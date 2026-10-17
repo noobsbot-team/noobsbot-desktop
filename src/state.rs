@@ -152,6 +152,20 @@ impl State {
                 state.clipboard.store(fetched);
             }
         })?;
+        // The system font scan takes ~20 ms: do it off the frame thread (E1.10). A label drawn before it lands loads
+        // its own fonts; the cache is simply replaced.
+        let (text_tx, text_rx) = channel::channel();
+        std::thread::Builder::new().name("font-load".into()).spawn(move || {
+            let mut text = crate::text::Text::default();
+            text.preload();
+            let _ = text_tx.send(text);
+        })?;
+        handle.insert_source(text_rx, |event, _, state| {
+            if let channel::Event::Msg(text) = event {
+                state.text = text;
+                state.schedule_redraw();
+            }
+        })?;
 
         Ok(Self {
             start_time: Instant::now(),

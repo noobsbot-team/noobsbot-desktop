@@ -39,8 +39,8 @@ type Key = (String, Style, u32, u64);
 
 /// Owns the font database and glyph rasteriser.
 ///
-/// Fonts load lazily on the first `label` call (a one-time system font scan: ~20 ms release, ~90 ms debug, see the
-/// `font_load_time` test): create it on a worker, or accept that first-frame cost.
+/// Fonts load lazily on the first `label` call, or on `preload` (a one-time system font scan: ~20 ms release, ~90 ms
+/// debug, see the `font_load_time` test); the compositor preloads on a worker.
 #[derive(Default)]
 pub struct Text {
     fonts: Option<(FontSystem, SwashCache, String)>,
@@ -69,6 +69,14 @@ impl Text {
         self.bytes += rendered.pixels.len();
         self.cache.insert(key, (rendered.clone(), self.tick));
         rendered
+    }
+
+    /// Loads the fonts now instead of on the first `label`, and shapes a sample in the title (600) and glyph (700)
+    /// weights: the first shaping of a face parses it, another ~20 ms.
+    pub fn preload(&mut self) {
+        for weight in [600, 700] {
+            self.rasterise("Aa×–⤢", Style { size: 13, line_height: 16, weight, color: [0, 0, 0, 255] }, 100, 1.0);
+        }
     }
 
     fn fonts(&mut self) -> &mut (FontSystem, SwashCache, String) {
