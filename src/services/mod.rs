@@ -3,6 +3,7 @@
 //! its client reports `None` and picks it up again when it appears.
 
 pub mod bluetooth;
+pub mod brightness;
 pub mod network;
 pub mod power;
 pub mod profiles;
@@ -27,15 +28,20 @@ pub enum Update {
     Bluetooth(Option<bluetooth::Bluetooth>),
     /// `None`: power-profiles-daemon isn't running.
     Profiles(Option<profiles::Profiles>),
+    /// Percent; `None` without a backlight (desktop monitors).
+    Brightness(Option<u8>),
 }
 
 /// Requests from the frame loop.
 #[derive(Debug)]
 pub enum Command {
     /// An IANA zone such as `Asia/Kathmandu` (E2.6).
-    SetTimezone(String),
+    Timezone(String),
     #[expect(dead_code, reason = "the Control Center (E2.3) waits for the M2 mockup approval")]
-    SetPowerProfile(String),
+    PowerProfile(String),
+    /// Percent.
+    #[expect(dead_code, reason = "the Control Center (E2.3) and brightness keys (E2.7) wait for the M2 mockup approval")]
+    Brightness(u8),
 }
 
 pub struct Services {
@@ -70,11 +76,12 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
             return tracing::warn!("system bus unavailable, system status hidden: {err}");
         }
     };
+    brightness::send_current(&updates);
     let clients = future::zip(
         future::zip(power::watch(&bus, &updates), profiles::watch(&bus, &updates)),
         future::zip(network::watch(&bus, &updates), bluetooth::watch(&bus, &updates)),
     );
-    future::zip(clients, handle(&bus, commands)).await;
+    future::zip(clients, handle(&bus, commands, &updates)).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
@@ -101,11 +108,7 @@ where
     };
     let mut events = match streams.await {
         Ok(events) => events,
-        Err(err) => {
-            tracing::warn!("{service} off: {err}");
-            let _ = updates.send(wrap(None));
-            return;
-        }
+        Err(err) => return tracing::warn!("{service} off: {err}"),
     };
     let mut last = None;
     loop {
@@ -123,11 +126,12 @@ where
     }
 }
 
-async fn handle(bus: &Connection, commands: async_channel::Receiver<Command>) {
+async fn handle(bus: &Connection, commands: async_channel::Receiver<Command>, updates: &Sender<Update>) {
     while let Ok(command) = commands.recv().await {
         match command {
-            Command::SetTimezone(zone) => set_timezone(bus, &zone).await,
-            Command::SetPowerProfile(profile) => profiles::set(bus, &profile).await,
+            Command::Timezone(zone) => set_timezone(bus, &zone).await,
+            Command::PowerProfile(profile) => profiles::set(bus, &profile).await,
+            Command::Brightness(percent) => brightness::set(bus, percent, updates).await,
         }
     }
 }

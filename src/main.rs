@@ -92,7 +92,7 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool) -> Result<(), Box<d
                 state.schedule_redraw();
             }
             if config.clock.timezone != state.config.clock.timezone && !config.clock.timezone.is_empty() {
-                state.services.send(services::Command::SetTimezone(config.clock.timezone.clone()));
+                state.services.send(services::Command::Timezone(config.clock.timezone.clone()));
             }
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);

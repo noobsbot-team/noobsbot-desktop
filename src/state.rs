@@ -126,6 +126,8 @@ pub struct State {
     pub bluetooth: Option<crate::services::bluetooth::Bluetooth>,
     /// `None`: power-profiles-daemon isn't running.
     pub profiles: Option<crate::services::profiles::Profiles>,
+    /// Percent; `None` without a backlight.
+    pub brightness: Option<u8>,
 }
 
 impl State {
@@ -180,7 +182,7 @@ impl State {
         let (services_tx, services_rx) = channel::channel();
         let services = crate::services::spawn(services_tx);
         if !config.clock.timezone.is_empty() {
-            services.send(crate::services::Command::SetTimezone(config.clock.timezone.clone()));
+            services.send(crate::services::Command::Timezone(config.clock.timezone.clone()));
         }
         handle.insert_source(services_rx, |event, _, state| {
             if let channel::Event::Msg(update) = event {
@@ -190,6 +192,7 @@ impl State {
                     crate::services::Update::Network(network) => state.network = network,
                     crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,
                     crate::services::Update::Profiles(profiles) => state.profiles = profiles,
+                    crate::services::Update::Brightness(brightness) => state.brightness = brightness,
                 }
             }
         })?;
@@ -234,6 +237,7 @@ impl State {
             network: None,
             bluetooth: None,
             profiles: None,
+            brightness: None,
             display_handle: dh,
         })
     }
