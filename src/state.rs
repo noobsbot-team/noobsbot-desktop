@@ -120,6 +120,8 @@ pub struct State {
     pub services: crate::services::Services,
     /// `None`: no battery, or UPower isn't running.
     pub battery: Option<crate::services::power::Battery>,
+    /// `None`: NetworkManager isn't running.
+    pub network: Option<crate::services::network::Network>,
 }
 
 impl State {
@@ -181,6 +183,7 @@ impl State {
                 // Nothing draws these yet; the menu bar (E2.2) will damage just its item.
                 match update {
                     crate::services::Update::Battery(battery) => state.battery = battery,
+                    crate::services::Update::Network(network) => state.network = network,
                 }
             }
         })?;
@@ -222,6 +225,7 @@ impl State {
             text: Default::default(),
             services,
             battery: None,
+            network: None,
             display_handle: dh,
         })
     }

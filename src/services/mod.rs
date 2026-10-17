@@ -2,6 +2,7 @@
 //! two channels, so a stuck service can never freeze the screen (E1.11). A missing service is a state, not an error:
 //! its client reports `None` and picks it up again when it appears.
 
+pub mod network;
 pub mod power;
 
 use std::{os::unix::net::UnixStream, time::Duration};
@@ -18,6 +19,8 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 pub enum Update {
     /// `None`: no battery, or UPower isn't running.
     Battery(Option<power::Battery>),
+    /// `None`: NetworkManager isn't running.
+    Network(Option<network::Network>),
 }
 
 /// Requests from the frame loop.
@@ -57,10 +60,11 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         Err(err) => {
             tracing::warn!("system bus unavailable, system status hidden: {err}");
             let _ = updates.send(Update::Battery(None));
+            let _ = updates.send(Update::Network(None));
             return;
         }
     };
-    future::zip(power::watch(&bus, &updates), handle(&bus, commands)).await;
+    future::zip(future::zip(power::watch(&bus, &updates), network::watch(&bus, &updates)), handle(&bus, commands)).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
