@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use smithay::{
     backend::{
-        renderer::{ImportDma, damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement, gles::GlesRenderer},
+        renderer::{ImportDma, damage::OutputDamageTracker, gles::GlesRenderer},
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
     desktop::{layer_map_for_output, utils::OutputPresentationFeedback},
@@ -16,7 +16,10 @@ use smithay::{
     wayland::{compositor::SurfaceData, presentation::Refresh},
 };
 
-use crate::state::State;
+use crate::{
+    render::{self, Shaders},
+    state::State,
+};
 
 const REFRESH_MHZ: i32 = 60_000;
 
@@ -24,6 +27,7 @@ pub struct Winit {
     pub backend: WinitGraphicsBackend<GlesRenderer>,
     output: Output,
     damage_tracker: OutputDamageTracker,
+    shaders: Shaders,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -42,7 +46,10 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
     let damage_tracker = OutputDamageTracker::from_output(&output);
-    state.backend = Some(Winit { backend, output, damage_tracker });
+
+    // Shaders compile once.
+    let shaders = Shaders::new(backend.renderer())?;
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -66,21 +73,14 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
-        let Some(Winit { backend, output, damage_tracker }) = self.backend.as_mut() else { return };
+        let Some(Winit { backend, output, damage_tracker, shaders }) = self.backend.as_mut() else { return };
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
-            Ok((renderer, mut framebuffer)) => smithay::desktop::space::render_output::<_, WaylandSurfaceRenderElement<GlesRenderer>, _, _>(
-                output,
-                renderer,
-                &mut framebuffer,
-                1.0,
-                age,
-                [&self.space],
-                &[],
-                damage_tracker,
-                [0.1, 0.1, 0.1, 1.0],
-            )
-            .map(|result| result.damage.cloned()),
+            Ok((renderer, mut framebuffer)) => {
+                // Layers and windows with rounded corners and shadows (E1.4): see render::scene.
+                let elements = render::scene(renderer, shaders, &self.space, output, &self.config.appearance);
+                damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, [0.1, 0.1, 0.1, 1.0]).map(|result| result.damage.cloned())
+            }
             Err(err) => {
                 tracing::warn!("bind: {err}");
                 return;

@@ -6,6 +6,7 @@ mod config;
 mod grabs;
 mod input;
 mod protocols;
+mod render;
 mod rules;
 mod shortcuts;
 mod state;
