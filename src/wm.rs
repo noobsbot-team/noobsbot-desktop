@@ -13,6 +13,8 @@ pub const SNAP_DISTANCE: i32 = 8;
 pub const MIN_VISIBLE: i32 = 40;
 /// Floor for apps that give no minimum size, so a window can never vanish.
 pub const MIN_SIZE: (i32, i32) = (200, 120);
+/// An activation token older than this no longer brings a window forward.
+pub const ACTIVATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 /// Two clicks closer than this are a double-click.
 pub const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
 

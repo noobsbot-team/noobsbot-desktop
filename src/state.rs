@@ -214,8 +214,12 @@ impl State {
     /// Moves a window so its visible part (without client-side shadows) starts at `loc`;
     /// a Space location is already the visible corner.
     pub fn set_visible_loc(&mut self, window: &Window, loc: smithay::utils::Point<i32, smithay::utils::Logical>) {
-        // map_element also raises the window, so float_above windows go back on top.
+        // map_element also raises the window: put back what was above it, so moving never restacks.
+        let above: Vec<Window> = self.space.elements().skip_while(|w| *w != window).skip(1).cloned().collect();
         self.space.map_element(window.clone(), loc, false);
+        for w in &above {
+            self.space.raise_element(w, false);
+        }
         self.restack();
         self.schedule_redraw();
     }
@@ -441,12 +445,26 @@ impl XdgShellHandler for State {
         }
     }
 
+    /// Focus stealing (E1.2): a new window takes focus only if it is the only one or the focused app opened it; any
+    /// other opens behind the focused window until it activates with a token (see `request_activation`).
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        surface.with_pending_state(|state| state.states.set(xdg_toplevel::State::Activated));
+        let client = |s: &WlSurface| s.client().map(|c| c.id());
+        let focused = self.seat.get_keyboard().and_then(|k| k.current_focus());
+        let only = self.space.elements().next().is_none() && self.hidden.is_empty();
+        let takes_focus = only || focused.as_ref().is_some_and(|f| client(f).is_some() && client(f) == client(surface.wl_surface()));
+        if takes_focus {
+            surface.with_pending_state(|state| state.states.set(xdg_toplevel::State::Activated));
+        }
         let window = Window::new_wayland_window(surface);
         // Positioned on its first buffer, once its size is known (see commit).
-        self.space.map_element(window.clone(), (0, 0), true);
-        self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
+        self.space.map_element(window.clone(), (0, 0), takes_focus);
+        if takes_focus {
+            self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
+        } else if let Some(focused) = self.focused_window() {
+            // ponytail: no dock yet, so nothing bounces (M3).
+            self.space.raise_element(&focused, false);
+            self.restack();
+        }
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
@@ -638,10 +656,16 @@ impl XdgActivationHandler for State {
         &mut self.activation_state
     }
 
+    /// Only the focused app may hand out tokens (a click or key in it opened something); we make our own in `spawn`.
+    fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
+        let focused = self.seat.get_keyboard().and_then(|k| k.current_focus());
+        focused.and_then(|f| f.client()).is_some_and(|c| data.client_id == Some(c.id()))
+    }
+
     /// An app asks to bring a window forward (e.g. a link clicked in the terminal raises Brave).
-    /// ponytail: any token under 10 s old is honoured; focus-stealing rules come with the window manager.
+    /// ponytail: any valid token under ACTIVATION_TIMEOUT is honoured, without checking its input serial.
     fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
-        if token_data.timestamp.elapsed().as_secs() >= 10 {
+        if token_data.timestamp.elapsed() >= wm::ACTIVATION_TIMEOUT {
             return;
         }
         if let Some(window) = self.window_for(&surface).cloned() {

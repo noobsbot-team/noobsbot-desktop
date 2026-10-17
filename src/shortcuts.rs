@@ -122,11 +122,16 @@ impl State {
         }
     }
 
-    /// Starts a program on this display; a thread reaps it so no zombie is left.
-    pub fn spawn(&self, command: &[String]) {
+    /// Starts a program on this display; a thread reaps it so no zombie is left. The user launched it, so it gets an
+    /// activation token: its first window may take focus (see `request_activation`).
+    pub fn spawn(&mut self, command: &[String]) {
         let Some((program, args)) = command.split_first() else { return };
+        self.activation_state.retain_tokens(|_, data| data.timestamp.elapsed() < crate::wm::ACTIVATION_TIMEOUT);
+        let token = self.activation_state.create_external_token(None).0.to_string();
         // ponytail: fire and forget; supervised launching lives in apps.rs (M3).
-        match std::process::Command::new(program).args(args).env("WAYLAND_DISPLAY", &self.socket_name).spawn() {
+        let mut command = std::process::Command::new(program);
+        command.args(args).env("WAYLAND_DISPLAY", &self.socket_name).env("XDG_ACTIVATION_TOKEN", &token).env("DESKTOP_STARTUP_ID", &token);
+        match command.spawn() {
             Ok(mut child) => {
                 std::thread::spawn(move || child.wait());
             }
@@ -134,7 +139,7 @@ impl State {
         }
     }
 
-    fn focused_window(&self) -> Option<Window> {
+    pub fn focused_window(&self) -> Option<Window> {
         let surface = self.seat.get_keyboard()?.current_focus()?;
         self.space.elements().find(|w| w.toplevel().is_some_and(|t| *t.wl_surface() == surface)).cloned()
     }
