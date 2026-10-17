@@ -51,6 +51,9 @@ use crate::{
 /// Marks a window that got its first position (it is placed once its size is known).
 struct Placed;
 
+/// Where a zoomed or fullscreen window goes back to.
+struct Restore(std::sync::Mutex<Option<Rect>>);
+
 pub struct State {
     pub start_time: Instant,
     pub socket_name: OsString,
@@ -172,6 +175,43 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let Some(start) = self.space.element_geometry(&window) else { return };
         pointer.set_grab(self, MoveGrab { start_data, window, start, started: false }, serial, Focus::Clear);
+    }
+
+    /// Zoom (fill the work area) or fullscreen (fill the output), remembering where the window was.
+    /// ponytail: one output and no menu bar or dock yet, so both fill the same area; refitting on output resize comes with udev (M6).
+    fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
+        let (Some(window), Some(area)) = (self.window_for(surface.wl_surface()).cloned(), self.work_area()) else { return };
+        let restore = window.user_data().get_or_insert(|| Restore(std::sync::Mutex::new(None)));
+        if let (Ok(mut saved), Some(geo)) = (restore.0.lock(), self.space.element_geometry(&window)) {
+            saved.get_or_insert(geo);
+        }
+        window.user_data().insert_if_missing(|| Placed);
+        surface.with_pending_state(|s| {
+            s.states.set(state);
+            s.size = Some(area.size);
+        });
+        if surface.is_initial_configure_sent() {
+            surface.send_pending_configure();
+        }
+        self.set_visible_loc(&window, area.loc);
+    }
+
+    /// Leaves zoom or fullscreen; returns where the window went back to.
+    fn unfill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) -> Option<Rect> {
+        let window = self.window_for(surface.wl_surface()).cloned()?;
+        if !surface.with_pending_state(|s| s.states.contains(state)) {
+            return None;
+        }
+        let saved = window.user_data().get::<Restore>().and_then(|r| r.0.lock().ok()?.take());
+        surface.with_pending_state(|s| {
+            s.states.unset(state);
+            s.size = saved.map(|r| r.size);
+        });
+        surface.send_pending_configure();
+        if let Some(rect) = saved {
+            self.set_visible_loc(&window, rect.loc);
+        }
+        saved
     }
 
     fn window_for(&self, surface: &WlSurface) -> Option<&Window> {
@@ -322,7 +362,28 @@ impl XdgShellHandler for State {
             return;
         }
         let (Some(start_data), Some(window)) = (pointer.grab_start_data(), self.window_for(surface.wl_surface()).cloned()) else { return };
+        // Dragging a zoomed window un-zooms it first, centred under the pointer (macOS).
+        if let Some(restore) = self.unfill(&surface, xdg_toplevel::State::Maximized) {
+            let at = start_data.location.to_i32_round::<i32>();
+            self.set_visible_loc(&window, (at.x - restore.size.w / 2, at.y - 12).into());
+        }
         self.start_move(window, start_data, serial);
+    }
+
+    fn maximize_request(&mut self, surface: ToplevelSurface) {
+        self.fill(&surface, xdg_toplevel::State::Maximized);
+    }
+
+    fn unmaximize_request(&mut self, surface: ToplevelSurface) {
+        self.unfill(&surface, xdg_toplevel::State::Maximized);
+    }
+
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<smithay::reexports::wayland_server::protocol::wl_output::WlOutput>) {
+        self.fill(&surface, xdg_toplevel::State::Fullscreen);
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        self.unfill(&surface, xdg_toplevel::State::Fullscreen);
     }
 
     /// The app's own window edge was dragged.
