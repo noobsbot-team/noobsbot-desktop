@@ -25,3 +25,8 @@ panic = "abort"
 
 [profile.dev]
 panic = "abort"
+
+# wayland-backend 0.3.17 panics on a wl_registry.bind with a null interface string (found by scripts/fuzz-client.py);
+# vendored with a one-branch fix (see the noobsbot-desktop patch comment) until upstream fixes it.
+[patch.crates-io]
+wayland-backend = { path = "vendor/wayland-backend" }
