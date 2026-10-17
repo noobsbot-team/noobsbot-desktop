@@ -44,7 +44,7 @@ impl Gallery {
                     let spec = material.spec(dark);
                     let color = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
                     let name = format!("{material:?} · {:.0}% · r{}", spec.opacity * 100.0, spec.radius);
-                    let rendered = text.label(&name, Style { size: 13, line_height: 16, weight: 600, color }, 200, scale);
+                    let rendered = text.label(&name, Style { size: 13, line_height: 16, weight: 600, color, tabular: false }, 200, scale);
                     let buffer = text::to_buffer(&rendered);
                     (rendered, buffer)
                 })

@@ -2,7 +2,9 @@
 
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
-use cosmic_text::{Attrs, Buffer, Color, Ellipsize, EllipsizeHeightLimit, Family, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap};
+use cosmic_text::{
+    Attrs, Buffer, Color, Ellipsize, EllipsizeHeightLimit, Family, FeatureTag, FontFeatures, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap,
+};
 use smithay::{
     backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer},
     utils::Transform,
@@ -19,6 +21,8 @@ pub struct Style {
     pub weight: u16,
     /// Straight (not premultiplied) RGBA.
     pub color: [u8; 4],
+    /// Equal-width digits (Inter `tnum`), for clocks and percentages that must not jiggle (Part D).
+    pub tabular: bool,
 }
 
 /// A rasterised label: premultiplied RGBA8 (byte order R, G, B, A), in physical px.
@@ -75,7 +79,7 @@ impl Text {
     /// weights: the first shaping of a face parses it, another ~20 ms.
     pub fn preload(&mut self) {
         for weight in [600, 700] {
-            self.rasterise("Aa×–⤢", Style { size: 13, line_height: 16, weight, color: [0, 0, 0, 255] }, 100, 1.0);
+            self.rasterise("Aa×–⤢", Style { size: 13, line_height: 16, weight, color: [0, 0, 0, 255], tabular: false }, 100, 1.0);
         }
     }
 
@@ -103,7 +107,11 @@ impl Text {
         let metrics = Metrics::new(f32::from(style.size.max(1)) * scale, f32::from(style.line_height.max(1)) * scale);
         let family = if family.is_empty() { Family::SansSerif } else { Family::Name(family) };
         let [r, g, b, a] = style.color;
-        let attrs = Attrs::new().family(family).weight(Weight(style.weight));
+        let mut features = FontFeatures::new();
+        if style.tabular {
+            features.enable(FeatureTag::new(b"tnum"));
+        }
+        let attrs = Attrs::new().family(family).weight(Weight(style.weight)).font_features(features);
         let mut buffer = Buffer::new(fonts, metrics);
         let mut buffer = buffer.borrow_with(fonts);
         buffer.set_wrap(Wrap::None);
@@ -154,7 +162,7 @@ pub fn to_buffer(rendered: &Rendered) -> Option<MemoryRenderBuffer> {
 mod tests {
     use super::*;
 
-    const HEADLINE: Style = Style { size: 13, line_height: 16, weight: 600, color: [0, 0, 0, 255] };
+    const HEADLINE: Style = Style { size: 13, line_height: 16, weight: 600, color: [0, 0, 0, 255], tabular: false };
 
     /// A loaded `Text`, or `None` when the machine has no fonts at all.
     fn text() -> Option<Text> {
@@ -208,6 +216,13 @@ mod tests {
         }
         assert_eq!(text.cache.len(), MAX_ENTRIES);
         assert!(text.bytes <= MAX_BYTES);
+    }
+
+    #[test]
+    fn tabular_digits_have_one_width() {
+        let Some(mut text) = text() else { return };
+        let style = Style { tabular: true, ..HEADLINE };
+        assert_eq!(text.label("11:11", style, 300, 1.0).width, text.label("00:00", style, 300, 1.0).width);
     }
 
     #[test]

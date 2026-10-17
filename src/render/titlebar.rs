@@ -114,7 +114,7 @@ pub fn elements(
     };
     let color = if dark { [255, 255, 255, alpha] } else { [0, 0, 0, alpha] };
     let max_width = (frame.size.w - 2 * TITLE_MARGIN).max(0) as u32;
-    let rendered = text.label(&title_of(window), Style { size: 13, line_height: 16, weight: 600, color }, max_width, scale);
+    let rendered = text.label(&title_of(window), Style { size: 13, line_height: 16, weight: 600, color, tabular: false }, max_width, scale);
     if !cache.title.as_ref().is_some_and(|(r, _)| Arc::ptr_eq(r, &rendered)) {
         cache.title = Some((rendered.clone(), text::to_buffer(&rendered)));
     }
@@ -122,7 +122,7 @@ pub fn elements(
         out.extend(label_element(renderer, title, Rectangle::new(frame.loc, Size::from((frame.size.w, BAR))), scale));
     }
     if focused && crate::decorations::lights_hovered(window) {
-        let style = Style { size: 10, line_height: 12, weight: 700, color: [0, 0, 0, 140] };
+        let style = Style { size: 10, line_height: 12, weight: 700, color: [0, 0, 0, 140], tabular: false };
         let glyphs: Vec<Label> = GLYPHS
             .iter()
             .map(|g| text.label(g, style, LIGHT as u32, scale))

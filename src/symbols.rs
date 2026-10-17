@@ -8,6 +8,7 @@ use resvg::{tiny_skia, usvg};
 use crate::text::Rendered;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(not(test), expect(dead_code, reason = "fill is for the Control Center's on states (E2.3)"))]
 pub enum Weight {
     Regular,
     /// The "on" state: an enabled toggle, the playing control.
@@ -18,14 +19,20 @@ macro_rules! symbols {
     ($($variant:ident = $file:literal,)*) => {
         /// One per file in `assets/phosphor/{regular,fill}/`.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-        pub enum Symbol { $($variant,)* }
+        #[cfg_attr(not(test), expect(dead_code, reason = "most are for the Control Center and OSD (E2.3, E2.7)"))]
+        pub enum Symbol {
+            /// The Noobsbot mark (`assets/logo.svg`), same weight in both styles.
+            Logo,
+            $($variant,)*
+        }
 
         impl Symbol {
             #[cfg(test)]
-            const ALL: &[Symbol] = &[$(Symbol::$variant,)*];
+            const ALL: &[Symbol] = &[Symbol::Logo, $(Symbol::$variant,)*];
 
             fn svg(self, weight: Weight) -> &'static str {
                 match (self, weight) {
+                    (Symbol::Logo, _) => include_str!("../assets/logo.svg"),
                     $(
                         (Symbol::$variant, Weight::Regular) => include_str!(concat!("../assets/phosphor/regular/", $file, ".svg")),
                         (Symbol::$variant, Weight::Fill) => include_str!(concat!("../assets/phosphor/fill/", $file, ".svg")),
