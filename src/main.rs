@@ -5,7 +5,6 @@ mod clipboard;
 mod config;
 mod grabs;
 mod input;
-#[cfg_attr(not(test), expect(dead_code, reason = "window rules are applied by E1.9, next"))]
 mod rules;
 mod shortcuts;
 mod state;
@@ -58,6 +57,7 @@ fn run(command: Vec<String>, nested: bool) -> Result<(), Box<dyn std::error::Err
         if let channel::Event::Msg(config) = event {
             tracing::info!("settings reloaded");
             state.bindings = shortcuts::from_config(&config);
+            state.rules = rules::compile(&config.rules);
             state.config = config;
         }
     })?;

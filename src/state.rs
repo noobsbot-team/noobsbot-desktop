@@ -46,6 +46,7 @@ use crate::{
     clipboard::{self, Clipboard},
     config::Config,
     grabs::{MoveGrab, Resize, ResizeGrab, edges_from},
+    rules::{self, Actions, CompiledRule},
     shortcuts::{self, Action, Binding},
     wm::{self, Rect},
 };
@@ -55,6 +56,13 @@ struct Placed;
 
 /// Where a zoomed or fullscreen window goes back to.
 struct Restore(std::sync::Mutex<Option<Rect>>);
+
+/// The window rules that matched this window.
+struct Ruled(std::sync::Mutex<Actions>);
+
+fn ruled(window: &Window) -> Option<Actions> {
+    window.user_data().get::<Ruled>().and_then(|r| r.0.lock().ok().map(|a| a.clone()))
+}
 
 pub struct State {
     pub start_time: Instant,
@@ -74,6 +82,8 @@ pub struct State {
     /// Nested in another desktop: Alt stands in for Super, which the host keeps.
     pub nested: bool,
     pub config: Config,
+    /// Built from `config.rules`.
+    pub rules: Vec<CompiledRule>,
     /// Built from `config.bindings`.
     pub bindings: Vec<(Binding, Action)>,
     /// Keys whose press was a shortcut; their release is kept from the app too, so nothing sticks.
@@ -139,6 +149,7 @@ impl State {
             redraw_pending: false,
             resize: None,
             nested,
+            rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
             config,
             suppressed: Vec::new(),
@@ -254,6 +265,7 @@ impl State {
         match window {
             Some(window) => {
                 self.space.raise_element(&window, true);
+                self.restack();
                 keyboard.set_focus(self, window.toplevel().map(|t| t.wl_surface().clone()), serial);
             }
             None => {
@@ -268,6 +280,48 @@ impl State {
                 toplevel.send_pending_configure();
             }
         });
+    }
+
+    /// Window rules (E1.9), resolved before the first configure so the app opens at the ruled size, and again if the
+    /// app sets its app_id only after that (then the window is resized and moved where the rule says).
+    /// ponytail: space, layer, decorations and opacity wait for Spaces (M4), layers, server-side bars (E1.3) and alpha.
+    fn apply_rules(&mut self, surface: &ToplevelSurface) {
+        let actions = self.resolve_rules(surface);
+        let (Some(window), Some(area)) = (self.window_for(surface.wl_surface()).cloned(), self.work_area()) else { return };
+        if let Some([w, h]) = actions.size {
+            surface.with_pending_state(|s| s.size = Some((w.to_px(area.size.w), h.to_px(area.size.h)).into()));
+        }
+        let (fullscreen, position) = (actions.fullscreen == Some(true), actions.position);
+        if let Ok(mut ruled) = window.user_data().get_or_insert(|| Ruled(std::sync::Mutex::new(Actions::default()))).0.lock() {
+            *ruled = actions;
+        }
+        if fullscreen {
+            self.fill(surface, xdg_toplevel::State::Fullscreen);
+        } else if surface.is_initial_configure_sent() {
+            surface.send_pending_configure();
+            if let Some([x, y]) = position.filter(|_| window.user_data().get::<Placed>().is_some()) {
+                self.set_visible_loc(&window, area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))));
+            }
+        }
+        self.restack();
+    }
+
+    fn resolve_rules(&self, surface: &ToplevelSurface) -> Actions {
+        let (app_id, title) = with_states(surface.wl_surface(), |states| {
+            let data = states.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok().map(|d| (d.app_id.clone(), d.title.clone())));
+            data.map(|(a, t)| (a.unwrap_or_default(), t.unwrap_or_default())).unwrap_or_default()
+        });
+        let actions = rules::resolve(&self.rules, &app_id, &title);
+        tracing::debug!(app_id, title, ?actions, "window rules");
+        actions
+    }
+
+    /// Keeps `float_above` windows over every normal one.
+    fn restack(&mut self) {
+        let above: Vec<Window> = self.space.elements().filter(|w| ruled(w).is_some_and(|a| a.float_above == Some(true))).cloned().collect();
+        for window in above {
+            self.space.raise_element(&window, false);
+        }
     }
 
     fn unconstrain_popup(&self, popup: &PopupSurface) {
@@ -307,6 +361,18 @@ impl CompositorHandler for State {
     fn commit(&mut self, surface: &WlSurface) {
         smithay::backend::renderer::utils::on_commit_buffer_handler::<Self>(surface);
 
+        // The first commit of a toplevel asks for its initial configure. Rules go first: an app may already give its
+        // window geometry in this commit, and placement below must see the ruled position.
+        if let Some(toplevel) = self.window_for(surface).and_then(|w| w.toplevel()).cloned() {
+            let sent = with_states(surface, |states| {
+                states.data_map.get::<XdgToplevelSurfaceData>().is_some_and(|data| data.lock().is_ok_and(|d| d.initial_configure_sent))
+            });
+            if !sent {
+                self.apply_rules(&toplevel);
+                toplevel.send_configure();
+            }
+        }
+
         if !is_sync_subsurface(surface) {
             let mut root = surface.clone();
             while let Some(parent) = get_parent(&root) {
@@ -318,21 +384,14 @@ impl CompositorHandler for State {
                 if size.w > 0 && window.user_data().get::<Placed>().is_none() {
                     window.user_data().insert_if_missing(|| Placed);
                     if let Some(area) = self.work_area() {
-                        self.set_visible_loc(&window, wm::place(area, size));
+                        let position = ruled(&window).and_then(|a| a.position);
+                        let loc = position.map_or_else(|| wm::place(area, size), |[x, y]| area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))));
+                        tracing::debug!(?size, ?loc, ?position, "placed");
+                        self.set_visible_loc(&window, loc);
                     }
                 }
             }
             self.resize_commit(&root);
-        }
-
-        // The first commit of a toplevel asks for its initial configure.
-        if let Some(toplevel) = self.window_for(surface).and_then(|w| w.toplevel()) {
-            let sent = with_states(surface, |states| {
-                states.data_map.get::<XdgToplevelSurfaceData>().is_some_and(|data| data.lock().is_ok_and(|d| d.initial_configure_sent))
-            });
-            if !sent {
-                toplevel.send_configure();
-            }
         }
 
         self.popups.commit(surface);
@@ -348,6 +407,26 @@ impl CompositorHandler for State {
 impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
+    }
+
+    /// A rule can match on the title, so `float_above` follows it (Brave names its PiP window after it opens).
+    fn title_changed(&mut self, surface: ToplevelSurface) {
+        let float_above = self.resolve_rules(&surface).float_above;
+        let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
+        if let Some(Ok(mut ruled)) = window.user_data().get::<Ruled>().map(|r| r.0.lock())
+            && ruled.float_above != float_above
+        {
+            ruled.float_above = float_above;
+            drop(ruled);
+            self.restack();
+            self.schedule_redraw();
+        }
+    }
+
+    fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        if surface.is_initial_configure_sent() {
+            self.apply_rules(&surface);
+        }
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
