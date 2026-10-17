@@ -681,7 +681,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 - **Design:**
   ```
   ┌──────────────────────────────────────────────────────────────────────────────┐
-  │ ◆  Brave  File  Edit …            ⌨ EN  ▣ tray   Wi-Fi  BT  85% ▮  🔊  ⊞  Fri 17 Oct  9:41 │ 24 px
+  │ ◆  Brave  File  Edit …            ⌨ EN  ▣ tray   Wi-Fi  BT  85% ▮  🔊  ⊞  Sat 17 Oct  9:41 │ 24 px
   └──────────────────────────────────────────────────────────────────────────────┘
   ```
   - Height **24 px**, `bar` material, elevation 1, full width.
@@ -749,7 +749,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 
 ### E2.4 Clock
 - **What it is:** date and time at the right end of the menu bar.
-- **Design:** `Fri 17 Oct  9:41 AM` in Body with **tabular digits** (the bar doesn't jiggle as time changes).
+- **Design:** `Sat 17 Oct  9:41 AM` in Body with **tabular digits** (the bar doesn't jiggle as time changes).
   Options: 12/24-hour, show date, show day name, show seconds (off by default). Click → **Notification Center** (M4;
   until M4 it opens the calendar popover below).
 - **Built with:** system time; **systemd-timesyncd** keeps it accurate (NTP); `chrono` formats it.
@@ -765,11 +765,11 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   ╭──────────────────────────────╮
   │  October 2026          ‹  ›  │  Title 3
   │  S   M   T   W   T   F   S   │  Caption, label-secondary
-  │              1   2   3   4   │
-  │  5   6   7   8   9  10  11   │
-  │ 12  13  14  15  16 (17) 18   │  today = accent filled circle, white text
-  │ 19  20  21  22  23  24  25   │
-  │ 26  27  28  29  30  31       │
+  │                  1   2   3   │
+  │  4   5   6   7   8   9  10   │
+  │ 11  12  13  14  15  16 (17)  │  today = accent filled circle, white text
+  │ 18  19  20  21  22  23  24   │
+  │ 25  26  27  28  29  30  31   │
   ╰──────────────────────────────╯
   ```
   - Days of other months at `label-tertiary`; week starts on the locale's first day (configurable); optional week numbers.
@@ -992,7 +992,7 @@ Goal: everything that informs you and helps you find things.
 - **Design:**
   ```
                                                    ╭──────────────────────────────╮
-                                                   │ Friday, 17 October      ⚙   │ Title 2
+                                                   │ Saturday, 17 October      ⚙   │ Title 2
                                                    │                              │
                                                    │ Notifications    Clear All  │ Subheadline / button
                                                    │ ╭──────────────────────────╮ │
@@ -1278,7 +1278,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Design:**
   ```
   ┌─────────────────────────────────────────────────────────────┐
-  │                     Friday, 17 October                       │  Title 2, white 85%
+  │                     Saturday, 17 October                       │  Title 2, white 85%
   │                           9:41                               │  Display (96 Light), white
   │                                                               │
   │                                                               │
