@@ -3,12 +3,9 @@
 use std::{ffi::OsString, os::fd::OwnedFd, sync::Arc, time::Instant};
 
 use smithay::{
-    backend::{
-        allocator::dmabuf::Dmabuf,
-        renderer::{ImportDma, gles::GlesRenderer},
-        winit::WinitGraphicsBackend,
-    },
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output, delegate_primary_selection, delegate_seat, delegate_shm, delegate_xdg_shell,
+    backend::{allocator::dmabuf::Dmabuf, renderer::ImportDma},
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output, delegate_primary_selection, delegate_seat, delegate_shm, delegate_viewporter,
+    delegate_xdg_activation, delegate_xdg_dialog, delegate_xdg_foreign, delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
     },
@@ -33,9 +30,15 @@ use smithay::{
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler, set_data_device_focus},
             primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus},
         },
-        shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData},
+        shell::xdg::{
+            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState, XdgToplevelSurfaceData,
+            dialog::{XdgDialogHandler, XdgDialogState},
+        },
         shm::{ShmHandler, ShmState},
         socket::ListeningSocketSource,
+        viewporter::ViewporterState,
+        xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData},
+        xdg_foreign::{XdgForeignHandler, XdgForeignState},
     },
 };
 
@@ -53,7 +56,8 @@ pub struct State {
     pub seat: Seat<Self>,
     pub clipboard: Clipboard,
     /// Set by the backend once the renderer exists.
-    pub backend: Option<WinitGraphicsBackend<GlesRenderer>>,
+    pub backend: Option<crate::backend::winit::Winit>,
+    redraw_pending: bool,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -63,6 +67,10 @@ pub struct State {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub primary_selection_state: PrimarySelectionState,
+    pub activation_state: XdgActivationState,
+    pub foreign_state: XdgForeignState,
+    pub _viewporter_state: ViewporterState,
+    pub _dialog_state: XdgDialogState,
 }
 
 impl State {
@@ -106,6 +114,7 @@ impl State {
             seat,
             clipboard: Clipboard::new(clipboard_tx),
             backend: None,
+            redraw_pending: false,
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
             shm_state: ShmState::new::<Self>(&dh, vec![]),
@@ -114,8 +123,23 @@ impl State {
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(&dh),
             primary_selection_state: PrimarySelectionState::new::<Self>(&dh),
+            activation_state: XdgActivationState::new::<Self>(&dh),
+            foreign_state: XdgForeignState::new::<Self>(&dh),
+            _viewporter_state: ViewporterState::new::<Self>(&dh),
+            _dialog_state: XdgDialogState::new::<Self>(&dh),
             display_handle: dh,
         })
+    }
+
+    /// Draws a frame at the next vblank. Called only when something changed, so an idle desktop costs no CPU.
+    pub fn schedule_redraw(&mut self) {
+        if !self.redraw_pending {
+            self.redraw_pending = true;
+            self.loop_handle.insert_idle(|state| {
+                state.redraw_pending = false;
+                state.render();
+            });
+        }
     }
 
     fn window_for(&self, surface: &WlSurface) -> Option<&Window> {
@@ -202,6 +226,7 @@ impl CompositorHandler for State {
         }
 
         self.popups.commit(surface);
+        self.schedule_redraw();
         if let Some(PopupKind::Xdg(popup)) = self.popups.find_popup(surface)
             && !popup.is_initial_configure_sent()
         {
@@ -225,8 +250,13 @@ impl XdgShellHandler for State {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        let next = self.space.elements().filter(|w| w.toplevel() != Some(&surface)).next_back().cloned();
+        self.schedule_redraw();
+        let next = self.space.elements().rev().find(|w| w.toplevel() != Some(&surface)).cloned();
         self.focus_window(next, SERIAL_COUNTER.next_serial());
+    }
+
+    fn popup_destroyed(&mut self, _surface: PopupSurface) {
+        self.schedule_redraw();
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
@@ -343,7 +373,7 @@ impl DmabufHandler for State {
 
     /// Test-import every buffer so a format the GPU can't read fails here, not as a black window.
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        if self.backend.as_mut().is_some_and(|b| b.renderer().import_dmabuf(&dmabuf, None).is_ok()) {
+        if self.backend.as_mut().is_some_and(|w| w.backend.renderer().import_dmabuf(&dmabuf, None).is_ok()) {
             let _ = notifier.successful::<Self>();
         } else {
             notifier.failed();
@@ -353,6 +383,31 @@ impl DmabufHandler for State {
 
 impl OutputHandler for State {}
 
+impl XdgActivationHandler for State {
+    fn activation_state(&mut self) -> &mut XdgActivationState {
+        &mut self.activation_state
+    }
+
+    /// An app asks to bring a window forward (e.g. a link clicked in the terminal raises Brave).
+    /// ponytail: any token under 10 s old is honoured; focus-stealing rules come with the window manager.
+    fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
+        if token_data.timestamp.elapsed().as_secs() >= 10 {
+            return;
+        }
+        if let Some(window) = self.window_for(&surface).cloned() {
+            self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
+        }
+    }
+}
+
+impl XdgForeignHandler for State {
+    fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
+        &mut self.foreign_state
+    }
+}
+
+impl XdgDialogHandler for State {}
+
 delegate_compositor!(State);
 delegate_xdg_shell!(State);
 delegate_shm!(State);
@@ -361,3 +416,7 @@ delegate_output!(State);
 delegate_seat!(State);
 delegate_data_device!(State);
 delegate_primary_selection!(State);
+delegate_xdg_activation!(State);
+delegate_xdg_foreign!(State);
+delegate_xdg_dialog!(State);
+delegate_viewporter!(State);

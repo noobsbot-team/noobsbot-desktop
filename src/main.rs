@@ -51,6 +51,9 @@ fn run(command: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    event_loop.run(None, &mut state, |_| {})?;
+    // Replies queued while handling events go out once per loop turn.
+    event_loop.run(None, &mut state, |state| {
+        let _ = state.display_handle.flush_clients();
+    })?;
     Ok(())
 }
