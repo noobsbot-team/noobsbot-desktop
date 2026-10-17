@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: System libraries
+        run: pacman -Syu --noconfirm --needed base-devel rustup git wayland libxkbcommon mesa libinput systemd-libs seatd
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup default stable && rustup component add rustfmt clippy
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            target
+          key: cargo-${{ hashFiles('Cargo.lock') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
