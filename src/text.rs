@@ -128,7 +128,8 @@ impl Text {
         let height = if width == 0 { 0 } else { metrics.line_height.ceil() as u32 };
         let mut pixels = vec![0u8; (width * height * 4) as usize];
         buffer.draw(swash, Color::rgba(r, g, b, a), |x, y, w, h, c| {
-            let alpha = u32::from(c.a());
+            // cosmic-text hands over glyph coverage alone; the colour's own alpha is ours to apply.
+            let alpha = u32::from(c.a()) * u32::from(a) / 255;
             if alpha == 0 {
                 return;
             }
@@ -172,6 +173,15 @@ mod tests {
             return None;
         }
         Some(text)
+    }
+
+    #[test]
+    fn colour_alpha_fades_the_text() {
+        let Some(mut text) = text() else { return };
+        let max = |r: &Rendered| r.pixels.as_chunks::<4>().0.iter().map(|p| p[3]).max().unwrap_or(0);
+        let solid = text.label("8", HEADLINE, 100, 1.0);
+        let faded = text.label("8", Style { color: [0, 0, 0, 66], ..HEADLINE }, 100, 1.0);
+        assert!(max(&faded) < max(&solid) / 2, "{} vs {}", max(&faded), max(&solid));
     }
 
     #[test]
