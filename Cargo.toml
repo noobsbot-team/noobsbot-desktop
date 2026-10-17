@@ -14,6 +14,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 toml = { version = "1.1.8", default-features = false, features = ["std", "serde", "parse"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+cosmic-text = "0.19.0"
 
 [profile.release]
 lto = "thin"
