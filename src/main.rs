@@ -23,6 +23,15 @@ const USAGE: &str = "usage: noobsbot-desktop [--nested] [-- command [args...]]";
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
 
+    // Crash → clean exit (E1.11): the panic and its backtrace reach the log before `panic = "abort"` ends the process.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info.location().map_or_else(|| "?".into(), |l| l.to_string());
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        tracing::error!("panic at {location}: {}\n{backtrace}", info.payload_as_str().unwrap_or("(no message)"));
+        default_hook(info);
+    }));
+
     let mut args = std::env::args().skip(1);
     let mut command = Vec::new();
     let mut nested = false;
