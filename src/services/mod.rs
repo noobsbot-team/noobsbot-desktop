@@ -5,6 +5,7 @@
 pub mod bluetooth;
 pub mod network;
 pub mod power;
+pub mod profiles;
 
 use std::{fmt::Debug, future::Future, os::unix::net::UnixStream, time::Duration};
 
@@ -24,6 +25,8 @@ pub enum Update {
     Network(Option<network::Network>),
     /// `None`: no adapter, or BlueZ isn't running.
     Bluetooth(Option<bluetooth::Bluetooth>),
+    /// `None`: power-profiles-daemon isn't running.
+    Profiles(Option<profiles::Profiles>),
 }
 
 /// Requests from the frame loop.
@@ -31,6 +34,8 @@ pub enum Update {
 pub enum Command {
     /// An IANA zone such as `Asia/Kathmandu` (E2.6).
     SetTimezone(String),
+    #[expect(dead_code, reason = "the Control Center (E2.3) waits for the M2 mockup approval")]
+    SetPowerProfile(String),
 }
 
 pub struct Services {
@@ -61,14 +66,14 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     let bus = match bus {
         Ok(bus) => bus,
         Err(err) => {
-            tracing::warn!("system bus unavailable, system status hidden: {err}");
-            let _ = updates.send(Update::Battery(None));
-            let _ = updates.send(Update::Network(None));
-            let _ = updates.send(Update::Bluetooth(None));
-            return;
+            // Every service state starts as `None` (hidden) in the frame loop, so there is nothing to send.
+            return tracing::warn!("system bus unavailable, system status hidden: {err}");
         }
     };
-    let clients = future::zip(power::watch(&bus, &updates), future::zip(network::watch(&bus, &updates), bluetooth::watch(&bus, &updates)));
+    let clients = future::zip(
+        future::zip(power::watch(&bus, &updates), profiles::watch(&bus, &updates)),
+        future::zip(network::watch(&bus, &updates), bluetooth::watch(&bus, &updates)),
+    );
     future::zip(clients, handle(&bus, commands)).await;
 }
 
@@ -122,6 +127,7 @@ async fn handle(bus: &Connection, commands: async_channel::Receiver<Command>) {
     while let Ok(command) = commands.recv().await {
         match command {
             Command::SetTimezone(zone) => set_timezone(bus, &zone).await,
+            Command::SetPowerProfile(profile) => profiles::set(bus, &profile).await,
         }
     }
 }

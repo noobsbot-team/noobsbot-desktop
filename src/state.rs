@@ -124,6 +124,8 @@ pub struct State {
     pub network: Option<crate::services::network::Network>,
     /// `None`: no adapter, or BlueZ isn't running.
     pub bluetooth: Option<crate::services::bluetooth::Bluetooth>,
+    /// `None`: power-profiles-daemon isn't running.
+    pub profiles: Option<crate::services::profiles::Profiles>,
 }
 
 impl State {
@@ -187,6 +189,7 @@ impl State {
                     crate::services::Update::Battery(battery) => state.battery = battery,
                     crate::services::Update::Network(network) => state.network = network,
                     crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,
+                    crate::services::Update::Profiles(profiles) => state.profiles = profiles,
                 }
             }
         })?;
@@ -230,6 +233,7 @@ impl State {
             battery: None,
             network: None,
             bluetooth: None,
+            profiles: None,
             display_handle: dh,
         })
     }
