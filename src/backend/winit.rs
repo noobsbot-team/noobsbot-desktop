@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, Shaders, Wallpaper},
+    render::{self, Gallery, Shaders, Wallpaper},
     state::State,
 };
 
@@ -34,6 +34,8 @@ pub struct Winit {
     shaders: Shaders,
     pub wallpaper: Wallpaper,
     pub clock: FrameClock,
+    /// The `--test-scene` material gallery (E1.4), drawn over the wallpaper when set.
+    pub gallery: Option<Gallery>,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -78,7 +80,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -102,14 +104,29 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock }) = self.backend.as_mut() else { return };
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery }) = self.backend.as_mut() else { return };
         let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
             Ok((renderer, mut framebuffer)) => {
                 // Wallpaper, layers, windows with rounded corners and shadows (E1.4, E1.5): see render::scene.
-                let elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, &self.config.appearance);
-                damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, [0.1, 0.1, 0.1, 1.0]).map(|result| result.damage.cloned())
+                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, &self.config.appearance);
+                if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
+                    let scale = output.current_scale().fractional_scale();
+                    let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
+                    // Above the wallpaper (the last element), below every window.
+                    elements.splice(elements.len().saturating_sub(1)..elements.len().saturating_sub(1), cards);
+                }
+                damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, [0.1, 0.1, 0.1, 1.0]).map(|result| {
+                    if gallery.is_some() {
+                        // The test scene is a benchmark: wait for the GPU so the time includes its work (E1.4 budget).
+                        // Not glFinish via with_context: that unbinds the window surface and the swap then fails.
+                        let cpu = started.elapsed();
+                        let _ = result.sync.wait();
+                        tracing::debug!(?cpu, cpu_gpu = ?started.elapsed(), "test scene frame");
+                    }
+                    result.damage.cloned()
+                })
             }
             Err(err) => {
                 tracing::warn!("bind: {err}");
@@ -127,6 +144,7 @@ impl State {
             }
         };
 
+        let benchmark = gallery.is_some();
         // Everything on this output was shown. ponytail: stamped after the swap returns, without a vblank counter;
         // the real flip time and sequence come from DRM page-flip events (M6). Feedback dropped unsent is "discarded".
         let mut feedback = OutputPresentationFeedback::new(output);
@@ -154,5 +172,9 @@ impl State {
         self.space.refresh();
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();
+        // The test scene redraws every frame (its cards are rebuilt each time, so each frame repaints them).
+        if benchmark {
+            self.schedule_redraw();
+        }
     }
 }

@@ -24,7 +24,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [-- command [args...]]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -41,9 +41,12 @@ fn main() {
     let mut args = std::env::args().skip(1);
     let mut command = Vec::new();
     let mut nested = false;
+    let mut test_scene = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--nested" => nested = true,
+            // Every glass material in light and dark over the wallpaper (E1.4 done check).
+            "--test-scene" => test_scene = true,
             "--" => command.extend(args.by_ref()),
             "-h" | "--help" => return println!("{USAGE}"),
             other => {
@@ -53,13 +56,13 @@ fn main() {
         }
     }
 
-    if let Err(err) = run(command, nested) {
+    if let Err(err) = run(command, nested, test_scene) {
         tracing::error!("{err}");
         std::process::exit(1);
     }
 }
 
-fn run(command: Vec<String>, nested: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn run(command: Vec<String>, nested: bool, test_scene: bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;
     let config_path = config::path();
@@ -92,6 +95,9 @@ fn run(command: Vec<String>, nested: bool) -> Result<(), Box<dyn std::error::Err
     })?;
 
     backend::winit::init(&mut event_loop, &mut state)?;
+    if test_scene && let Some(winit) = state.backend.as_mut() {
+        winit.gallery = Some(Default::default());
+    }
 
     tracing::info!("listening on WAYLAND_DISPLAY={}", state.socket_name.to_string_lossy());
     if !command.is_empty() {

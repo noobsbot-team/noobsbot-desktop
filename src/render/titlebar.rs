@@ -35,12 +35,12 @@ struct Cache {
     glyphs: Vec<Label>,
 }
 
-type Label = (Arc<Rendered>, Option<smithay::backend::renderer::element::memory::MemoryRenderBuffer>);
+pub(super) type Label = (Arc<Rendered>, Option<smithay::backend::renderer::element::memory::MemoryRenderBuffer>);
 
 const GLYPHS: [&str; 3] = ["×", "–", "⤢"];
 
 /// A label as a render element, centred in `rect` (output-relative, logical).
-fn label_element(renderer: &mut GlesRenderer, label: &Label, rect: Rect, scale: f64) -> Option<SceneElement> {
+pub(super) fn label_element(renderer: &mut GlesRenderer, label: &Label, rect: Rect, scale: f64) -> Option<SceneElement> {
     let (rendered, Some(buffer)) = label else { return None };
     let size = Size::from(((f64::from(rendered.width) / scale).round() as i32, (f64::from(rendered.height) / scale).round() as i32));
     let loc = Point::from((rect.loc.x + (rect.size.w - size.w) / 2, rect.loc.y + (rect.size.h - size.h) / 2)).to_f64().to_physical(scale);

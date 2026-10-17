@@ -2,6 +2,7 @@
 //! Shaders are compiled once; shadow and wallpaper elements are kept between frames, so a frame where nothing moved
 //! damages nothing and an idle desktop draws nothing.
 
+mod gallery;
 mod titlebar;
 mod wallpaper;
 
@@ -28,6 +29,7 @@ use smithay::{
     utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
     wayland::shell::wlr_layer::Layer,
 };
+pub use gallery::Gallery;
 pub use wallpaper::Wallpaper;
 
 use crate::{
@@ -87,7 +89,6 @@ impl Shaders {
 
     /// A glass surface (D3) filling `rect` (output-relative, logical). Keep the element and `resize` it: a new one is
     /// a new damage id. Its shadow is a separate `shadow(rect, spec.radius, spec.elevation, dark, scale, false)`.
-    #[expect(dead_code, reason = "the menu bar and panels (M2) are the first glass")]
     pub fn glass(&self, rect: Rect, material: Material, dark: bool, glass_opacity: f32, scale: f64) -> PixelShaderElement {
         let spec = material.spec(dark);
         let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
@@ -174,7 +175,6 @@ pub(super) fn grow(rect: Rect, by: i32) -> Rect {
 }
 
 /// D3 glass materials.
-#[cfg_attr(not(test), expect(dead_code, reason = "the menu bar and panels (M2) are the first glass"))]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Material {
     Bar,
@@ -194,6 +194,8 @@ pub struct MaterialSpec {
 }
 
 impl Material {
+    pub const ALL: [Material; 6] = [Material::Bar, Material::Panel, Material::Popover, Material::Card, Material::Hud, Material::Sheet];
+
     /// Tint, opacity, radius and elevation from the Materials board.
     pub fn spec(self, dark: bool) -> MaterialSpec {
         let (light_tint, dark_tint, light_opacity, dark_opacity, radius, elevation) = match self {
