@@ -10,14 +10,16 @@ use smithay::{
     desktop::{layer_map_for_output, utils::OutputPresentationFeedback},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        calloop::EventLoop, wayland_protocols::wp::presentation_time::server::wp_presentation_feedback, wayland_server::protocol::wl_surface::WlSurface,
+        calloop::{EventLoop, channel},
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
+        wayland_server::protocol::wl_surface::WlSurface,
     },
     utils::Transform,
     wayland::{compositor::SurfaceData, presentation::Refresh},
 };
 
 use crate::{
-    render::{self, Shaders},
+    render::{self, Shaders, Wallpaper},
     state::State,
 };
 
@@ -28,6 +30,7 @@ pub struct Winit {
     output: Output,
     damage_tracker: OutputDamageTracker,
     shaders: Shaders,
+    pub wallpaper: Wallpaper,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -47,9 +50,18 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     state.space.map_output(&output, (0, 0));
     let damage_tracker = OutputDamageTracker::from_output(&output);
 
-    // Shaders compile once.
+    // Shaders compile once; wallpapers decode on a worker thread and upload when they arrive.
     let shaders = Shaders::new(backend.renderer())?;
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders });
+    let (tx, rx) = channel::channel();
+    event_loop.handle().insert_source(rx, |event, _, state| {
+        if let (channel::Event::Msg(decoded), Some(winit)) = (event, state.backend.as_mut()) {
+            winit.wallpaper.receive(winit.backend.renderer(), decoded);
+            state.schedule_redraw();
+        }
+    })?;
+    let mut wallpaper = Wallpaper::new(tx);
+    wallpaper.set(&state.config.appearance);
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -73,12 +85,12 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
-        let Some(Winit { backend, output, damage_tracker, shaders }) = self.backend.as_mut() else { return };
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper }) = self.backend.as_mut() else { return };
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
             Ok((renderer, mut framebuffer)) => {
-                // Layers and windows with rounded corners and shadows (E1.4): see render::scene.
-                let elements = render::scene(renderer, shaders, &self.space, output, &self.config.appearance);
+                // Wallpaper, layers, windows with rounded corners and shadows (E1.4, E1.5): see render::scene.
+                let elements = render::scene(renderer, shaders, wallpaper, &self.space, output, &self.config.appearance);
                 damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, [0.1, 0.1, 0.1, 1.0]).map(|result| result.damage.cloned())
             }
             Err(err) => {

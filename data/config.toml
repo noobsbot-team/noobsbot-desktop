@@ -15,6 +15,10 @@ mode = "light"
 accent = "blue"
 # Multiplies the opacity of every glass surface (0.0 … 1.0).
 glass_opacity = 1.0
+# Wallpaper picture (PNG or JPEG), scaled to fill the screen; empty = the built-in opal gradient.
+wallpaper = ""
+# Used in dark mode; empty = the built-in dark opal gradient.
+wallpaper_dark = ""
 
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).

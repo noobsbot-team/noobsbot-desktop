@@ -2,6 +2,8 @@
 //! Shaders are compiled once; shadow and wallpaper elements are kept between frames, so a frame where nothing moved
 //! damages nothing and an idle desktop draws nothing.
 
+mod wallpaper;
+
 use std::cell::RefCell;
 
 use smithay::{
@@ -23,6 +25,7 @@ use smithay::{
     utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Transform},
     wayland::shell::wlr_layer::Layer,
 };
+pub use wallpaper::Wallpaper;
 
 use crate::{
     config::{Appearance, Mode},
@@ -52,6 +55,7 @@ pub struct Shaders {
     glass: GlesPixelProgram,
     rounded: GlesTexProgram,
     shadow: GlesPixelProgram,
+    opal: GlesPixelProgram,
 }
 
 fn floats(names: &[&'static str]) -> Vec<UniformName<'static>> {
@@ -64,6 +68,8 @@ impl Shaders {
         glass.push(UniformName::new("fill", UniformType::_4f));
         let rounded =
             [UniformName::new("geo_size", UniformType::_2f), UniformName::new("radius", UniformType::_1f), UniformName::new("to_geo", UniformType::_4f)];
+        let mut opal = vec![UniformName::new("base", UniformType::_3f)];
+        opal.extend(["blob1", "blob2", "blob3", "blob4"].map(|n| UniformName::new(n, UniformType::_4f)));
         Ok(Self {
             glass: renderer.compile_custom_pixel_shader(include_str!("glass.frag"), &glass)?,
             rounded: renderer.compile_custom_texture_shader(include_str!("rounded.frag"), &rounded)?,
@@ -71,6 +77,7 @@ impl Shaders {
                 include_str!("shadow.frag"),
                 &floats(&["scale", "margin", "offset_y", "sigma", "radius", "opacity", "hairline"]),
             )?,
+            opal: renderer.compile_custom_pixel_shader(include_str!("opal.frag"), &opal)?,
         })
     }
 
@@ -116,6 +123,19 @@ impl Shaders {
             Uniform::new("hairline", hairline),
         ];
         Some(PixelShaderElement::new(self.shadow.clone(), shadow.area(rect), None, 1.0, uniforms, Kind::Unspecified))
+    }
+
+    /// The built-in opal wallpaper (D11) over `area`.
+    fn opal(&self, area: Rect, dark: bool) -> PixelShaderElement {
+        let rgba = |r: u8, g: u8, b: u8, a: f32| (f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, a);
+        let (base, blobs) = if dark {
+            (rgba(0x15, 0x16, 0x1A, 1.0), [rgba(52, 78, 128, 0.85), rgba(104, 52, 84, 0.8), rgba(40, 92, 72, 0.8), rgba(70, 72, 82, 0.7)])
+        } else {
+            (rgba(0xF4, 0xF3, 0xF1, 1.0), [rgba(176, 204, 244, 0.85), rgba(246, 196, 218, 0.85), rgba(194, 232, 210, 0.9), rgba(255, 255, 255, 0.9)])
+        };
+        let mut uniforms = vec![Uniform::new("base", (base.0, base.1, base.2))];
+        uniforms.extend(["blob1", "blob2", "blob3", "blob4"].into_iter().zip(blobs).map(|(n, c)| Uniform::new(n, c)));
+        PixelShaderElement::new(self.opal.clone(), area, Some(vec![area]), 1.0, uniforms, Kind::Unspecified)
     }
 }
 
@@ -343,8 +363,15 @@ fn window_elements(
 }
 
 /// Every element of one output frame, front to back: top/overlay layers, windows (topmost first) with their shadows,
-/// background/bottom layers.
-pub fn scene(renderer: &mut GlesRenderer, shaders: &Shaders, space: &Space<Window>, output: &Output, appearance: &Appearance) -> Vec<SceneElement> {
+/// background/bottom layers, wallpaper.
+pub fn scene(
+    renderer: &mut GlesRenderer,
+    shaders: &Shaders,
+    wallpaper: &mut Wallpaper,
+    space: &Space<Window>,
+    output: &Output,
+    appearance: &Appearance,
+) -> Vec<SceneElement> {
     let Some(output_geo) = space.output_geometry(output) else { return Vec::new() };
     let scale = output.current_scale().fractional_scale();
     let dark = is_dark(appearance);
@@ -364,6 +391,7 @@ pub fn scene(renderer: &mut GlesRenderer, shaders: &Shaders, space: &Space<Windo
         out.extend(window_elements(renderer, shaders, space, window, output_geo.loc, scale, dark));
     }
     out.extend(layer_elements(renderer, lower));
+    out.push(wallpaper.element(shaders, output_geo.size, dark));
     out
 }
 

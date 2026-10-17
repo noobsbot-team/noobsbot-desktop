@@ -49,6 +49,10 @@ pub struct Appearance {
     pub accent: Accent,
     /// Multiplier on every glass material's opacity, 0.0 … 1.0.
     pub glass_opacity: f32,
+    /// PNG or JPEG for light mode; empty = the built-in opal gradient.
+    pub wallpaper: String,
+    /// PNG or JPEG for dark mode; empty = the built-in dark opal gradient.
+    pub wallpaper_dark: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -174,7 +178,7 @@ impl Default for Config {
 
 impl Default for Appearance {
     fn default() -> Self {
-        Self { mode: Mode::Light, accent: Accent::Blue, glass_opacity: 1.0 }
+        Self { mode: Mode::Light, accent: Accent::Blue, glass_opacity: 1.0, wallpaper: String::new(), wallpaper_dark: String::new() }
     }
 }
 

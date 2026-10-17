@@ -77,6 +77,12 @@ fn run(command: Vec<String>, nested: bool) -> Result<(), Box<dyn std::error::Err
                     tracing::warn!(keyboard = ?resolved, "keyboard layout: {err}, keeping the previous one");
                 }
             }
+            if config.appearance != state.config.appearance {
+                if let Some(winit) = state.backend.as_mut() {
+                    winit.wallpaper.set(&config.appearance);
+                }
+                state.schedule_redraw();
+            }
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             state.config = config;
