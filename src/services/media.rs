@@ -1,0 +1,132 @@
+//! Now Playing (E2.3) over MPRIS: every media app (Brave, Spotify, mpv) publishes `org.mpris.MediaPlayer2.<app>` on
+//! the session bus. Follows players appearing, leaving and changing track or state.
+
+use std::collections::HashMap;
+
+use futures_lite::StreamExt;
+use smithay::reexports::calloop::channel::Sender;
+use zbus::{Connection, MatchRule, MessageStream, fdo, message, proxy::CacheProperties, zvariant::OwnedValue};
+
+use super::Update;
+
+const NAMESPACE: &str = "org.mpris.MediaPlayer2";
+const PATH: &str = "/org/mpris/MediaPlayer2";
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Media {
+    /// The player's bus name, where the controls go.
+    pub player: String,
+    pub title: String,
+    /// Artists joined with `, `; may be empty (a web video).
+    pub artist: String,
+    pub playing: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[expect(dead_code, reason = "the Control Center (E2.3) and media keys (E2.7) wait for the M2 mockup approval")]
+pub enum Action {
+    PlayPause,
+    Next,
+    Previous,
+}
+
+#[zbus::proxy(interface = "org.mpris.MediaPlayer2.Player", default_path = "/org/mpris/MediaPlayer2")]
+trait Player {
+    fn play_pause(&self) -> zbus::Result<()>;
+    fn next(&self) -> zbus::Result<()>;
+    fn previous(&self) -> zbus::Result<()>;
+    #[zbus(property)]
+    fn playback_status(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn metadata(&self) -> zbus::Result<HashMap<String, OwnedValue>>;
+}
+
+pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
+    let streams = async {
+        let owners = MatchRule::builder()
+            .msg_type(message::Type::Signal)
+            .sender("org.freedesktop.DBus")?
+            .member("NameOwnerChanged")?
+            .arg0ns(NAMESPACE)?
+            .build();
+        let changes = MatchRule::builder().msg_type(message::Type::Signal).member("PropertiesChanged")?.path(PATH)?.build();
+        let owners = MessageStream::for_match_rule(owners, bus, Some(16)).await?;
+        let changes = MessageStream::for_match_rule(changes, bus, Some(16)).await?;
+        zbus::Result::Ok(owners.map(drop).or(changes.map(drop)))
+    };
+    match streams.await {
+        Ok(events) => super::relay(bus, events, "media", updates, Update::Media, read).await,
+        Err(err) => tracing::warn!("Now Playing off: {err}"),
+    }
+}
+
+/// The playing player, else a paused one; `None` when nothing is playing or paused.
+// ponytail: with several paused players the first by name wins, not the last one used; remember the last player to
+// switch to Playing if that shows up in use.
+async fn read(bus: &Connection) -> Option<Media> {
+    let mut names = fdo::DBusProxy::new(bus).await.ok()?.list_names().await.ok()?;
+    names.sort();
+    let mut paused = None;
+    // playerctld mirrors another player; showing it would show that one twice.
+    for name in names.iter().filter(|n| n.strip_prefix(NAMESPACE).is_some_and(|app| app.starts_with('.') && app != ".playerctld")) {
+        let Some(media) = player(bus, name).await else { continue };
+        if media.playing {
+            return Some(media);
+        }
+        paused.get_or_insert(media);
+    }
+    paused
+}
+
+async fn player(bus: &Connection, name: &str) -> Option<Media> {
+    let proxy = PlayerProxy::builder(bus).destination(name).ok()?.cache_properties(CacheProperties::No).build().await.ok()?;
+    let status = proxy.playback_status().await.ok()?;
+    from_raw(name, &status, &proxy.metadata().await.unwrap_or_default())
+}
+
+fn from_raw(player: &str, status: &str, metadata: &HashMap<String, OwnedValue>) -> Option<Media> {
+    let playing = match status {
+        "Playing" => true,
+        "Paused" => false,
+        _ => return None,
+    };
+    let title = metadata.get("xesam:title").and_then(|v| v.downcast_ref::<&str>().ok()).unwrap_or_default().to_owned();
+    let artists = metadata.get("xesam:artist").and_then(|v| Vec::<String>::try_from(v.try_clone().ok()?).ok());
+    Some(Media { player: player.to_owned(), title, artist: artists.unwrap_or_default().join(", "), playing })
+}
+
+pub async fn control(bus: &Connection, player: &str, action: Action) {
+    let result = match PlayerProxy::builder(bus).destination(player).map(|b| b.cache_properties(CacheProperties::No)) {
+        Ok(builder) => match builder.build().await {
+            Ok(proxy) => match action {
+                Action::PlayPause => proxy.play_pause().await,
+                Action::Next => proxy.next().await,
+                Action::Previous => proxy.previous().await,
+            },
+            Err(err) => Err(err),
+        },
+        Err(err) => Err(err),
+    };
+    if let Err(err) = result {
+        tracing::warn!("{player} {action:?}: {err}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zbus::zvariant::{Str, Value};
+
+    use super::*;
+
+    #[test]
+    fn metadata() {
+        let mut metadata = HashMap::new();
+        metadata.insert("xesam:title".to_owned(), OwnedValue::from(Str::from("Opal")));
+        metadata.insert("xesam:artist".to_owned(), Value::from(vec!["A", "B"]).try_into().unwrap());
+        let media = from_raw("org.mpris.MediaPlayer2.mpv", "Playing", &metadata).unwrap();
+        assert_eq!((media.title.as_str(), media.artist.as_str(), media.playing), ("Opal", "A, B", true));
+        let media = from_raw("org.mpris.MediaPlayer2.brave", "Paused", &HashMap::new()).unwrap();
+        assert_eq!((media.title.as_str(), media.artist.as_str(), media.playing), ("", "", false));
+        assert_eq!(from_raw("org.mpris.MediaPlayer2.mpv", "Stopped", &metadata), None);
+    }
+}

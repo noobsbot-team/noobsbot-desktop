@@ -4,6 +4,7 @@
 
 pub mod bluetooth;
 pub mod brightness;
+pub mod media;
 pub mod network;
 pub mod power;
 pub mod profiles;
@@ -33,6 +34,8 @@ pub enum Update {
     Brightness(Option<u8>),
     /// `None`: no output device, or PipeWire isn't running.
     Sound(Option<sound::Sound>),
+    /// `None`: nothing playing or paused.
+    Media(Option<media::Media>),
 }
 
 /// Requests from the frame loop.
@@ -50,6 +53,9 @@ pub enum Command {
     Volume { output: bool, percent: u8 },
     #[expect(dead_code, reason = "the Control Center (E2.3) and mute keys (E2.7) wait for the M2 mockup approval")]
     Mute { output: bool, muted: bool },
+    /// To the player `Update::Media` named.
+    #[expect(dead_code, reason = "the Control Center (E2.3) and media keys (E2.7) wait for the M2 mockup approval")]
+    Media { player: String, action: media::Action },
 }
 
 pub struct Services {
@@ -74,31 +80,42 @@ pub fn spawn(updates: Sender<Update>) -> Services {
 }
 
 async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>) {
-    let bus = match system_socket() {
-        Ok(socket) => zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(TIMEOUT).build().await,
-        Err(err) => Err(err.into()),
-    };
-    let bus = match bus {
-        Ok(bus) => bus,
-        Err(err) => {
-            // Every service state starts as `None` (hidden) in the frame loop, so there is nothing to send.
-            return tracing::warn!("system bus unavailable, system status hidden: {err}");
+    // A missing bus leaves its states at `None` (hidden) in the frame loop, so there is nothing to send.
+    let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into())
+        .await
+        .inspect_err(|err| tracing::warn!("system bus unavailable, system status hidden: {err}"))
+        .ok();
+    let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default();
+    let session = connect("DBUS_SESSION_BUS_ADDRESS", format!("{runtime}/bus"))
+        .await
+        .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing hidden: {err}"))
+        .ok();
+    brightness::send_current(&updates);
+    let system_clients = async {
+        if let Some(bus) = &system {
+            future::zip(
+                future::zip(power::watch(bus, &updates), profiles::watch(bus, &updates)),
+                future::zip(network::watch(bus, &updates), bluetooth::watch(bus, &updates)),
+            )
+            .await;
         }
     };
-    brightness::send_current(&updates);
-    let clients = future::zip(
-        future::zip(power::watch(&bus, &updates), profiles::watch(&bus, &updates)),
-        future::zip(network::watch(&bus, &updates), bluetooth::watch(&bus, &updates)),
-    );
-    future::zip(clients, handle(&bus, commands, &updates)).await;
+    let session_clients = async {
+        if let Some(bus) = &session {
+            media::watch(bus, &updates).await;
+        }
+    };
+    let clients = future::zip(system_clients, session_clients);
+    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates)).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
 /// every 500 ms for the life of the process, which would break the zero-idle-wakeup budget (Part I).
-fn system_socket() -> std::io::Result<UnixStream> {
-    let address = std::env::var("DBUS_SYSTEM_BUS_ADDRESS").unwrap_or_default();
-    let path = address.strip_prefix("unix:path=").map_or("/run/dbus/system_bus_socket", |rest| rest.split(',').next().unwrap_or(rest));
-    UnixStream::connect(path)
+async fn connect(variable: &str, fallback: String) -> zbus::Result<Connection> {
+    let address = std::env::var(variable).unwrap_or_default();
+    let path = address.strip_prefix("unix:path=").map_or(fallback.as_str(), |rest| rest.split(',').next().unwrap_or(rest));
+    let socket = UnixStream::connect(path)?;
+    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(TIMEOUT).build().await
 }
 
 /// A client's whole life: `read` now, and again after every signal from `service` under `path` (properties, objects
@@ -115,15 +132,29 @@ where
         let owners = fdo::DBusProxy::new(bus).await?.receive_name_owner_changed_with_args(&[(0, service)]).await?;
         zbus::Result::Ok(owners.map(drop).or(changes.map(drop)))
     };
-    let mut events = match streams.await {
-        Ok(events) => events,
-        Err(err) => return tracing::warn!("{service} off: {err}"),
-    };
+    match streams.await {
+        Ok(events) => relay(bus, events, service, updates, wrap, read).await,
+        Err(err) => tracing::warn!("{service} off: {err}"),
+    }
+}
+
+/// `read` now and after every event; only a changed result reaches the frame loop.
+async fn relay<'a, T, F>(
+    bus: &'a Connection,
+    mut events: impl futures_lite::Stream + Unpin,
+    name: &str,
+    updates: &Sender<Update>,
+    wrap: fn(Option<T>) -> Update,
+    read: impl Fn(&'a Connection) -> F,
+) where
+    T: Clone + Debug + PartialEq,
+    F: Future<Output = Option<T>>,
+{
     let mut last = None;
     loop {
         let state = read(bus).await;
         if state != last {
-            tracing::debug!(?state, "{service}");
+            tracing::debug!(?state, "{name}");
             if updates.send(wrap(state.clone())).is_err() {
                 return;
             }
@@ -135,15 +166,18 @@ where
     }
 }
 
-async fn handle(bus: &Connection, commands: async_channel::Receiver<Command>, updates: &Sender<Update>) {
+async fn handle(system: Option<&Connection>, session: Option<&Connection>, commands: async_channel::Receiver<Command>, updates: &Sender<Update>) {
     while let Ok(command) = commands.recv().await {
-        match command {
-            Command::Timezone(zone) => set_timezone(bus, &zone).await,
-            Command::PowerProfile(profile) => profiles::set(bus, &profile).await,
-            Command::Brightness(percent) => brightness::set(bus, percent, updates).await,
+        match (command, system, session) {
+            (Command::Timezone(zone), Some(bus), _) => set_timezone(bus, &zone).await,
+            (Command::PowerProfile(profile), Some(bus), _) => profiles::set(bus, &profile).await,
+            (Command::Brightness(percent), Some(bus), _) => brightness::set(bus, percent, updates).await,
+            (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
-            Command::Volume { output, percent } => sound::set_volume(output, percent),
-            Command::Mute { output, muted } => sound::set_muted(output, muted),
+            (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
+            (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),
+            // Its bus is down, which `run` has logged.
+            _ => {}
         }
     }
 }

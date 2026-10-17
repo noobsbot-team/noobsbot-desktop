@@ -130,6 +130,8 @@ pub struct State {
     pub brightness: Option<u8>,
     /// `None`: no output device, or PipeWire isn't running.
     pub sound: Option<crate::services::sound::Sound>,
+    /// `None`: nothing playing or paused.
+    pub media: Option<crate::services::media::Media>,
 }
 
 impl State {
@@ -196,6 +198,7 @@ impl State {
                     crate::services::Update::Profiles(profiles) => state.profiles = profiles,
                     crate::services::Update::Brightness(brightness) => state.brightness = brightness,
                     crate::services::Update::Sound(sound) => state.sound = sound,
+                    crate::services::Update::Media(media) => state.media = media,
                 }
             }
         })?;
@@ -242,6 +245,7 @@ impl State {
             profiles: None,
             brightness: None,
             sound: None,
+            media: None,
             display_handle: dh,
         })
     }
