@@ -4,6 +4,7 @@ mod backend;
 mod clipboard;
 mod input;
 mod state;
+mod wm;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 use tracing_subscriber::EnvFilter;
