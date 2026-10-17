@@ -87,9 +87,9 @@ pub fn elements(
             }
         }
         _ => {
-            let spec = Material::Bar.spec(dark);
-            let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
-            let mut glass = vec![shaders.glass_shape(frame, [r, g, b, spec.opacity], WINDOW_RADIUS, true, dark, scale)];
+            let [r, g, b] = Material::Bar.spec(dark).tint.map(|c| f32::from(c) / 255.0);
+            // Opaque, unlike the menu bar: a translucent title bar shows the title of a window behind it (contrast rule, D2).
+            let mut glass = vec![shaders.glass_shape(frame, [r, g, b, 1.0], WINDOW_RADIUS, true, dark, scale)];
             for (i, rect) in lights.iter().enumerate() {
                 let rgb = if focused {
                     LIGHTS[i]
