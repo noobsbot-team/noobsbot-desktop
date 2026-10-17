@@ -1774,7 +1774,7 @@ Exact AUR names are verified when `install.sh` is written. Nothing from GNOME, K
 | Target | Goal | How |
 |---|---|---|
 | CPU idle | **0%** | damage-only redraw; clock once per minute; services push changes (no polling); calloop sleeps |
-| RAM (whole desktop) | **< 100 MB** RSS (M1 < 60 MB) | one process (C5); glyph and icon caches live in GPU memory, CPU copies dropped (E1.11); hidden Spaces not drawn |
+| RAM (whole desktop) | **< 100 MB** USS (M1 < 60 MB) | one process (C5); glyph and icon caches live in GPU memory, CPU copies dropped (E1.11); hidden Spaces not drawn |
 | GPU memory (shell only) | **< 128 MB** | glyph atlas 16 MB + icon textures ≤ 64 MB + wallpapers + shadow slices; app buffers not counted |
 | Startup | **< 500 ms** to usable | no toolkit; app/icon index built in the background |
 | Input latency | **≤ 1 frame + ~2 ms** (input → photon) | render as late as possible before vblank, hardware cursor plane (E1.10) |
@@ -1784,7 +1784,9 @@ Exact AUR names are verified when `install.sh` is written. Nothing from GNOME, K
 | Glass cost | **one pass** per surface | no blur (R2) |
 | Battery | better than GNOME/KDE | all of the above + power-profiles-daemon |
 | Binary | small | `lto = "thin"`, `strip = true` |
-Measured with `ps -o rss,%cpu -C noobsbot-desktop`, frame-time logs and `powertop`.
+Measured with USS (`Private_Clean + Private_Dirty` in `/proc/<pid>/smaps_rollup`; plain RSS also counts Mesa's
+shared libLLVM/libgallium pages, ~130 MB that every GL process maps), per-thread CPU ticks, frame-time logs and
+`powertop`; results per milestone in `PERF.md`.
 
 ---
 
