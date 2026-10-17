@@ -1,5 +1,6 @@
 //! The rest of the E1.1/E1.7 protocols: layer shell, presentation time, pointer constraints, shortcut inhibiting,
-//! cursor shapes, fractional scale, tearing hints, security contexts and pointer gestures.
+//! cursor shapes, fractional scale, tearing hints, security contexts, pointer gestures and text input (the input
+//! method behind it is E6.12).
 
 use std::sync::{
     Arc,
@@ -8,7 +9,7 @@ use std::sync::{
 
 use smithay::{
     delegate_cursor_shape, delegate_fractional_scale, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_pointer_constraints,
-    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context,
+    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context, delegate_text_input_manager,
     desktop::{LayerSurface, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorIcon, CursorImageStatus, MotionEvent, PointerHandle, RelativeMotionEvent},
     output::Output,
@@ -38,6 +39,7 @@ use smithay::{
         security_context::{SecurityContext, SecurityContextHandler, SecurityContextListenerSource, SecurityContextState},
         shell::wlr_layer::{KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
         tablet_manager::TabletSeatHandler,
+        text_input::TextInputManagerState,
     },
 };
 
@@ -60,6 +62,7 @@ pub struct Protocols {
     _cursor_shape: CursorShapeManagerState,
     _security_context: SecurityContextState,
     _tearing_control: GlobalId,
+    _text_input: TextInputManagerState,
 }
 
 impl Protocols {
@@ -81,6 +84,7 @@ impl Protocols {
             // The protocol requires that sandboxed clients cannot nest contexts.
             _security_context: SecurityContextState::new::<State, _>(dh, unsandboxed),
             _tearing_control: dh.create_global::<State, WpTearingControlManagerV1, _>(1, ()),
+            _text_input: TextInputManagerState::new::<State>(dh),
         }
     }
 }
@@ -395,6 +399,7 @@ delegate_fractional_scale!(State);
 delegate_relative_pointer!(State);
 delegate_pointer_constraints!(State);
 delegate_pointer_gestures!(State);
+delegate_text_input_manager!(State);
 delegate_cursor_shape!(State);
 delegate_keyboard_shortcuts_inhibit!(State);
 delegate_security_context!(State);
