@@ -15,6 +15,8 @@ mod rules;
 mod services;
 mod shortcuts;
 mod state;
+#[cfg_attr(not(test), expect(dead_code, reason = "the menu bar and Control Center (E2.2, E2.3) wait for the M2 mockup approval"))]
+mod symbols;
 mod sync;
 mod text;
 mod wm;
