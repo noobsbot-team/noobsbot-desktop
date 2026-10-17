@@ -1,8 +1,7 @@
 //! Network state from NetworkManager (E2.3): the primary connection and, on Wi-Fi, its network name and signal bars.
 
-use futures_lite::StreamExt;
 use smithay::reexports::calloop::channel::Sender;
-use zbus::{Connection, MatchRule, MessageStream, fdo, message, proxy::CacheProperties, zvariant::OwnedObjectPath};
+use zbus::{Connection, proxy::CacheProperties, zvariant::OwnedObjectPath};
 
 use super::Update;
 
@@ -51,46 +50,15 @@ trait AccessPoint {
     fn ssid(&self) -> zbus::Result<Vec<u8>>;
 }
 
-/// Sends the network state now and after every change, including NetworkManager starting or stopping.
+/// Sends the network state now and after every change, including NetworkManager starting or stopping. Signals are
+/// rare (a few per minute, mostly the access point's strength), and only a visible change reaches the frame loop.
 pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
-    if let Err(err) = watch_inner(bus, updates).await {
-        tracing::warn!("network status off: {err}");
-        let _ = updates.send(Update::Network(None));
-    }
-}
-
-async fn watch_inner(bus: &Connection, updates: &Sender<Update>) -> zbus::Result<()> {
-    // Any property change on any NetworkManager object (the manager, connections, access points): re-read. They are
-    // rare (a few per minute, mostly the access point's strength), and only a visible change reaches the frame loop.
-    let rule = MatchRule::builder()
-        .msg_type(message::Type::Signal)
-        .sender(SERVICE)?
-        .interface("org.freedesktop.DBus.Properties")?
-        .member("PropertiesChanged")?
-        .path_namespace(ROOT)?
-        .build();
-    let changes = MessageStream::for_match_rule(rule, bus, Some(16)).await?;
-    let owners = fdo::DBusProxy::new(bus).await?.receive_name_owner_changed_with_args(&[(0, SERVICE)]).await?;
-    let mut events = owners.map(drop).or(changes.map(drop));
-    let manager = ManagerProxy::builder(bus).cache_properties(CacheProperties::No).build().await?;
-    let mut last = None;
-    loop {
-        let network = read(bus, &manager).await;
-        if network != last {
-            tracing::debug!(?network, "network");
-            if updates.send(Update::Network(network.clone())).is_err() {
-                return Ok(());
-            }
-            last = network;
-        }
-        if events.next().await.is_none() {
-            return Ok(());
-        }
-    }
+    super::follow(bus, SERVICE, ROOT, updates, Update::Network, read).await;
 }
 
 /// `None` when NetworkManager doesn't answer.
-async fn read(bus: &Connection, manager: &ManagerProxy<'_>) -> Option<Network> {
+async fn read(bus: &Connection) -> Option<Network> {
+    let manager = ManagerProxy::builder(bus).cache_properties(CacheProperties::No).build().await.ok()?;
     let wifi_enabled = manager.wireless_enabled().await.ok()?;
     let primary = manager.primary_connection().await.ok()?;
     // A connection that vanishes while we read it is simply gone; the signal that follows corrects the rest.

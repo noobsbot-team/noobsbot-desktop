@@ -122,6 +122,8 @@ pub struct State {
     pub battery: Option<crate::services::power::Battery>,
     /// `None`: NetworkManager isn't running.
     pub network: Option<crate::services::network::Network>,
+    /// `None`: no adapter, or BlueZ isn't running.
+    pub bluetooth: Option<crate::services::bluetooth::Bluetooth>,
 }
 
 impl State {
@@ -184,6 +186,7 @@ impl State {
                 match update {
                     crate::services::Update::Battery(battery) => state.battery = battery,
                     crate::services::Update::Network(network) => state.network = network,
+                    crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,
                 }
             }
         })?;
@@ -226,6 +229,7 @@ impl State {
             services,
             battery: None,
             network: None,
+            bluetooth: None,
             display_handle: dh,
         })
     }

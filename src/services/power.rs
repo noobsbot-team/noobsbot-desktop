@@ -1,8 +1,7 @@
 //! Battery state from UPower's display device (E2.3): the combined battery the menu bar and Control Center show.
 
-use futures_lite::StreamExt;
 use smithay::reexports::calloop::channel::Sender;
-use zbus::{Connection, fdo, proxy::CacheProperties};
+use zbus::{Connection, proxy::CacheProperties};
 
 use super::Update;
 
@@ -37,36 +36,13 @@ trait Device {
 
 /// Sends the battery now and after every change, including UPower starting or stopping.
 pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
-    if let Err(err) = watch_inner(bus, updates).await {
-        tracing::warn!("battery status off: {err}");
-        let _ = updates.send(Update::Battery(None));
-    }
-}
-
-async fn watch_inner(bus: &Connection, updates: &Sender<Update>) -> zbus::Result<()> {
-    // Uncached: every read goes to UPower, so a restarted daemon can't leave stale values behind.
-    let device = DeviceProxy::builder(bus).cache_properties(CacheProperties::No).build().await?;
-    let owners = fdo::DBusProxy::new(bus).await?.receive_name_owner_changed_with_args(&[(0, SERVICE)]).await?;
-    let changes = fdo::PropertiesProxy::builder(bus).destination(SERVICE)?.path(PATH)?.build().await?.receive_properties_changed().await?;
-    let mut events = owners.map(drop).or(changes.map(drop));
-    let mut last = None;
-    loop {
-        let battery = read(&device).await;
-        if battery != last {
-            tracing::debug!(?battery, "battery");
-            if updates.send(Update::Battery(battery)).is_err() {
-                return Ok(());
-            }
-            last = battery;
-        }
-        if events.next().await.is_none() {
-            return Ok(());
-        }
-    }
+    super::follow(bus, SERVICE, PATH, updates, Update::Battery, read).await;
 }
 
 /// `None` when there is no battery or UPower doesn't answer.
-async fn read(device: &DeviceProxy<'_>) -> Option<Battery> {
+async fn read(bus: &Connection) -> Option<Battery> {
+    // Uncached: every read goes to UPower, so a restarted daemon can't leave stale values behind.
+    let device = DeviceProxy::builder(bus).cache_properties(CacheProperties::No).build().await.ok()?;
     if !device.is_present().await.ok()? {
         return None;
     }

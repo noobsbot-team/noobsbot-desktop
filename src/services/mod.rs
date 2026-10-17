@@ -2,14 +2,15 @@
 //! two channels, so a stuck service can never freeze the screen (E1.11). A missing service is a state, not an error:
 //! its client reports `None` and picks it up again when it appears.
 
+pub mod bluetooth;
 pub mod network;
 pub mod power;
 
-use std::{os::unix::net::UnixStream, time::Duration};
+use std::{fmt::Debug, future::Future, os::unix::net::UnixStream, time::Duration};
 
-use futures_lite::future;
+use futures_lite::{StreamExt, future};
 use smithay::reexports::calloop::channel::Sender;
-use zbus::Connection;
+use zbus::{Connection, MatchRule, MessageStream, fdo, message};
 
 /// Every D-Bus call gives up after this long (E1.11).
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -21,6 +22,8 @@ pub enum Update {
     Battery(Option<power::Battery>),
     /// `None`: NetworkManager isn't running.
     Network(Option<network::Network>),
+    /// `None`: no adapter, or BlueZ isn't running.
+    Bluetooth(Option<bluetooth::Bluetooth>),
 }
 
 /// Requests from the frame loop.
@@ -61,10 +64,12 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
             tracing::warn!("system bus unavailable, system status hidden: {err}");
             let _ = updates.send(Update::Battery(None));
             let _ = updates.send(Update::Network(None));
+            let _ = updates.send(Update::Bluetooth(None));
             return;
         }
     };
-    future::zip(future::zip(power::watch(&bus, &updates), network::watch(&bus, &updates)), handle(&bus, commands)).await;
+    let clients = future::zip(power::watch(&bus, &updates), future::zip(network::watch(&bus, &updates), bluetooth::watch(&bus, &updates)));
+    future::zip(clients, handle(&bus, commands)).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
@@ -73,6 +78,44 @@ fn system_socket() -> std::io::Result<UnixStream> {
     let address = std::env::var("DBUS_SYSTEM_BUS_ADDRESS").unwrap_or_default();
     let path = address.strip_prefix("unix:path=").map_or("/run/dbus/system_bus_socket", |rest| rest.split(',').next().unwrap_or(rest));
     UnixStream::connect(path)
+}
+
+/// A client's whole life: `read` now, and again after every signal from `service` under `path` (properties, objects
+/// added or removed) and every change of its owner, so a service that starts later or restarts is picked up. Only a
+/// changed result reaches the frame loop.
+async fn follow<'a, T, F>(bus: &'a Connection, service: &str, path: &str, updates: &Sender<Update>, wrap: fn(Option<T>) -> Update, read: impl Fn(&'a Connection) -> F)
+where
+    T: Clone + Debug + PartialEq,
+    F: Future<Output = Option<T>>,
+{
+    let rule = MatchRule::builder().msg_type(message::Type::Signal).sender(service).and_then(|r| r.path_namespace(path)).map(|r| r.build());
+    let streams = async {
+        let changes = MessageStream::for_match_rule(rule?, bus, Some(16)).await?;
+        let owners = fdo::DBusProxy::new(bus).await?.receive_name_owner_changed_with_args(&[(0, service)]).await?;
+        zbus::Result::Ok(owners.map(drop).or(changes.map(drop)))
+    };
+    let mut events = match streams.await {
+        Ok(events) => events,
+        Err(err) => {
+            tracing::warn!("{service} off: {err}");
+            let _ = updates.send(wrap(None));
+            return;
+        }
+    };
+    let mut last = None;
+    loop {
+        let state = read(bus).await;
+        if state != last {
+            tracing::debug!(?state, "{service}");
+            if updates.send(wrap(state.clone())).is_err() {
+                return;
+            }
+            last = state;
+        }
+        if events.next().await.is_none() {
+            return;
+        }
+    }
 }
 
 async fn handle(bus: &Connection, commands: async_channel::Receiver<Command>) {
