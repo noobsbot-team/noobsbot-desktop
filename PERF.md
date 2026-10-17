@@ -38,3 +38,10 @@ pixels than the single quad, so on this iGPU the shadow cost is per draw call, n
 queries (M6) to see where GPU time actually goes; re-test slicing at 4K there.
 
 Not measured yet: input latency (needs a real display), GPU memory, heaptrack run.
+
+## M2 (in progress) — 2026-10-17
+
+With the `services` thread (zbus, UPower battery) running: **38.7 MB** USS, release binary 12.3 MB stripped (zbus +
+chrono). Idle: 0 CPU ticks; the only wakeups left are UPower's own PropertiesChanged signals (about one per 20 s on
+battery), which we must receive. zbus's built-in connect runs on the `blocking` 1.7.0 pool, whose idle thread never
+exits and wakes every 500 ms; `services::system_socket` connects on our own thread instead, so that thread never starts.
