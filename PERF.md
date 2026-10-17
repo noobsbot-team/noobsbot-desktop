@@ -45,3 +45,8 @@ With the `services` thread (zbus, UPower battery) running: **38.7 MB** USS, rele
 chrono). Idle: 0 CPU ticks; the only wakeups left are UPower's own PropertiesChanged signals (about one per 20 s on
 battery), which we must receive. zbus's built-in connect runs on the `blocking` 1.7.0 pool, whose idle thread never
 exits and wakes every 500 ms; `services::system_socket` connects on our own thread instead, so that thread never starts.
+
+With every M2 client (UPower, NetworkManager, BlueZ, power-profiles, backlight, PipeWire): **38.5 MB** USS, binary
+12.5 MB. The `sound` thread: 0 wakeups in 10 s idle. Each `wpctl` run is a PipeWire client that `pw-dump --monitor`
+reports as a change, so re-reading on every chunk looped (2293 wakeups in 10 s); only node, device and metadata
+chunks trigger a read now.
