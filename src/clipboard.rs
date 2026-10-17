@@ -4,7 +4,10 @@
 use std::{
     io::{Read, Write},
     os::fd::OwnedFd,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use smithay::{
@@ -19,6 +22,26 @@ use smithay::{
 use crate::state::State;
 
 pub const MAX_BYTES: usize = 10 * 1024 * 1024;
+/// Transfer threads in flight at once (E1.11): an app that never closes or never reads its pipe parks one, so a
+/// misbehaving app can't pile up threads. Past the cap the pipe is dropped, which reads as an empty transfer.
+const MAX_TRANSFERS: usize = 32;
+static TRANSFERS: AtomicUsize = AtomicUsize::new(0);
+
+/// Runs `work` on a worker thread, unless `MAX_TRANSFERS` are already running.
+fn transfer(work: impl FnOnce() + Send + 'static) {
+    if TRANSFERS.fetch_add(1, Ordering::Relaxed) >= MAX_TRANSFERS {
+        TRANSFERS.fetch_sub(1, Ordering::Relaxed);
+        tracing::warn!("{MAX_TRANSFERS} clipboard transfers in flight, dropping one");
+        return;
+    }
+    let spawned = std::thread::Builder::new().name("clipboard".into()).spawn(move || {
+        work();
+        TRANSFERS.fetch_sub(1, Ordering::Relaxed);
+    });
+    if spawned.is_err() {
+        TRANSFERS.fetch_sub(1, Ordering::Relaxed);
+    }
+}
 
 /// One mime type's contents, read from the app that copied.
 pub struct Fetched {
@@ -67,8 +90,7 @@ impl Clipboard {
                 continue;
             }
             let tx = self.tx.clone();
-            // ponytail: one blocking thread per mime type; an app that never closes the pipe parks a thread.
-            std::thread::spawn(move || {
+            transfer(move || {
                 let mut bytes = Vec::new();
                 if reader.by_ref().take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes).is_ok() && bytes.len() <= MAX_BYTES {
                     let _ = tx.send(Fetched { generation, mime, bytes });
@@ -92,7 +114,7 @@ impl Clipboard {
         let Some((_, bytes)) = self.data.iter().find(|(m, _)| m == mime) else { return };
         let bytes = bytes.clone();
         // A worker thread: a slow reader must never block the frame loop (E1.11).
-        std::thread::spawn(move || {
+        transfer(move || {
             let _ = std::fs::File::from(fd).write_all(&bytes);
         });
     }
@@ -124,5 +146,27 @@ mod tests {
 
         clip.replaced(None);
         assert!(clip.data.is_empty(), "a new clipboard clears the copy");
+    }
+
+    #[test]
+    fn transfers_are_capped() {
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let wait = Arc::new(std::sync::Mutex::new(wait));
+        let (started_tx, started) = std::sync::mpsc::channel();
+        for _ in 0..MAX_TRANSFERS + 5 {
+            let (wait, started_tx) = (wait.clone(), started_tx.clone());
+            transfer(move || {
+                let _ = started_tx.send(());
+                let _ = wait.lock().unwrap().recv();
+            });
+        }
+        drop(started_tx);
+        // Every thread that got a slot reports in; the extra 5 were dropped.
+        assert_eq!(started.iter().take(MAX_TRANSFERS).count(), MAX_TRANSFERS);
+        assert_eq!(TRANSFERS.load(Ordering::Relaxed), MAX_TRANSFERS);
+        drop(release);
+        while TRANSFERS.load(Ordering::Relaxed) > 0 {
+            std::thread::yield_now();
+        }
     }
 }
