@@ -128,6 +128,8 @@ pub struct State {
     pub profiles: Option<crate::services::profiles::Profiles>,
     /// Percent; `None` without a backlight.
     pub brightness: Option<u8>,
+    /// `None`: no output device, or PipeWire isn't running.
+    pub sound: Option<crate::services::sound::Sound>,
 }
 
 impl State {
@@ -193,6 +195,7 @@ impl State {
                     crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,
                     crate::services::Update::Profiles(profiles) => state.profiles = profiles,
                     crate::services::Update::Brightness(brightness) => state.brightness = brightness,
+                    crate::services::Update::Sound(sound) => state.sound = sound,
                 }
             }
         })?;
@@ -238,6 +241,7 @@ impl State {
             bluetooth: None,
             profiles: None,
             brightness: None,
+            sound: None,
             display_handle: dh,
         })
     }

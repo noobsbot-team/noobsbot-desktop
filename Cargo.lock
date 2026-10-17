@@ -1233,6 +1233,7 @@ dependencies = [
  "chrono",
  "cosmic-text",
  "futures-lite",
+ "libc",
  "notify",
  "png",
  "regex-lite",

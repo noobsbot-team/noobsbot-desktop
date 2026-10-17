@@ -7,6 +7,7 @@ pub mod brightness;
 pub mod network;
 pub mod power;
 pub mod profiles;
+pub mod sound;
 
 use std::{fmt::Debug, future::Future, os::unix::net::UnixStream, time::Duration};
 
@@ -30,6 +31,8 @@ pub enum Update {
     Profiles(Option<profiles::Profiles>),
     /// Percent; `None` without a backlight (desktop monitors).
     Brightness(Option<u8>),
+    /// `None`: no output device, or PipeWire isn't running.
+    Sound(Option<sound::Sound>),
 }
 
 /// Requests from the frame loop.
@@ -42,6 +45,11 @@ pub enum Command {
     /// Percent.
     #[expect(dead_code, reason = "the Control Center (E2.3) and brightness keys (E2.7) wait for the M2 mockup approval")]
     Brightness(u8),
+    /// Percent of the default output (`true`) or input.
+    #[expect(dead_code, reason = "the Control Center (E2.3) and volume keys (E2.7) wait for the M2 mockup approval")]
+    Volume { output: bool, percent: u8 },
+    #[expect(dead_code, reason = "the Control Center (E2.3) and mute keys (E2.7) wait for the M2 mockup approval")]
+    Mute { output: bool, muted: bool },
 }
 
 pub struct Services {
@@ -57,6 +65,7 @@ impl Services {
 
 pub fn spawn(updates: Sender<Update>) -> Services {
     let (commands, rx) = async_channel::unbounded();
+    sound::spawn(updates.clone());
     let thread = std::thread::Builder::new().name("services".into()).spawn(move || future::block_on(run(updates, rx)));
     if let Err(err) = thread {
         tracing::warn!("system services off: {err}");
@@ -132,6 +141,9 @@ async fn handle(bus: &Connection, commands: async_channel::Receiver<Command>, up
             Command::Timezone(zone) => set_timezone(bus, &zone).await,
             Command::PowerProfile(profile) => profiles::set(bus, &profile).await,
             Command::Brightness(percent) => brightness::set(bus, percent, updates).await,
+            // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
+            Command::Volume { output, percent } => sound::set_volume(output, percent),
+            Command::Mute { output, muted } => sound::set_muted(output, muted),
         }
     }
 }
