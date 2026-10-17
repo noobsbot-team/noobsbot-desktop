@@ -21,6 +21,17 @@ pub struct Sound {
     pub output: Device,
     /// `None`: no microphone.
     pub input: Option<Device>,
+    /// Every output, for the picker (E2.3).
+    pub outputs: Vec<Output>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Output {
+    /// PipeWire's object id, for `set_output`.
+    pub id: u32,
+    pub name: String,
+    /// The default output, which `Sound::output` describes.
+    pub current: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -125,7 +136,22 @@ fn wpctl(args: &[&str]) -> Option<String> {
 
 /// `None` when there is no output device.
 fn read() -> Option<Sound> {
-    Some(Sound { output: device(OUTPUT)?, input: device(INPUT) })
+    let outputs = parse_outputs(&wpctl(&["status"]).unwrap_or_default());
+    Some(Sound { output: device(OUTPUT)?, input: device(INPUT), outputs })
+}
+
+/// The audio `Sinks:` section of `wpctl status`: `│  *   63. Raptor Lake-P/U/H cAVS Speaker      [vol: 0.89]`.
+fn parse_outputs(status: &str) -> Vec<Output> {
+    let lines = status.lines().skip_while(|line| !line.ends_with("Sinks:")).skip(1);
+    // The section ends at its blank `│` line.
+    lines
+        .map_while(|line| {
+            let line = line.trim_start_matches([' ', '│']);
+            let (id, rest) = line.trim_start_matches(['*', ' ']).split_once(". ")?;
+            let name = rest.rsplit_once(" [vol:").map_or(rest, |(name, _)| name).trim();
+            Some(Output { id: id.parse().ok()?, name: name.to_owned(), current: line.starts_with('*') })
+        })
+        .collect()
 }
 
 fn device(target: &str) -> Option<Device> {
@@ -158,6 +184,11 @@ pub fn set_volume(output: bool, percent: u8) {
     let _ = wpctl(&["set-volume", target, &format!("{}%", percent.min(100))]);
 }
 
+/// Makes output `id` the default; the change comes back through the monitor.
+pub fn set_output(id: u32) {
+    let _ = wpctl(&["set-default", &id.to_string()]);
+}
+
 pub fn set_muted(output: bool, muted: bool) {
     let target = if output { OUTPUT } else { INPUT };
     let _ = wpctl(&["set-mute", target, if muted { "1" } else { "0" }]);
@@ -188,6 +219,17 @@ mod tests {
         // The node going away (unplugged): counts, once.
         assert!(feed(&mut chunk, "[\n  {\n    \"id\": 52,\n    \"info\": null\n  }\n]\n"));
         assert!(!feed(&mut chunk, "[\n  {\n    \"id\": 52,\n    \"info\": null\n  }\n]\n"));
+    }
+
+    #[test]
+    fn outputs() {
+        let status = "Audio\n ├─ Sinks:\n │      60. HDMI / DisplayPort 3 Output (Stereo) [vol: 1.00]\n │  *   63. Raptor Lake Speaker      [vol: 0.89]\n │      70. AirPods\n │  \n ├─ Sources:\n │  *   65. Digital Microphone [vol: 1.00]\n";
+        let names: Vec<_> = parse_outputs(status).into_iter().map(|o| (o.id, o.name, o.current)).collect();
+        assert_eq!(
+            names,
+            [(60, "HDMI / DisplayPort 3 Output (Stereo)".into(), false), (63, "Raptor Lake Speaker".into(), true), (70, "AirPods".into(), false)]
+        );
+        assert_eq!(parse_outputs(""), []);
     }
 
     #[test]

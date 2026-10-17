@@ -53,6 +53,9 @@ pub enum Command {
     Volume { output: bool, percent: u8 },
     #[expect(dead_code, reason = "the Control Center (E2.3) and mute keys (E2.7) wait for the M2 mockup approval")]
     Mute { output: bool, muted: bool },
+    /// The sound picker: a `sound::Output` id.
+    #[expect(dead_code, reason = "the Control Center (E2.3) waits for the M2 mockup approval")]
+    Output(u32),
     /// To the player `Update::Media` named.
     #[expect(dead_code, reason = "the Control Center (E2.3) and media keys (E2.7) wait for the M2 mockup approval")]
     Media { player: String, action: media::Action },
@@ -176,6 +179,7 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
             (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),
+            (Command::Output(id), ..) => sound::set_output(id),
             // Its bus is down, which `run` has logged.
             _ => {}
         }
