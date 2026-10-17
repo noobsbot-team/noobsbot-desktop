@@ -22,8 +22,7 @@ pub struct Media {
     pub playing: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
-#[expect(dead_code, reason = "the Control Center (E2.3) and media keys (E2.7) wait for the M2 mockup approval")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Action {
     PlayPause,
     Next,

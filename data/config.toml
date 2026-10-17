@@ -52,7 +52,8 @@ date = true
 seconds = false
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
-# Actions: terminal, quit, close, minimise, hide, cycle, or "exec <command>".
+# Actions: terminal, quit, close, minimise, hide, cycle, "exec <command>", "volume up|down", mute, mic-mute,
+# "brightness up|down", "media play-pause|next|previous".
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec brave"
@@ -63,6 +64,16 @@ seconds = false
 "Super+H" = "hide"
 "Super+Tab" = "cycle"
 "F12" = "exec noobsbot --quake"
+"XF86AudioRaiseVolume" = "volume up"
+"XF86AudioLowerVolume" = "volume down"
+"XF86AudioMute" = "mute"
+"XF86AudioMicMute" = "mic-mute"
+"XF86MonBrightnessUp" = "brightness up"
+"XF86MonBrightnessDown" = "brightness down"
+"XF86AudioPlay" = "media play-pause"
+"XF86AudioPause" = "media play-pause"
+"XF86AudioNext" = "media next"
+"XF86AudioPrev" = "media previous"
 
 # Window rules, applied when a window appears and again when its title changes.
 # Match on app_id (exact) and/or title (a regular expression, searched anywhere in the title).

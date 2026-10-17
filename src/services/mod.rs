@@ -46,18 +46,14 @@ pub enum Command {
     #[expect(dead_code, reason = "the Control Center (E2.3) waits for the M2 mockup approval")]
     PowerProfile(String),
     /// Percent.
-    #[expect(dead_code, reason = "the Control Center (E2.3) and brightness keys (E2.7) wait for the M2 mockup approval")]
     Brightness(u8),
     /// Percent of the default output (`true`) or input.
-    #[expect(dead_code, reason = "the Control Center (E2.3) and volume keys (E2.7) wait for the M2 mockup approval")]
     Volume { output: bool, percent: u8 },
-    #[expect(dead_code, reason = "the Control Center (E2.3) and mute keys (E2.7) wait for the M2 mockup approval")]
     Mute { output: bool, muted: bool },
     /// The sound picker: a `sound::Output` id.
     #[expect(dead_code, reason = "the Control Center (E2.3) waits for the M2 mockup approval")]
     Output(u32),
     /// To the player `Update::Media` named.
-    #[expect(dead_code, reason = "the Control Center (E2.3) and media keys (E2.7) wait for the M2 mockup approval")]
     Media { player: String, action: media::Action },
 }
 

@@ -206,7 +206,7 @@ impl Default for Windows {
     }
 }
 
-/// The M1 shortcuts (E1.6).
+/// The M1 shortcuts (E1.6) and the hardware keys (E2.7).
 fn default_bindings() -> BTreeMap<String, String> {
     [
         ("Super+Return", "terminal"),
@@ -218,6 +218,16 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+H", "hide"),
         ("Super+Tab", "cycle"),
         ("F12", "exec noobsbot --quake"),
+        ("XF86AudioRaiseVolume", "volume up"),
+        ("XF86AudioLowerVolume", "volume down"),
+        ("XF86AudioMute", "mute"),
+        ("XF86AudioMicMute", "mic-mute"),
+        ("XF86MonBrightnessUp", "brightness up"),
+        ("XF86MonBrightnessDown", "brightness down"),
+        ("XF86AudioPlay", "media play-pause"),
+        ("XF86AudioPause", "media play-pause"),
+        ("XF86AudioNext", "media next"),
+        ("XF86AudioPrev", "media previous"),
     ]
     .into_iter()
     .map(|(k, v)| (k.into(), v.into()))

@@ -8,7 +8,11 @@ use smithay::{
     utils::SERIAL_COUNTER,
 };
 
-use crate::{config::Config, state::State};
+use crate::{
+    config::Config,
+    services::{Command, media::Action as MediaAction},
+    state::State,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -21,7 +25,20 @@ pub enum Action {
     Hide,
     /// Basic window cycling; the full switcher comes in M4.
     CycleWindows,
+    /// The default output's volume by one step; `true`: up (E2.7).
+    Volume(bool),
+    /// Mutes or unmutes the default output.
+    Mute,
+    /// Mutes or unmutes the default microphone.
+    MicMute,
+    /// The display backlight by one step; `true`: up.
+    Brightness(bool),
+    /// To the Now Playing player.
+    Media(MediaAction),
 }
+
+/// A volume or brightness key press, in percent (about macOS's 1/16 steps).
+const STEP: u8 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
@@ -69,6 +86,15 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("minimise" | "minimize", "") => Some(Action::Minimise),
         ("hide", "") => Some(Action::Hide),
         ("cycle", "") => Some(Action::CycleWindows),
+        ("volume", "up") => Some(Action::Volume(true)),
+        ("volume", "down") => Some(Action::Volume(false)),
+        ("mute", "") => Some(Action::Mute),
+        ("mic-mute", "") => Some(Action::MicMute),
+        ("brightness", "up") => Some(Action::Brightness(true)),
+        ("brightness", "down") => Some(Action::Brightness(false)),
+        ("media", "play-pause") => Some(Action::Media(MediaAction::PlayPause)),
+        ("media", "next") => Some(Action::Media(MediaAction::Next)),
+        ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
         _ => None,
     };
     let mut table = Vec::new();
@@ -88,11 +114,16 @@ pub fn lookup<'a>(bindings: &'a [(Binding, Action)], mods: &ModifiersState, key:
     bindings.iter().find(|(b, _)| b.key == key && b.desktop == desktop && b.ctrl == mods.ctrl && b.shift == mods.shift && b.alt == alt).map(|(_, a)| a)
 }
 
+/// One key step from `percent`, within 0–100; a level already above 100 (PipeWire allows 150) is only turned down.
+fn step(percent: u8, up: bool) -> u8 {
+    if up { percent.saturating_add(STEP).min(percent.max(100)) } else { percent.saturating_sub(STEP) }
+}
+
 impl State {
     pub fn run_action(&mut self, action: Action) {
         tracing::debug!(?action, "shortcut");
         let focused = self.focused_window();
-        match action {
+        match action.clone() {
             Action::Spawn(command) => self.spawn(&command.split_whitespace().map(String::from).collect::<Vec<_>>()),
             Action::CloseWindow => {
                 if let Some(toplevel) = focused.as_ref().and_then(|w| w.toplevel()) {
@@ -118,6 +149,35 @@ impl State {
                 if next.is_some() {
                     self.focus_window(next, SERIAL_COUNTER.next_serial());
                 }
+            }
+            // ponytail: one step per press, no repeat while held; the OSD (E2.7) waits for the M2 mockup approval.
+            // Each changes the local copy at once, so presses faster than the service's echo still add up.
+            Action::Volume(up) => {
+                let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
+                if up && output.muted {
+                    // As on macOS: turning it up unmutes.
+                    output.muted = false;
+                    self.services.send(Command::Mute { output: true, muted: false });
+                }
+                output.volume = step(output.volume, up);
+                self.services.send(Command::Volume { output: true, percent: output.volume });
+            }
+            Action::Mute | Action::MicMute => {
+                let output = action == Action::Mute;
+                let sound = self.sound.as_mut();
+                let Some(device) = sound.and_then(|s| if output { Some(&mut s.output) } else { s.input.as_mut() }) else { return };
+                device.muted = !device.muted;
+                self.services.send(Command::Mute { output, muted: device.muted });
+            }
+            Action::Brightness(up) => {
+                let Some(percent) = self.brightness.as_mut() else { return };
+                // Never to 0: a black screen leaves no way to see what happened.
+                *percent = step(*percent, up).max(1);
+                self.services.send(Command::Brightness(*percent));
+            }
+            Action::Media(media) => {
+                let Some(player) = self.media.as_ref().map(|m| m.player.clone()) else { return };
+                self.services.send(Command::Media { player, action: media });
             }
         }
     }
@@ -183,6 +243,25 @@ mod tests {
         assert!(parse("F12").is_some_and(|b| !b.desktop && b.key == Keysym::F12));
         assert_eq!(parse("Super+Hyper+B"), None);
         assert_eq!(parse("Super+NoSuchKey"), None);
+    }
+
+    #[test]
+    fn steps() {
+        assert_eq!(step(50, true), 56);
+        assert_eq!(step(98, true), 100);
+        assert_eq!(step(3, false), 0);
+        assert_eq!(step(130, true), 130, "above 100 only goes down");
+        assert_eq!(step(130, false), 124);
+    }
+
+    #[test]
+    fn media_keys_are_bound() {
+        let table = from_config(&Config::default());
+        let none = mods(false, false, false);
+        assert_eq!(lookup(&table, &none, Keysym::XF86_AudioRaiseVolume, false), Some(&Action::Volume(true)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_AudioMicMute, false), Some(&Action::MicMute));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_MonBrightnessDown, false), Some(&Action::Brightness(false)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_AudioPlay, false), Some(&Action::Media(MediaAction::PlayPause)));
     }
 
     #[test]
