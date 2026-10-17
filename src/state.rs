@@ -42,7 +42,14 @@ use smithay::{
     },
 };
 
-use crate::clipboard::{self, Clipboard};
+use crate::{
+    clipboard::{self, Clipboard},
+    grabs::{MoveGrab, Resize, ResizeGrab, edges_from},
+    wm::{self, Rect},
+};
+
+/// Marks a window that got its first position (it is placed once its size is known).
+struct Placed;
 
 pub struct State {
     pub start_time: Instant,
@@ -58,6 +65,7 @@ pub struct State {
     /// Set by the backend once the renderer exists.
     pub backend: Option<crate::backend::winit::Winit>,
     redraw_pending: bool,
+    pub resize: Option<Resize>,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -115,6 +123,7 @@ impl State {
             clipboard: Clipboard::new(clipboard_tx),
             backend: None,
             redraw_pending: false,
+            resize: None,
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
             shm_state: ShmState::new::<Self>(&dh, vec![]),
@@ -140,6 +149,29 @@ impl State {
                 state.render();
             });
         }
+    }
+
+    /// Where windows may go. ponytail: the whole output until the menu bar and dock exist (M2, M3).
+    pub fn work_area(&self) -> Option<Rect> {
+        self.space.outputs().next().and_then(|o| self.space.output_geometry(o))
+    }
+
+    pub fn modifiers(&self) -> smithay::input::keyboard::ModifiersState {
+        self.seat.get_keyboard().map(|k| k.modifier_state()).unwrap_or_default()
+    }
+
+    /// Moves a window so its visible part (without client-side shadows) starts at `loc`;
+    /// a Space location is already the visible corner.
+    pub fn set_visible_loc(&mut self, window: &Window, loc: smithay::utils::Point<i32, smithay::utils::Logical>) {
+        self.space.map_element(window.clone(), loc, false);
+        self.schedule_redraw();
+    }
+
+    /// Starts moving `window` with the pointer; the move begins after the drag threshold.
+    pub fn start_move(&mut self, window: Window, start_data: smithay::input::pointer::GrabStartData<Self>, serial: Serial) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        let Some(start) = self.space.element_geometry(&window) else { return };
+        pointer.set_grab(self, MoveGrab { start_data, window, start, started: false }, serial, Focus::Clear);
     }
 
     fn window_for(&self, surface: &WlSurface) -> Option<&Window> {
@@ -210,9 +242,17 @@ impl CompositorHandler for State {
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            if let Some(window) = self.window_for(&root) {
+            if let Some(window) = self.window_for(&root).cloned() {
                 window.on_commit();
+                let size = window.geometry().size;
+                if size.w > 0 && window.user_data().get::<Placed>().is_none() {
+                    window.user_data().insert_if_missing(|| Placed);
+                    if let Some(area) = self.work_area() {
+                        self.set_visible_loc(&window, wm::place(area, size));
+                    }
+                }
             }
+            self.resize_commit(&root);
         }
 
         // The first commit of a toplevel asks for its initial configure.
@@ -243,9 +283,8 @@ impl XdgShellHandler for State {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         surface.with_pending_state(|state| state.states.set(xdg_toplevel::State::Activated));
         let window = Window::new_wayland_window(surface);
-        // ponytail: simple cascade; real placement (E1.4) moves to wm.rs.
-        let step = 32 * (self.space.elements().count() as i32 % 10);
-        self.space.map_element(window.clone(), (40 + step, 40 + step), true);
+        // Positioned on its first buffer, once its size is known (see commit).
+        self.space.map_element(window.clone(), (0, 0), true);
         self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
     }
 
@@ -273,6 +312,38 @@ impl XdgShellHandler for State {
         });
         self.unconstrain_popup(&surface);
         surface.send_repositioned(token);
+    }
+
+    /// The app's own title bar was dragged.
+    fn move_request(&mut self, surface: ToplevelSurface, seat: WlSeat, serial: Serial) {
+        let Some(pointer) = Seat::<Self>::from_resource(&seat).and_then(|s| s.get_pointer()) else { return };
+        // Only while the button that started it is still held.
+        if !pointer.has_grab(serial) {
+            return;
+        }
+        let (Some(start_data), Some(window)) = (pointer.grab_start_data(), self.window_for(surface.wl_surface()).cloned()) else { return };
+        self.start_move(window, start_data, serial);
+    }
+
+    /// The app's own window edge was dragged.
+    fn resize_request(&mut self, surface: ToplevelSurface, seat: WlSeat, serial: Serial, edges: xdg_toplevel::ResizeEdge) {
+        let Some(pointer) = Seat::<Self>::from_resource(&seat).and_then(|s| s.get_pointer()) else { return };
+        if !pointer.has_grab(serial) {
+            return;
+        }
+        let (Some(start_data), Some(window)) = (pointer.grab_start_data(), self.window_for(surface.wl_surface()).cloned()) else { return };
+        let Some(start) = self.space.element_geometry(&window) else { return };
+        self.resize = Some(Resize {
+            window,
+            edges: edges_from(edges),
+            start,
+            symmetric: false,
+            desired: start.size,
+            sent: Some(start.size),
+            waiting: false,
+            released: false,
+        });
+        pointer.set_grab(self, ResizeGrab { start_data }, serial, Focus::Clear);
     }
 
     fn grab(&mut self, surface: PopupSurface, seat: WlSeat, serial: Serial) {

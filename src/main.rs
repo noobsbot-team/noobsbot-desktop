@@ -2,6 +2,7 @@
 
 mod backend;
 mod clipboard;
+mod grabs;
 mod input;
 mod state;
 mod wm;
