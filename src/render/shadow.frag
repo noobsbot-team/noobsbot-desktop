@@ -1,7 +1,8 @@
 // Soft drop shadow of a rounded rect (D6) plus its 0.5 px outer hairline, drawn only outside the rect.
 // The element covers the rect grown by `margin` on every side.
-// ponytail: per-pixel SDF + logistic falloff (exact on straight edges, close at corners), every frame a shadow is
-// damaged; render once per (radius, blur, opacity) into a 9-slice texture (plan E1.4) when 4K GPU time needs it.
+// Per-pixel SDF + logistic falloff (exact on straight edges, close at corners), every frame a shadow is damaged.
+// A cached 9-slice texture (plan E1.4) was measured slower on Intel RPL-U at 1080p (PERF.md, M1): 8 textured draws
+// per shadow cost more than this one ALU-light quad. Re-measure at 4K on the udev backend (M6) before trying again.
 
 #ifdef GL_FRAGMENT_PRECISION_HIGH
 precision highp float;

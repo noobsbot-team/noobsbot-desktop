@@ -525,7 +525,9 @@ macOS-style glass windows.
 - **Why:** one pass per surface, no blur (R2, R3). SDF = sharp at any size, no texture memory.
 - **Shadow cost:** a 60 px soft shadow computed per pixel around every window is the one expensive shader at 4K,
   so shadows are rendered **once per (radius, blur, opacity)** into a small 9-slice texture and stretched; only the
-  corners cost anything, and a frame with 20 windows stays under the E1.10 budget.
+  corners cost anything, and a frame with 20 windows stays under the E1.10 budget. *Measured in M1 (PERF.md): on an
+  Intel iGPU at 1080p the 9-slice was slower than the per-pixel shader (draw calls, not fill, dominate), so M1 keeps
+  per-pixel shadows; re-measure at 4K in M6.*
 - **Done when:** a test scene shows every material in light and dark, matching the mockup; GPU time per frame
   under 1 ms on an Intel iGPU at 1080p.
 
