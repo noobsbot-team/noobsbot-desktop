@@ -26,4 +26,11 @@ Robustness (E1.11): `scripts/fuzz-client.py` ran 60–90 s per seed (seeds 1–4
 debug build without a panic, after vendoring a fix for a `wayland-backend` 0.3.17 panic it found
 (`wl_registry.bind` with a null interface).
 
+Glass stress test (E1.4): `--test-scene` at 1920×1080 rebuilds all 12 material cards (6 materials × light/dark,
+elevations 1–5) every frame, repainting ~55% of the screen. 2.5 ms per frame CPU+GPU (0.66 ms CPU); without shadows
+1.9 ms, so shadows cost ~0.6 ms. The GPU share is measured by waiting on the frame's fence, which also counts
+submission latency and the iGPU clocking up — GL timer queries (M6) give the real GPU time. **The < 1 ms GPU budget is
+not shown to hold under this stress test**; normal frames repaint only what changed. Levers, in order: the 9-slice
+shadow cache (plan E1.4), then timer queries to find what else costs.
+
 Not measured yet: input latency (needs a real display), GPU memory, heaptrack run.
