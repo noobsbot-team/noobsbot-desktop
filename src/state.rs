@@ -12,7 +12,11 @@ use smithay::{
     },
     input::{Seat, SeatHandler, SeatState, keyboard::Keycode, pointer::Focus},
     reexports::{
-        calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
+        calloop::{
+            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, channel,
+            generic::Generic,
+            timer::{TimeoutAction, Timer},
+        },
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
             Client, Display, DisplayHandle, Resource,
@@ -188,13 +192,25 @@ impl State {
     }
 
     /// Draws a frame at the next vblank. Called only when something changed, so an idle desktop costs no CPU.
+    /// The frame starts as late as the frame clock allows (E1.10), so input arriving meanwhile is still in it.
     pub fn schedule_redraw(&mut self) {
-        if !self.redraw_pending {
-            self.redraw_pending = true;
-            self.loop_handle.insert_idle(|state| {
-                state.redraw_pending = false;
-                state.render();
-            });
+        if self.redraw_pending {
+            return;
+        }
+        self.redraw_pending = true;
+        let delay = self.backend.as_mut().map_or(std::time::Duration::ZERO, |b| b.clock.delay(Instant::now()));
+        let draw = |state: &mut Self| {
+            state.redraw_pending = false;
+            state.render();
+        };
+        if delay.is_zero() {
+            self.loop_handle.insert_idle(draw);
+        } else if let Err(err) = self.loop_handle.insert_source(Timer::from_duration(delay), move |_, _, state| {
+            draw(state);
+            TimeoutAction::Drop
+        }) {
+            tracing::warn!("frame timer: {err}");
+            self.loop_handle.insert_idle(draw);
         }
     }
 

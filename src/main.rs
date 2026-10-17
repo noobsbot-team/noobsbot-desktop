@@ -4,6 +4,7 @@ mod backend;
 mod clipboard;
 mod config;
 mod decorations;
+mod frame;
 mod grabs;
 mod input;
 mod protocols;

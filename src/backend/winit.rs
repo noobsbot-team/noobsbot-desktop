@@ -1,6 +1,6 @@
 //! Development backend: the desktop runs as a window on the current session (`--nested`).
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::{
     backend::{
@@ -19,6 +19,7 @@ use smithay::{
 };
 
 use crate::{
+    frame::FrameClock,
     render::{self, Shaders, Wallpaper},
     state::State,
 };
@@ -31,6 +32,7 @@ pub struct Winit {
     damage_tracker: OutputDamageTracker,
     shaders: Shaders,
     pub wallpaper: Wallpaper,
+    pub clock: FrameClock,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -61,7 +63,8 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     })?;
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper });
+    let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -85,7 +88,8 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper }) = self.backend.as_mut() else { return };
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock }) = self.backend.as_mut() else { return };
+        let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
             Ok((renderer, mut framebuffer)) => {
@@ -99,7 +103,8 @@ impl State {
             }
         };
         // Always swap, even without damage: the swap waits for vblank, which keeps an app that commits
-        // in a loop at the refresh rate. ponytail: the blocking wait is fine nested; frame.rs (E1.10) replaces it.
+        // in a loop at the refresh rate. When drawing starts is up to frame.rs (E1.10, see schedule_redraw).
+        let render_time = started.elapsed();
         let shown = match damage {
             Ok(damage) => backend.submit(damage.as_deref()).inspect_err(|err| tracing::warn!("submit: {err}")).is_ok(),
             Err(err) => {
@@ -125,6 +130,10 @@ impl State {
         layers.cleanup();
         drop(layers);
         if shown {
+            // ponytail: nested, the swap returning stands in for the vblank and only CPU render time is measured; DRM
+            // page-flip events and GPU timestamps give the real ones (M6).
+            clock.presented(Instant::now(), render_time);
+            tracing::trace!(?render_time, "frame");
             let refresh = Refresh::fixed(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
             feedback.presented(self.protocols.clock.now(), refresh, 0, wp_presentation_feedback::Kind::empty());
         }
