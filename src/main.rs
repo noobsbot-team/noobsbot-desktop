@@ -2,6 +2,7 @@
 
 mod backend;
 mod calendar;
+mod clock;
 mod clipboard;
 mod config;
 mod decorations;
