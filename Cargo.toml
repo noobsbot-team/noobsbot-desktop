@@ -17,6 +17,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 cosmic-text = "0.19.0"
 png = "0.18.1"
 zune-jpeg = "0.5.15"
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 
 [profile.release]
 lto = "thin"
