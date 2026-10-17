@@ -363,7 +363,8 @@ impl CompositorHandler for State {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        // Every client is inserted with a ClientState (see State::new).
+        // Unreachable by any client: the socket source in State::new is the only place clients are inserted, always
+        // with a ClientState, so this can only fire on a bug of ours.
         &client.get_data::<ClientState>().expect("client without ClientState").compositor_state
     }
 

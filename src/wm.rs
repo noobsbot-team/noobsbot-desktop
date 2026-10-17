@@ -45,8 +45,9 @@ pub fn move_to(rect: Rect, area: Rect, others: &[Rect], magnetic: bool) -> Point
         y = stick(y, rect.size.h, &ys);
     }
     // The title bar never goes above the top of the work area, and MIN_VISIBLE px stay reachable.
-    let x = x.clamp(area.loc.x - rect.size.w + MIN_VISIBLE, area.loc.x + area.size.w - MIN_VISIBLE);
-    let y = y.clamp(area.loc.y, area.loc.y + area.size.h - MIN_VISIBLE);
+    // max/min, not clamp: clamp panics when a tiny window or output makes the bounds cross.
+    let x = x.max(area.loc.x - rect.size.w + MIN_VISIBLE).min(area.loc.x + area.size.w - MIN_VISIBLE);
+    let y = y.max(area.loc.y).min(area.loc.y + area.size.h - MIN_VISIBLE);
     (x, y).into()
 }
 
@@ -144,6 +145,11 @@ mod tests {
     }
     const NONE: ResizeMods = ResizeMods { symmetric: false, keep_aspect: false };
     const NO_HINT: (i32, i32) = (0, 0);
+
+    #[test]
+    fn move_on_tiny_output_does_not_panic() {
+        move_to(rect(5, 5, 1, 1), rect(0, 0, 30, 20), &[], true);
+    }
 
     #[test]
     fn places_centred_above_middle() {
