@@ -1,6 +1,6 @@
 //! Central state and the Wayland protocol handlers.
 
-use std::{ffi::OsString, sync::Arc, time::Instant};
+use std::{ffi::OsString, os::fd::OwnedFd, sync::Arc, time::Instant};
 
 use smithay::{
     backend::{
@@ -14,7 +14,7 @@ use smithay::{
     },
     input::{Seat, SeatHandler, SeatState, pointer::Focus},
     reexports::{
-        calloop::{EventLoop, Interest, LoopSignal, Mode, PostAction, generic::Generic},
+        calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
             Client, Display, DisplayHandle, Resource,
@@ -29,7 +29,7 @@ use smithay::{
         dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         output::{OutputHandler, OutputManagerState},
         selection::{
-            SelectionHandler,
+            SelectionHandler, SelectionSource, SelectionTarget,
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler, set_data_device_focus},
             primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus},
         },
@@ -39,15 +39,19 @@ use smithay::{
     },
 };
 
+use crate::clipboard::{self, Clipboard};
+
 pub struct State {
     pub start_time: Instant,
     pub socket_name: OsString,
     pub display_handle: DisplayHandle,
     pub loop_signal: LoopSignal,
+    pub loop_handle: LoopHandle<'static, Self>,
 
     pub space: Space<Window>,
     pub popups: PopupManager,
     pub seat: Seat<Self>,
+    pub clipboard: Clipboard,
     /// Set by the backend once the renderer exists.
     pub backend: Option<WinitGraphicsBackend<GlesRenderer>>,
 
@@ -62,7 +66,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(event_loop: &mut EventLoop<Self>, display: Display<Self>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Result<Self, Box<dyn std::error::Error>> {
         let dh = display.handle();
 
         let mut seat_state = SeatState::new();
@@ -85,14 +89,22 @@ impl State {
             }
             Ok(PostAction::Continue)
         })?;
+        let (clipboard_tx, clipboard_rx) = channel::channel();
+        handle.insert_source(clipboard_rx, |event, _, state| {
+            if let channel::Event::Msg(fetched) = event {
+                state.clipboard.store(fetched);
+            }
+        })?;
 
         Ok(Self {
             start_time: Instant::now(),
             socket_name,
             loop_signal: event_loop.get_signal(),
+            loop_handle: handle,
             space: Space::default(),
             popups: PopupManager::default(),
             seat,
+            clipboard: Clipboard::new(clipboard_tx),
             backend: None,
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
@@ -269,6 +281,7 @@ impl SeatHandler for State {
     /// The clipboard follows the keyboard: only the focused app may read it.
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
         let dh = &self.display_handle;
+        self.clipboard.adopt_if_orphaned(dh, seat);
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, client.clone());
         set_primary_focus(dh, seat, client);
@@ -277,6 +290,25 @@ impl SeatHandler for State {
 
 impl SelectionHandler for State {
     type SelectionUserData = ();
+
+    fn new_selection(&mut self, ty: SelectionTarget, source: Option<SelectionSource>, seat: Seat<Self>) {
+        if ty != SelectionTarget::Clipboard {
+            return;
+        }
+        let owner = source.as_ref().and_then(|_| clipboard::focused_client(&self.display_handle, &seat));
+        let generation = self.clipboard.replaced(owner);
+        if let Some(source) = source {
+            let mimes = source.mime_types();
+            // Smithay installs the new source after this call returns; read it on the next idle.
+            self.loop_handle.insert_idle(move |state| state.clipboard.fetch(&seat, generation, mimes));
+        }
+    }
+
+    fn send_selection(&mut self, ty: SelectionTarget, mime_type: String, fd: OwnedFd, _seat: Seat<Self>, _user_data: &()) {
+        if ty == SelectionTarget::Clipboard {
+            self.clipboard.send(&mime_type, fd);
+        }
+    }
 }
 
 impl DataDeviceHandler for State {

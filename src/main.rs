@@ -1,6 +1,7 @@
 //! Noobsbot Desktop: start-up, logging and backend selection.
 
 mod backend;
+mod clipboard;
 mod input;
 mod state;
 
@@ -35,7 +36,7 @@ fn main() {
 }
 
 fn run(command: Vec<String>) -> Result<(), Box<dyn std::error::Error>> {
-    let mut event_loop: EventLoop<State> = EventLoop::try_new()?;
+    let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;
     let mut state = State::new(&mut event_loop, display)?;
 
