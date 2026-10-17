@@ -7,6 +7,7 @@ use smithay::{
         renderer::{ImportDma, damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement, gles::GlesRenderer},
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
+    input::pointer::{CursorIcon, CursorImageStatus},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::calloop::EventLoop,
     utils::Transform,
@@ -59,6 +60,20 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 }
 
 impl State {
+    /// Shows `image` as the host window's cursor.
+    pub fn set_cursor(&self, image: CursorImageStatus) {
+        let Some(winit) = &self.backend else { return };
+        let window = winit.backend.window();
+        window.set_cursor_visible(image != CursorImageStatus::Hidden);
+        match image {
+            CursorImageStatus::Named(icon) => window.set_cursor(icon),
+            // ponytail: an app's own cursor surface shows as the host default; apps get named cursors once cursor-shape
+            // is enabled, drawing surfaces needs a cursor plane (udev, M6).
+            CursorImageStatus::Surface(_) => window.set_cursor(CursorIcon::Default),
+            CursorImageStatus::Hidden => {}
+        }
+    }
+
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
         let Some(Winit { backend, output, damage_tracker }) = self.backend.as_mut() else { return };

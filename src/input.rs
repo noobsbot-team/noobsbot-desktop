@@ -7,7 +7,7 @@ use smithay::{
     desktop::{Window, WindowSurfaceType},
     input::{
         keyboard::{FilterResult, XkbConfig},
-        pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent},
+        pointer::{AxisFrame, ButtonEvent, CursorIcon, CursorImageStatus, GrabStartData, MotionEvent},
     },
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
@@ -27,6 +27,23 @@ const BTN_LEFT: u32 = 0x110;
 pub fn xkb(keyboard: &Keyboard) -> XkbConfig<'_> {
     let options = (!keyboard.options.is_empty()).then(|| keyboard.options.clone());
     XkbConfig { layout: &keyboard.layout, variant: &keyboard.variant, options, ..Default::default() }
+}
+
+/// Pointer state of our resize zones.
+#[derive(Default)]
+pub struct Zones {
+    /// The zone the pointer is in, whose cursor is showing.
+    pub hover: Option<Edges>,
+}
+
+/// ↔ ↕ ⤡ ⤢ for a zone.
+fn resize_icon(edges: Edges) -> CursorIcon {
+    match (edges.left || edges.right, edges.top || edges.bottom) {
+        (true, false) => CursorIcon::EwResize,
+        (false, _) => CursorIcon::NsResize,
+        _ if edges.left == edges.top => CursorIcon::NwseResize,
+        _ => CursorIcon::NeswResize,
+    }
 }
 
 impl State {
@@ -68,6 +85,12 @@ impl State {
                 // A resize zone takes the pointer from whatever app is underneath it.
                 let zone = if pointer.is_grabbed() { None } else { self.zone_under(location) };
                 let under = if zone.is_some() { None } else { self.surface_under(location) };
+                // Our cursor in a zone; entering an app resets to the default, then the app sets its own.
+                let hover = zone.map(|(_, edges)| edges);
+                if !pointer.is_grabbed() && (hover != self.zones.hover || pointer.current_focus() != under.as_ref().map(|(s, _)| s.clone())) {
+                    self.zones.hover = hover;
+                    self.set_cursor(hover.map_or_else(CursorImageStatus::default_named, |e| CursorImageStatus::Named(resize_icon(e))));
+                }
                 pointer.motion(self, under, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: event.time_msec() });
                 pointer.frame(self);
             }
@@ -142,5 +165,20 @@ impl State {
         self.space.element_under(location).and_then(|(window, loc)| {
             window.surface_under(location - loc.to_f64(), WindowSurfaceType::ALL).map(|(surface, offset)| (surface, (offset + loc).to_f64()))
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zone_cursors() {
+        let e = |left, right, top, bottom| resize_icon(Edges { left, right, top, bottom });
+        assert_eq!(e(true, false, false, false), CursorIcon::EwResize);
+        assert_eq!(e(false, false, false, true), CursorIcon::NsResize);
+        assert_eq!(e(true, false, true, false), CursorIcon::NwseResize);
+        assert_eq!(e(false, true, false, true), CursorIcon::NwseResize);
+        assert_eq!(e(false, true, true, false), CursorIcon::NeswResize);
     }
 }

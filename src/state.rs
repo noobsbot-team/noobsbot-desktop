@@ -90,6 +90,7 @@ pub struct State {
     pub suppressed: Vec<Keycode>,
     /// Minimised and hidden windows with where they were.
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
+    pub zones: crate::input::Zones,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -159,6 +160,7 @@ impl State {
             config,
             suppressed: Vec::new(),
             hidden: Vec::new(),
+            zones: Default::default(),
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
             shm_state: ShmState::new::<Self>(&dh, vec![]),
@@ -547,6 +549,13 @@ impl SeatHandler for State {
 
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
+    }
+
+    /// The app under the pointer picks its cursor; not while the pointer is in one of our zones.
+    fn cursor_image(&mut self, _seat: &Seat<Self>, image: smithay::input::pointer::CursorImageStatus) {
+        if self.zones.hover.is_none() {
+            self.set_cursor(image);
+        }
     }
 
     /// The clipboard follows the keyboard: only the focused app may read it.
