@@ -45,7 +45,7 @@ use smithay::{
 use crate::{
     clipboard::{self, Clipboard},
     config::Config,
-    grabs::{MoveGrab, Resize, ResizeGrab, edges_from},
+    grabs::{MoveGrab, Resize, edges_from},
     rules::{self, Actions, CompiledRule},
     shortcuts::{self, Action, Binding},
     wm::{self, Rect},
@@ -513,18 +513,7 @@ impl XdgShellHandler for State {
             return;
         }
         let (Some(start_data), Some(window)) = (pointer.grab_start_data(), self.window_for(surface.wl_surface()).cloned()) else { return };
-        let Some(start) = self.space.element_geometry(&window) else { return };
-        self.resize = Some(Resize {
-            window,
-            edges: edges_from(edges),
-            start,
-            symmetric: false,
-            desired: start.size,
-            sent: Some(start.size),
-            waiting: false,
-            released: false,
-        });
-        pointer.set_grab(self, ResizeGrab { start_data }, serial, Focus::Clear);
+        self.start_resize(window, edges_from(edges), start_data, serial);
     }
 
     fn grab(&mut self, surface: PopupSurface, seat: WlSeat, serial: Serial) {

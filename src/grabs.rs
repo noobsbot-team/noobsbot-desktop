@@ -182,6 +182,14 @@ pub fn edges_from(edge: xdg_toplevel::ResizeEdge) -> Edges {
 }
 
 impl State {
+    /// Starts resizing `window` by `edges` with the pointer (an app's own edge or one of our zones).
+    pub fn start_resize(&mut self, window: Window, edges: Edges, start_data: GrabStartData<State>, serial: smithay::utils::Serial) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        let Some(start) = self.space.element_geometry(&window) else { return };
+        self.resize = Some(Resize { window, edges, start, symmetric: false, desired: start.size, sent: Some(start.size), waiting: false, released: false });
+        pointer.set_grab(self, ResizeGrab { start_data }, serial, smithay::input::pointer::Focus::Clear);
+    }
+
     /// Sends the app the size the pointer asks for, unless a configure is still unanswered.
     pub fn flush_resize(&mut self) {
         let Some(resize) = self.resize.as_mut() else { return };

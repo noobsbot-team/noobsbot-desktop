@@ -136,6 +136,33 @@ pub fn resize_anchor(start: Rect, edges: Edges, symmetric: bool, size: Size<i32,
     (x, y).into()
 }
 
+/// Invisible resize zones reach this far outside every window edge...
+pub const ZONE_OUTSIDE: f64 = 8.0;
+/// ...and this far into the window.
+pub const ZONE_INSIDE: f64 = 4.0;
+/// Corner zones are this big (centred on the corner) and resize diagonally.
+pub const ZONE_CORNER: f64 = 16.0;
+
+/// The edges the resize zone at `p` drags, or None outside every zone of the window at `rect`.
+pub fn zone_edges(rect: Rect, p: Point<f64, Logical>) -> Option<Edges> {
+    let (l, t) = (rect.loc.x as f64, rect.loc.y as f64);
+    let (r, b) = (l + rect.size.w as f64, t + rect.size.h as f64);
+    let beyond = p.x < l - ZONE_OUTSIDE || p.x >= r + ZONE_OUTSIDE || p.y < t - ZONE_OUTSIDE || p.y >= b + ZONE_OUTSIDE;
+    let inside = p.x >= l + ZONE_INSIDE && p.x < r - ZONE_INSIDE && p.y >= t + ZONE_INSIDE && p.y < b - ZONE_INSIDE;
+    if beyond || inside {
+        return None;
+    }
+    let reach = ZONE_CORNER / 2.0;
+    let (in_left, in_right, in_top, in_bottom) = (p.x < l + ZONE_INSIDE, p.x >= r - ZONE_INSIDE, p.y < t + ZONE_INSIDE, p.y >= b - ZONE_INSIDE);
+    let (horizontal, vertical) = (in_left || in_right, in_top || in_bottom);
+    // A tiny window can be in both opposite bands; left and top win.
+    let left = in_left || (vertical && p.x < l + reach);
+    let right = !left && (in_right || (vertical && p.x >= r - reach));
+    let top = in_top || (horizontal && p.y < t + reach);
+    let bottom = !top && (in_bottom || (horizontal && p.y >= b - reach));
+    Some(Edges { left, right, top, bottom })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,5 +236,22 @@ mod tests {
         assert_eq!(tiny, MIN_SIZE.into(), "no hints: floor");
         let hinted = resize_size(start, br, (-1000.0, 1000.0).into(), NONE, (300, 100).into(), (0, 500).into());
         assert_eq!(hinted, (300, 500).into(), "app min and max win");
+    }
+
+    #[test]
+    fn zones_hug_every_edge_and_corner() {
+        let win = rect(100, 100, 400, 300);
+        let at = |x: f64, y: f64| zone_edges(win, (x, y).into());
+        let e = |left, right, top, bottom| Some(Edges { left, right, top, bottom });
+        assert_eq!(at(93.0, 250.0), e(true, false, false, false), "8 px outside the left edge");
+        assert_eq!(at(103.0, 250.0), e(true, false, false, false), "outer 4 px inside");
+        assert_eq!(at(91.0, 250.0), None, "too far out");
+        assert_eq!(at(105.0, 250.0), None, "the window's own content");
+        assert_eq!(at(300.0, 405.0), e(false, false, false, true));
+        assert_eq!(at(505.0, 250.0), e(false, true, false, false));
+        assert_eq!(at(95.0, 105.0), e(true, false, true, false), "top-left corner");
+        assert_eq!(at(104.0, 95.0), e(true, false, true, false), "16 px corner reaches along the top");
+        assert_eq!(at(110.0, 95.0), e(false, false, true, false), "past the corner: top only");
+        assert_eq!(at(505.0, 395.0), e(false, true, false, true), "bottom-right corner");
     }
 }
