@@ -30,7 +30,24 @@ type Key = (bool, bool, u64);
 #[derive(Default)]
 struct Cache {
     glass: Option<(Key, Vec<PixelShaderElement>)>,
-    title: Option<(Arc<Rendered>, Option<smithay::backend::renderer::element::memory::MemoryRenderBuffer>)>,
+    title: Option<Label>,
+    /// × – ⤢, shown on all three lights while the pointer is over any (D2).
+    glyphs: Vec<Label>,
+}
+
+type Label = (Arc<Rendered>, Option<smithay::backend::renderer::element::memory::MemoryRenderBuffer>);
+
+const GLYPHS: [&str; 3] = ["×", "–", "⤢"];
+
+/// A label as a render element, centred in `rect` (output-relative, logical).
+fn label_element(renderer: &mut GlesRenderer, label: &Label, rect: Rect, scale: f64) -> Option<SceneElement> {
+    let (rendered, Some(buffer)) = label else { return None };
+    let size = Size::from(((f64::from(rendered.width) / scale).round() as i32, (f64::from(rendered.height) / scale).round() as i32));
+    let loc = Point::from((rect.loc.x + (rect.size.w - size.w) / 2, rect.loc.y + (rect.size.h - size.h) / 2)).to_f64().to_physical(scale);
+    MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, None, Some(size), Kind::Unspecified)
+        .inspect_err(|err| tracing::warn!("title bar label: {err}"))
+        .ok()
+        .map(SceneElement::Memory)
 }
 
 fn title_of(window: &Window) -> String {
@@ -101,13 +118,26 @@ pub fn elements(
     if !cache.title.as_ref().is_some_and(|(r, _)| Arc::ptr_eq(r, &rendered)) {
         cache.title = Some((rendered.clone(), text::to_buffer(&rendered)));
     }
-    if let Some((rendered, Some(buffer))) = &cache.title {
-        let size = Size::from(((f64::from(rendered.width) / scale).round() as i32, (f64::from(rendered.height) / scale).round() as i32));
-        let loc = Point::from((frame.loc.x + (frame.size.w - size.w) / 2, frame.loc.y + (BAR - size.h) / 2)).to_f64().to_physical(scale);
-        match MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, None, Some(size), Kind::Unspecified) {
-            Ok(element) => out.push(SceneElement::Memory(element)),
-            Err(err) => tracing::warn!("title: {err}"),
+    if let Some(title) = &cache.title {
+        out.extend(label_element(renderer, title, Rectangle::new(frame.loc, Size::from((frame.size.w, BAR))), scale));
+    }
+    if focused && crate::decorations::lights_hovered(window) {
+        let style = Style { size: 10, line_height: 12, weight: 700, color: [0, 0, 0, 140] };
+        let glyphs: Vec<Label> = GLYPHS
+            .iter()
+            .map(|g| text.label(g, style, LIGHT as u32, scale))
+            .map(|r| match cache.glyphs.iter().find(|(c, _)| Arc::ptr_eq(c, &r)) {
+                Some(label) => label.clone(),
+                None => {
+                    let buffer = text::to_buffer(&r);
+                    (r, buffer)
+                }
+            })
+            .collect();
+        for (glyph, rect) in glyphs.iter().zip(&lights) {
+            out.extend(label_element(renderer, glyph, *rect, scale));
         }
+        cache.glyphs = glyphs;
     }
     if let Some((_, glass)) = &cache.glass {
         // Lights in front of the strip.

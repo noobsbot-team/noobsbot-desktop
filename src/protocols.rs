@@ -132,10 +132,14 @@ impl State {
         }
 
         // Our cursor in a zone; entering an app or the bare desktop resets to the arrow, then an app sets its own.
-        let hover = zone.map(|(_, edges)| edges);
+        let hover = zone.as_ref().map(|(_, edges)| *edges);
         if !pointer.is_grabbed() && (hover != self.zones.hover || pointer.current_focus() != new_under.as_ref().map(|(s, _)| s.clone())) {
             self.zones.hover = hover;
             self.set_cursor(hover.map_or_else(CursorImageStatus::default_named, |e| CursorImageStatus::Named(crate::input::resize_icon(e))));
+        }
+        if !pointer.is_grabbed() {
+            let lights = zone.is_none().then(|| self.bar_under(host)).flatten().filter(|(_, p)| *p != crate::decorations::Part::Title).map(|(w, _)| w);
+            self.set_lights_hover(lights);
         }
         pointer.motion(self, new_under.clone(), &MotionEvent { location: host, serial: SERIAL_COUNTER.next_serial(), time: (utime / 1000) as u32 });
         pointer.frame(self);

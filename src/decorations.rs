@@ -73,6 +73,14 @@ impl Decorations {
     }
 }
 
+/// Set on a window while the pointer is over its traffic lights: all three show their glyphs (macOS).
+#[derive(Default)]
+struct LightsHover(AtomicBool);
+
+pub fn lights_hovered(window: &Window) -> bool {
+    window.user_data().get::<LightsHover>().is_some_and(|h| h.0.load(Ordering::Relaxed))
+}
+
 /// Set on a surface whose app agreed to our title bar through the KDE protocol (GTK3, Qt 5).
 #[derive(Default)]
 struct KdeServerSide(AtomicBool);
@@ -157,6 +165,19 @@ impl State {
             Part::Zoom => self.toggle_zoom(&window),
             Part::Title => {}
         }
+    }
+
+    pub fn set_lights_hover(&mut self, window: Option<Window>) {
+        if self.zones.lights_hover == window {
+            return;
+        }
+        for (w, on) in [(self.zones.lights_hover.take(), false), (window.clone(), true)] {
+            if let Some(w) = w {
+                w.user_data().get_or_insert_threadsafe(LightsHover::default).0.store(on, Ordering::Relaxed);
+            }
+        }
+        self.zones.lights_hover = window;
+        self.schedule_redraw();
     }
 
     fn toggle_zoom(&mut self, window: &Window) {

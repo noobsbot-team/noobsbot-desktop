@@ -40,6 +40,8 @@ pub struct Zones {
     pub bar_press: Option<(Window, crate::decorations::Part)>,
     /// The last press on a title, to spot a double-click.
     pub last_title_press: Option<(std::time::Instant, Window)>,
+    /// The window whose traffic lights the pointer is over (they show their glyphs).
+    pub lights_hover: Option<Window>,
 }
 
 /// ↔ ↕ ⤡ ⤢ for a zone.
