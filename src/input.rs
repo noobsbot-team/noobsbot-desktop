@@ -2,7 +2,7 @@
 
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
     },
     desktop::WindowSurfaceType,
     input::{
@@ -13,7 +13,10 @@ use smithay::{
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 
-use crate::state::State;
+use crate::{
+    shortcuts::{self, Action},
+    state::State,
+};
 
 /// Linux input code of the left mouse button.
 const BTN_LEFT: u32 = 0x110;
@@ -24,7 +27,31 @@ impl State {
             InputEvent::Keyboard { event } => {
                 let Some(keyboard) = self.seat.get_keyboard() else { return };
                 let serial = SERIAL_COUNTER.next_serial();
-                keyboard.input::<(), _>(self, event.key_code(), event.state(), serial, event.time_msec(), |_, _, _| FilterResult::Forward);
+                let key_state = event.state();
+                let action = keyboard.input::<Option<Action>, _>(self, event.key_code(), key_state, serial, event.time_msec(), |state, mods, key| {
+                    let code = key.raw_code();
+                    if key_state == KeyState::Released {
+                        // The release of a shortcut key never reaches the app, which never saw the press.
+                        return match state.suppressed.iter().position(|c| *c == code) {
+                            Some(i) => {
+                                state.suppressed.swap_remove(i);
+                                FilterResult::Intercept(None)
+                            }
+                            None => FilterResult::Forward,
+                        };
+                    }
+                    let Some(sym) = key.raw_latin_sym_or_raw_current_sym() else { return FilterResult::Forward };
+                    match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
+                        Some(action) => {
+                            state.suppressed.push(code);
+                            FilterResult::Intercept(Some(action))
+                        }
+                        None => FilterResult::Forward,
+                    }
+                });
+                if let Some(action) = action.flatten() {
+                    self.run_action(action);
+                }
             }
             InputEvent::PointerMotionAbsolute { event } => {
                 let Some(output_geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
@@ -44,7 +71,7 @@ impl State {
                     let window = self.space.element_under(location).map(|(w, _)| w.clone());
                     self.focus_window(window.clone(), serial);
                     // Super + drag anywhere in a window moves it (the click never reaches the app).
-                    if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.modifiers().logo) {
+                    if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.desktop_key_held()) {
                         self.start_move(window, GrabStartData { focus: None, button: BTN_LEFT, location }, serial);
                     }
                 }

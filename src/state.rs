@@ -9,7 +9,7 @@ use smithay::{
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
     },
-    input::{Seat, SeatHandler, SeatState, pointer::Focus},
+    input::{Seat, SeatHandler, SeatState, keyboard::Keycode, pointer::Focus},
     reexports::{
         calloop::{EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, channel, generic::Generic},
         wayland_protocols::xdg::shell::server::xdg_toplevel,
@@ -19,7 +19,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_seat::WlSeat, wl_surface::WlSurface},
         },
     },
-    utils::{SERIAL_COUNTER, Serial},
+    utils::{Logical, Point, SERIAL_COUNTER, Serial},
     wayland::{
         buffer::BufferHandler,
         compositor::{CompositorClientState, CompositorHandler, CompositorState, get_parent, is_sync_subsurface, with_states},
@@ -45,6 +45,7 @@ use smithay::{
 use crate::{
     clipboard::{self, Clipboard},
     grabs::{MoveGrab, Resize, ResizeGrab, edges_from},
+    shortcuts::{self, Action, Binding},
     wm::{self, Rect},
 };
 
@@ -69,6 +70,13 @@ pub struct State {
     pub backend: Option<crate::backend::winit::Winit>,
     redraw_pending: bool,
     pub resize: Option<Resize>,
+    /// Nested in another desktop: Alt stands in for Super, which the host keeps.
+    pub nested: bool,
+    pub bindings: Vec<(Binding, Action)>,
+    /// Keys whose press was a shortcut; their release is kept from the app too, so nothing sticks.
+    pub suppressed: Vec<Keycode>,
+    /// Minimised and hidden windows with where they were.
+    pub hidden: Vec<(Window, Point<i32, Logical>)>,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -85,7 +93,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>, nested: bool) -> Result<Self, Box<dyn std::error::Error>> {
         let dh = display.handle();
 
         let mut seat_state = SeatState::new();
@@ -127,6 +135,10 @@ impl State {
             backend: None,
             redraw_pending: false,
             resize: None,
+            nested,
+            bindings: shortcuts::defaults(),
+            suppressed: Vec::new(),
+            hidden: Vec::new(),
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
             shm_state: ShmState::new::<Self>(&dh, vec![]),
@@ -157,6 +169,12 @@ impl State {
     /// Where windows may go. ponytail: the whole output until the menu bar and dock exist (M2, M3).
     pub fn work_area(&self) -> Option<Rect> {
         self.space.outputs().next().and_then(|o| self.space.output_geometry(o))
+    }
+
+    /// Super, or Alt when nested (the host desktop keeps Super).
+    pub fn desktop_key_held(&self) -> bool {
+        let mods = self.modifiers();
+        if self.nested { mods.alt } else { mods.logo }
     }
 
     pub fn modifiers(&self) -> smithay::input::keyboard::ModifiersState {
@@ -330,6 +348,7 @@ impl XdgShellHandler for State {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.schedule_redraw();
+        self.hidden.retain(|(w, _)| w.toplevel() != Some(&surface));
         let next = self.space.elements().rev().find(|w| w.toplevel() != Some(&surface)).cloned();
         self.focus_window(next, SERIAL_COUNTER.next_serial());
     }
