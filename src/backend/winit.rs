@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, Gallery, Shaders, Wallpaper},
+    render::{self, Gallery, MenuBar, Shaders, Wallpaper},
     state::State,
 };
 
@@ -36,6 +36,7 @@ pub struct Winit {
     pub clock: FrameClock,
     /// The `--test-scene` material gallery (E1.4), drawn over the wallpaper when set.
     pub gallery: Option<Gallery>,
+    menu_bar: MenuBar,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -80,7 +81,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default() });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -104,15 +105,24 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery }) = self.backend.as_mut() else { return };
+        let content = self.menu_bar();
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar }) = self.backend.as_mut() else { return };
         let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
             Ok((renderer, mut framebuffer)) => {
                 // Wallpaper, layers, windows with rounded corners and shadows (E1.4, E1.5): see render::scene.
-                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, &self.config.appearance);
+                let scale = output.current_scale().fractional_scale();
+                let appearance = &self.config.appearance;
+                let bar = match (&content, self.space.output_geometry(output)) {
+                    (Some(content), Some(geo)) => {
+                        let dark = render::is_dark(appearance);
+                        menu_bar.elements(renderer, shaders, &mut self.text, &mut self.symbols, content, geo.size.w, dark, appearance.glass_opacity, scale)
+                    }
+                    _ => Vec::new(),
+                };
+                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar);
                 if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
-                    let scale = output.current_scale().fractional_scale();
                     let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
                     // Above the wallpaper (the last element), below every window.
                     elements.splice(elements.len().saturating_sub(1)..elements.len().saturating_sub(1), cards);

@@ -22,7 +22,6 @@ impl Default for Format {
 }
 
 /// `Sat 17 Oct  9:41 AM`, `21:41:07`, …: two spaces between the date and the time, like macOS.
-#[cfg_attr(not(test), expect(dead_code, reason = "the menu bar (E2.2) waits for the M2 mockup approval"))]
 pub fn text<Tz: TimeZone>(now: &DateTime<Tz>, format: Format) -> String
 where
     Tz::Offset: std::fmt::Display,
@@ -48,7 +47,6 @@ where
 
 /// Time until the text next changes: the next minute boundary (second, with seconds shown). Re-arm a monotonic timer
 /// with this after every tick, so the clock stays aligned even when the wall clock jumps (NTP, suspend, zone change).
-#[cfg_attr(not(test), expect(dead_code, reason = "the menu bar (E2.2) waits for the M2 mockup approval"))]
 pub fn until_next_tick<Tz: TimeZone>(now: &DateTime<Tz>, seconds: bool) -> Duration {
     const SECOND: u64 = 1_000_000_000;
     // A leap second shows up as nanosecond() >= 1e9: treat it as the end of the second.

@@ -3,6 +3,7 @@
 //! damages nothing and an idle desktop draws nothing.
 
 mod gallery;
+pub mod menubar;
 mod titlebar;
 mod wallpaper;
 
@@ -30,6 +31,7 @@ use smithay::{
     wayland::shell::wlr_layer::Layer,
 };
 pub use gallery::Gallery;
+pub use menubar::MenuBar;
 pub use wallpaper::Wallpaper;
 
 use crate::{
@@ -405,8 +407,9 @@ fn window_elements(
     out
 }
 
-/// Every element of one output frame, front to back: top/overlay layers, windows (topmost first) with their shadows,
-/// background/bottom layers, wallpaper.
+#[allow(clippy::too_many_arguments)]
+/// Every element of one output frame, front to back: top/overlay layers, `bar` (the menu bar), windows (topmost first)
+/// with their shadows, background/bottom layers, wallpaper.
 pub fn scene(
     renderer: &mut GlesRenderer,
     shaders: &Shaders,
@@ -415,6 +418,7 @@ pub fn scene(
     space: &Space<Window>,
     output: &Output,
     appearance: &Appearance,
+    bar: Vec<SceneElement>,
 ) -> Vec<SceneElement> {
     let Some(output_geo) = space.output_geometry(output) else { return Vec::new() };
     let scale = output.current_scale().fractional_scale();
@@ -431,6 +435,7 @@ pub fn scene(
     };
 
     let mut out = layer_elements(renderer, upper);
+    out.extend(bar);
     for window in space.elements().rev() {
         out.extend(window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark));
     }

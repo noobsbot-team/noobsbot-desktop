@@ -132,6 +132,7 @@ pub struct State {
     pub sound: Option<crate::services::sound::Sound>,
     /// `None`: nothing playing or paused.
     pub media: Option<crate::services::media::Media>,
+    pub symbols: crate::symbols::Symbols,
 }
 
 impl State {
@@ -190,7 +191,7 @@ impl State {
         }
         handle.insert_source(services_rx, |event, _, state| {
             if let channel::Event::Msg(update) = event {
-                // Nothing draws these yet; the menu bar (E2.2) will damage just its item.
+                // Only the changed menu-bar item gets a new buffer, so the redraw damages just that item.
                 match update {
                     crate::services::Update::Battery(battery) => state.battery = battery,
                     crate::services::Update::Network(network) => state.network = network,
@@ -200,7 +201,14 @@ impl State {
                     crate::services::Update::Sound(sound) => state.sound = sound,
                     crate::services::Update::Media(media) => state.media = media,
                 }
+                state.schedule_redraw();
             }
+        })?;
+        // The menu-bar clock (E2.4): one redraw per minute (second, with seconds on), on the boundary.
+        let tick = |state: &Self| crate::clock::until_next_tick(&chrono::Local::now(), state.config.clock.format.seconds);
+        handle.insert_source(Timer::from_duration(crate::clock::until_next_tick(&chrono::Local::now(), config.clock.format.seconds)), move |_, _, state| {
+            state.schedule_redraw();
+            TimeoutAction::ToDuration(tick(state))
         })?;
 
         Ok(Self {
@@ -246,6 +254,7 @@ impl State {
             brightness: None,
             sound: None,
             media: None,
+            symbols: Default::default(),
             display_handle: dh,
         })
     }
@@ -273,11 +282,37 @@ impl State {
         }
     }
 
-    /// Where windows may go: the first output minus what layer surfaces (bars, docks) reserve.
+    /// What the menu bar shows; `None` while a fullscreen window has focus (it covers the bar, as on macOS).
+    pub fn menu_bar(&self) -> Option<crate::render::menubar::Content> {
+        use crate::render::menubar::{self, Item};
+        let focused = self.focused_window();
+        let toplevel = focused.as_ref().and_then(|w| w.toplevel());
+        if toplevel.is_some_and(|t| t.current_state().states.contains(xdg_toplevel::State::Fullscreen)) {
+            return None;
+        }
+        let app = toplevel.and_then(|t| {
+            let id = with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.app_id.clone()));
+            // noobsbot and others set no app id: fall back to the process name.
+            id.filter(|id| !id.is_empty()).or_else(|| {
+                let pid = t.wl_surface().client()?.get_credentials(&self.display_handle).ok()?.pid;
+                Some(std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim().to_owned())
+            })
+        });
+        let simple = |symbol| Item { symbol, text: None };
+        let status = [
+            self.network.as_ref().map(|n| simple(menubar::wifi(n))),
+            self.bluetooth.as_ref().map(|b| simple(menubar::bluetooth(b))),
+            self.battery.as_ref().map(menubar::battery),
+            self.sound.as_ref().map(|s| simple(menubar::volume(s))),
+        ];
+        Some(menubar::Content { app, status: status.into_iter().flatten().collect(), clock: crate::clock::text(&chrono::Local::now(), self.config.clock.format) })
+    }
+
+    /// Where windows may go: the first output minus the menu bar and what layer surfaces (bars, docks) reserve.
     /// ponytail: a zoomed window keeps its size when a bar appears later; refitting comes with output changes (M6).
     pub fn work_area(&self) -> Option<Rect> {
         let output = self.space.outputs().next()?;
-        let mut zone = layer_map_for_output(output).non_exclusive_zone();
+        let mut zone = crate::render::menubar::below(layer_map_for_output(output).non_exclusive_zone());
         zone.loc += self.space.output_geometry(output)?.loc;
         Some(zone)
     }
