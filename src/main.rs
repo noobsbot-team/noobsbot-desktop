@@ -12,6 +12,7 @@ mod render;
 mod rules;
 mod shortcuts;
 mod state;
+mod sync;
 mod text;
 mod wm;
 

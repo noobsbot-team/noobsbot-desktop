@@ -43,6 +43,9 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     // linux-dmabuf v4 tells apps which GPU and formats we import (E1.1); without a render node, v3 still works.
     let formats = backend.renderer().dmabuf_formats();
     let node = EGLDevice::device_for_display(backend.renderer().egl_context().display()).and_then(|device| device.try_get_render_node());
+    if let Ok(Some(node)) = &node {
+        crate::sync::init(state, *node);
+    }
     match node.map(|node| node.map(|node| DmabufFeedbackBuilder::new(node.dev_id(), formats.clone()).build())) {
         Ok(Some(Ok(feedback))) => {
             state.dmabuf_state.create_global_with_default_feedback::<State>(&state.display_handle, &feedback);

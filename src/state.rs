@@ -103,6 +103,8 @@ pub struct State {
     pub xdg_shell_state: XdgShellState,
     pub shm_state: ShmState,
     pub dmabuf_state: DmabufState,
+    /// linux-drm-syncobj-v1, when the GPU supports it (see sync.rs).
+    pub syncobj: Option<smithay::wayland::drm_syncobj::DrmSyncobjState>,
     pub _output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
@@ -190,6 +192,7 @@ impl State {
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
             shm_state: ShmState::new::<Self>(&dh, vec![]),
             dmabuf_state: DmabufState::new(),
+            syncobj: None,
             _output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(&dh),
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(&dh),
@@ -418,9 +421,13 @@ impl CompositorHandler for State {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        // Unreachable by any client: the socket source in State::new is the only place clients are inserted, always
-        // with a ClientState, so this can only fire on a bug of ours.
+        // Unreachable by any client: both insert_client calls (the socket here, security contexts in protocols.rs)
+        // pass a ClientState, so this can only fire on a bug of ours.
         &client.get_data::<ClientState>().expect("client without ClientState").compositor_state
+    }
+
+    fn new_surface(&mut self, surface: &WlSurface) {
+        crate::sync::add_hook(surface);
     }
 
     fn commit(&mut self, surface: &WlSurface) {
