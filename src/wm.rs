@@ -13,6 +13,8 @@ pub const SNAP_DISTANCE: i32 = 8;
 pub const MIN_VISIBLE: i32 = 40;
 /// Floor for apps that give no minimum size, so a window can never vanish.
 pub const MIN_SIZE: (i32, i32) = (200, 120);
+/// Two clicks closer than this are a double-click.
+pub const DOUBLE_CLICK: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// New windows open centred, slightly above the middle (golden ratio).
 pub fn place(area: Rect, size: Size<i32, Logical>) -> Point<i32, Logical> {
@@ -163,6 +165,24 @@ pub fn zone_edges(rect: Rect, p: Point<f64, Logical>) -> Option<Edges> {
     Some(Edges { left, right, top, bottom })
 }
 
+/// Double-clicking an edge zone: the window grows to the work-area edge in that direction only (never shrinks).
+pub fn grow_to(rect: Rect, area: Rect, edges: Edges) -> Rect {
+    let (mut l, mut t, mut r, mut b) = (rect.loc.x, rect.loc.y, rect.loc.x + rect.size.w, rect.loc.y + rect.size.h);
+    if edges.left {
+        l = l.min(area.loc.x);
+    }
+    if edges.right {
+        r = r.max(area.loc.x + area.size.w);
+    }
+    if edges.top {
+        t = t.min(area.loc.y);
+    }
+    if edges.bottom {
+        b = b.max(area.loc.y + area.size.h);
+    }
+    Rectangle::new((l, t).into(), (r - l, b - t).into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,5 +273,15 @@ mod tests {
         assert_eq!(at(104.0, 95.0), e(true, false, true, false), "16 px corner reaches along the top");
         assert_eq!(at(110.0, 95.0), e(false, false, true, false), "past the corner: top only");
         assert_eq!(at(505.0, 395.0), e(false, true, false, true), "bottom-right corner");
+    }
+
+    #[test]
+    fn double_click_grows_one_direction_only() {
+        let area = rect(0, 0, 1000, 800);
+        let left = Edges { left: true, ..Default::default() };
+        assert_eq!(grow_to(rect(100, 100, 400, 300), area, left), rect(0, 100, 500, 300));
+        let br = Edges { right: true, bottom: true, ..Default::default() };
+        assert_eq!(grow_to(rect(100, 100, 400, 300), area, br), rect(100, 100, 900, 700));
+        assert_eq!(grow_to(rect(-50, 100, 400, 300), area, left), rect(-50, 100, 400, 300), "never shrinks");
     }
 }

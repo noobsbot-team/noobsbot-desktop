@@ -190,6 +190,21 @@ impl State {
         pointer.set_grab(self, ResizeGrab { start_data }, serial, smithay::input::pointer::Focus::Clear);
     }
 
+    /// A press in a resize zone: a double-click on the same edge grows the window to the work area that way only,
+    /// anything else starts a resize.
+    pub fn zone_press(&mut self, window: Window, edges: Edges, start_data: GrabStartData<State>, serial: smithay::utils::Serial) {
+        let double = self.zones.last_press.take().is_some_and(|(at, w, e)| at.elapsed() < wm::DOUBLE_CLICK && w == window && e == edges);
+        if !double {
+            self.zones.last_press = Some((std::time::Instant::now(), window.clone(), edges));
+            return self.start_resize(window, edges, start_data, serial);
+        }
+        let (Some(start), Some(area)) = (self.space.element_geometry(&window), self.work_area()) else { return };
+        let desired = wm::grow_to(start, area, edges).size;
+        // A released resize: one configure, then the commit pins the window to the opposite edge.
+        self.resize = Some(Resize { window, edges, start, symmetric: false, desired, sent: None, waiting: false, released: true });
+        self.flush_resize();
+    }
+
     /// Sends the app the size the pointer asks for, unless a configure is still unanswered.
     pub fn flush_resize(&mut self) {
         let Some(resize) = self.resize.as_mut() else { return };

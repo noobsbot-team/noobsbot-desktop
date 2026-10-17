@@ -34,6 +34,8 @@ pub fn xkb(keyboard: &Keyboard) -> XkbConfig<'_> {
 pub struct Zones {
     /// The zone the pointer is in, whose cursor is showing.
     pub hover: Option<Edges>,
+    /// The last press in a zone, to spot a double-click.
+    pub last_press: Option<(std::time::Instant, Window, Edges)>,
 }
 
 /// ↔ ↕ ⤡ ⤢ for a zone.
@@ -109,7 +111,7 @@ impl State {
                     if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {
                         self.start_move(window, start_data, serial);
                     } else if let Some((window, edges)) = zone.filter(|_| event.button_code() == BTN_LEFT) {
-                        self.start_resize(window, edges, start_data, serial);
+                        self.zone_press(window, edges, start_data, serial);
                     }
                 }
                 pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
