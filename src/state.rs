@@ -8,6 +8,7 @@ use smithay::{
     delegate_xdg_activation, delegate_xdg_dialog, delegate_xdg_foreign, delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
+        layer_map_for_output,
     },
     input::{Seat, SeatHandler, SeatState, keyboard::Keycode, pointer::Focus},
     reexports::{
@@ -25,6 +26,7 @@ use smithay::{
         compositor::{CompositorClientState, CompositorHandler, CompositorState, get_parent, is_sync_subsurface, with_states},
         dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         output::{OutputHandler, OutputManagerState},
+        security_context::SecurityContext,
         selection::{
             SelectionHandler, SelectionSource, SelectionTarget,
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler, set_data_device_focus},
@@ -46,6 +48,7 @@ use crate::{
     clipboard::{self, Clipboard},
     config::Config,
     grabs::{MoveGrab, Resize, edges_from},
+    protocols::Protocols,
     rules::{self, Actions, CompiledRule},
     shortcuts::{self, Action, Binding},
     wm::{self, Rect},
@@ -104,6 +107,7 @@ pub struct State {
     pub foreign_state: XdgForeignState,
     pub _viewporter_state: ViewporterState,
     pub _dialog_state: XdgDialogState,
+    pub protocols: Protocols,
 }
 
 impl State {
@@ -173,6 +177,7 @@ impl State {
             foreign_state: XdgForeignState::new::<Self>(&dh),
             _viewporter_state: ViewporterState::new::<Self>(&dh),
             _dialog_state: XdgDialogState::new::<Self>(&dh),
+            protocols: Protocols::new(&dh),
             display_handle: dh,
         })
     }
@@ -188,9 +193,13 @@ impl State {
         }
     }
 
-    /// Where windows may go. ponytail: the whole output until the menu bar and dock exist (M2, M3).
+    /// Where windows may go: the first output minus what layer surfaces (bars, docks) reserve.
+    /// ponytail: a zoomed window keeps its size when a bar appears later; refitting comes with output changes (M6).
     pub fn work_area(&self) -> Option<Rect> {
-        self.space.outputs().next().and_then(|o| self.space.output_geometry(o))
+        let output = self.space.outputs().next()?;
+        let mut zone = layer_map_for_output(output).non_exclusive_zone();
+        zone.loc += self.space.output_geometry(output)?.loc;
+        Some(zone)
     }
 
     /// Super, or Alt when nested (the host desktop keeps Super).
@@ -275,17 +284,19 @@ impl State {
     /// Raises and activates `window`, giving it the keyboard; `None` clears focus.
     pub fn focus_window(&mut self, window: Option<Window>, serial: Serial) {
         let Some(keyboard) = self.seat.get_keyboard() else { return };
+        // A layer surface with exclusive keyboard (a launcher, a lock screen) keeps it while it is up.
+        let exclusive = self.exclusive_layer().map(|l| l.wl_surface().clone());
         match window {
             Some(window) => {
                 self.space.raise_element(&window, true);
                 self.restack();
-                keyboard.set_focus(self, window.toplevel().map(|t| t.wl_surface().clone()), serial);
+                keyboard.set_focus(self, exclusive.or_else(|| window.toplevel().map(|t| t.wl_surface().clone())), serial);
             }
             None => {
                 self.space.elements().for_each(|w| {
                     w.set_activated(false);
                 });
-                keyboard.set_focus(self, None, serial);
+                keyboard.set_focus(self, exclusive, serial);
             }
         }
         // A new window gets its first configure on its first commit (with window rules applied), not here.
@@ -356,6 +367,8 @@ impl State {
 #[derive(Default)]
 pub struct ClientState {
     pub compositor_state: CompositorClientState,
+    /// Set for clients of a sandbox (security-context-v1); they get no privileged globals.
+    pub security_context: Option<SecurityContext>,
 }
 
 impl ClientData for ClientState {
@@ -410,6 +423,7 @@ impl CompositorHandler for State {
             self.resize_commit(&root);
         }
 
+        self.layer_commit(surface);
         self.popups.commit(surface);
         self.schedule_redraw();
         if let Some(PopupKind::Xdg(popup)) = self.popups.find_popup(surface)

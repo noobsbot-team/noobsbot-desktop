@@ -7,7 +7,7 @@ use smithay::{
     desktop::{Window, WindowSurfaceType},
     input::{
         keyboard::{FilterResult, XkbConfig},
-        pointer::{AxisFrame, ButtonEvent, CursorIcon, CursorImageStatus, GrabStartData, MotionEvent},
+        pointer::{AxisFrame, ButtonEvent, CursorIcon, GrabStartData},
     },
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
@@ -39,7 +39,7 @@ pub struct Zones {
 }
 
 /// ↔ ↕ ⤡ ⤢ for a zone.
-fn resize_icon(edges: Edges) -> CursorIcon {
+pub fn resize_icon(edges: Edges) -> CursorIcon {
     match (edges.left || edges.right, edges.top || edges.bottom) {
         (true, false) => CursorIcon::EwResize,
         (false, _) => CursorIcon::NsResize,
@@ -55,6 +55,7 @@ impl State {
                 let Some(keyboard) = self.seat.get_keyboard() else { return };
                 let serial = SERIAL_COUNTER.next_serial();
                 let key_state = event.state();
+                let inhibited = self.shortcuts_inhibited();
                 let action = keyboard.input::<Option<Action>, _>(self, event.key_code(), key_state, serial, event.time_msec(), |state, mods, key| {
                     let code = key.raw_code();
                     if key_state == KeyState::Released {
@@ -67,7 +68,8 @@ impl State {
                             None => FilterResult::Forward,
                         };
                     }
-                    let Some(sym) = key.raw_latin_sym_or_raw_current_sym() else { return FilterResult::Forward };
+                    // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
+                    let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
                     match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
                         Some(action) => {
                             state.suppressed.push(code);
@@ -82,19 +84,7 @@ impl State {
             }
             InputEvent::PointerMotionAbsolute { event } => {
                 let Some(output_geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
-                let Some(pointer) = self.seat.get_pointer() else { return };
-                let location = event.position_transformed(output_geo.size) + output_geo.loc.to_f64();
-                // A resize zone takes the pointer from whatever app is underneath it.
-                let zone = if pointer.is_grabbed() { None } else { self.zone_under(location) };
-                let under = if zone.is_some() { None } else { self.surface_under(location) };
-                // Our cursor in a zone; entering an app resets to the default, then the app sets its own.
-                let hover = zone.map(|(_, edges)| edges);
-                if !pointer.is_grabbed() && (hover != self.zones.hover || pointer.current_focus() != under.as_ref().map(|(s, _)| s.clone())) {
-                    self.zones.hover = hover;
-                    self.set_cursor(hover.map_or_else(CursorImageStatus::default_named, |e| CursorImageStatus::Named(resize_icon(e))));
-                }
-                pointer.motion(self, under, &MotionEvent { location, serial: SERIAL_COUNTER.next_serial(), time: event.time_msec() });
-                pointer.frame(self);
+                self.pointer_motion(event.position_transformed(output_geo.size) + output_geo.loc.to_f64(), event.time());
             }
             InputEvent::PointerButton { event } => {
                 let Some(pointer) = self.seat.get_pointer() else { return };
@@ -105,13 +95,23 @@ impl State {
                     let location = pointer.current_location();
                     let zone = self.zone_under(location);
                     let window = zone.as_ref().map(|(w, _)| w.clone()).or_else(|| self.space.element_under(location).map(|(w, _)| w.clone()));
-                    self.focus_window(window.clone(), serial);
-                    let start_data = GrabStartData { focus: None, button: BTN_LEFT, location };
-                    // Super + drag anywhere in a window moves it (the click never reaches the app).
-                    if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {
-                        self.start_move(window, start_data, serial);
-                    } else if let Some((window, edges)) = zone.filter(|_| event.button_code() == BTN_LEFT) {
-                        self.zone_press(window, edges, start_data, serial);
+                    // Bars and launchers above windows (or the wallpaper below, where no window is) take the click instead.
+                    let layer = self.layer_under(location, true).or_else(|| window.is_none().then(|| self.layer_under(location, false)).flatten());
+                    if let Some((layer, ..)) = layer {
+                        if layer.can_receive_keyboard_focus()
+                            && let Some(keyboard) = self.seat.get_keyboard()
+                        {
+                            keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
+                        }
+                    } else {
+                        self.focus_window(window.clone(), serial);
+                        let start_data = GrabStartData { focus: None, button: BTN_LEFT, location };
+                        // Super + drag anywhere in a window moves it (the click never reaches the app).
+                        if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {
+                            self.start_move(window, start_data, serial);
+                        } else if let Some((window, edges)) = zone.filter(|_| event.button_code() == BTN_LEFT) {
+                            self.zone_press(window, edges, start_data, serial);
+                        }
                     }
                 }
                 pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
@@ -141,8 +141,11 @@ impl State {
     }
 
     /// The resize zone at `location`, if any: the topmost window whose zone or content is there decides, so a zone
-    /// never reaches into a window above. Zoomed and fullscreen windows have none.
+    /// never reaches into a window above (or under a bar). Zoomed and fullscreen windows have none.
     pub fn zone_under(&self, location: Point<f64, Logical>) -> Option<(Window, Edges)> {
+        if self.layer_under(location, true).is_some() {
+            return None;
+        }
         for window in self.space.elements().rev() {
             let Some(geo) = self.space.element_geometry(window) else { continue };
             let local = location - (geo.loc - window.geometry().loc).to_f64();
@@ -163,10 +166,14 @@ impl State {
         None
     }
 
+    /// Top/overlay layer surfaces, then windows, then bottom/background layer surfaces.
     pub fn surface_under(&self, location: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.space.element_under(location).and_then(|(window, loc)| {
-            window.surface_under(location - loc.to_f64(), WindowSurfaceType::ALL).map(|(surface, offset)| (surface, (offset + loc).to_f64()))
-        })
+        let window = || {
+            self.space.element_under(location).and_then(|(window, loc)| {
+                window.surface_under(location - loc.to_f64(), WindowSurfaceType::ALL).map(|(surface, offset)| (surface, (offset + loc).to_f64()))
+            })
+        };
+        self.layer_under(location, true).map(|(_, s, loc)| (s, loc)).or_else(window).or_else(|| self.layer_under(location, false).map(|(_, s, loc)| (s, loc)))
     }
 }
 

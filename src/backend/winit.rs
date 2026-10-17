@@ -7,10 +7,13 @@ use smithay::{
         renderer::{ImportDma, damage::OutputDamageTracker, element::surface::WaylandSurfaceRenderElement, gles::GlesRenderer},
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
-    input::pointer::{CursorIcon, CursorImageStatus},
+    desktop::{layer_map_for_output, utils::OutputPresentationFeedback},
     output::{Mode, Output, PhysicalProperties, Subpixel},
-    reexports::calloop::EventLoop,
+    reexports::{
+        calloop::EventLoop, wayland_protocols::wp::presentation_time::server::wp_presentation_feedback, wayland_server::protocol::wl_surface::WlSurface,
+    },
     utils::Transform,
+    wayland::{compositor::SurfaceData, presentation::Refresh},
 };
 
 use crate::state::State;
@@ -47,6 +50,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
                 let mode = Mode { size, refresh: REFRESH_MHZ };
                 winit.output.change_current_state(Some(mode), None, None, None);
                 winit.output.set_preferred(mode);
+                layer_map_for_output(&winit.output).arrange();
             }
             state.schedule_redraw();
         }
@@ -60,20 +64,6 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 }
 
 impl State {
-    /// Shows `image` as the host window's cursor.
-    pub fn set_cursor(&self, image: CursorImageStatus) {
-        let Some(winit) = &self.backend else { return };
-        let window = winit.backend.window();
-        window.set_cursor_visible(image != CursorImageStatus::Hidden);
-        match image {
-            CursorImageStatus::Named(icon) => window.set_cursor(icon),
-            // ponytail: an app's own cursor surface shows as the host default; apps get named cursors once cursor-shape
-            // is enabled, drawing surfaces needs a cursor plane (udev, M6).
-            CursorImageStatus::Surface(_) => window.set_cursor(CursorIcon::Default),
-            CursorImageStatus::Hidden => {}
-        }
-    }
-
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
         let Some(Winit { backend, output, damage_tracker }) = self.backend.as_mut() else { return };
@@ -98,17 +88,34 @@ impl State {
         };
         // Always swap, even without damage: the swap waits for vblank, which keeps an app that commits
         // in a loop at the refresh rate. ponytail: the blocking wait is fine nested; frame.rs (E1.10) replaces it.
-        match damage {
-            Ok(damage) => {
-                if let Err(err) = backend.submit(damage.as_deref()) {
-                    tracing::warn!("submit: {err}");
-                }
+        let shown = match damage {
+            Ok(damage) => backend.submit(damage.as_deref()).inspect_err(|err| tracing::warn!("submit: {err}")).is_ok(),
+            Err(err) => {
+                tracing::warn!("render: {err}");
+                false
             }
-            Err(err) => tracing::warn!("render: {err}"),
-        }
+        };
 
+        // Everything on this output was shown. ponytail: stamped after the swap returns, without a vblank counter;
+        // the real flip time and sequence come from DRM page-flip events (M6). Feedback dropped unsent is "discarded".
+        let mut feedback = OutputPresentationFeedback::new(output);
+        let on_output = |_: &WlSurface, _: &SurfaceData| Some(output.clone());
         let elapsed = self.start_time.elapsed();
-        self.space.elements().for_each(|window| window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone())));
+        for window in self.space.elements() {
+            window.send_frame(output, elapsed, Some(Duration::ZERO), on_output);
+            window.take_presentation_feedback(&mut feedback, on_output, |_, _| wp_presentation_feedback::Kind::empty());
+        }
+        let mut layers = layer_map_for_output(output);
+        for layer in layers.layers() {
+            layer.send_frame(output, elapsed, Some(Duration::ZERO), on_output);
+            layer.take_presentation_feedback(&mut feedback, on_output, |_, _| wp_presentation_feedback::Kind::empty());
+        }
+        layers.cleanup();
+        drop(layers);
+        if shown {
+            let refresh = Refresh::fixed(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
+            feedback.presented(self.protocols.clock.now(), refresh, 0, wp_presentation_feedback::Kind::empty());
+        }
         self.space.refresh();
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();

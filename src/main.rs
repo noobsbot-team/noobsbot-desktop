@@ -5,6 +5,7 @@ mod clipboard;
 mod config;
 mod grabs;
 mod input;
+mod protocols;
 mod rules;
 mod shortcuts;
 mod state;
