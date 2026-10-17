@@ -7,13 +7,16 @@ use smithay::{
     desktop::WindowSurfaceType,
     input::{
         keyboard::FilterResult,
-        pointer::{AxisFrame, ButtonEvent, MotionEvent},
+        pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent},
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 
 use crate::state::State;
+
+/// Linux input code of the left mouse button.
+const BTN_LEFT: u32 = 0x110;
 
 impl State {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
@@ -37,8 +40,13 @@ impl State {
                 let state = event.state();
                 // Click to focus: the window under the pointer comes to the front.
                 if state == ButtonState::Pressed && !pointer.is_grabbed() {
-                    let window = self.space.element_under(pointer.current_location()).map(|(w, _)| w.clone());
-                    self.focus_window(window, serial);
+                    let location = pointer.current_location();
+                    let window = self.space.element_under(location).map(|(w, _)| w.clone());
+                    self.focus_window(window.clone(), serial);
+                    // Super + drag anywhere in a window moves it (the click never reaches the app).
+                    if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.modifiers().logo) {
+                        self.start_move(window, GrabStartData { focus: None, button: BTN_LEFT, location }, serial);
+                    }
                 }
                 pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
                 pointer.frame(self);
