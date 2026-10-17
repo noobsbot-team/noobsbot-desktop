@@ -232,9 +232,10 @@ impl Shadow {
         Some(Shadow { offset_y, blur, opacity: if dark { dark_opacity } else { light } })
     }
 
-    /// How far the shadow (and the hairline) reaches past the rect on any side.
+    /// How far the shadow (and the hairline) reaches past the rect on any side: 3σ (1.5 × blur, like CSS), where
+    /// the falloff is under 1% of the opacity. At 2σ it is still ~3%, a visible edge on light wallpapers.
     pub fn margin(&self) -> i32 {
-        (self.blur + self.offset_y).ceil() as i32 + 1
+        (1.5 * self.blur + self.offset_y).ceil() as i32 + 1
     }
 
     /// The element area for a shadow under `rect`.
@@ -446,9 +447,9 @@ mod tests {
         assert_eq!(Shadow::of(4, false), Some(Shadow { offset_y: 8.0, blur: 30.0, opacity: 0.22 }));
         assert_eq!(Shadow::of(5, true), Some(Shadow { offset_y: 22.0, blur: 60.0, opacity: 0.60 }));
         assert_eq!(Shadow::of(9, false), Shadow::of(5, false));
-        // Elevation 5 reaches 22 + 60 px below the window, plus the hairline.
+        // Elevation 5 reaches 22 + 1.5 × 60 px below the window, plus the hairline.
         let area = Shadow::of(5, false).unwrap().area(Rectangle::new((100, 100).into(), (400, 300).into()));
-        assert_eq!(area, Rectangle::new((17, 17).into(), (566, 466).into()));
+        assert_eq!(area, Rectangle::new((-13, -13).into(), (626, 526).into()));
     }
 
     #[test]
