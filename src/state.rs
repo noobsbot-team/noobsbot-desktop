@@ -403,6 +403,11 @@ impl CompositorHandler for State {
                 states.data_map.get::<XdgToplevelSurfaceData>().is_some_and(|data| data.lock().is_ok_and(|d| d.initial_configure_sent))
             });
             if !sent {
+                // Apps that size themselves should fit the work area (xdg_toplevel bounds).
+                if let (Some(window), Some(area)) = (self.window_for(surface).cloned(), self.work_area()) {
+                    let bounds = self.content_size(&window, area.size);
+                    toplevel.with_pending_state(|s| s.bounds = Some(bounds));
+                }
                 self.apply_rules(&toplevel);
                 toplevel.send_configure();
             }
@@ -419,6 +424,16 @@ impl CompositorHandler for State {
                 if size.w > 0 && window.user_data().get::<Placed>().is_none() {
                     window.user_data().insert_if_missing(|| Placed);
                     if let Some(area) = self.work_area() {
+                        // A window bigger than the work area (the app ignored the bounds) is shrunk to fit.
+                        let fitted = Size::from((size.w.min(area.size.w), size.h.min(area.size.h)));
+                        if fitted != size
+                            && let Some(toplevel) = window.toplevel()
+                        {
+                            let content = self.content_size(&window, fitted);
+                            toplevel.with_pending_state(|s| s.size = Some(content));
+                            toplevel.send_pending_configure();
+                        }
+                        let size = fitted;
                         let position = ruled(&window).and_then(|a| a.position);
                         let loc = position.map_or_else(|| wm::place(area, size), |[x, y]| area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))));
                         tracing::debug!(?size, ?loc, ?position, "placed");
