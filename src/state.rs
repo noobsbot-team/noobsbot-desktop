@@ -207,7 +207,9 @@ impl State {
     /// Moves a window so its visible part (without client-side shadows) starts at `loc`;
     /// a Space location is already the visible corner.
     pub fn set_visible_loc(&mut self, window: &Window, loc: smithay::utils::Point<i32, smithay::utils::Logical>) {
+        // map_element also raises the window, so float_above windows go back on top.
         self.space.map_element(window.clone(), loc, false);
+        self.restack();
         self.schedule_redraw();
     }
 
@@ -275,8 +277,9 @@ impl State {
                 keyboard.set_focus(self, None, serial);
             }
         }
+        // A new window gets its first configure on its first commit (with window rules applied), not here.
         self.space.elements().for_each(|w| {
-            if let Some(toplevel) = w.toplevel() {
+            if let Some(toplevel) = w.toplevel().filter(|t| t.is_initial_configure_sent()) {
                 toplevel.send_pending_configure();
             }
         });
@@ -287,7 +290,8 @@ impl State {
     /// ponytail: space, layer, decorations and opacity wait for Spaces (M4), layers, server-side bars (E1.3) and alpha.
     fn apply_rules(&mut self, surface: &ToplevelSurface) {
         let actions = self.resolve_rules(surface);
-        let (Some(window), Some(area)) = (self.window_for(surface.wl_surface()).cloned(), self.work_area()) else { return };
+        let (window, area) = (self.window_for(surface.wl_surface()).cloned(), self.work_area());
+        let (Some(window), Some(area)) = (window, area) else { return };
         if let Some([w, h]) = actions.size {
             surface.with_pending_state(|s| s.size = Some((w.to_px(area.size.w), h.to_px(area.size.h)).into()));
         }
