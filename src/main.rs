@@ -2,13 +2,19 @@
 
 mod backend;
 mod clipboard;
+mod config;
 mod grabs;
 mod input;
+#[cfg_attr(not(test), expect(dead_code, reason = "window rules are applied by E1.9, next"))]
+mod rules;
 mod shortcuts;
 mod state;
 mod wm;
 
-use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
+use smithay::reexports::{
+    calloop::{EventLoop, channel},
+    wayland_server::Display,
+};
 use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
@@ -42,7 +48,19 @@ fn main() {
 fn run(command: Vec<String>, nested: bool) -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;
-    let mut state = State::new(&mut event_loop, display, nested)?;
+    let config_path = config::path();
+    let mut state = State::new(&mut event_loop, display, nested, config::load(&config_path))?;
+
+    // Saving the settings file applies it at once (E1.8).
+    let (tx, rx) = channel::channel();
+    config::watch(&config_path, move |config| tx.send(config).is_ok());
+    event_loop.handle().insert_source(rx, |event, _, state| {
+        if let channel::Event::Msg(config) = event {
+            tracing::info!("settings reloaded");
+            state.bindings = shortcuts::from_config(&config);
+            state.config = config;
+        }
+    })?;
 
     backend::winit::init(&mut event_loop, &mut state)?;
 

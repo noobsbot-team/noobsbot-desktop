@@ -71,7 +71,7 @@ impl State {
                     let window = self.space.element_under(location).map(|(w, _)| w.clone());
                     self.focus_window(window.clone(), serial);
                     // Super + drag anywhere in a window moves it (the click never reaches the app).
-                    if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.desktop_key_held()) {
+                    if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {
                         self.start_move(window, GrabStartData { focus: None, button: BTN_LEFT, location }, serial);
                     }
                 }

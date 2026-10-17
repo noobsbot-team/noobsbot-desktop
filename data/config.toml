@@ -1,0 +1,84 @@
+# Noobsbot Desktop settings. Saving this file applies the changes instantly.
+# Every value below is the default; delete a line to go back to it.
+# A line the desktop doesn't understand is reported in the journal and skipped:
+#   journalctl --user -t noobsbot-desktop
+
+version = 1
+
+# Terminal opened by Super+Enter and the "terminal" action.
+terminal = "noobsbot"
+
+[appearance]
+# "light", "dark" or "auto" (auto follows the schedule set in Settings).
+mode = "light"
+# blue, purple, pink, red, orange, yellow, green or graphite.
+accent = "blue"
+# Multiplies the opacity of every glass surface (0.0 … 1.0).
+glass_opacity = 1.0
+
+[keyboard]
+# xkb layout(s), variant(s) and options; empty = the system's (localectl).
+# Example: layout = "us,np"  options = "grp:alt_shift_toggle,caps:escape"
+layout = ""
+variant = ""
+options = ""
+# Super acts as Cmd, like macOS: Super+C/V/X/Z/A/S/F/T/R/L/W/N/1…9 reach apps as Ctrl+…
+mac_keys = false
+
+[touchpad]
+tap_to_click = true
+natural_scroll = true
+
+[windows]
+# Hold this key and drag anywhere in a window to move it: "super" or "alt".
+move_modifier = "super"
+# Window edges stick to screen and window edges within 8 px (hold Ctrl to disable while dragging).
+magnetic_edges = true
+# Hold a window at a screen edge to snap it into a half or a quarter.
+snapping = true
+# Double-clicking a title bar: "zoom", "minimise" or "nothing".
+double_click_title = "zoom"
+
+# Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
+# Actions: terminal, quit, close, minimise, hide, cycle, or "exec <command>".
+[bindings]
+"Super+Return" = "terminal"
+"Super+B" = "exec brave"
+"Super+E" = "exec dolphin"
+"Super+Q" = "quit"
+"Super+W" = "close"
+"Super+M" = "minimise"
+"Super+H" = "hide"
+"Super+Tab" = "cycle"
+"F12" = "exec noobsbot --quake"
+
+# Window rules, applied when a window appears and again when its title changes.
+# Match on app_id (exact) and/or title (a regular expression, searched anywhere in the title).
+# Every matching rule applies in order; a later rule wins where two set the same thing.
+# Writing any [[rules]] here replaces this default list.
+#
+# Keys:
+#   space = "all" | 1, 2, …           open on that Space
+#   float_above = true                always above normal windows
+#   size = [800, "40%"]               logical px or a percentage of the screen
+#   position = [0, 0]                 top-left corner, px or percentage
+#   fullscreen = true
+#   decorations = false               no title bar
+#   layer = "overlay"                 above fullscreen apps ("normal" to undo)
+#   opacity = 0.9
+#
+# The quake terminal (F12; assumes `noobsbot --quake` titles its window "Quake"):
+#   [[rules]]
+#   app_id = "noobsbot"
+#   title = "^Quake$"
+#   space = "all"
+#   size = ["100%", "40%"]
+#   position = [0, 0]
+#   decorations = false
+#   layer = "overlay"
+
+# Brave's picture-in-picture window stays on top.
+[[rules]]
+app_id = "brave-browser"
+title = "^Picture in picture$"
+float_above = true

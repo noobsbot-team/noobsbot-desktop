@@ -44,6 +44,7 @@ use smithay::{
 
 use crate::{
     clipboard::{self, Clipboard},
+    config::Config,
     grabs::{MoveGrab, Resize, ResizeGrab, edges_from},
     shortcuts::{self, Action, Binding},
     wm::{self, Rect},
@@ -72,6 +73,8 @@ pub struct State {
     pub resize: Option<Resize>,
     /// Nested in another desktop: Alt stands in for Super, which the host keeps.
     pub nested: bool,
+    pub config: Config,
+    /// Built from `config.bindings`.
     pub bindings: Vec<(Binding, Action)>,
     /// Keys whose press was a shortcut; their release is kept from the app too, so nothing sticks.
     pub suppressed: Vec<Keycode>,
@@ -93,7 +96,7 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>, nested: bool) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(event_loop: &mut EventLoop<'static, Self>, display: Display<Self>, nested: bool, config: Config) -> Result<Self, Box<dyn std::error::Error>> {
         let dh = display.handle();
 
         let mut seat_state = SeatState::new();
@@ -136,7 +139,8 @@ impl State {
             redraw_pending: false,
             resize: None,
             nested,
-            bindings: shortcuts::defaults(),
+            bindings: shortcuts::from_config(&config),
+            config,
             suppressed: Vec::new(),
             hidden: Vec::new(),
             compositor_state: CompositorState::new::<Self>(&dh),
@@ -175,6 +179,14 @@ impl State {
     pub fn desktop_key_held(&self) -> bool {
         let mods = self.modifiers();
         if self.nested { mods.alt } else { mods.logo }
+    }
+
+    /// The `windows.move_modifier` key; "super" means the desktop key.
+    pub fn move_key_held(&self) -> bool {
+        match self.config.windows.move_modifier {
+            crate::config::Modifier::Super => self.desktop_key_held(),
+            crate::config::Modifier::Alt => self.modifiers().alt,
+        }
     }
 
     pub fn modifiers(&self) -> smithay::input::keyboard::ModifiersState {

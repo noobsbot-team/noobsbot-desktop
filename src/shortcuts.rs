@@ -8,7 +8,7 @@ use smithay::{
     utils::SERIAL_COUNTER,
 };
 
-use crate::state::State;
+use crate::{config::Config, state::State};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
@@ -25,6 +25,8 @@ pub enum Action {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
+    /// Needs the desktop key (written "Super"); F12-style bindings don't.
+    pub desktop: bool,
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
@@ -32,17 +34,15 @@ pub struct Binding {
     pub key: Keysym,
 }
 
-/// Parses "Super+Shift+Return": the desktop key first, then modifiers, then one key name (xkb names; Enter and Esc
-/// are accepted too). Returns None for anything else, so a typo in config disables one binding, nothing more.
+/// Parses "Super+Shift+Return" or "F12": modifiers, then one key name (xkb names; Enter and Esc are accepted too).
+/// Returns None for anything else, so a typo in config disables one binding, nothing more.
 pub fn parse(text: &str) -> Option<Binding> {
     let mut parts: Vec<&str> = text.split('+').map(str::trim).collect();
     let key = parts.pop()?;
-    if !parts.first().is_some_and(|p| p.eq_ignore_ascii_case("super")) {
-        return None;
-    }
-    let mut binding = Binding { ctrl: false, alt: false, shift: false, key: Keysym::NoSymbol };
-    for part in &parts[1..] {
+    let mut binding = Binding { desktop: false, ctrl: false, alt: false, shift: false, key: Keysym::NoSymbol };
+    for part in parts {
         match part.to_ascii_lowercase().as_str() {
+            "super" => binding.desktop = true,
             "ctrl" | "control" => binding.ctrl = true,
             "alt" => binding.alt = true,
             "shift" => binding.shift = true,
@@ -59,32 +59,33 @@ pub fn parse(text: &str) -> Option<Binding> {
     (binding.key != Keysym::NoSymbol).then_some(binding)
 }
 
-/// The M1 bindings (plan E1.6). ponytail: fixed until config.rs lands, which makes every binding editable.
-pub fn defaults() -> Vec<(Binding, Action)> {
-    [
-        ("Super+Return", Action::Spawn("noobsbot".into())),
-        ("Super+B", Action::Spawn("brave".into())),
-        ("Super+E", Action::Spawn("dolphin".into())),
-        ("Super+Q", Action::QuitApp),
-        ("Super+W", Action::CloseWindow),
-        ("Super+M", Action::Minimise),
-        ("Super+H", Action::Hide),
-        ("Super+Tab", Action::CycleWindows),
-    ]
-    .into_iter()
-    .filter_map(|(text, action)| Some((parse(text)?, action)))
-    .collect()
+/// The shortcut table from the config's `[bindings]`; entries that don't parse are logged and skipped.
+pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
+    let action = |text: &str| match text.split_once(' ').map_or((text, ""), |(a, rest)| (a, rest.trim())) {
+        ("terminal", "") => Some(Action::Spawn(config.terminal.clone())),
+        ("exec", command) if !command.is_empty() => Some(Action::Spawn(command.into())),
+        ("quit", "") => Some(Action::QuitApp),
+        ("close", "") => Some(Action::CloseWindow),
+        ("minimise" | "minimize", "") => Some(Action::Minimise),
+        ("hide", "") => Some(Action::Hide),
+        ("cycle", "") => Some(Action::CycleWindows),
+        _ => None,
+    };
+    let mut table = Vec::new();
+    for (combo, text) in &config.bindings {
+        match (parse(combo), action(text)) {
+            (Some(binding), Some(action)) => table.push((binding, action)),
+            _ => tracing::warn!("config: shortcut `{combo}` = `{text}` not understood, skipped"),
+        }
+    }
+    table
 }
 
-/// The action for a key pressed while the desktop key is held. `key` is the raw (unshifted) keysym; `desktop_is_alt`:
-/// nested mode, Alt is the desktop key.
+/// The action for a key. `key` is the raw (unshifted) keysym; `desktop_is_alt`: nested mode, Alt is the desktop key.
 pub fn lookup<'a>(bindings: &'a [(Binding, Action)], mods: &ModifiersState, key: Keysym, desktop_is_alt: bool) -> Option<&'a Action> {
     let desktop = if desktop_is_alt { mods.alt } else { mods.logo };
-    if !desktop {
-        return None;
-    }
-    let other_alt = !desktop_is_alt && mods.alt;
-    bindings.iter().find(|(b, _)| b.key == key && b.ctrl == mods.ctrl && b.shift == mods.shift && b.alt == other_alt).map(|(_, a)| a)
+    let alt = !desktop_is_alt && mods.alt;
+    bindings.iter().find(|(b, _)| b.key == key && b.desktop == desktop && b.ctrl == mods.ctrl && b.shift == mods.shift && b.alt == alt).map(|(_, a)| a)
 }
 
 impl State {
@@ -174,18 +175,20 @@ mod tests {
         assert_eq!(parse("Super+b").map(|b| b.key), Some(Keysym::b));
         assert_eq!(parse("Super+B").map(|b| b.key), Some(Keysym::b), "letters are case-insensitive");
         assert!(parse("Super+Alt+Esc").is_some_and(|b| b.alt && b.key == Keysym::Escape));
-        assert_eq!(parse("Ctrl+B"), None, "must start with the desktop key");
+        assert!(parse("F12").is_some_and(|b| !b.desktop && b.key == Keysym::F12));
         assert_eq!(parse("Super+Hyper+B"), None);
         assert_eq!(parse("Super+NoSuchKey"), None);
     }
 
     #[test]
     fn looks_up_with_exact_modifiers() {
-        let table = defaults();
+        let table = from_config(&Config::default());
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::b, false), Some(&Action::Spawn("brave".into())));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::b, false), None, "Shift is not part of Super+B");
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::b, false), None, "plain b goes to the app");
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::c, false), None, "Super+C passes through");
+        assert_eq!(lookup(&table, &mods(false, false, false), Keysym::F12, false), Some(&Action::Spawn("noobsbot --quake".into())));
+        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::F12, false), None, "Super+F12 is not F12");
         assert_eq!(lookup(&table, &mods(false, true, false), Keysym::b, true), Some(&Action::Spawn("brave".into())), "nested: Alt is the desktop key");
     }
 }

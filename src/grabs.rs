@@ -93,7 +93,7 @@ impl PointerGrab<State> for MoveGrab {
         let rect = Rect::new(self.start.loc + delta.to_i32_round(), self.start.size);
         let others: Vec<Rect> = data.space.elements().filter(|w| **w != self.window).filter_map(|w| data.space.element_geometry(w)).collect();
         let Some(area) = data.work_area() else { return };
-        let loc = wm::move_to(rect, area, &others, !data.modifiers().ctrl);
+        let loc = wm::move_to(rect, area, &others, data.config.windows.magnetic_edges && !data.modifiers().ctrl);
         data.set_visible_loc(&self.window, loc);
     }
 
@@ -136,7 +136,8 @@ impl PointerGrab<State> for ResizeGrab {
         let mut size = wm::resize_size(start, edges, event.location - self.start_data.location, resize_mods, min, max);
 
         // The dragged edge is magnetic too (Ctrl turns it off); not while growing from the centre.
-        if !mods.ctrl
+        if data.config.windows.magnetic_edges
+            && !mods.ctrl
             && !mods.alt
             && let Some(area) = data.work_area()
         {
