@@ -56,6 +56,14 @@ fn run(command: Vec<String>, nested: bool) -> Result<(), Box<dyn std::error::Err
     event_loop.handle().insert_source(rx, |event, _, state| {
         if let channel::Event::Msg(config) = event {
             tracing::info!("settings reloaded");
+            if config.keyboard != state.config.keyboard
+                && let Some(keyboard) = state.seat.get_keyboard()
+            {
+                let resolved = config.keyboard.resolved();
+                if let Err(err) = keyboard.set_xkb_config(state, input::xkb(&resolved)) {
+                    tracing::warn!(keyboard = ?resolved, "keyboard layout: {err}, keeping the previous one");
+                }
+            }
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             state.config = config;

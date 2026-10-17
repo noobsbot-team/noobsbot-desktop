@@ -6,7 +6,7 @@ use smithay::{
     },
     desktop::WindowSurfaceType,
     input::{
-        keyboard::FilterResult,
+        keyboard::{FilterResult, XkbConfig},
         pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent},
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
@@ -14,12 +14,19 @@ use smithay::{
 };
 
 use crate::{
+    config::Keyboard,
     shortcuts::{self, Action},
     state::State,
 };
 
 /// Linux input code of the left mouse button.
 const BTN_LEFT: u32 = 0x110;
+
+/// The xkb names for a resolved `[keyboard]` section (see `Keyboard::resolved`).
+pub fn xkb(keyboard: &Keyboard) -> XkbConfig<'_> {
+    let options = (!keyboard.options.is_empty()).then(|| keyboard.options.clone());
+    XkbConfig { layout: &keyboard.layout, variant: &keyboard.variant, options, ..Default::default() }
+}
 
 impl State {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {

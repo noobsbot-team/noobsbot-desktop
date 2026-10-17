@@ -111,7 +111,12 @@ impl State {
 
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
-        seat.add_keyboard(Default::default(), 500, 30)?;
+        let keyboard = config.keyboard.resolved();
+        if let Err(err) = seat.add_keyboard(crate::input::xkb(&keyboard), 500, 30) {
+            // A typo in the layout must not stop the desktop: fall back to xkb's default (us).
+            tracing::warn!(?keyboard, "keyboard layout: {err}");
+            seat.add_keyboard(Default::default(), 500, 30)?;
+        }
         seat.add_pointer();
 
         let socket = ListeningSocketSource::new_auto()?;

@@ -84,6 +84,42 @@ pub struct Keyboard {
     pub mac_keys: bool,
 }
 
+/// Where `localectl` keeps the system layout; the X11 file is the one `set-x11-keymap` writes.
+const SYSTEM_KEYBOARD_FILES: [&str; 2] = ["/etc/X11/xorg.conf.d/00-keyboard.conf", "/etc/vconsole.conf"];
+
+impl Keyboard {
+    /// This section with empty fields filled from the system: layout and variant together, options on their own.
+    pub fn resolved(&self) -> Keyboard {
+        let system = SYSTEM_KEYBOARD_FILES.iter().filter_map(|p| fs::read_to_string(p).ok()).map(|t| parse_system_keyboard(&t)).find(|k| !k.layout.is_empty());
+        let system = system.unwrap_or_default();
+        let (layout, variant) = if self.layout.is_empty() { (system.layout, system.variant) } else { (self.layout.clone(), self.variant.clone()) };
+        let options = if self.options.is_empty() { system.options } else { self.options.clone() };
+        Keyboard { layout, variant, options, mac_keys: self.mac_keys }
+    }
+}
+
+/// Reads XKBLAYOUT/XKBVARIANT/XKBOPTIONS from `vconsole.conf`, or `Option "XkbLayout" "us"` lines from an xorg.conf.
+fn parse_system_keyboard(text: &str) -> Keyboard {
+    let mut keyboard = Keyboard::default();
+    for line in text.lines().map(str::trim).filter(|l| !l.starts_with('#')) {
+        let pair = match line.strip_prefix("Option") {
+            Some(rest) => {
+                let mut quoted = rest.split('"').skip(1).step_by(2);
+                quoted.next().zip(quoted.next())
+            }
+            None => line.split_once('=').map(|(k, v)| (k.trim(), v.trim().trim_matches(['"', '\'']))),
+        };
+        let Some((key, value)) = pair else { continue };
+        match key.to_ascii_lowercase().as_str() {
+            "xkblayout" => keyboard.layout = value.into(),
+            "xkbvariant" => keyboard.variant = value.into(),
+            "xkboptions" => keyboard.options = value.into(),
+            _ => {}
+        }
+    }
+    keyboard
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Touchpad {
@@ -318,6 +354,25 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn system_keyboard_files() {
+        let vconsole = "KEYMAP=de-latin1\n# XKBLAYOUT=fr\nXKBLAYOUT=de\nXKBVARIANT=\"nodeadkeys\"\nXKBOPTIONS='caps:escape'\n";
+        let k = parse_system_keyboard(vconsole);
+        assert_eq!((k.layout.as_str(), k.variant.as_str(), k.options.as_str()), ("de", "nodeadkeys", "caps:escape"));
+
+        let xorg = "Section \"InputClass\"\n    Identifier \"system-keyboard\"\n    MatchIsKeyboard \"on\"\n    Option \"XkbLayout\" \"us,de\"\n    Option \"XkbOptions\" \"grp:alt_shift_toggle\"\nEndSection\n";
+        let k = parse_system_keyboard(xorg);
+        assert_eq!((k.layout.as_str(), k.variant.as_str(), k.options.as_str()), ("us,de", "", "grp:alt_shift_toggle"));
+
+        assert_eq!(parse_system_keyboard("KEYMAP=us\n"), Keyboard::default());
+    }
+
+    #[test]
+    fn config_layout_wins() {
+        let k = Keyboard { layout: "de".into(), variant: "neo".into(), options: "caps:escape".into(), mac_keys: true }.resolved();
+        assert_eq!((k.layout.as_str(), k.variant.as_str(), k.options.as_str(), k.mac_keys), ("de", "neo", "caps:escape", true));
     }
 
     #[test]
