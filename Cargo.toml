@@ -1,0 +1,20 @@
+[package]
+name = "noobsbot-desktop"
+version = "1.0.0-alpha.1"
+edition = "2024"
+license = "MIT"
+description = "Noobsbot Desktop: a macOS-style Wayland desktop environment"
+repository = "https://github.com/anil0403/noobsbot-desktop"
+
+[dependencies]
+smithay = { version = "=0.7.0", default-features = false, features = ["backend_winit", "desktop", "renderer_gl", "wayland_frontend"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+lto = "thin"
+strip = true
+panic = "abort"
+
+[profile.dev]
+panic = "abort"
