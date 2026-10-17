@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, Gallery, MenuBar, Shaders, Wallpaper},
+    render::{self, CalendarPopover, Gallery, MenuBar, Shaders, Wallpaper},
     state::State,
 };
 
@@ -36,7 +36,8 @@ pub struct Winit {
     pub clock: FrameClock,
     /// The `--test-scene` material gallery (E1.4), drawn over the wallpaper when set.
     pub gallery: Option<Gallery>,
-    menu_bar: MenuBar,
+    pub menu_bar: MenuBar,
+    calendar: CalendarPopover,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -81,7 +82,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default() });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default() });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -106,7 +107,7 @@ impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
         let content = self.menu_bar();
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar }) = self.backend.as_mut() else { return };
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar }) = self.backend.as_mut() else { return };
         let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
@@ -114,13 +115,31 @@ impl State {
                 // Wallpaper, layers, windows with rounded corners and shadows (E1.4, E1.5): see render::scene.
                 let scale = output.current_scale().fractional_scale();
                 let appearance = &self.config.appearance;
-                let bar = match (&content, self.space.output_geometry(output)) {
-                    (Some(content), Some(geo)) => {
-                        let dark = render::is_dark(appearance);
-                        menu_bar.elements(renderer, shaders, &mut self.text, &mut self.symbols, content, geo.size.w, dark, appearance.glass_opacity, scale)
-                    }
-                    _ => Vec::new(),
-                };
+                let dark = render::is_dark(appearance);
+                let width = self.space.output_geometry(output).map_or(0, |g| g.size.w);
+                // Popups in front of the bar, the bar in front of windows.
+                let mut bar = Vec::new();
+                if let Some(crate::shell::Popup::Calendar { year, month }) = self.popup {
+                    let shown = render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };
+                    let accent = render::accent(appearance.accent, dark);
+                    bar.extend(calendar.elements(renderer, shaders, &mut self.text, &mut self.symbols, &shown, width, dark, accent, appearance.glass_opacity, scale));
+                }
+                let active = self.popup.map(|crate::shell::Popup::Calendar { .. }| render::menubar::BarItem::Clock);
+                match &content {
+                    Some(content) => bar.extend(menu_bar.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &mut self.symbols,
+                        content,
+                        active,
+                        width,
+                        dark,
+                        appearance.glass_opacity,
+                        scale,
+                    )),
+                    None => menu_bar.hide(),
+                }
                 let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar);
                 if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
                     let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);

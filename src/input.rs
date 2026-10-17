@@ -74,6 +74,11 @@ impl State {
                             None => FilterResult::Forward,
                         };
                     }
+                    // Esc closes an open menu-bar popup before anything else sees it.
+                    if key.modified_sym() == smithay::input::keyboard::Keysym::Escape && state.close_popup() {
+                        state.suppressed.push(code);
+                        return FilterResult::Intercept(None);
+                    }
                     // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
                     let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
                     match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
@@ -96,9 +101,10 @@ impl State {
                 let Some(pointer) = self.seat.get_pointer() else { return };
                 let serial = SERIAL_COUNTER.next_serial();
                 let state = event.state();
-                // Click to focus: the window under the pointer comes to the front.
-                if state == ButtonState::Pressed && !pointer.is_grabbed() {
-                    let location = pointer.current_location();
+                let location = pointer.current_location();
+                // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
+                // pointer comes to the front.
+                if state == ButtonState::Pressed && !pointer.is_grabbed() && !self.shell_press(self.to_output(location)) {
                     let zone = self.zone_under(location);
                     let bar = if zone.is_some() { None } else { self.bar_under(location) };
                     let window = zone
@@ -182,8 +188,12 @@ impl State {
         None
     }
 
-    /// Top/overlay layer surfaces, then windows, then bottom/background layer surfaces.
+    /// Top/overlay layer surfaces, then windows, then bottom/background layer surfaces; nothing over the menu bar or
+    /// an open popup, which the shell draws itself.
     pub fn surface_under(&self, location: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+        if self.shell_covers(self.to_output(location)) {
+            return None;
+        }
         let window = || {
             self.space.element_under(location).and_then(|(window, loc)| {
                 window.surface_under(location - loc.to_f64(), WindowSurfaceType::ALL).map(|(surface, offset)| (surface, (offset + loc).to_f64()))

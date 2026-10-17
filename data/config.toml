@@ -50,6 +50,8 @@ hour24 = false
 weekday = true
 date = true
 seconds = false
+# The calendar's first day: "sunday", "monday" or "saturday".
+week_start = "sunday"
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, hide, cycle, "exec <command>", "volume up|down", mute, mic-mute,

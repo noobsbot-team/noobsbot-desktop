@@ -50,6 +50,20 @@ pub(super) fn label_element(renderer: &mut GlesRenderer, label: &Label, rect: Re
         .map(SceneElement::Memory)
 }
 
+/// Buffers for `pieces`, reusing `old`'s where the rendering is unchanged, so those keep their damage ids.
+pub(super) fn keep_buffers(old: &[Label], pieces: impl IntoIterator<Item = Arc<Rendered>>) -> Vec<Label> {
+    pieces
+        .into_iter()
+        .map(|piece| match old.iter().find(|(r, _)| Arc::ptr_eq(r, &piece)) {
+            Some(label) => label.clone(),
+            None => {
+                let buffer = text::to_buffer(&piece);
+                (piece, buffer)
+            }
+        })
+        .collect()
+}
+
 fn title_of(window: &Window) -> String {
     let Some(toplevel) = window.toplevel() else { return String::new() };
     with_states(toplevel.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.title.clone())).unwrap_or_default()
@@ -123,17 +137,7 @@ pub fn elements(
     }
     if focused && crate::decorations::lights_hovered(window) {
         let style = Style { size: 10, line_height: 12, weight: 700, color: [0, 0, 0, 140], tabular: false };
-        let glyphs: Vec<Label> = GLYPHS
-            .iter()
-            .map(|g| text.label(g, style, LIGHT as u32, scale))
-            .map(|r| match cache.glyphs.iter().find(|(c, _)| Arc::ptr_eq(c, &r)) {
-                Some(label) => label.clone(),
-                None => {
-                    let buffer = text::to_buffer(&r);
-                    (r, buffer)
-                }
-            })
-            .collect();
+        let glyphs = keep_buffers(&cache.glyphs, GLYPHS.iter().map(|g| text.label(g, style, LIGHT as u32, scale)));
         for (glyph, rect) in glyphs.iter().zip(&lights) {
             out.extend(label_element(renderer, glyph, *rect, scale));
         }

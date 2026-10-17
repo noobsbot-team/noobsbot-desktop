@@ -2,7 +2,7 @@
 //! Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4). Every piece is kept between frames, so a
 //! frame where only the minute changed damages only the clock.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
@@ -11,7 +11,7 @@ use smithay::{
 
 use super::{
     Material, SceneElement, Shaders,
-    titlebar::{Label, label_element},
+    titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
     services::{
@@ -21,7 +21,7 @@ use crate::{
         sound::Sound,
     },
     symbols::{Symbol, Symbols, Weight},
-    text::{self, Rendered, Style, Text},
+    text::{Rendered, Style, Text},
     wm::Rect,
 };
 
@@ -42,6 +42,17 @@ pub struct Content {
     pub app: Option<String>,
     pub status: Vec<Item>,
     pub clock: String,
+}
+
+/// What a click on the bar hit.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BarItem {
+    Logo,
+    App,
+    /// `Content::status[i]`.
+    Status(usize),
+    ControlCenter,
+    Clock,
 }
 
 #[derive(Debug, PartialEq)]
@@ -120,10 +131,29 @@ pub struct MenuBar {
     glass: Option<(GlassKey, Vec<PixelShaderElement>)>,
     labels: Vec<Label>,
     names: HashMap<String, String>,
+    /// Each item's area from the last frame; empty while the bar is hidden.
+    hits: Vec<(BarItem, Rect)>,
+    /// The pressed pill behind the item whose popup is open, and what it was made for.
+    pill: Option<((Rect, bool, u64), PixelShaderElement)>,
 }
 
 impl MenuBar {
-    /// Front to back: symbols and labels, the strip, its shadow. `width` is the output's, logical.
+    pub fn visible(&self) -> bool {
+        !self.hits.is_empty()
+    }
+
+    /// The item under `location` (output-relative).
+    pub fn hit(&self, location: smithay::utils::Point<f64, smithay::utils::Logical>) -> Option<BarItem> {
+        self.hits.iter().find(|(_, rect)| rect.to_f64().contains(location)).map(|(item, _)| *item)
+    }
+
+    /// A fullscreen window covers the bar: it takes no clicks.
+    pub fn hide(&mut self) {
+        self.hits.clear();
+    }
+
+    /// Front to back: symbols and labels, the pressed pill behind `active`, the strip, its shadow. `width` is the
+    /// output's, logical.
     #[allow(clippy::too_many_arguments)]
     pub fn elements(
         &mut self,
@@ -132,6 +162,7 @@ impl MenuBar {
         text: &mut Text,
         symbols: &mut Symbols,
         content: &Content,
+        active: Option<BarItem>,
         width: i32,
         dark: bool,
         glass_opacity: f32,
@@ -150,51 +181,65 @@ impl MenuBar {
         let color = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
         let body = Style { size: 13, line_height: 16, weight: 400, color, tabular: true };
         let symbol = |symbols: &mut Symbols, s: Symbol| symbols.get(s, Weight::Regular, SYMBOL, scale, color);
-        // (piece, gap after it); left pieces then right ones, each list in reading order.
-        let mut left = vec![(symbols.get(Symbol::Logo, Weight::Regular, SYMBOL, scale, color), LOGO_GAP)];
+        // (piece, gap after it, item); left pieces then right ones, each list in reading order.
+        let mut left = vec![(symbols.get(Symbol::Logo, Weight::Regular, SYMBOL, scale, color), LOGO_GAP, BarItem::Logo)];
         if let Some(app) = &content.app {
             let name = self.names.entry(app.clone()).or_insert_with(|| app_name(app));
-            left.push((text.label(name, Style { weight: 600, tabular: false, ..body }, 300, scale), 0));
+            left.push((text.label(name, Style { weight: 600, tabular: false, ..body }, 300, scale), 0, BarItem::App));
         }
         let mut right = Vec::new();
-        for item in &content.status {
+        for (i, item) in content.status.iter().enumerate() {
             if let Some(t) = &item.text {
-                right.push((text.label(t, body, 100, scale), TIGHT));
+                right.push((text.label(t, body, 100, scale), TIGHT, BarItem::Status(i)));
             }
-            right.push((symbol(symbols, item.symbol), GAP));
+            right.push((symbol(symbols, item.symbol), GAP, BarItem::Status(i)));
         }
-        right.push((symbol(symbols, Symbol::Sliders), GAP));
-        right.push((text.label(&content.clock, body, 300, scale), 0));
+        right.push((symbol(symbols, Symbol::Sliders), GAP, BarItem::ControlCenter));
+        right.push((text.label(&content.clock, body, 300, scale), 0, BarItem::Clock));
 
         let logical = |r: &Rendered| (f64::from(r.width) / scale).round() as i32;
         let mut rects = Vec::new();
         let mut x = EDGE;
-        for (piece, gap) in &left {
+        for (piece, gap, _) in &left {
             rects.push(Rectangle::new((x, 0).into(), (logical(piece), HEIGHT).into()));
             x += logical(piece) + gap;
         }
-        let total: i32 = right.iter().map(|(piece, gap)| logical(piece) + gap).sum();
+        let total: i32 = right.iter().map(|(piece, gap, _)| logical(piece) + gap).sum();
         let mut x = width - EDGE - total;
-        for (piece, gap) in &right {
+        for (piece, gap, _) in &right {
             rects.push(Rectangle::new((x, 0).into(), (logical(piece), HEIGHT).into()));
             x += logical(piece) + gap;
         }
 
-        // Unchanged pieces keep their buffer, so they keep their damage id.
-        let old = std::mem::take(&mut self.labels);
-        self.labels = left
-            .into_iter()
-            .chain(right)
-            .map(|(piece, _)| match old.iter().find(|(r, _)| Arc::ptr_eq(r, &piece)) {
-                Some(label) => label.clone(),
-                None => {
-                    let buffer = text::to_buffer(&piece);
-                    (piece, buffer)
-                }
-            })
-            .collect();
+        // An item's click area spans its pieces plus half a gap each side.
+        let items: Vec<BarItem> = left.iter().chain(&right).map(|(_, _, item)| *item).collect();
+        self.hits.clear();
+        for (item, rect) in items.iter().zip(&rects) {
+            let rect = Rectangle::new((rect.loc.x - GAP / 2, 0).into(), (rect.size.w + GAP, HEIGHT).into());
+            match self.hits.last_mut() {
+                Some((last, area)) if last == item => *area = area.merge(rect),
+                _ => self.hits.push((*item, rect)),
+            }
+        }
+
+        self.labels = keep_buffers(&self.labels, left.into_iter().chain(right).map(|(piece, _, _)| piece));
         let mut out: Vec<SceneElement> =
             self.labels.iter().zip(rects).filter_map(|(label, rect): (&Label, Rect)| label_element(renderer, label, rect, scale)).collect();
+        let pill = active.and_then(|a| self.hits.iter().find(|(item, _)| *item == a)).map(|(_, area)| {
+            // macOS: a rounded highlight a little inside the bar's height.
+            Rectangle::new((area.loc.x + GAP / 2 - 6, 2).into(), (area.size.w - GAP + 12, HEIGHT - 4).into())
+        });
+        match pill {
+            Some(rect) => {
+                let key = (rect, dark, scale.to_bits());
+                if self.pill.as_ref().is_none_or(|(k, _)| *k != key) {
+                    let fill = if dark { [1.0, 1.0, 1.0, 0.15] } else { [0.0, 0.0, 0.0, 0.10] };
+                    self.pill = Some((key, shaders.glass_shape(rect, fill, 4.0, false, dark, scale)));
+                }
+                out.extend(self.pill.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
+            }
+            None => self.pill = None,
+        }
         if let Some((_, glass)) = &self.glass {
             out.extend(glass.iter().cloned().map(SceneElement::Shader));
         }

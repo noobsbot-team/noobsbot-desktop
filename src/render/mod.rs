@@ -2,6 +2,7 @@
 //! Shaders are compiled once; shadow and wallpaper elements are kept between frames, so a frame where nothing moved
 //! damages nothing and an idle desktop draws nothing.
 
+pub mod calendar;
 mod gallery;
 pub mod menubar;
 mod titlebar;
@@ -31,11 +32,12 @@ use smithay::{
     wayland::shell::wlr_layer::Layer,
 };
 pub use gallery::Gallery;
+pub use calendar::CalendarPopover;
 pub use menubar::MenuBar;
 pub use wallpaper::Wallpaper;
 
 use crate::{
-    config::{Appearance, Mode},
+    config::{Accent, Appearance, Mode},
     text::Text,
     wm::Rect,
 };
@@ -56,6 +58,22 @@ render_elements! {
 /// Dark mode on? ponytail: `auto` is light until the Settings schedule exists (M7).
 pub fn is_dark(appearance: &Appearance) -> bool {
     appearance.mode == Mode::Dark
+}
+
+/// The accent colour (Part D's macOS set) in light or dark mode.
+pub fn accent(accent: Accent, dark: bool) -> [u8; 3] {
+    let (light, dark_rgb) = match accent {
+        Accent::Blue => (0x007AFF, 0x0A84FF),
+        Accent::Purple => (0xAF52DE, 0xBF5AF2),
+        Accent::Pink => (0xFF2D55, 0xFF375F),
+        Accent::Red => (0xFF3B30, 0xFF453A),
+        Accent::Orange => (0xFF9500, 0xFF9F0A),
+        Accent::Yellow => (0xFFCC00, 0xFFD60A),
+        Accent::Green => (0x34C759, 0x30D158),
+        Accent::Graphite => (0x8E8E93, 0x98989D),
+    };
+    let rgb: u32 = if dark { dark_rgb } else { light };
+    [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]
 }
 
 /// The four compiled shaders.

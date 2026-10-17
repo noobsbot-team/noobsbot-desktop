@@ -13,6 +13,7 @@ mod protocols;
 mod render;
 mod rules;
 mod services;
+mod shell;
 mod shortcuts;
 mod state;
 mod symbols;
@@ -28,7 +29,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar] [-- command [args...]]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -46,11 +47,14 @@ fn main() {
     let mut command = Vec::new();
     let mut nested = false;
     let mut test_scene = false;
+    let mut show = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--nested" => nested = true,
             // Every glass material in light and dark over the wallpaper (E1.4 done check).
             "--test-scene" => test_scene = true,
+            // Opens a popup at start, for screenshots of states that otherwise need a click.
+            "--show" => show = args.next(),
             "--" => command.extend(args.by_ref()),
             "-h" | "--help" => return println!("{USAGE}"),
             other => {
@@ -60,13 +64,13 @@ fn main() {
         }
     }
 
-    if let Err(err) = run(command, nested, test_scene) {
+    if let Err(err) = run(command, nested, test_scene, show.as_deref()) {
         tracing::error!("{err}");
         std::process::exit(1);
     }
 }
 
-fn run(command: Vec<String>, nested: bool, test_scene: bool) -> Result<(), Box<dyn std::error::Error>> {
+fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;
     let config_path = config::path();
@@ -104,6 +108,14 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool) -> Result<(), Box<d
     backend::winit::init(&mut event_loop, &mut state)?;
     if test_scene && let Some(winit) = state.backend.as_mut() {
         winit.gallery = Some(Default::default());
+    }
+    match show {
+        Some("calendar") => {
+            let (year, month) = shell::this_month();
+            state.popup = Some(shell::Popup::Calendar { year, month });
+        }
+        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar)"),
+        None => {}
     }
 
     tracing::info!("listening on WAYLAND_DISPLAY={}", state.socket_name.to_string_lossy());

@@ -133,6 +133,8 @@ pub struct State {
     /// `None`: nothing playing or paused.
     pub media: Option<crate::services::media::Media>,
     pub symbols: crate::symbols::Symbols,
+    /// The menu-bar popup that is open (E2.2).
+    pub popup: Option<crate::shell::Popup>,
 }
 
 impl State {
@@ -255,6 +257,7 @@ impl State {
             sound: None,
             media: None,
             symbols: Default::default(),
+            popup: None,
             display_handle: dh,
         })
     }

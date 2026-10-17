@@ -5,7 +5,6 @@ use chrono::{Datelike, Days, NaiveDate, Weekday};
 /// The grid of `month` (1–12) of `year`, one row per week starting on `week_start`: leading and trailing days come
 /// from the neighbouring months (drawn at `label-tertiary`), and only as many rows as the month needs (4–6).
 /// `None` for an invalid month or a year outside chrono's range.
-#[cfg_attr(not(test), expect(dead_code, reason = "the calendar popover (E2.5) waits for the M2 mockup approval"))]
 pub fn month_grid(year: i32, month: u32, week_start: Weekday) -> Option<Vec<[NaiveDate; 7]>> {
     let first = NaiveDate::from_ymd_opt(year, month, 1)?;
     let lead = first.weekday().days_since(week_start);

@@ -64,6 +64,27 @@ pub struct Clock {
     pub timezone: String,
     #[serde(flatten)]
     pub format: crate::clock::Format,
+    /// The calendar's first column (E2.5).
+    pub week_start: WeekStart,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WeekStart {
+    #[default]
+    Sunday,
+    Monday,
+    Saturday,
+}
+
+impl From<WeekStart> for chrono::Weekday {
+    fn from(start: WeekStart) -> Self {
+        match start {
+            WeekStart::Sunday => chrono::Weekday::Sun,
+            WeekStart::Monday => chrono::Weekday::Mon,
+            WeekStart::Saturday => chrono::Weekday::Sat,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
