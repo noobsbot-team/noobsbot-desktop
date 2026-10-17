@@ -36,6 +36,7 @@ pub struct Config {
     pub keyboard: Keyboard,
     pub touchpad: Touchpad,
     pub windows: Windows,
+    pub clock: Clock,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec brave"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -53,6 +54,16 @@ pub struct Appearance {
     pub wallpaper: String,
     /// PNG or JPEG for dark mode; empty = the built-in dark opal gradient.
     pub wallpaper_dark: String,
+}
+
+/// The menu-bar clock (E2.4) and the system time zone (E2.6).
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default)]
+pub struct Clock {
+    /// IANA zone (`Asia/Kathmandu`); empty = leave the system's zone alone.
+    pub timezone: String,
+    #[serde(flatten)]
+    pub format: crate::clock::Format,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -166,6 +177,7 @@ impl Default for Config {
             keyboard: Keyboard::default(),
             touchpad: Touchpad::default(),
             windows: Windows::default(),
+            clock: Clock::default(),
             bindings: default_bindings(),
             rules: vec![Rule {
                 app_id: Some("brave-browser".into()),

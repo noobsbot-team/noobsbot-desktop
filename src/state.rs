@@ -117,6 +117,9 @@ pub struct State {
     pub decorations: crate::decorations::Decorations,
     /// Title bar labels; the font loads on first use.
     pub text: crate::text::Text,
+    pub services: crate::services::Services,
+    /// `None`: no battery, or UPower isn't running.
+    pub battery: Option<crate::services::power::Battery>,
 }
 
 impl State {
@@ -168,6 +171,19 @@ impl State {
                 state.schedule_redraw();
             }
         })?;
+        let (services_tx, services_rx) = channel::channel();
+        let services = crate::services::spawn(services_tx);
+        if !config.clock.timezone.is_empty() {
+            services.send(crate::services::Command::SetTimezone(config.clock.timezone.clone()));
+        }
+        handle.insert_source(services_rx, |event, _, state| {
+            if let channel::Event::Msg(update) = event {
+                // Nothing draws these yet; the menu bar (E2.2) will damage just its item.
+                match update {
+                    crate::services::Update::Battery(battery) => state.battery = battery,
+                }
+            }
+        })?;
 
         Ok(Self {
             start_time: Instant::now(),
@@ -204,6 +220,8 @@ impl State {
             protocols: Protocols::new(&dh),
             decorations: crate::decorations::Decorations::new(&dh),
             text: Default::default(),
+            services,
+            battery: None,
             display_handle: dh,
         })
     }
