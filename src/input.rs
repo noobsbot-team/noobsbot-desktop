@@ -36,6 +36,10 @@ pub struct Zones {
     pub hover: Option<Edges>,
     /// The last press in a zone, to spot a double-click.
     pub last_press: Option<(std::time::Instant, Window, Edges)>,
+    /// A traffic light pressed and not yet released.
+    pub bar_press: Option<(Window, crate::decorations::Part)>,
+    /// The last press on a title, to spot a double-click.
+    pub last_title_press: Option<(std::time::Instant, Window)>,
 }
 
 /// ↔ ↕ ⤡ ⤢ for a zone.
@@ -94,7 +98,12 @@ impl State {
                 if state == ButtonState::Pressed && !pointer.is_grabbed() {
                     let location = pointer.current_location();
                     let zone = self.zone_under(location);
-                    let window = zone.as_ref().map(|(w, _)| w.clone()).or_else(|| self.space.element_under(location).map(|(w, _)| w.clone()));
+                    let bar = if zone.is_some() { None } else { self.bar_under(location) };
+                    let window = zone
+                        .as_ref()
+                        .map(|(w, _)| w.clone())
+                        .or_else(|| bar.as_ref().map(|(w, _)| w.clone()))
+                        .or_else(|| self.space.element_under(location).map(|(w, _)| w.clone()));
                     // Bars and launchers above windows (or the wallpaper below, where no window is) take the click instead.
                     let layer = self.layer_under(location, true).or_else(|| window.is_none().then(|| self.layer_under(location, false)).flatten());
                     if let Some((layer, ..)) = layer {
@@ -111,8 +120,13 @@ impl State {
                             self.start_move(window, start_data, serial);
                         } else if let Some((window, edges)) = zone.filter(|_| event.button_code() == BTN_LEFT) {
                             self.zone_press(window, edges, start_data, serial);
+                        } else if let Some((window, part)) = bar.filter(|_| event.button_code() == BTN_LEFT) {
+                            self.bar_press(window, part, start_data, serial);
                         }
                     }
+                }
+                if state == ButtonState::Released && event.button_code() == BTN_LEFT {
+                    self.bar_release(pointer.current_location());
                 }
                 pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
                 pointer.frame(self);
@@ -147,7 +161,7 @@ impl State {
             return None;
         }
         for window in self.space.elements().rev() {
-            let Some(geo) = self.space.element_geometry(window) else { continue };
+            let (Some(geo), Some(frame)) = (self.space.element_geometry(window), self.frame(window)) else { continue };
             let local = location - (geo.loc - window.geometry().loc).to_f64();
             let popup = window.surface_under(local, WindowSurfaceType::POPUP).is_some();
             let filled = window.toplevel().is_some_and(|t| {
@@ -155,11 +169,11 @@ impl State {
             });
             if !popup
                 && !filled
-                && let Some(edges) = wm::zone_edges(geo, location)
+                && let Some(edges) = wm::zone_edges(frame, location)
             {
                 return Some((window.clone(), edges));
             }
-            if popup || window.surface_under(local, WindowSurfaceType::ALL).is_some() {
+            if popup || frame.to_f64().contains(location) || window.surface_under(local, WindowSurfaceType::ALL).is_some() {
                 return None;
             }
         }

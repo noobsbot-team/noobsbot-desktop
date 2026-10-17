@@ -2,6 +2,7 @@
 //! Shaders are compiled once; shadow and wallpaper elements are kept between frames, so a frame where nothing moved
 //! damages nothing and an idle desktop draws nothing.
 
+mod titlebar;
 mod wallpaper;
 
 use std::cell::RefCell;
@@ -10,7 +11,9 @@ use smithay::{
     backend::renderer::{
         Texture,
         element::{
-            AsRenderElements, Element, Id, Kind, RenderElement, render_elements,
+            AsRenderElements, Element, Id, Kind, RenderElement,
+            memory::MemoryRenderBufferRenderElement,
+            render_elements,
             surface::{WaylandSurfaceRenderElement, WaylandSurfaceTexture, render_elements_from_surface_tree},
             texture::TextureRenderElement,
         },
@@ -22,13 +25,14 @@ use smithay::{
     desktop::{PopupManager, Space, Window, layer_map_for_output},
     output::Output,
     reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
-    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Transform},
+    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
     wayland::shell::wlr_layer::Layer,
 };
 pub use wallpaper::Wallpaper;
 
 use crate::{
     config::{Appearance, Mode},
+    text::Text,
     wm::Rect,
 };
 
@@ -42,6 +46,7 @@ render_elements! {
     Rounded=RoundedElement,
     Shader=PixelShaderElement,
     Texture=TextureRenderElement<GlesTexture>,
+    Memory=MemoryRenderBufferRenderElement<GlesRenderer>,
 }
 
 /// Dark mode on? ponytail: `auto` is light until the Settings schedule exists (M7).
@@ -51,7 +56,6 @@ pub fn is_dark(appearance: &Appearance) -> bool {
 
 /// The four compiled shaders.
 pub struct Shaders {
-    #[expect(dead_code, reason = "the menu bar and panels (M2) are the first glass")]
     glass: GlesPixelProgram,
     rounded: GlesTexProgram,
     shadow: GlesPixelProgram,
@@ -87,13 +91,39 @@ impl Shaders {
     pub fn glass(&self, rect: Rect, material: Material, dark: bool, glass_opacity: f32, scale: f64) -> PixelShaderElement {
         let spec = material.spec(dark);
         let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
-        let (sheen, highlight, highlight_top, hairline) = if dark { (0.03, 0.12, 0.18, 0.50) } else { (0.04, 0.25, 0.40, 0.10) };
+        self.glass_shape(rect, [r, g, b, spec.opacity * glass_opacity], spec.radius, true, dark, scale)
+    }
+
+    /// A rounded rect in the glass shader with any fill; `effects` adds the D3 sheen, highlights and hairline.
+    pub fn glass_shape(&self, rect: Rect, fill: [f32; 4], radius: f64, effects: bool, dark: bool, scale: f64) -> PixelShaderElement {
+        let (sheen, highlight, highlight_top, hairline) = match (effects, dark) {
+            (false, _) => (0.0, 0.0, 0.0, 0.0),
+            (true, true) => (0.03, 0.12, 0.18, 0.50),
+            (true, false) => (0.04, 0.25, 0.40, 0.10),
+        };
+        self.glass_element(rect, fill, radius, [sheen, highlight, highlight_top, hairline], scale)
+    }
+
+    /// A traffic light (D2): a flat circle, edged 0.5 px darker only on a focused window.
+    pub fn light(&self, rect: Rect, fill: [f32; 4], edge: bool, scale: f64) -> PixelShaderElement {
+        let radius = f64::from(rect.size.w) / 2.0;
+        self.glass_element(rect, fill, radius, [0.0, 0.0, 0.0, if edge { 0.15 } else { 0.0 }], scale)
+    }
+
+    fn glass_element(
+        &self,
+        rect: Rect,
+        [r, g, b, a]: [f32; 4],
+        radius: f64,
+        [sheen, highlight, highlight_top, hairline]: [f32; 4],
+        scale: f64,
+    ) -> PixelShaderElement {
         let px = scale as f32;
         let uniforms = vec![
-            Uniform::new("fill", (r, g, b, spec.opacity * glass_opacity)),
+            Uniform::new("fill", (r, g, b, a)),
             Uniform::new("px", px),
             Uniform::new("inset", px),
-            Uniform::new("radius", spec.radius as f32 * px),
+            Uniform::new("radius", radius as f32 * px),
             Uniform::new("sheen", sheen),
             Uniform::new("highlight", highlight),
             Uniform::new("highlight_top", highlight_top),
@@ -139,7 +169,7 @@ impl Shaders {
     }
 }
 
-fn grow(rect: Rect, by: i32) -> Rect {
+pub(super) fn grow(rect: Rect, by: i32) -> Rect {
     Rectangle::new(rect.loc - Point::from((by, by)), (rect.size.w + 2 * by, rect.size.h + 2 * by).into())
 }
 
@@ -322,11 +352,13 @@ fn window_shadow(shaders: &Shaders, window: &Window, rect: Rect, elevation: u8, 
     cache.as_ref().map(|(_, element)| element.clone())
 }
 
-/// One window, front to back: popups, its surfaces clipped to rounded corners, its shadow (5 focused, 4 not).
-/// Fullscreen windows get neither corners nor shadow.
+/// One window, front to back: popups, its surfaces clipped to rounded corners, our title bar if it has one, its
+/// shadow (5 focused, 4 not). Fullscreen windows get neither corners nor shadow.
+#[allow(clippy::too_many_arguments)]
 fn window_elements(
     renderer: &mut GlesRenderer,
     shaders: &Shaders,
+    text: &mut Text,
     space: &Space<Window>,
     window: &Window,
     output_loc: Point<i32, Logical>,
@@ -334,6 +366,7 @@ fn window_elements(
     dark: bool,
 ) -> Vec<SceneElement> {
     let (Some(toplevel), Some(geo)) = (window.toplevel(), space.element_geometry(window)) else { return Vec::new() };
+    let bar = crate::decorations::bar_height(window);
     let state = toplevel.current_state();
     let surface = toplevel.wl_surface();
     let geo = Rectangle::new(geo.loc - output_loc, geo.size);
@@ -351,14 +384,21 @@ fn window_elements(
         out.extend(surfaces.into_iter().map(SceneElement::Surface));
         return out;
     }
-    let geo_px = geo.to_physical_precise_round(scale);
+    // The frame: content plus our title bar. Content is clipped to the frame's corners, so under a title bar only its
+    // bottom corners round.
+    let frame = Rectangle::new(geo.loc - Point::from((0, bar)), geo.size + Size::from((0, bar)));
+    let frame_px = frame.to_physical_precise_round(scale);
     out.extend(
         surfaces
             .into_iter()
-            .map(|inner| SceneElement::Rounded(RoundedElement { inner, program: shaders.rounded.clone(), geo: geo_px, radius: WINDOW_RADIUS * scale })),
+            .map(|inner| SceneElement::Rounded(RoundedElement { inner, program: shaders.rounded.clone(), geo: frame_px, radius: WINDOW_RADIUS * scale })),
     );
-    let elevation = if state.states.contains(xdg_toplevel::State::Activated) { 5 } else { 4 };
-    out.extend(window_shadow(shaders, window, geo, elevation, dark, scale).map(SceneElement::Shader));
+    let focused = state.states.contains(xdg_toplevel::State::Activated);
+    if bar > 0 {
+        out.extend(titlebar::elements(renderer, shaders, text, window, frame, focused, dark, scale));
+    }
+    let elevation = if focused { 5 } else { 4 };
+    out.extend(window_shadow(shaders, window, frame, elevation, dark, scale).map(SceneElement::Shader));
     out
 }
 
@@ -368,6 +408,7 @@ pub fn scene(
     renderer: &mut GlesRenderer,
     shaders: &Shaders,
     wallpaper: &mut Wallpaper,
+    text: &mut Text,
     space: &Space<Window>,
     output: &Output,
     appearance: &Appearance,
@@ -388,7 +429,7 @@ pub fn scene(
 
     let mut out = layer_elements(renderer, upper);
     for window in space.elements().rev() {
-        out.extend(window_elements(renderer, shaders, space, window, output_geo.loc, scale, dark));
+        out.extend(window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark));
     }
     out.extend(layer_elements(renderer, lower));
     out.push(wallpaper.element(shaders, output_geo.size, dark));

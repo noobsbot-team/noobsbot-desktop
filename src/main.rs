@@ -3,6 +3,7 @@
 mod backend;
 mod clipboard;
 mod config;
+mod decorations;
 mod grabs;
 mod input;
 mod protocols;
@@ -10,7 +11,6 @@ mod render;
 mod rules;
 mod shortcuts;
 mod state;
-#[cfg_attr(not(test), expect(dead_code, reason = "title bars (E1.3) draw with it"))]
 mod text;
 mod wm;
 

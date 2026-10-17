@@ -90,7 +90,7 @@ impl State {
         let damage = match backend.bind() {
             Ok((renderer, mut framebuffer)) => {
                 // Wallpaper, layers, windows with rounded corners and shadows (E1.4, E1.5): see render::scene.
-                let elements = render::scene(renderer, shaders, wallpaper, &self.space, output, &self.config.appearance);
+                let elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, &self.config.appearance);
                 damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, [0.1, 0.1, 0.1, 1.0]).map(|result| result.damage.cloned())
             }
             Err(err) => {

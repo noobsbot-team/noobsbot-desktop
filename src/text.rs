@@ -28,8 +28,10 @@ pub struct Rendered {
     pub width: u32,
     pub height: u32,
     /// Baseline, in px from the top.
+    #[cfg_attr(not(test), expect(dead_code, reason = "for aligning labels with other text (menu bar, M2)"))]
     pub baseline: u32,
     /// The text did not fit `max_width` and ends in "…".
+    #[cfg_attr(not(test), expect(dead_code, reason = "a truncated title shows in full on hover (later)"))]
     pub truncated: bool,
 }
 

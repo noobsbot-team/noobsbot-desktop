@@ -20,7 +20,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_seat::WlSeat, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Point, SERIAL_COUNTER, Serial},
+    utils::{Logical, Point, SERIAL_COUNTER, Serial, Size},
     wayland::{
         buffer::BufferHandler,
         compositor::{CompositorClientState, CompositorHandler, CompositorState, get_parent, is_sync_subsurface, with_states},
@@ -108,6 +108,9 @@ pub struct State {
     pub _viewporter_state: ViewporterState,
     pub _dialog_state: XdgDialogState,
     pub protocols: Protocols,
+    pub decorations: crate::decorations::Decorations,
+    /// Title bar labels; the font loads on first use.
+    pub text: crate::text::Text,
 }
 
 impl State {
@@ -178,6 +181,8 @@ impl State {
             _viewporter_state: ViewporterState::new::<Self>(&dh),
             _dialog_state: XdgDialogState::new::<Self>(&dh),
             protocols: Protocols::new(&dh),
+            decorations: crate::decorations::Decorations::new(&dh),
+            text: Default::default(),
             display_handle: dh,
         })
     }
@@ -220,12 +225,12 @@ impl State {
         self.seat.get_keyboard().map(|k| k.modifier_state()).unwrap_or_default()
     }
 
-    /// Moves a window so its visible part (without client-side shadows) starts at `loc`;
-    /// a Space location is already the visible corner.
+    /// Moves a window so its frame (our title bar, then its visible part without client-side shadows) starts at
+    /// `loc`; a Space location is the visible corner of the content.
     pub fn set_visible_loc(&mut self, window: &Window, loc: smithay::utils::Point<i32, smithay::utils::Logical>) {
         // map_element also raises the window: put back what was above it, so moving never restacks.
         let above: Vec<Window> = self.space.elements().skip_while(|w| *w != window).skip(1).cloned().collect();
-        self.space.map_element(window.clone(), loc, false);
+        self.space.map_element(window.clone(), loc + Point::from((0, crate::decorations::bar_height(window))), false);
         for w in &above {
             self.space.raise_element(w, false);
         }
@@ -236,23 +241,23 @@ impl State {
     /// Starts moving `window` with the pointer; the move begins after the drag threshold.
     pub fn start_move(&mut self, window: Window, start_data: smithay::input::pointer::GrabStartData<Self>, serial: Serial) {
         let Some(pointer) = self.seat.get_pointer() else { return };
-        let Some(start) = self.space.element_geometry(&window) else { return };
+        let Some(start) = self.frame(&window) else { return };
         pointer.set_grab(self, MoveGrab { start_data, window, start, started: false }, serial, Focus::Clear);
     }
 
     /// Zoom (fill the work area) or fullscreen (fill the output), remembering where the window was.
     /// ponytail: one output and no menu bar or dock yet, so both fill the same area; refitting on output resize comes with udev (M6).
-    fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
+    pub fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
         let (Some(window), Some(area)) = (self.window_for(surface.wl_surface()).cloned(), self.work_area()) else { return };
         let restore = window.user_data().get_or_insert(|| Restore(std::sync::Mutex::new(None)));
-        if let (Ok(mut saved), Some(geo)) = (restore.0.lock(), self.space.element_geometry(&window)) {
-            saved.get_or_insert(geo);
+        if let (Ok(mut saved), Some(frame)) = (restore.0.lock(), self.frame(&window)) {
+            saved.get_or_insert(frame);
         }
         window.user_data().insert_if_missing(|| Placed);
-        surface.with_pending_state(|s| {
-            s.states.set(state);
-            s.size = Some(area.size);
-        });
+        // State first: a fullscreen window has no title bar, so its content is the whole area.
+        surface.with_pending_state(|s| s.states.set(state));
+        let size = self.content_size(&window, area.size);
+        surface.with_pending_state(|s| s.size = Some(size));
         if surface.is_initial_configure_sent() {
             surface.send_pending_configure();
         }
@@ -260,16 +265,15 @@ impl State {
     }
 
     /// Leaves zoom or fullscreen; returns where the window went back to.
-    fn unfill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) -> Option<Rect> {
+    pub fn unfill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) -> Option<Rect> {
         let window = self.window_for(surface.wl_surface()).cloned()?;
         if !surface.with_pending_state(|s| s.states.contains(state)) {
             return None;
         }
         let saved = window.user_data().get::<Restore>().and_then(|r| r.0.lock().ok()?.take());
-        surface.with_pending_state(|s| {
-            s.states.unset(state);
-            s.size = saved.map(|r| r.size);
-        });
+        surface.with_pending_state(|s| s.states.unset(state));
+        let size = saved.map(|r| self.content_size(&window, r.size));
+        surface.with_pending_state(|s| s.size = size);
         surface.send_pending_configure();
         if let Some(rect) = saved {
             self.set_visible_loc(&window, rect.loc);
@@ -277,7 +281,7 @@ impl State {
         saved
     }
 
-    fn window_for(&self, surface: &WlSurface) -> Option<&Window> {
+    pub fn window_for(&self, surface: &WlSurface) -> Option<&Window> {
         self.space.elements().find(|w| w.toplevel().is_some_and(|t| t.wl_surface() == surface))
     }
 
@@ -315,7 +319,9 @@ impl State {
         let (window, area) = (self.window_for(surface.wl_surface()).cloned(), self.work_area());
         let (Some(window), Some(area)) = (window, area) else { return };
         if let Some([w, h]) = actions.size {
-            surface.with_pending_state(|s| s.size = Some((w.to_px(area.size.w), h.to_px(area.size.h)).into()));
+            // A ruled size is the frame's, title bar included.
+            let size = self.content_size(&window, (w.to_px(area.size.w), h.to_px(area.size.h)).into());
+            surface.with_pending_state(|s| s.size = Some(size));
         }
         let (fullscreen, position) = (actions.fullscreen == Some(true), actions.position);
         if let Ok(mut ruled) = window.user_data().get_or_insert(|| Ruled(std::sync::Mutex::new(Actions::default()))).0.lock() {
@@ -332,7 +338,7 @@ impl State {
         self.restack();
     }
 
-    fn resolve_rules(&self, surface: &ToplevelSurface) -> Actions {
+    pub fn resolve_rules(&self, surface: &ToplevelSurface) -> Actions {
         let (app_id, title) = with_states(surface.wl_surface(), |states| {
             let data = states.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok().map(|d| (d.app_id.clone(), d.title.clone())));
             data.map(|(a, t)| (a.unwrap_or_default(), t.unwrap_or_default())).unwrap_or_default()
@@ -409,7 +415,7 @@ impl CompositorHandler for State {
             }
             if let Some(window) = self.window_for(&root).cloned() {
                 window.on_commit();
-                let size = window.geometry().size;
+                let size = window.geometry().size + Size::from((0, crate::decorations::bar_height(&window)));
                 if size.w > 0 && window.user_data().get::<Placed>().is_none() {
                     window.user_data().insert_if_missing(|| Placed);
                     if let Some(area) = self.work_area() {
@@ -519,7 +525,7 @@ impl XdgShellHandler for State {
         // Dragging a zoomed window un-zooms it first, centred under the pointer (macOS).
         if let Some(restore) = self.unfill(&surface, xdg_toplevel::State::Maximized) {
             let at = start_data.location.to_i32_round::<i32>();
-            self.set_visible_loc(&window, (at.x - restore.size.w / 2, at.y - 12).into());
+            self.set_visible_loc(&window, (at.x - restore.size.w / 2, at.y - crate::decorations::BAR / 2).into());
         }
         self.start_move(window, start_data, serial);
     }

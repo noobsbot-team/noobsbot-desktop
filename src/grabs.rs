@@ -91,7 +91,7 @@ impl PointerGrab<State> for MoveGrab {
         self.started = true;
 
         let rect = Rect::new(self.start.loc + delta.to_i32_round(), self.start.size);
-        let others: Vec<Rect> = data.space.elements().filter(|w| **w != self.window).filter_map(|w| data.space.element_geometry(w)).collect();
+        let others: Vec<Rect> = data.space.elements().filter(|w| **w != self.window).filter_map(|w| data.frame(w)).collect();
         let Some(area) = data.work_area() else { return };
         let loc = wm::move_to(rect, area, &others, data.config.windows.magnetic_edges && !data.modifiers().ctrl);
         data.set_visible_loc(&self.window, loc);
@@ -126,11 +126,17 @@ impl PointerGrab<State> for ResizeGrab {
         let mods = data.modifiers();
         let Some(resize) = data.resize.as_ref() else { return };
         let Some(surface) = resize.window.toplevel().map(|t| t.wl_surface().clone()) else { return };
-        let (min, max) = with_states(&surface, |states| {
+        let (mut min, mut max) = with_states(&surface, |states| {
             let mut cached = states.cached_state.get::<SurfaceCachedState>();
             let current = cached.current();
             (current.min_size, current.max_size)
         });
+        // The app's limits are for its content; the frame adds our title bar (0 = no limit stays 0).
+        let bar = crate::decorations::bar_height(&resize.window);
+        min.h += bar;
+        if max.h > 0 {
+            max.h += bar;
+        }
         let resize_mods = ResizeMods { symmetric: mods.alt, keep_aspect: mods.shift };
         let (start, edges) = (resize.start, resize.edges);
         let mut size = wm::resize_size(start, edges, event.location - self.start_data.location, resize_mods, min, max);
@@ -141,7 +147,7 @@ impl PointerGrab<State> for ResizeGrab {
             && !mods.alt
             && let Some(area) = data.work_area()
         {
-            let others: Vec<Rect> = data.space.elements().filter(|w| **w != resize.window).filter_map(|w| data.space.element_geometry(w)).collect();
+            let others: Vec<Rect> = data.space.elements().filter(|w| **w != resize.window).filter_map(|w| data.frame(w)).collect();
             let xs: Vec<i32> = [area.loc.x, area.loc.x + area.size.w].into_iter().chain(others.iter().flat_map(|o| [o.loc.x, o.loc.x + o.size.w])).collect();
             let ys: Vec<i32> = [area.loc.y, area.loc.y + area.size.h].into_iter().chain(others.iter().flat_map(|o| [o.loc.y, o.loc.y + o.size.h])).collect();
             let (right, bottom) = (start.loc.x + start.size.w, start.loc.y + start.size.h);
@@ -185,7 +191,7 @@ impl State {
     /// Starts resizing `window` by `edges` with the pointer (an app's own edge or one of our zones).
     pub fn start_resize(&mut self, window: Window, edges: Edges, start_data: GrabStartData<State>, serial: smithay::utils::Serial) {
         let Some(pointer) = self.seat.get_pointer() else { return };
-        let Some(start) = self.space.element_geometry(&window) else { return };
+        let Some(start) = self.frame(&window) else { return };
         self.resize = Some(Resize { window, edges, start, symmetric: false, desired: start.size, sent: Some(start.size), waiting: false, released: false });
         pointer.set_grab(self, ResizeGrab { start_data }, serial, smithay::input::pointer::Focus::Clear);
     }
@@ -198,7 +204,7 @@ impl State {
             self.zones.last_press = Some((std::time::Instant::now(), window.clone(), edges));
             return self.start_resize(window, edges, start_data, serial);
         }
-        let (Some(start), Some(area)) = (self.space.element_geometry(&window), self.work_area()) else { return };
+        let (Some(start), Some(area)) = (self.frame(&window), self.work_area()) else { return };
         let desired = wm::grow_to(start, area, edges).size;
         // A released resize: one configure, then the commit pins the window to the opposite edge.
         self.resize = Some(Resize { window, edges, start, symmetric: false, desired, sent: None, waiting: false, released: true });
@@ -213,8 +219,9 @@ impl State {
         }
         let Some(toplevel) = resize.window.toplevel() else { return };
         let (size, released) = (resize.desired, resize.released);
+        let content = (size.w, (size.h - crate::decorations::bar_height(&resize.window)).max(1)).into();
         toplevel.with_pending_state(|state| {
-            state.size = Some(size);
+            state.size = Some(content);
             if released {
                 state.states.unset(xdg_toplevel::State::Resizing);
             } else {
@@ -234,7 +241,8 @@ impl State {
         }
         resize.waiting = false;
         let window = resize.window.clone();
-        let loc = wm::resize_anchor(resize.start, resize.edges, resize.symmetric, window.geometry().size);
+        let frame_size = window.geometry().size + Size::from((0, crate::decorations::bar_height(&window)));
+        let loc = wm::resize_anchor(resize.start, resize.edges, resize.symmetric, frame_size);
         let done = resize.released && resize.sent == Some(resize.desired);
         self.set_visible_loc(&window, loc);
         if done {

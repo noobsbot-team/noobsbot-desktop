@@ -150,12 +150,12 @@ impl State {
         self.space.elements().filter(|w| w.toplevel().and_then(|t| t.wl_surface().client()).is_some_and(|c| c.id() == client.id())).cloned().collect()
     }
 
-    fn hide_windows(&mut self, windows: Vec<Window>) {
+    pub fn hide_windows(&mut self, windows: Vec<Window>) {
         if windows.is_empty() {
             return;
         }
         for window in windows {
-            let Some(loc) = self.space.element_location(&window) else { continue };
+            let Some(loc) = self.frame(&window).map(|f| f.loc) else { continue };
             window.set_activated(false);
             self.space.unmap_elem(&window);
             self.hidden.push((window, loc));
