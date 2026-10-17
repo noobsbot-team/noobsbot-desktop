@@ -4,6 +4,7 @@ use std::time::{Duration, Instant};
 
 use smithay::{
     backend::{
+        egl::EGLDevice,
         renderer::{ImportDma, damage::OutputDamageTracker, gles::GlesRenderer},
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
@@ -15,7 +16,7 @@ use smithay::{
         wayland_server::protocol::wl_surface::WlSurface,
     },
     utils::Transform,
-    wayland::{compositor::SurfaceData, presentation::Refresh},
+    wayland::{compositor::SurfaceData, dmabuf::DmabufFeedbackBuilder, presentation::Refresh},
 };
 
 use crate::{
@@ -39,8 +40,18 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let (mut backend, winit) = winit::init::<GlesRenderer>()?;
     backend.window().set_title("Noobsbot Desktop");
 
+    // linux-dmabuf v4 tells apps which GPU and formats we import (E1.1); without a render node, v3 still works.
     let formats = backend.renderer().dmabuf_formats();
-    state.dmabuf_state.create_global::<State>(&state.display_handle, formats);
+    let node = EGLDevice::device_for_display(backend.renderer().egl_context().display()).and_then(|device| device.try_get_render_node());
+    match node.map(|node| node.map(|node| DmabufFeedbackBuilder::new(node.dev_id(), formats.clone()).build())) {
+        Ok(Some(Ok(feedback))) => {
+            state.dmabuf_state.create_global_with_default_feedback::<State>(&state.display_handle, &feedback);
+        }
+        other => {
+            tracing::warn!("no render node for dmabuf feedback ({other:?}), using linux-dmabuf v3");
+            state.dmabuf_state.create_global::<State>(&state.display_handle, formats);
+        }
+    }
 
     let mode = Mode { size: backend.window_size(), refresh: REFRESH_MHZ };
     let output =
