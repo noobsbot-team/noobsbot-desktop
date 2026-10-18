@@ -3,6 +3,8 @@
 [workspace]
 # Not on crates.io; releases are GitHub Releases with a signed tarball (release.yml).
 publish = false
+# So the last version comes from our `v…` tags, not crates.io (else every run thinks 0.1.0 is unreleased).
+git_only = true
 git_tag_name = "v{{ version }}"
 git_release_enable = true
 # `1.4.0-beta.2` becomes a GitHub pre-release, seen only by the Beta channel.
