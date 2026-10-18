@@ -1312,7 +1312,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Built with:** idle timing in the compositor; `ext-idle-notify` for other tools; **logind** for sleep/shutdown
   and lid/power-button events (we hold a logind **`delay` inhibitor** on `PrepareForSleep`: lock the screen first, then
   let the machine sleep, so waking never shows the unlocked desktop for a frame); **UPower** for battery levels. The 5%
-  action has **one owner**: `install.sh` sets `CriticalPowerAction=Suspend` in `/etc/UPower/UPower.conf` and we only show
+  action has **one owner**: `install.sh` sets `CriticalPowerAction=Suspend` (plus `AllowRiskyCriticalPowerAction=true`, without which UPower ≥ 1.90
+  hibernates or powers off instead, and `PercentageCritical=10` / `PercentageAction=5`) in the drop-in
+  `/etc/UPower/UPower.conf.d/50-noobsbot-desktop.conf` and we only show
   the 20% / 10% notifications (no double action). Hibernate: not in v1 (needs swap sizing at install time; L10).
 - **Done when:** each step happens on time; it locks on wake; videos (idle-inhibit) keep it awake.
 
@@ -1402,7 +1404,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 ### E6.10 Installer (`install.sh`)
 - **What it is:** one script that turns a fresh Arch install into Noobsbot Desktop.
 - **Does:** runs **as the normal user** (AUR packages cannot be built as root) and uses `sudo` only for `pacman` and
-  system files → detects hardware (`lspci`, `lsusb`) → installs the package list (G4) including only the needed
+  system files → detects hardware (`/proc/cpuinfo`, `lspci`, `/sys/bus/thunderbolt`) → installs the package list (G4) including only the needed
   drivers → bootstraps an **AUR helper** (`paru`, built with `makepkg`) → installs `helium-browser-bin` and the WhiteSur themes
   from AUR → installs Noobsbot Desktop and noobsbot-terminal from their latest **signed GitHub Release** tarballs (minisign
   verified, E6.13), or builds from **pinned git tags** with `--from-source` → writes system files from the repo (greetd config, `/etc/pam.d/noobsbot-desktop`,
@@ -1465,7 +1467,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Release build (CI, `.github/workflows/release.yml`, on tag `v*`):** builds `noobsbot-desktop` for `x86_64`
   (`aarch64` later) with `lto = "thin"`, `strip = true`; packages
   `noobsbot-desktop-1.3.0-x86_64.tar.zst` (binary, `themes/`, `data/`, session file, PAM/portal/greetd templates) +
-  `SHA256SUMS` + a **minisign** signature (`.minisig`; private key only in a CI secret, the public key is compiled
+  `SHA256SUMS` + a **minisign** signature of it (`SHA256SUMS.minisig`; private key only in a CI secret, the public key is compiled
   into the updater). Attached to the GitHub Release. `install.sh` installs **this tarball** by default (fast, no Rust
   toolchain needed on the user's machine) and only builds from source with `--from-source`.
 - **Software Update on the installed desktop (`services/update.rs`):**
@@ -1609,7 +1611,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
   the keyring on GNOME/KDE; on an unknown desktop it would store passwords **unencrypted**), written to
   `~/.config/helium-browser-flags.conf`, which the `helium-browser-bin` launcher (`helium-browser`) reads, so **every**
   launch path (dock, Spotlight, `xdg-open` links from other apps) gets them; set as the system default
-  (`xdg-settings set default-web-browser helium.desktop` + `xdg-mime` for http/https/html); passwords in gnome-keyring.
+  (`xdg-mime default helium.desktop` for http/https/html/xhtml, which is what `xdg-settings` does on a desktop it doesn't know); passwords in gnome-keyring.
   Its Wayland app_id is checked in M6 (expected `helium`); the picture-in-picture rule matches the title only, so it
   works whatever the id is.
 - **Look: kept as it is.** Noobsbot Desktop does **not** theme Helium: it keeps its own theme, its own tab-strip
@@ -1698,8 +1700,8 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Display / GPU | Intel `i915`/`xe`, AMD `amdgpu`, NVIDIA `nvidia-open` + `nvidia-utils`; `mesa`, `vulkan-intel`/`vulkan-radeon` | Noobsbot Desktop (DRM/KMS) | Displays settings, Night Shift | M6 (UI M7) |
 | External monitors | same GPU drivers | Noobsbot Desktop hotplug | auto-arrange, remembered layouts | M6 |
 | Brightness | `backlight` | logind | Control Center slider, keys, OSD | M2 |
-| Video decoding | `intel-media-driver` / `libva-mesa-driver` / NVIDIA VA-API | — | none (Helium uses less CPU) | M6 |
-| Wi-Fi | `iwlwifi` (Intel), Realtek/MediaTek/Atheros in kernel; Broadcom → `broadcom-wl` | NetworkManager | menu bar + Control Center | M2 |
+| Video decoding | `intel-media-driver` / `mesa` (AMD VA-API is part of mesa) / NVIDIA VA-API | — | none (Helium uses less CPU) | M6 |
+| Wi-Fi | `iwlwifi` (Intel), Realtek/MediaTek/Atheros in kernel; Broadcom → `broadcom-wl-dkms` (only the chips the kernel can't run) | NetworkManager | menu bar + Control Center | M2 |
 | Ethernet | in kernel | NetworkManager | network menu | M2 |
 | Bluetooth | `btusb` + firmware | BlueZ | Control Center, pairing alert | M2 |
 | Sound | `snd_hda_intel`, Intel SOF → `sof-firmware`, `alsa-ucm-conf` | PipeWire + WirePlumber | volume, output picker, OSD | M2 |
@@ -1741,21 +1743,21 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Build tools | `base-devel` `git` (needed for `paru` and AUR builds) · `rust` only with `--from-source` |
 | CPU | `intel-ucode` / `amd-ucode` (detected) |
 | GPU | `mesa` + `vulkan-intel` / `vulkan-radeon` / `nvidia-open` + `nvidia-utils` (detected) |
-| Video decode | `intel-media-driver` / `libva-mesa-driver` (detected) |
+| Video decode | `intel-media-driver` (detected; AMD's VA-API comes with `mesa`, `libva-mesa-driver` is no separate package any more) |
 | Audio | `sof-firmware` `alsa-ucm-conf` `pipewire` `wireplumber` `pipewire-pulse` `pipewire-alsa` |
-| Network / BT | `networkmanager` `bluez` `bluez-utils` (`broadcom-wl` only if needed) |
+| Network / BT | `networkmanager` `bluez` `bluez-utils` (`broadcom-wl-dkms` + `linux-headers` only if needed) |
 | Input / seat | `libinput` `libxkbcommon` `seatd` (provides libseat; the logind backend is used) |
 | Graphics | `wayland` `xorg-xwayland` `xwayland-satellite` |
 | Login | `greetd` `greetd-tuigreet` |
 | Services | `upower` `power-profiles-daemon` `udisks2` `polkit` `polkit-kde-agent` `gnome-keyring` `xdg-desktop-portal` `xdg-desktop-portal-gtk` `xdg-desktop-portal-wlr` `xdg-utils` `xdg-user-dirs` `xdg-terminal-exec` `slurp` |
 | Apps | noobsbot-terminal (repo) · `helium-browser-bin` (AUR) · `dolphin` `kio-extras` `kdegraphics-thumbnailers` `ffmpegthumbs` `kimageformats` `qt6-imageformats` `kio-admin` `ark` `archlinux-xdg-menu` · `kate` `nano` · `partitionmanager` `filelight` · `plasma-systemmonitor` `btop` |
 | Disk tools | `smartmontools` `exfatprogs` `dosfstools` `ntfs-3g` `btrfs-progs` `e2fsprogs` |
-| Look | `inter-font` `ttf-jetbrains-mono` `noto-fonts` `noto-fonts-cjk` `noto-fonts-emoji` · `kvantum` `qt6ct` · WhiteSur icons, cursors, Kvantum and GTK themes (AUR/GitHub) · Phosphor icons (bundled with Noobsbot Desktop) |
+| Look | `inter-font` `ttf-jetbrains-mono` `noto-fonts` `noto-fonts-cjk` `noto-fonts-emoji` · `kvantum` `qt6ct` · WhiteSur themes (AUR: `whitesur-icon-theme` `whitesur-cursor-theme-git` `whitesur-gtk-theme-git` `kvantum-theme-whitesur-git`) · Phosphor icons (bundled with Noobsbot Desktop) |
 | Optional | `cups` `fprintd` `fwupd` `bolt` `libimobiledevice` `geoclue` `wf-recorder` · input methods: `fcitx5` `fcitx5-m17n` `fcitx5-configtool` (E6.12) |
 | Dev / test only | `qemu-desktop` `virt-manager` (fresh-system VM), `powertop`, `heaptrack` (Part K gates); `paru` is bootstrapped by `install.sh` |
 | Security (optional) | `sbctl` (Secure Boot, E6.6) |
 
-Exact AUR names are verified when `install.sh` is written. Nothing from GNOME, KDE Plasma or Cinnamon desktops is installed.
+AUR names verified 2026-10-18. Nothing from GNOME, KDE Plasma or Cinnamon desktops is installed.
 
 ---
 
@@ -1830,7 +1832,7 @@ custom-desktop-environemt/
     services/      zbus: power · network (+ NM SecretAgent) · bluetooth (+ BlueZ Agent1) · audio · brightness · media (MPRIS) · tray (+ SNI watcher) · notifications (server) · launcher-entry (badges) · time · session · disks · update (E6.13)
     bin/           update-helper.rs → noobsbot-desktop-update (privileged installer, polkit) · session.rs → noobsbot-desktop-session (watchdog + rollback)
   assets/          Phosphor symbols (SVG), noobsbot-desktop logo
-  data/            noobsbot-desktop.desktop · config.toml (commented defaults) · wallpapers/ · system/ (greetd config, pam.d/noobsbot-desktop, portals.conf, UPower.conf, polkit action)
+  data/            config.toml (commented defaults) · helium-browser-flags.conf · wallpapers/ · system/ (mirrors `/`: greetd config, pam.d/noobsbot-desktop, portals.conf, UPower.conf.d drop-in, wayland-sessions .desktop, session target, polkit action)
   themes/          Noobsbot Glass Kvantum + colour scheme + GTK (GPL-3.0, generated from theme.rs)
   install.sh  LICENSE (MIT)  CHANGELOG.md (generated)  release-plz.toml
   .github/workflows/  ci.yml (fmt, clippy, tests) · release-plz.yml (version PR + tag) · release.yml (build, sign, publish)
