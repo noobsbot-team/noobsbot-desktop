@@ -178,6 +178,7 @@ fn locale() -> String {
 
 /// What one file says.
 #[derive(Debug, PartialEq)]
+#[expect(clippy::large_enum_variant, reason = "short-lived: one per file while scanning")]
 enum Entry {
     App(App),
     /// `Hidden=true`: deleted, and it hides the same id in lower-priority dirs.
