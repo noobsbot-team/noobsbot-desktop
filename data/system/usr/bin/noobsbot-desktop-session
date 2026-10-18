@@ -1,7 +1,8 @@
 #!/bin/sh
 # Noobsbot Desktop login session (plan.md E6.7), started by greetd/tuigreet and the wayland-sessions entry.
+# Starts the installed version, or the last good one when an update keeps crashing (E6.13 rollback).
 # ponytail: plain shell; the Rust wrapper (src/bin/session.rs, E6.13) replaces it to add the heartbeat watchdog
-# and the update rollback, keeping this environment and the session target.
+# (E6.4), keeping this environment, the rollback rule and the session target.
 
 export XDG_CURRENT_DESKTOP=noobsbot-desktop XDG_SESSION_DESKTOP=noobsbot-desktop XDG_SESSION_TYPE=wayland \
     XDG_MENU_PREFIX=arch- QT_QPA_PLATFORMTHEME=qt6ct QT_STYLE_OVERRIDE=kvantum TERMINAL=noobsbot \
@@ -19,11 +20,48 @@ fi
 # shellcheck disable=SC2086 # word splitting of $vars is intended
 dbus-update-activation-environment --systemd $vars
 
-# Once the compositor listens, hand WAYLAND_DISPLAY over too and start the session target
-# (graphical-session.target, polkit agent, keyring, XDG autostart).
-noobsbot-desktop -- sh -c 'dbus-update-activation-environment --systemd WAYLAND_DISPLAY &&
-    exec systemctl --user start noobsbot-desktop-session.target'
+# Rollback (E6.13): install.sh and the updater keep each version in $lib/versions/<v>/ and point
+# /usr/bin/noobsbot-desktop at the current one. A version that ran for a minute is written to boot-ok; one that
+# dies 3 times within 2 minutes before that is skipped for boot-ok's version until the next update.
+lib=${NOOBSBOT_LIB:-/usr/lib/noobsbot-desktop}
+state=${XDG_STATE_HOME:-$HOME/.local/state}/noobsbot-desktop
+ok_after=${NOOBSBOT_BOOT_OK_AFTER:-60}
+mkdir -p "$state"
+bin=$(readlink -f "$(command -v noobsbot-desktop)")
+ver=""
+case $bin in "$lib"/versions/*/noobsbot-desktop) ver=${bin#"$lib/versions/"}; ver=${ver%/noobsbot-desktop} ;; esac
+good=$(cat "$state/boot-ok" 2>/dev/null)
+run=$bin running=$ver
+if [ -n "$ver" ] && [ "$ver" != "$good" ] && [ -x "$lib/versions/$good/noobsbot-desktop" ]; then
+    crashes=$(awk -v v="$ver" -v since=$(($(date +%s) - 120)) '$1 == v && $2 >= since' "$state/crashes" 2>/dev/null | wc -l)
+    if [ "$(cat "$state/rolled-back" 2>/dev/null)" = "$ver" ] || [ "$crashes" -ge 3 ]; then
+        echo "$ver" >"$state/rolled-back"
+        echo "noobsbot-desktop-session: $ver keeps crashing, starting $good" >&2
+        run=$lib/versions/$good/noobsbot-desktop running=$good
+        export NOOBSBOT_ROLLED_BACK="$ver"
+    fi
+fi
+
+# Once the compositor listens, hand WAYLAND_DISPLAY and DISPLAY (xwayland-satellite, E6.9) over too and start the
+# session target (graphical-session.target, polkit agent, keyring, XDG autostart).
+marker=""
+if [ -n "$running" ]; then
+    (sleep "$ok_after" && echo "$running" >"$state/boot-ok") &
+    marker=$!
+fi
+started=$(date +%s)
+"$run" -- sh -c 'dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY
+    systemctl --user start noobsbot-desktop-session.target
+    [ -z "$NOOBSBOT_ROLLED_BACK" ] || gdbus call --session --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify Noobsbot\ Desktop 0 "" \
+        "Update $NOOBSBOT_ROLLED_BACK was rolled back" "It kept quitting at start, so the previous version is running." \
+        "[]" "{}" 10000 >/dev/null'
 status=$?
+[ -z "$marker" ] || kill "$marker" 2>/dev/null
+# A crash before the boot-ok marker counts towards a rollback; only the installed version is counted.
+if [ "$status" -ne 0 ] && [ "$run" = "$bin" ] && [ -n "$ver" ] && [ $(($(date +%s) - started)) -lt "$ok_after" ]; then
+    echo "$ver $(date +%s)" >>"$state/crashes"
+fi
 
 # Logged out (or crashed): stop the session's helpers and forget the dead display.
 systemctl --user stop noobsbot-desktop-session.target graphical-session.target
