@@ -24,7 +24,7 @@ use smithay::{
 use crate::{
     apps::App,
     config::{self, Dock, DockHide},
-    shell::{Row, launchpad},
+    shell::{Row, drawer, launchpad},
     shortcuts::Action,
     state::State,
     wm::Rect,
@@ -124,7 +124,11 @@ pub struct Item {
 
 impl Item {
     pub fn icon(&self) -> &str {
-        let key = if self.key == launchpad::DOCK_KEY { launchpad::ICON } else { &self.key };
+        let key = match self.key.as_str() {
+            launchpad::DOCK_KEY => launchpad::ICON,
+            drawer::DOCK_KEY => drawer::ICON,
+            key => key,
+        };
         self.app.as_ref().map_or(key, |a| &a.icon)
     }
 }
@@ -157,7 +161,7 @@ impl State {
     pub fn dock_items(&self) -> Vec<Item> {
         let mut items: Vec<Item> = Vec::new();
         for name in &self.config.dock.items {
-            if name == launchpad::DOCK_KEY && !items.iter().any(|i| i.key == *name) {
+            if (name == launchpad::DOCK_KEY || name == drawer::DOCK_KEY) && !items.iter().any(|i| i.key == *name) {
                 items.push(Item { key: name.clone(), app: None, windows: Vec::new() });
             }
             if let Some(app) = self.apps.find(name).filter(|a| !items.iter().any(|i| i.key == a.id)) {
@@ -241,6 +245,11 @@ impl State {
         let Some((i, item)) = hit(&layout, location).and_then(|i| Some((i, items.into_iter().nth(i)?))) else { return true };
         if item.key == launchpad::DOCK_KEY {
             self.toggle_launchpad();
+            return true;
+        }
+        if item.key == drawer::DOCK_KEY {
+            let (left, right) = layout.columns[i];
+            self.toggle_drawer(drawer::Anchor::Dock((((left + right) / 2.0).round() as i32, layout.icons[i].loc.y.round() as i32).into()));
             return true;
         }
         self.close_launchpad();
@@ -516,7 +525,7 @@ impl State {
     }
 
     /// Moves `key` to pinned slot `to`, or unpins it, and saves `[dock] items`.
-    fn dock_repin(&mut self, key: &str, to: Option<usize>) {
+    pub fn dock_repin(&mut self, key: &str, to: Option<usize>) {
         let pinned = self.dock_pinned();
         let shown: Vec<usize> = pinned.iter().map(|(i, _)| *i).collect();
         let from = pinned.iter().position(|(_, id)| id == key);

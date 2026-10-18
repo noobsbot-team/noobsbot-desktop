@@ -1,5 +1,6 @@
 //! Desktop shortcuts (E1.6). "Super" in a binding means the desktop key: Super in a real session, Alt when nested
-//! (the host desktop keeps Super for itself). Super+C/V/X/Z/A/S/F/T/R/L are never bound, so they reach the app.
+//! (the host desktop keeps Super for itself). Super+C/V/X/Z/S/F/T/R/L are never bound, so they reach the app; Super+A
+//! opens the app drawer (Mac keys mode, when it comes, frees it for select-all).
 
 use smithay::{
     desktop::Window,
@@ -68,6 +69,10 @@ pub enum Action {
     Desktop(crate::shell::desktop::Command),
     /// Opens or closes Launchpad (E4.4; F4, off by default).
     Launchpad,
+    /// Opens or closes the app drawer (Super+A, or a lone Super tap).
+    AppDrawer,
+    /// A row of an app's right-click menu in the app drawer.
+    Drawer(crate::shell::drawer::Command),
     /// Installs the downloaded update, then logs out (logo menu / notification ▸ Restart to Update, E6.13).
     InstallUpdate,
     /// The Space to the left (-1) or right (+1) (E5.1).
@@ -162,6 +167,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("spotlight", "") => Some(Action::Spotlight),
         ("emoji", "") => Some(Action::Emoji),
         ("launchpad", "") => Some(Action::Launchpad),
+        ("app-drawer", "") => Some(Action::AppDrawer),
         ("space", "left") => Some(Action::SwitchSpace(-1)),
         ("space", "right") => Some(Action::SwitchSpace(1)),
         ("space", n) => n.parse::<usize>().ok().filter(|n| (1..=16).contains(n)).map(|n| Action::ShowSpace(n - 1)),
@@ -251,7 +257,10 @@ impl State {
             Action::Power(power) => self.open_alert(power),
             Action::Switcher { back, held } => self.switcher_start(back, held),
             Action::ForceQuit => self.open_force_quit(),
-            Action::Spotlight => self.toggle_spotlight(),
+            Action::Spotlight => {
+                self.close_drawer();
+                self.toggle_spotlight();
+            }
             Action::Emoji => self.toggle_emoji(),
             Action::Layout(index) => self.switch_layout(index),
             Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
@@ -306,7 +315,10 @@ impl State {
             Action::SwitchSpace(delta) => self.switch_space(delta),
             Action::ShowSpace(n) => self.show_space(n),
             Action::MoveToSpace(delta) => self.move_to_space(delta),
-            Action::MissionControl => self.toggle_mission_control(),
+            Action::MissionControl => {
+                self.close_drawer();
+                self.toggle_mission_control();
+            }
             Action::AppExpose => self.app_expose(),
             Action::ShowDesktop => self.toggle_desktop(),
             Action::NotificationCenter => {
@@ -317,7 +329,12 @@ impl State {
             }
             Action::Dock(command) => self.dock_command(command),
             Action::Desktop(command) => self.desktop_command(command),
-            Action::Launchpad => self.toggle_launchpad(),
+            Action::Launchpad => {
+                self.close_drawer();
+                self.toggle_launchpad();
+            }
+            Action::AppDrawer => self.toggle_drawer(crate::shell::drawer::Anchor::Corner),
+            Action::Drawer(command) => self.drawer_command(command),
             Action::Screenshot(start) => self.screenshot(start),
             Action::InstallUpdate => self.install_update(),
         }
@@ -459,6 +476,7 @@ mod tests {
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::b, false), None, "Shift is not part of Super+B");
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::b, false), None, "plain b goes to the app");
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::c, false), None, "Super+C passes through");
+        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::a, false), Some(&Action::AppDrawer));
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::F12, false), Some(&Action::Quake));
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::F12, false), None, "Super+F12 is not F12");
         assert_eq!(lookup(&table, &mods(false, true, false), Keysym::b, true), Some(&Action::Spawn("helium-browser".into())), "nested: Alt is the desktop key");

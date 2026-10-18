@@ -7,6 +7,7 @@ pub mod desktop;
 pub mod disks;
 pub mod dock;
 pub mod dock_fx;
+pub mod drawer;
 pub mod emoji;
 pub mod force_quit;
 pub mod greeter;
@@ -70,7 +71,7 @@ impl Popup {
             Popup::Menu(Menu::App) => BarItem::App,
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
             Popup::Menu(Menu::Input) => BarItem::Input,
-            Popup::Menu(Menu::Dock | Menu::Desktop) => return None,
+            Popup::Menu(Menu::Dock | Menu::Desktop | Menu::Drawer) => return None,
             Popup::Control => BarItem::ControlCenter,
         })
     }
@@ -106,6 +107,8 @@ pub enum Menu {
     Input,
     /// A desktop icon's or the desktop's right-click menu (E7.2): `State::desktop_menu_rows`.
     Desktop,
+    /// An app's right-click menu in the app drawer: `State::drawer_menu_rows`.
+    Drawer,
 }
 
 /// Where a menu opens: under the bar with its left edge at x, centred over (x, bottom) like the dock's, or with its
@@ -159,7 +162,7 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) 
         ],
         Menu::Tray(_) => tray.iter().map(|r| r.as_ref().and_then(|r| row(r.label.clone(), "", r.enabled.then_some(Action::TrayMenu(r.id))))).collect(),
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
-        Menu::Dock | Menu::Input | Menu::Desktop => Vec::new(),
+        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer => Vec::new(),
     }
 }
 
@@ -299,7 +302,7 @@ impl State {
         if self.force_quit.is_some() && self.force_quit_layout(0).is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
-        if self.launchpad_open() {
+        if self.launchpad_open() || self.drawer_layout().is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
         let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
@@ -365,6 +368,7 @@ impl State {
                     Menu::Dock => self.dock_menu_rows(),
                     Menu::Input => self.input_menu_rows(),
                     Menu::Desktop => self.desktop_menu_rows(),
+                    Menu::Drawer => self.drawer_menu_rows(),
                     _ => menu_rows(menu, "", tray, self.update_ready()),
                 };
                 if let Some(action) = index.and_then(|i| rows.into_iter().nth(i)).flatten().and_then(|row| row.action) {
@@ -383,6 +387,7 @@ impl State {
             return self.control_drag(to);
         }
         self.notify_motion(to);
+        self.drawer_motion(to);
         let Some(open) = self.popup else { return };
         let Some(backend) = self.backend.as_ref() else { return };
         if let Some(next) = backend.menu_bar.hit(to).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(popup_for) {

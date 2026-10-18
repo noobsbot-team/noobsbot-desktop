@@ -141,6 +141,10 @@ impl State {
             .then(|| self.desktop_menu_rows())
             .and_then(|rows| Some((self.desktop_menu_anchor(&rows)?, rows)));
         let desktop_frame = self.desktop_frame();
+        let drawer_frame = self.drawer_frame();
+        let drawer_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Drawer)))
+            .then(|| self.drawer_menu_rows())
+            .and_then(|rows| Some((self.drawer_menu_anchor(&rows)?, rows)));
         let overview = self.mission_frame();
         let slide = if overview.is_none() { self.slide_frame() } else { None };
         let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
@@ -166,6 +170,7 @@ impl State {
             spotlight,
             emoji: emoji_view,
             launchpad: pad_view,
+            drawer: drawer_view,
             mission,
             ghosts,
             entrances,
@@ -354,6 +359,9 @@ impl State {
                     (crate::shell::Menu::Desktop, _) => {
                         desktop_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
                     }
+                    (crate::shell::Menu::Drawer, _) => {
+                        drawer_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
+                    }
                     _ => (
                         if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray, update_ready) },
                         crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
@@ -383,6 +391,23 @@ impl State {
         render::motion::appear(entrances.popup(), renderer, &mut bar, mark, scale, now);
         let replaced = entrances.replaced;
         entrances.fade_popup.track(renderer, &mut bar, mark, replaced, true, reduce, scale, now, &mut self.anim_until);
+        // The app drawer: behind its right-click menu, in front of the bar and the dock.
+        let mark = bar.len();
+        if let Some(frame) = &drawer_frame {
+            bar.extend(drawer_view.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                &mut self.icons,
+                frame,
+                dark,
+                accent,
+                appearance.glass_opacity,
+                scale,
+            ));
+        }
+        drawer_view.motion(renderer, &mut bar, mark, drawer_frame.is_some(), reduce, scale, now, &mut self.anim_until);
         bar.extend(strip);
         // The dock: behind the bar and popups, above windows.
         if let Some(layout) = &dock_layout {

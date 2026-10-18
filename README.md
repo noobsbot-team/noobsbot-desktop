@@ -176,6 +176,10 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   right-click menus. It hides when a window covers it; touch the bottom edge to bring it back.
 - **Spotlight (Super+Space):** apps and a calculator. Arrow keys select, Return opens, Esc closes.
 - **Launchpad:** every app in a grid, with search. Open it from the dock or with a four-finger pinch.
+- **App drawer (Super+A, or tap Super alone):** apps by category, like the Cinnamon menu, with search, Favorites and
+  Recent; right-click an app to favorite it or add it to the dock or desktop. Lock, Log Out and Shut Down sit in its
+  left strip. Turn the Super tap off with `[app_drawer] super_tap = false`; add `"app-drawer"` to `[dock] items` for a
+  dock icon.
 - **Spaces and Mission Control:** Super+Left/Right or a three-finger swipe switches Space. Super+Up (or swipe up)
   shows every window and the Spaces bar, where + adds a Space. Super+Down (or swipe down) shows the current app's
   windows.
@@ -202,6 +206,7 @@ settings file.
 |---|---|
 | Super+Return | terminal |
 | Super+Space | Spotlight |
+| Super+A, or Super tapped alone | app drawer |
 | Super+B / Super+E | Helium browser / Dolphin file manager |
 | Super+Q / Super+W | quit app / close window |
 | Super+M / Super+H / Super+Alt+H | minimise / hide app / hide others |

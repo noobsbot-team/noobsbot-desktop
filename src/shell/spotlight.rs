@@ -54,6 +54,7 @@ pub fn layout(output: Size<i32, Logical>, bottom: i32, count: usize) -> Layout {
 
 /// One result row.
 #[derive(Debug, Clone, PartialEq)]
+#[expect(clippy::large_enum_variant, reason = "at most MAX_ROWS of them, rebuilt per keystroke")]
 pub enum Hit {
     App(App),
     /// The calculator's answer, formatted.
@@ -115,7 +116,7 @@ pub fn score(name: &str, query: &str) -> Option<i32> {
 }
 
 /// An app's best score over its name and its program (`dolphin`, `kate`): the program only by prefix.
-fn app_score(app: &App, query: &str) -> Option<i32> {
+pub fn app_score(app: &App, query: &str) -> Option<i32> {
     let program = app.command().first().map(|p| p.rsplit('/').next().unwrap_or(p).to_lowercase());
     let by_program = program.filter(|p| p.starts_with(query)).map(|_| 600);
     score(&app.name, query).max(by_program)
@@ -294,6 +295,7 @@ impl State {
             Hit::App(app) => {
                 tracing::info!(app = app.id, "spotlight: launch");
                 self.spawn(&app.command());
+                self.remember_launch(&app.id);
             }
             Hit::Answer(answer) => {
                 let seat = self.seat.clone();
@@ -323,7 +325,7 @@ mod tests {
     use super::*;
 
     fn app(name: &str, exec: &str) -> App {
-        App { id: name.to_lowercase(), name: name.into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false }
+        App { id: name.to_lowercase(), name: name.into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false, ..Default::default() }
     }
 
     fn names(hits: &[Hit]) -> Vec<String> {

@@ -44,7 +44,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--greeter] [--test-scene] [--show notification|notification-center|calendar-events|weather|fades|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|alert-polkit|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|emoji|emoji-search|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|greeter|greeter-users|greeter-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail|desktop|desktop-menu|desktop-rename] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--greeter] [--test-scene] [--show notification|notification-center|calendar-events|weather|fades|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|alert-polkit|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|emoji|emoji-search|launchpad|launchpad-search|app-drawer|app-drawer-search|app-drawer-menu|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|greeter|greeter-users|greeter-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail|desktop|desktop-menu|desktop-rename] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -318,6 +318,41 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             if let Some(l) = state.launchpad.as_mut() {
                 l.field = ui::field::TextField { text: "k".into(), caret: 1, ..Default::default() };
             }
+        }
+        // The app drawer on All Applications with the third app selected, searching "te", or with the second app's
+        // right-click menu open (once the app index has arrived).
+        Some("app-drawer") => {
+            state.open_drawer(shell::drawer::Anchor::Corner);
+            if let Some(d) = state.drawer.as_mut() {
+                d.show(shell::drawer::Category::All);
+                d.selected = 2;
+            }
+        }
+        Some("app-drawer-search") => {
+            state.open_drawer(shell::drawer::Anchor::Corner);
+            if let Some(d) = state.drawer.as_mut() {
+                d.field = ui::field::TextField { text: "te".into(), caret: 2, ..Default::default() };
+            }
+        }
+        Some("app-drawer-menu") => {
+            state.open_drawer(shell::drawer::Anchor::Corner);
+            if let Some(d) = state.drawer.as_mut() {
+                d.show(shell::drawer::Category::All);
+            }
+            let open = |_: std::time::Instant, _: &mut (), state: &mut State| {
+                let (Some(id), Some(layout)) = (state.drawer_apps().get(1).map(|a| a.id.clone()), state.drawer_layout()) else {
+                    return smithay::reexports::calloop::timer::TimeoutAction::ToDuration(std::time::Duration::from_millis(200));
+                };
+                let row = layout.rows[1];
+                if let Some(d) = state.drawer.as_mut() {
+                    d.selected = 1;
+                    d.menu = Some((id, (row.loc.x + 120, row.loc.y + row.size.h / 2).into()));
+                }
+                state.popup = Some(shell::Popup::Menu(shell::Menu::Drawer));
+                state.schedule_redraw();
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            };
+            event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_millis(500)), open)?;
         }
         // Opened once the apps started with up.sh have mapped; `mission-control-bar` with the Spaces bar expanded and
         // a second Space.

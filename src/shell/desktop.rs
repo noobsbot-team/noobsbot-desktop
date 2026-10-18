@@ -166,7 +166,7 @@ pub fn desktop_dir(env: Option<&str>, user_dirs: &str, home: &Path) -> Option<Pa
 }
 
 /// The user's Desktop folder, from the environment.
-fn user_dir() -> Option<PathBuf> {
+pub fn user_dir() -> Option<PathBuf> {
     let home = PathBuf::from(std::env::var_os("HOME")?);
     let config = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home.join(".config"));
     let user_dirs = std::fs::read_to_string(config.join("user-dirs.dirs")).unwrap_or_default();
