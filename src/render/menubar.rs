@@ -44,6 +44,8 @@ pub struct Content {
     /// Each tray item's icons, left to right.
     pub tray: Vec<Arc<Vec<Image>>>,
     pub status: Vec<Item>,
+    /// The input item's text, the active layout's code ("US", E6.12); `None`: one layout, no input method.
+    pub input: Option<String>,
     pub clock: String,
 }
 
@@ -56,6 +58,8 @@ pub enum BarItem {
     Tray(usize),
     /// `Content::status[i]`.
     Status(usize),
+    /// The keyboard layout / input method menu.
+    Input,
     ControlCenter,
     Clock,
 }
@@ -218,6 +222,9 @@ impl MenuBar {
             right.push((icon.clone(), GAP, BarItem::Tray(i)));
         }
         self.icons = icons;
+        if let Some(code) = &content.input {
+            right.push((text.label(code, Style { weight: 600, ..body }, 100, scale), GAP, BarItem::Input));
+        }
         for (i, item) in content.status.iter().enumerate() {
             if let Some(t) = &item.text {
                 right.push((text.label(t, body, 100, scale), TIGHT, BarItem::Status(i)));

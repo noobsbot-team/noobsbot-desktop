@@ -64,6 +64,7 @@ impl Popup {
             Popup::Menu(Menu::Logo) => BarItem::Logo,
             Popup::Menu(Menu::App) => BarItem::App,
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
+            Popup::Menu(Menu::Input) => BarItem::Input,
             Popup::Menu(Menu::Dock) => return None,
             Popup::Control => BarItem::ControlCenter,
         })
@@ -77,6 +78,7 @@ fn popup_for(item: BarItem) -> Option<Popup> {
     match item {
         BarItem::Logo => Some(Popup::Menu(Menu::Logo)),
         BarItem::App => Some(Popup::Menu(Menu::App)),
+        BarItem::Input => Some(Popup::Menu(Menu::Input)),
         BarItem::Clock => {
             let (year, month) = this_month();
             Some(Popup::Notifications { year, month })
@@ -95,6 +97,8 @@ pub enum Menu {
     Tray(usize),
     /// A dock icon's right-click menu: `State::dock_menu_rows`, above `State::dock_ui.menu`.
     Dock,
+    /// Keyboard layouts and input methods (E6.12): `State::input_menu_rows`.
+    Input,
 }
 
 /// Where a menu opens: under the bar with its left edge at x, or centred over (x, bottom) like the dock's.
@@ -105,7 +109,7 @@ pub enum Anchor {
 }
 
 /// A menu row (D8); `None` in a row list is a separator. No action: drawn disabled.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub label: String,
     /// macOS-style glyphs; ⌘ is the desktop key.
@@ -143,8 +147,8 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>]) -> Vec<Option<
             row(format!("Quit {app}"), "⌘Q", Some(Action::QuitApp)),
         ],
         Menu::Tray(_) => tray.iter().map(|r| r.as_ref().and_then(|r| row(r.label.clone(), "", r.enabled.then_some(Action::TrayMenu(r.id))))).collect(),
-        // Built from the dock's items: `State::dock_menu_rows`.
-        Menu::Dock => Vec::new(),
+        // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`.
+        Menu::Dock | Menu::Input => Vec::new(),
     }
 }
 
@@ -329,7 +333,11 @@ impl State {
                 let index = self.backend.as_ref().and_then(|b| b.menu.row_at(location));
                 // Separators and disabled rows keep the menu open, as on macOS.
                 let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
-                let rows = if menu == Menu::Dock { self.dock_menu_rows() } else { menu_rows(menu, "", tray) };
+                let rows = match menu {
+                    Menu::Dock => self.dock_menu_rows(),
+                    Menu::Input => self.input_menu_rows(),
+                    _ => menu_rows(menu, "", tray),
+                };
                 if let Some(action) = index.and_then(|i| rows.into_iter().nth(i)).flatten().and_then(|row| row.action) {
                     self.popup = None;
                     self.run_action(action);

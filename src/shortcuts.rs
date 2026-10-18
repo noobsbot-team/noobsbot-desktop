@@ -72,6 +72,8 @@ pub enum Action {
     MissionControl,
     /// Mission Control with only the focused app's windows.
     AppExpose,
+    /// Keyboard layout n, from 0, or the next one (Super+Ctrl+Space, E6.12).
+    Layout(Option<usize>),
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -151,6 +153,7 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("move-to-space", "right") => Some(Action::MoveToSpace(1)),
         ("mission-control", "") => Some(Action::MissionControl),
         ("app-expose", "") => Some(Action::AppExpose),
+        ("input-source", "") => Some(Action::Layout(None)),
         _ => None,
     };
     let mut table = Vec::new();
@@ -224,6 +227,7 @@ impl State {
             Action::Switcher { back, held } => self.switcher_start(back, held),
             Action::ForceQuit => self.open_force_quit(),
             Action::Spotlight => self.toggle_spotlight(),
+            Action::Layout(index) => self.switch_layout(index),
             // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
             Action::Volume(up) => {

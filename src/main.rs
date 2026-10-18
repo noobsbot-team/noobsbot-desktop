@@ -9,6 +9,7 @@ mod config;
 mod decorations;
 mod frame;
 mod grabs;
+mod ime;
 mod input;
 mod mission;
 mod protocols;
@@ -34,7 +35,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -97,6 +98,8 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
     let display: Display<State> = Display::new()?;
     let config_path = config::path();
     let mut state = State::new(&mut event_loop, display, nested, config::load(&config_path))?;
+    let codes = state.config.keyboard.resolved().layout;
+    state.read_layouts(&codes);
 
     // Saving the settings file applies it at once (E1.8).
     let (tx, rx) = channel::channel();
@@ -110,6 +113,8 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
                 let resolved = config.keyboard.resolved();
                 if let Err(err) = keyboard.set_xkb_config(state, input::xkb(&resolved)) {
                     tracing::warn!(keyboard = ?resolved, "keyboard layout: {err}, keeping the previous one");
+                } else {
+                    state.read_layouts(&resolved.layout);
                 }
             }
             if config.appearance != state.config.appearance {
@@ -147,6 +152,13 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         Some("usb") => shell::disks::sample(&mut state),
         Some("logo-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::Logo)),
         Some("app-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::App)),
+        Some("input-menu") => {
+            let names = ["English (US)", "Nepali", "Hindi (Bolnagri)"].map(String::from).to_vec();
+            state.layouts.list = ["us", "np", "in"].map(String::from).into_iter().zip(names).collect();
+            state.layouts.active = 1;
+            state.layouts.fcitx = true;
+            state.popup = Some(shell::Popup::Menu(shell::Menu::Input));
+        }
         Some("control") => state.popup = Some(shell::Popup::Control),
         Some("control-wifi") => {
             state.popup = Some(shell::Popup::Control);
