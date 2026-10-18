@@ -138,6 +138,7 @@ pub struct State {
     pub tray: Vec<crate::services::tray::TrayItem>,
     /// The open tray menu: service, dbusmenu path and rows.
     pub tray_menu: Option<(String, String, Vec<Option<crate::services::tray::MenuRow>>)>,
+    pub disks: crate::shell::disks::Disks,
     pub symbols: crate::symbols::Symbols,
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
@@ -246,6 +247,8 @@ impl State {
                     crate::services::Update::Notify(n) => state.notify(*n),
                     crate::services::Update::CloseNotification(id) => state.close_notification(id, crate::shell::notify::Reason::Closed),
                     crate::services::Update::History(list) => state.restore_notifications(list),
+                    crate::services::Update::Disks(volumes) => state.disks_changed(volumes),
+                    crate::services::Update::DiskFailed { name, error } => state.disk_failed(name, error),
                 }
                 state.schedule_redraw();
             }
@@ -312,6 +315,7 @@ impl State {
             media: None,
             tray: Vec::new(),
             tray_menu: None,
+            disks: Default::default(),
             symbols: Default::default(),
             popup: None,
             osd: None,

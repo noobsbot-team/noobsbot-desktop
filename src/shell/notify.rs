@@ -466,7 +466,9 @@ impl State {
 
     fn invoke(&mut self, id: u32, key: String) {
         let resident = self.notifications.get(id).is_some_and(|n| n.resident);
-        self.services.send(Command::NotificationAction { id, key });
+        if !self.disk_action(id, &key) {
+            self.services.send(Command::NotificationAction { id, key });
+        }
         if !resident {
             self.close_notification(id, Reason::Dismissed);
         }

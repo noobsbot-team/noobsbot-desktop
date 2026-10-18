@@ -138,6 +138,7 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             let (year, month) = shell::this_month();
             state.popup = Some(shell::Popup::Notifications { year, month });
         }
+        Some("usb") => shell::disks::sample(&mut state),
         Some("logo-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::Logo)),
         Some("app-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::App)),
         Some("control") => state.popup = Some(shell::Popup::Control),

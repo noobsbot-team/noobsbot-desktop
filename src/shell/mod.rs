@@ -3,6 +3,7 @@
 
 pub mod alert;
 pub mod control;
+pub mod disks;
 pub mod dock;
 pub mod force_quit;
 pub mod notify;
