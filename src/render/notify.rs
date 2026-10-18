@@ -302,9 +302,11 @@ fn place(renderer: &mut GlesRenderer, label: &Label, piece: &Rendered, rect: Rec
         Align::Right => Rectangle::new((rect.loc.x + rect.size.w - w, rect.loc.y).into(), (w, rect.size.h).into()),
         Align::Centre => rect,
         Align::Fill => {
-            let (_, Some(buffer)) = label else { return None };
+            let (pixels, Some(buffer)) = label else { return None };
             let loc = Point::from((rect.loc.x, rect.loc.y)).to_f64().to_physical(scale);
-            return MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, None, Some(rect.size), Kind::Unspecified)
+            // The whole buffer, scaled into the rect (without `src` only a rect-sized corner of it is sampled).
+            let src = Rectangle::from_size((f64::from(pixels.width), f64::from(pixels.height)).into());
+            return MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, Some(src), Some(rect.size), Kind::Unspecified)
                 .inspect_err(|err| tracing::warn!("notification icon: {err}"))
                 .ok()
                 .map(SceneElement::Memory);

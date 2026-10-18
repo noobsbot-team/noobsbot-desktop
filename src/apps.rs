@@ -304,7 +304,7 @@ const THEMES: [&str; 4] = ["WhiteSur", "hicolor", "Adwaita", "breeze"];
 /// The file of icon `name`: in the first theme that has it, its scalable version, else its largest bitmap; then
 /// `/usr/share/pixmaps`. Symbolic (monochrome) variants are skipped.
 // ponytail: follows the fixed THEMES list, not each theme's `Inherits`; read index.theme chains if a theme needs it.
-fn find_icon(name: &str) -> Option<PathBuf> {
+pub fn find_icon(name: &str) -> Option<PathBuf> {
     if name.is_empty() {
         return None;
     }
@@ -359,7 +359,7 @@ impl Icons {
 }
 
 /// Premultiplied RGBA of the icon file at `path`.
-fn rasterise(path: &Path, px: u32) -> Option<Rendered> {
+pub fn rasterise(path: &Path, px: u32) -> Option<Rendered> {
     let bytes = std::fs::read(path).ok()?;
     let rendered = |pixels, width, height| Rendered { pixels, width, height, baseline: height, truncated: false };
     if bytes.starts_with(b"\x89PNG") {

@@ -4,7 +4,7 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use resvg::{tiny_skia, usvg};
+use resvg::tiny_skia;
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
     Connection,
@@ -229,53 +229,15 @@ pub fn load_icon(name: &str) -> Option<Rendered> {
     if path.starts_with('/') {
         return decode(&PathBuf::from(path));
     }
-    find_icon(name).and_then(|path| decode(&path))
-}
-
-/// `name` in the icon themes, the largest found.
-// ponytail: hicolor, Adwaita and breeze only, ignoring the user's theme and index.theme; parse the theme chain when
-// the Appearance settings pick an icon theme (M7).
-fn find_icon(name: &str) -> Option<PathBuf> {
-    let home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
-    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    let mut best: Option<(u32, PathBuf)> = None;
-    for dir in std::iter::once(home.as_str()).chain(dirs.split(':')) {
-        for theme in ["hicolor", "Adwaita", "breeze"] {
-            let Ok(levels) = std::fs::read_dir(format!("{dir}/icons/{theme}")) else { continue };
-            // hicolor is <size>/<category>/, breeze <category>/<size>/: try both levels.
-            for outer in levels.flatten() {
-                let Ok(inner) = std::fs::read_dir(outer.path()) else { continue };
-                for inner in inner.flatten() {
-                    let size = [outer.file_name(), inner.file_name()]
-                        .iter()
-                        .find_map(|n| n.to_str()?.split(['x', '@']).next()?.parse::<u32>().ok().or_else(|| (n == "scalable").then_some(u32::MAX)));
-                    for ext in ["svg", "png"] {
-                        let file = inner.path().join(format!("{name}.{ext}"));
-                        // The largest size wins (scalable above all); an SVG beats a PNG of its size.
-                        let rank = size.unwrap_or(0).saturating_mul(2).saturating_add(u32::from(ext == "svg"));
-                        if best.as_ref().is_none_or(|(r, _)| rank > *r) && file.exists() {
-                            best = Some((rank, file));
-                        }
-                    }
-                }
-            }
-        }
-        if best.is_some() {
-            break;
-        }
-    }
-    best.map(|(_, path)| path).or_else(|| ["png", "svg"].iter().map(|ext| PathBuf::from(format!("/usr/share/pixmaps/{name}.{ext}"))).find(|p| p.exists()))
+    // The dock's lookup: WhiteSur first, like every other icon on the desktop.
+    crate::apps::find_icon(name).and_then(|path| decode(&path))
 }
 
 /// SVG, PNG or JPEG, scaled to fit `ICON_PX`.
 fn decode(path: &std::path::Path) -> Option<Rendered> {
     let bytes = std::fs::read(path).ok()?;
     if path.extension().is_some_and(|e| e == "svg" || e == "svgz") {
-        let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default()).ok()?;
-        let mut pixmap = tiny_skia::Pixmap::new(ICON_PX, ICON_PX)?;
-        let s = ICON_PX as f32 / tree.size().width().max(tree.size().height());
-        resvg::render(&tree, tiny_skia::Transform::from_scale(s, s), &mut pixmap.as_mut());
-        return Some(Rendered { pixels: pixmap.take(), width: ICON_PX, height: ICON_PX, baseline: 0, truncated: false });
+        return crate::apps::rasterise(path, ICON_PX);
     }
     let (width, height, channels, pixels) = if bytes.starts_with(b"\x89PNG") {
         let mut decoder = png::Decoder::new(std::io::Cursor::new(&bytes));
