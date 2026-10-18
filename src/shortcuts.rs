@@ -60,6 +60,8 @@ pub enum Action {
     Spotlight,
     /// A row of a dock icon's right-click menu (E3.1).
     Dock(crate::shell::dock::Command),
+    /// Opens or closes Launchpad (E4.4; F4, off by default).
+    Launchpad,
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -131,6 +133,7 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
         ("notification-center", "") => Some(Action::NotificationCenter),
         ("spotlight", "") => Some(Action::Spotlight),
+        ("launchpad", "") => Some(Action::Launchpad),
         _ => None,
     };
     let mut table = Vec::new();
@@ -259,6 +262,7 @@ impl State {
                 self.schedule_redraw();
             }
             Action::Dock(command) => self.dock_command(command),
+            Action::Launchpad => self.toggle_launchpad(),
         }
     }
 

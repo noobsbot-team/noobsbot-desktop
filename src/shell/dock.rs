@@ -24,7 +24,7 @@ use smithay::{
 use crate::{
     apps::App,
     config::{self, Dock, DockHide},
-    shell::Row,
+    shell::{Row, launchpad},
     shortcuts::Action,
     state::State,
     wm::Rect,
@@ -124,7 +124,8 @@ pub struct Item {
 
 impl Item {
     pub fn icon(&self) -> &str {
-        self.app.as_ref().map_or(&self.key, |a| &a.icon)
+        let key = if self.key == launchpad::DOCK_KEY { launchpad::ICON } else { &self.key };
+        self.app.as_ref().map_or(key, |a| &a.icon)
     }
 }
 
@@ -156,6 +157,9 @@ impl State {
     pub fn dock_items(&self) -> Vec<Item> {
         let mut items: Vec<Item> = Vec::new();
         for name in &self.config.dock.items {
+            if name == launchpad::DOCK_KEY && !items.iter().any(|i| i.key == *name) {
+                items.push(Item { key: name.clone(), app: None, windows: Vec::new() });
+            }
             if let Some(app) = self.apps.find(name).filter(|a| !items.iter().any(|i| i.key == a.id)) {
                 items.push(Item { key: app.id.clone(), app: Some(app.clone()), windows: Vec::new() });
             }
@@ -197,6 +201,9 @@ impl State {
     pub fn dock_visible(&self, layout: &Layout) -> bool {
         let focused = self.focused_window();
         let state = |s| focused.as_ref().and_then(|w| w.toplevel()).is_some_and(|t| t.current_state().states.contains(s));
+        if self.launchpad.is_some() {
+            return true;
+        }
         if state(xdg_toplevel::State::Fullscreen) {
             return false;
         }
@@ -232,6 +239,11 @@ impl State {
             return false;
         }
         let Some((i, item)) = hit(&layout, location).and_then(|i| Some((i, items.into_iter().nth(i)?))) else { return true };
+        if item.key == launchpad::DOCK_KEY {
+            self.toggle_launchpad();
+            return true;
+        }
+        self.close_launchpad();
         match button {
             // A click acts on release, unless it became a drag (`dock_release`).
             BTN_LEFT => self.dock_ui.drag = Some(Drag { key: item.key, start: location, moved: false, slot: None }),
@@ -270,7 +282,7 @@ impl State {
 
     /// Starts `app` from its `Exec` line, with Plank's launch bounce.
     // ponytail: Terminal=true apps start without a terminal.
-    fn launch(&mut self, app: Option<&App>) {
+    pub fn launch(&mut self, app: Option<&App>) {
         let Some(app) = app else { return };
         tracing::info!(app = app.id, "dock: launch");
         self.dock_fx.launched(app.id.clone());

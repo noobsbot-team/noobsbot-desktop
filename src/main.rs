@@ -32,7 +32,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -190,6 +190,14 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             let text = if show == "spotlight" { "te" } else { "12*7" };
             let field = ui::field::TextField { text: text.into(), caret: text.len(), ..Default::default() };
             state.spotlight = Some(shell::spotlight::Spotlight { field, selected: 0 });
+        }
+        // Launchpad, or Launchpad searching "k".
+        Some("launchpad") => state.open_launchpad(),
+        Some("launchpad-search") => {
+            state.open_launchpad();
+            if let Some(l) = state.launchpad.as_mut() {
+                l.field = ui::field::TextField { text: "k".into(), caret: 1, ..Default::default() };
+            }
         }
         // Stays up: no hide timer.
         Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),

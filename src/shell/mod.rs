@@ -7,6 +7,7 @@ pub mod disks;
 pub mod dock;
 pub mod dock_fx;
 pub mod force_quit;
+pub mod launchpad;
 pub mod notify;
 pub mod plank;
 pub mod spotlight;
@@ -274,6 +275,9 @@ impl State {
         if self.force_quit.is_some() && self.force_quit_layout(0).is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
+        if self.launchpad_open() {
+            return true;
+        }
         let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
         on_bar || self.popup_rect().is_some_and(|r| r.to_f64().contains(location)) || self.dock_covers(location)
     }
@@ -285,7 +289,7 @@ impl State {
         if self.alert.is_some() && self.alert_press(location) {
             return true;
         }
-        if self.banner_press(location) || self.force_quit_press(location) || self.spotlight_press(location) {
+        if self.banner_press(location) || self.force_quit_press(location) || self.spotlight_press(location) || self.launchpad_press(location, secondary) {
             return true;
         }
         let item = self.backend.as_ref().and_then(|b| b.menu_bar.hit(location));

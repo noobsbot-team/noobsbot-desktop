@@ -174,6 +174,8 @@ pub struct State {
     pub force_quit: Option<crate::shell::force_quit::ForceQuit>,
     /// Spotlight (E4.3), when open.
     pub spotlight: Option<crate::shell::spotlight::Spotlight>,
+    /// Launchpad (E4.4), while open or fading out.
+    pub launchpad: Option<crate::shell::launchpad::Launchpad>,
 }
 
 impl State {
@@ -342,6 +344,7 @@ impl State {
             switcher: Default::default(),
             force_quit: None,
             spotlight: None,
+            launchpad: None,
             display_handle: dh,
         })
     }
