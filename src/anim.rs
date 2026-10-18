@@ -334,6 +334,54 @@ impl State {
     pub fn window_closing(&mut self, window: &Window) {
         self.leave(window, None, Curve::Ease(FADE_OUT));
     }
+
+    /// Show Desktop (E5.3): the shown Space's windows spring aside, or back.
+    pub fn toggle_desktop(&mut self) {
+        if self.desktop_shown.is_some() {
+            self.restore_desktop();
+            return;
+        }
+        let Some(output) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
+        let windows: Vec<Window> = self.space.elements().filter(|w| self.on_current(w)).cloned().collect();
+        let mut saved = Vec::new();
+        for window in windows {
+            let Some(geo) = self.space.element_geometry(&window) else { continue };
+            let bar = crate::decorations::bar_height(&window);
+            let frame = Rectangle::new(geo.loc - Point::from((0, bar)), geo.size + (0, bar).into());
+            self.slide_window(&window, aside(frame, output));
+            saved.push((window, frame.loc));
+        }
+        self.desktop_shown = Some(saved);
+    }
+
+    /// Show Desktop off: every pushed-aside window still there springs back.
+    pub fn restore_desktop(&mut self) {
+        for (window, loc) in self.desktop_shown.take().into_iter().flatten() {
+            if self.space.elements().any(|w| *w == window) {
+                self.slide_window(&window, loc);
+            }
+        }
+    }
+
+    /// Moves `window`'s frame to `loc` with a `smooth` spring; reduce motion: it jumps.
+    fn slide_window(&mut self, window: &Window, loc: Point<i32, Logical>) {
+        let from = self.current_look(window).filter(|_| !self.config.appearance.reduce_motion);
+        self.set_visible_loc(window, loc);
+        if let Some(from) = from {
+            self.move_from(window, from, Curve::Spring(SMOOTH));
+        }
+    }
+}
+
+/// How much of a window Show Desktop leaves on screen.
+const PEEK: i32 = 16;
+
+/// Where Show Desktop pushes `frame`: past the nearer side edge of `output`, `PEEK` px still showing.
+// ponytail: sideways only; up or down would cross into other Spaces' rows (spaces.rs stacks them vertically).
+fn aside(frame: crate::wm::Rect, output: crate::wm::Rect) -> Point<i32, Logical> {
+    let left = frame.loc.x + frame.size.w / 2 < output.loc.x + output.size.w / 2;
+    let x = if left { output.loc.x - frame.size.w + PEEK } else { output.loc.x + output.size.w - PEEK };
+    (x, frame.loc.y).into()
 }
 
 #[cfg(test)]
@@ -388,6 +436,15 @@ mod tests {
         let area = Rectangle::new((90.0, 90.0).into(), (220.0, 120.0).into());
         assert_eq!(small.map(frame, area), Rectangle::new((145.0, 120.0).into(), (110.0, 60.0).into()));
         assert_eq!(Look::at(frame).map(frame, area), area);
+    }
+
+    #[test]
+    fn show_desktop_pushes_to_the_nearer_side() {
+        let output = Rectangle::new((0, 0).into(), (1280, 800).into());
+        let left = Rectangle::new((100, 50).into(), (400, 300).into());
+        assert_eq!(aside(left, output), Point::from((16 - 400, 50)));
+        let right = Rectangle::new((800, 200).into(), (400, 300).into());
+        assert_eq!(aside(right, output), Point::from((1280 - 16, 200)));
     }
 
     #[test]

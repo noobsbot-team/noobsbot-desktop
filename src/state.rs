@@ -192,6 +192,8 @@ pub struct State {
     pub spaces: crate::spaces::Spaces,
     /// Mission Control (E5.2), while up or closing.
     pub mission: Option<crate::mission::Mission>,
+    /// Show Desktop is on: the windows pushed aside and the frame spots they go back to (E5.3).
+    pub desktop_shown: Option<Vec<(Window, Point<i32, Logical>)>>,
     /// The system touchpad gesture in progress (E5.3).
     pub gesture: Option<crate::gestures::Tracker>,
     /// Hot corners (E5.4).
@@ -303,6 +305,7 @@ impl State {
                     crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
                     crate::services::Update::Resumed => state.idle_activity(),
+                    crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                 }
                 state.schedule_redraw();
             }
@@ -398,6 +401,7 @@ impl State {
             launchpad: None,
             spaces: Default::default(),
             mission: None,
+            desktop_shown: None,
             gesture: None,
             corners: Default::default(),
             lock: None,
@@ -592,6 +596,8 @@ impl State {
         let exclusive = self.exclusive_layer().map(|l| l.wl_surface().clone());
         match window {
             Some(window) => {
+                // Any window taking focus ends Show Desktop.
+                self.restore_desktop();
                 self.reveal(&window);
                 self.switcher.touch(&window);
                 self.space.raise_element(&window, true);

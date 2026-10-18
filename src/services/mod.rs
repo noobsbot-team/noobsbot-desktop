@@ -5,6 +5,7 @@
 pub mod bluetooth;
 pub mod brightness;
 pub mod disks;
+pub mod fcitx;
 pub mod launcher;
 pub mod login;
 pub mod media;
@@ -75,6 +76,8 @@ pub enum Update {
     PrepareForSleep,
     /// Awake again.
     Resumed,
+    /// fcitx5's input methods; `None`: fcitx5 isn't on the bus.
+    Fcitx(Option<fcitx::Fcitx>),
 }
 
 /// Requests from the frame loop.
@@ -172,6 +175,10 @@ pub enum Command {
         blocks: Vec<String>,
         name: String,
     },
+    /// The input menu opened: read fcitx5's methods afresh.
+    FcitxRead,
+    /// Switch fcitx5 to this method (unique name).
+    InputMethod(String),
 }
 
 pub struct Services {
@@ -230,7 +237,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     };
     let session_clients = async {
         if let Some(bus) = &session {
-            let ours = future::zip(notifications::serve(bus, &updates), launcher::watch(bus, &updates));
+            let ours = future::zip(future::zip(notifications::serve(bus, &updates), launcher::watch(bus, &updates)), fcitx::watch(bus, &updates));
             future::zip(future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)), ours).await;
         }
     };
@@ -346,6 +353,10 @@ async fn handle(
             (Command::SaveNotifications(text), ..) => notifications::save_history(&text),
             (Command::Mount { block, name }, Some(bus), _) => disks::mount(bus, &block, name, updates).await,
             (Command::Eject { drive, blocks, name }, Some(bus), _) => disks::eject(bus, &drive, &blocks, name, updates).await,
+            (Command::FcitxRead, _, Some(bus)) => {
+                let _ = updates.send(Update::Fcitx(fcitx::read(bus).await));
+            }
+            (Command::InputMethod(name), _, Some(bus)) => fcitx::set(bus, &name, updates).await,
             // Its bus is down, which `run` has logged.
             _ => {}
         }

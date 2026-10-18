@@ -32,6 +32,8 @@ pub struct Views {
     pub components: Option<Components>,
     pub menu_bar: MenuBar,
     pub notifications: NotificationViews,
+    /// The banner sliding in, drawn apart from the stack under it.
+    pub entering: NotificationViews,
     pub menu: MenuPopover,
     pub osd: OsdPopover,
     pub control: ControlCenter,
@@ -59,6 +61,7 @@ impl Views {
             components: None,
             menu_bar: MenuBar::default(),
             notifications: NotificationViews::default(),
+            entering: NotificationViews::default(),
             menu: MenuPopover::default(),
             osd: OsdPopover::default(),
             control: ControlCenter::default(),

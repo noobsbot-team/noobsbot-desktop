@@ -222,10 +222,11 @@ impl State {
             Some(Gesture::AppExpose) if mission.is_some() => self.close_mission(),
             Some(Gesture::AppExpose) => self.app_expose(),
             Some(Gesture::Launchpad) if !self.launchpad_open() => self.open_launchpad(),
-            // Spreading closes Launchpad. ponytail: Show Desktop (E5.3, windows slide to the edges) isn't built yet.
+            // Spreading closes Launchpad, else shows the desktop (or brings the windows back).
             Some(Gesture::ShowDesktop) if self.launchpad_open() => {
                 self.close_launchpad();
             }
+            Some(Gesture::ShowDesktop) => self.toggle_desktop(),
             _ => {}
         }
         true
