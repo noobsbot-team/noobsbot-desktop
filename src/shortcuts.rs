@@ -11,7 +11,7 @@ use smithay::{
 use crate::{
     config::Config,
     services::{Command, media::Action as MediaAction},
-    shell::Osd,
+    shell::{Osd, alert::Power},
     state::State,
     symbols::Symbol,
 };
@@ -31,6 +31,8 @@ pub enum Action {
     ShowAll,
     /// Suspend the computer (logo menu ▸ Sleep).
     Sleep,
+    /// Ask, then restart, shut down or log out (logo menu).
+    Power(crate::shell::alert::Power),
     /// Basic window cycling; the full switcher comes in M4.
     CycleWindows,
     /// The default output's volume by one step; `true`: up (E2.7).
@@ -96,6 +98,9 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("hide-others", "") => Some(Action::HideOthers),
         ("show-all", "") => Some(Action::ShowAll),
         ("sleep", "") => Some(Action::Sleep),
+        ("restart", "") => Some(Action::Power(Power::Restart)),
+        ("shut-down", "") => Some(Action::Power(Power::ShutDown)),
+        ("log-out", "") => Some(Action::Power(Power::LogOut)),
         ("cycle", "") => Some(Action::CycleWindows),
         ("volume", "up") => Some(Action::Volume(true)),
         ("volume", "down") => Some(Action::Volume(false)),
@@ -161,6 +166,7 @@ impl State {
                 self.schedule_redraw();
             }
             Action::Sleep => self.services.send(Command::Suspend),
+            Action::Power(power) => self.open_alert(power),
             // ponytail: brings back the oldest hidden window first, else rotates the stack; the real switcher is M4.
             Action::CycleWindows => {
                 let next = if self.hidden.is_empty() {

@@ -1,6 +1,7 @@
 //! Shell popups opened from the menu bar (E2.2): which one is open, where it sits, and what a click on the bar or in
 //! a popup does. Layout lives here as plain rectangles so drawing (render/) and clicks share it.
 
+pub mod alert;
 pub mod control;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
@@ -86,8 +87,8 @@ pub struct Row {
 }
 
 /// The rows of `menu`; `app` is the focused app's name.
-// ponytail: rows whose window isn't built yet (About, Settings, Force Quit, the power alerts, the lock screen) are
-// disabled until their milestone adds it.
+// ponytail: rows whose window isn't built yet (About, Settings, Force Quit, the lock screen) are disabled until
+// their milestone adds it.
 pub fn menu_rows(menu: Menu, app: &str) -> Vec<Option<Row>> {
     let row = |label: String, shortcut, action| Some(Row { label, shortcut, action });
     match menu {
@@ -99,11 +100,11 @@ pub fn menu_rows(menu: Menu, app: &str) -> Vec<Option<Row>> {
             row("Force Quit…".into(), "⌥⌘⎋", None),
             None,
             row("Sleep".into(), "", Some(Action::Sleep)),
-            row("Restart…".into(), "", None),
-            row("Shut Down…".into(), "", None),
+            row("Restart…".into(), "", Some(Action::Power(alert::Power::Restart))),
+            row("Shut Down…".into(), "", Some(Action::Power(alert::Power::ShutDown))),
             None,
             row("Lock Screen".into(), "⌃⌘Q", None),
-            row("Log Out…".into(), "", None),
+            row("Log Out…".into(), "", Some(Action::Power(alert::Power::LogOut))),
         ],
         Menu::App => vec![
             row(format!("About {app}"), "", None),
@@ -232,12 +233,20 @@ impl State {
 
     /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar or an open popup.
     pub fn shell_covers(&self, location: Point<f64, Logical>) -> bool {
+        let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(location));
+        if on_alert {
+            return true;
+        }
         let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
         on_bar || self.popup_rect().is_some_and(|r| r.to_f64().contains(location))
     }
 
     /// A press at `location` (output-relative). `true`: the shell took it, so no window gets focus or the click.
     pub fn shell_press(&mut self, location: Point<f64, Logical>) -> bool {
+        // The alert is above everything else.
+        if self.alert.is_some() && self.alert_press(location) {
+            return true;
+        }
         let item = self.backend.as_ref().and_then(|b| b.menu_bar.hit(location));
         let open = self.popup;
         let in_popup = self.popup_rect().is_some_and(|r| r.to_f64().contains(location));

@@ -2,6 +2,7 @@
 //! Shaders are compiled once; shadow and wallpaper elements are kept between frames, so a frame where nothing moved
 //! damages nothing and an idle desktop draws nothing.
 
+mod alert;
 pub mod calendar;
 mod control;
 mod gallery;
@@ -35,6 +36,7 @@ use smithay::{
     wayland::shell::wlr_layer::Layer,
 };
 pub use gallery::Gallery;
+pub use alert::AlertSheet;
 pub use calendar::CalendarPopover;
 pub use control::ControlCenter;
 pub use menu::MenuPopover;

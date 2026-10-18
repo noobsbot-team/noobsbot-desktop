@@ -6,7 +6,7 @@ use smithay::{
     },
     desktop::{Window, WindowSurfaceType},
     input::{
-        keyboard::{FilterResult, XkbConfig},
+        keyboard::{FilterResult, Keysym, XkbConfig},
         pointer::{AxisFrame, ButtonEvent, CursorIcon, GrabStartData},
     },
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface},
@@ -74,8 +74,19 @@ impl State {
                             None => FilterResult::Forward,
                         };
                     }
-                    // Esc closes an open menu-bar popup before anything else sees it.
-                    if key.modified_sym() == smithay::input::keyboard::Keysym::Escape && state.close_popup() {
+                    // An alert answers Esc and Return first; then Esc closes an open menu-bar popup.
+                    let answer = match key.modified_sym() {
+                        _ if state.alert.is_none() => None,
+                        Keysym::Escape => Some(crate::shell::alert::Button::Cancel),
+                        Keysym::Return | Keysym::KP_Enter => Some(crate::shell::alert::Button::Confirm),
+                        _ => None,
+                    };
+                    if let Some(answer) = answer {
+                        state.alert_answer(answer);
+                        state.suppressed.push(code);
+                        return FilterResult::Intercept(None);
+                    }
+                    if key.modified_sym() == Keysym::Escape && state.close_popup() {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }

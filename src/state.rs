@@ -136,6 +136,10 @@ pub struct State {
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
     pub osd: Option<crate::shell::Osd>,
+    /// The power alert that is up.
+    pub alert: Option<crate::shell::alert::Alert>,
+    /// Its once-a-second countdown.
+    pub alert_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Do Not Disturb, from Control Center; the notification server (M4) honours it.
     pub dnd: bool,
     /// The Control Center slider being dragged.
@@ -266,6 +270,8 @@ impl State {
             symbols: Default::default(),
             popup: None,
             osd: None,
+            alert: None,
+            alert_timer: None,
             dnd: false,
             shell_drag: None,
             osd_timer: None,

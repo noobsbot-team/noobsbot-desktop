@@ -58,6 +58,10 @@ pub enum Command {
     Media { player: String, action: media::Action },
     /// Logo menu ▸ Sleep.
     Suspend,
+    /// After the Restart alert.
+    Reboot,
+    /// After the Shut Down alert.
+    PowerOff,
 }
 
 pub struct Services {
@@ -170,12 +174,13 @@ async fn relay<'a, T, F>(
 
 async fn handle(system: Option<&Connection>, session: Option<&Connection>, commands: async_channel::Receiver<Command>, updates: &Sender<Update>) {
     while let Ok(command) = commands.recv().await {
+        let name = command_name(&command);
         match (command, system, session) {
             (Command::Timezone(zone), Some(bus), _) => set_timezone(bus, &zone).await,
             (Command::PowerProfile(profile), Some(bus), _) => profiles::set(bus, &profile).await,
             (Command::Brightness(percent), Some(bus), _) => brightness::set(bus, percent, updates).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
-            (Command::Suspend, Some(bus), _) => suspend(bus).await,
+            (Command::Suspend | Command::Reboot | Command::PowerOff, Some(bus), _) => power(bus, &name).await,
             (Command::Wifi(on), Some(bus), _) => network::set_wifi(bus, on).await,
             (Command::Bluetooth(on), Some(bus), _) => bluetooth::set_powered(bus, on).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
@@ -197,18 +202,34 @@ trait Timedate {
     fn set_timezone(&self, timezone: &str, interactive: bool) -> zbus::Result<()>;
 }
 
+fn command_name(command: &Command) -> String {
+    match command {
+        Command::Reboot => "reboot",
+        Command::PowerOff => "power-off",
+        _ => "suspend",
+    }
+    .into()
+}
+
 #[zbus::proxy(interface = "org.freedesktop.login1.Manager", default_service = "org.freedesktop.login1", default_path = "/org/freedesktop/login1")]
 trait Login {
     fn suspend(&self, interactive: bool) -> zbus::Result<()>;
+    fn reboot(&self, interactive: bool) -> zbus::Result<()>;
+    fn power_off(&self, interactive: bool) -> zbus::Result<()>;
 }
 
-async fn suspend(bus: &Connection) {
+/// Sleep, restart or power off through logind ("interactive": polkit may ask for a password).
+async fn power(bus: &Connection, what: &str) {
     let result = match LoginProxy::new(bus).await {
-        Ok(login) => login.suspend(true).await,
+        Ok(login) => match what {
+            "reboot" => login.reboot(true).await,
+            "power-off" => login.power_off(true).await,
+            _ => login.suspend(true).await,
+        },
         Err(err) => Err(err),
     };
     if let Err(err) = result {
-        tracing::warn!("sleep: {err}");
+        tracing::warn!("{what}: {err}");
     }
 }
 

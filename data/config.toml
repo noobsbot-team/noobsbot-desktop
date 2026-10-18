@@ -54,7 +54,7 @@ seconds = false
 week_start = "sunday"
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
-# Actions: terminal, quit, close, minimise, hide, hide-others, show-all, sleep, cycle, "exec <command>", "volume up|down", mute, mic-mute,
+# Actions: terminal, quit, close, minimise, hide, hide-others, show-all, sleep, restart, shut-down, log-out, cycle, "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous".
 [bindings]
 "Super+Return" = "terminal"

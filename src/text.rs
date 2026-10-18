@@ -3,7 +3,7 @@
 use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use cosmic_text::{
-    Attrs, Buffer, Color, Ellipsize, EllipsizeHeightLimit, Family, FeatureTag, FontFeatures, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap,
+    Align, Attrs, Buffer, Color, Ellipsize, EllipsizeHeightLimit, Family, FeatureTag, FontFeatures, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap,
 };
 use smithay::{
     backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer},
@@ -39,7 +39,8 @@ pub struct Rendered {
     pub truncated: bool,
 }
 
-type Key = (String, Style, u32, u64);
+/// Text, style, width, scale, wrapped.
+type Key = (String, Style, u32, u64, bool);
 
 /// Owns the font database and glyph rasteriser.
 ///
@@ -56,13 +57,22 @@ pub struct Text {
 impl Text {
     /// One line of `text`, ellipsised to `max_width` logical px. Unchanged labels come from the cache.
     pub fn label(&mut self, text: &str, style: Style, max_width: u32, scale: f64) -> Arc<Rendered> {
+        self.cached(text, style, max_width, scale, false)
+    }
+
+    /// `text` word-wrapped to `width` logical px, every line centred in it (alerts); as wide as `width`.
+    pub fn paragraph(&mut self, text: &str, style: Style, width: u32, scale: f64) -> Arc<Rendered> {
+        self.cached(text, style, width, scale, true)
+    }
+
+    fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: bool) -> Arc<Rendered> {
         self.tick += 1;
-        let key = (text.to_owned(), style, max_width, scale.to_bits());
+        let key = (text.to_owned(), style, max_width, scale.to_bits(), wrap);
         if let Some((rendered, used)) = self.cache.get_mut(&key) {
             *used = self.tick;
             return rendered.clone();
         }
-        let rendered = Arc::new(self.rasterise(text, style, max_width, scale));
+        let rendered = Arc::new(if wrap { self.rasterise_wrapped(text, style, max_width, scale) } else { self.rasterise(text, style, max_width, scale) });
         // ponytail: O(n) scan for the oldest entry, fine at 256 entries; a linked LRU if the cap grows.
         while !self.cache.is_empty() && (self.cache.len() >= MAX_ENTRIES || self.bytes + rendered.pixels.len() > MAX_BYTES) {
             let Some(oldest) = self.cache.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone()) else { break };
@@ -101,6 +111,30 @@ impl Text {
         })
     }
 
+    fn rasterise_wrapped(&mut self, text: &str, style: Style, width: u32, scale: f64) -> Rendered {
+        let (fonts, swash, family) = self.fonts();
+        let scale = scale as f32;
+        let metrics = Metrics::new(f32::from(style.size.max(1)) * scale, f32::from(style.line_height.max(1)) * scale);
+        let family = if family.is_empty() { Family::SansSerif } else { Family::Name(family) };
+        let attrs = Attrs::new().family(family).weight(Weight(style.weight));
+        let limit = width as f32 * scale;
+        let mut buffer = Buffer::new(fonts, metrics);
+        let mut buffer = buffer.borrow_with(fonts);
+        buffer.set_wrap(Wrap::Word);
+        buffer.set_size(Some(limit), None);
+        buffer.set_text(text, &attrs, Shaping::Advanced, None);
+        for line in &mut buffer.lines {
+            line.set_align(Some(Align::Center));
+        }
+        buffer.shape_until_scroll(false);
+        let lines = buffer.layout_runs().count() as u32;
+        let width = limit.floor() as u32;
+        let height = if text.is_empty() { 0 } else { lines * metrics.line_height.ceil() as u32 };
+        let baseline = buffer.layout_runs().next().map_or(0.0, |run| run.line_y);
+        let pixels = draw(&mut buffer, swash, style.color, width, height);
+        Rendered { pixels, width, height, baseline: baseline.round() as u32, truncated: false }
+    }
+
     fn rasterise(&mut self, text: &str, style: Style, max_width: u32, scale: f64) -> Rendered {
         let (fonts, swash, family) = self.fonts();
         let scale = scale as f32;
@@ -126,26 +160,32 @@ impl Text {
         let (line_w, baseline) = buffer.layout_runs().next().map_or((0.0, 0.0), |run| (run.line_w, run.line_y));
         let width = (line_w.ceil() as u32).min(limit.floor() as u32);
         let height = if width == 0 { 0 } else { metrics.line_height.ceil() as u32 };
-        let mut pixels = vec![0u8; (width * height * 4) as usize];
-        buffer.draw(swash, Color::rgba(r, g, b, a), |x, y, w, h, c| {
-            // cosmic-text hands over glyph coverage alone; the colour's own alpha is ours to apply.
-            let alpha = u32::from(c.a()) * u32::from(a) / 255;
-            if alpha == 0 {
-                return;
-            }
-            let src = [c.r(), c.g(), c.b()].map(|v| u32::from(v) * alpha / 255);
-            for py in y.max(0)..(y + h as i32).min(height as i32) {
-                for px in x.max(0)..(x + w as i32).min(width as i32) {
-                    let i = (py as u32 * width + px as u32) as usize * 4;
-                    let dst = &mut pixels[i..i + 4];
-                    for (d, s) in dst.iter_mut().zip(src.into_iter().chain([alpha])) {
-                        *d = (s + u32::from(*d) * (255 - alpha) / 255) as u8;
-                    }
-                }
-            }
-        });
+        let pixels = draw(&mut buffer, swash, [r, g, b, a], width, height);
         Rendered { pixels, width, height, baseline: baseline.round() as u32, truncated }
     }
+}
+
+/// Rasterises a laid-out buffer into `width` × `height` premultiplied RGBA in `color`.
+fn draw(buffer: &mut cosmic_text::BorrowedWithFontSystem<Buffer>, swash: &mut SwashCache, [r, g, b, a]: [u8; 4], width: u32, height: u32) -> Vec<u8> {
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
+    buffer.draw(swash, Color::rgba(r, g, b, a), |x, y, w, h, c| {
+        // cosmic-text hands over glyph coverage alone; the colour's own alpha is ours to apply.
+        let alpha = u32::from(c.a()) * u32::from(a) / 255;
+        if alpha == 0 {
+            return;
+        }
+        let src = [c.r(), c.g(), c.b()].map(|v| u32::from(v) * alpha / 255);
+        for py in y.max(0)..(y + h as i32).min(height as i32) {
+            for px in x.max(0)..(x + w as i32).min(width as i32) {
+                let i = (py as u32 * width + px as u32) as usize * 4;
+                let dst = &mut pixels[i..i + 4];
+                for (d, s) in dst.iter_mut().zip(src.into_iter().chain([alpha])) {
+                    *d = (s + u32::from(*d) * (255 - alpha) / 255) as u8;
+                }
+            }
+        }
+    });
+    pixels
 }
 
 /// Upload target for a label; `None` for an empty one. Keep it while the `Arc<Rendered>` is unchanged,
@@ -173,6 +213,18 @@ mod tests {
             return None;
         }
         Some(text)
+    }
+
+    #[test]
+    fn paragraphs_wrap_to_their_width() {
+        let Some(mut text) = text() else { return };
+        let one = text.paragraph("Restart", HEADLINE, 220, 1.0);
+        let many = text.paragraph("Are you sure you want to restart your computer now? It restarts by itself soon.", HEADLINE, 220, 1.0);
+        assert_eq!((one.width, one.height), (220, 16));
+        assert!(many.height >= 48, "{} px tall", many.height);
+        // Centred: a short line leaves its left edge empty.
+        let first_ink = one.pixels.as_chunks::<4>().0.iter().position(|p| p[3] > 0).map(|i| i as u32 % 220);
+        assert!(first_ink.is_some_and(|x| x > 60), "{first_ink:?}");
     }
 
     #[test]
