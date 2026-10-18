@@ -27,6 +27,9 @@ lib=${NOOBSBOT_LIB:-/usr/lib/noobsbot-desktop}
 state=${XDG_STATE_HOME:-$HOME/.local/state}/noobsbot-desktop
 ok_after=${NOOBSBOT_BOOT_OK_AFTER:-60}
 mkdir -p "$state"
+# greetd leaves stdout and stderr on the VT, where nobody can read them: this session's log and the last one's are kept.
+mv -f "$state/session.log" "$state/session.log.old" 2>/dev/null
+exec >"$state/session.log" 2>&1
 bin=$(readlink -f "$(command -v noobsbot-desktop)")
 ver=""
 case $bin in "$lib"/versions/*/noobsbot-desktop) ver=${bin#"$lib/versions/"}; ver=${ver%/noobsbot-desktop} ;; esac
