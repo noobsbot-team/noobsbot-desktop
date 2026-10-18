@@ -111,6 +111,10 @@ pub struct State {
     pub x_display: Option<String>,
     /// A newer release, found by Software Update (E6.13).
     pub update: Option<crate::services::update::Release>,
+    /// The Weather widget's forecast (E7.2); `None` while it is off.
+    pub weather: Option<crate::services::weather::Weather>,
+    /// Every changed `[weather]` goes to the weather thread.
+    pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
     pub zones: crate::input::Zones,
 
     pub compositor_state: CompositorState,
@@ -284,6 +288,15 @@ impl State {
                 }
             })?;
         }
+        // Off by default (only `[weather] enabled` fetches); also nested, so it can be tried in a dev session.
+        let (weather_tx, weather_rx) = channel::channel();
+        let weather_settings = crate::services::weather::spawn(config.weather.clone(), weather_tx);
+        handle.insert_source(weather_rx, |event, _, state| {
+            if let channel::Event::Msg(weather) = event {
+                state.weather = weather;
+                state.schedule_redraw();
+            }
+        })?;
         if !config.clock.timezone.is_empty() {
             services.send(crate::services::Command::Timezone(config.clock.timezone.clone()));
         }
@@ -352,6 +365,8 @@ impl State {
             nested,
             x_display: None,
             update: None,
+            weather: None,
+            weather_settings,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
             config,

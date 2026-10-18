@@ -44,6 +44,7 @@ pub struct Config {
     pub dock: Dock,
     pub idle: Idle,
     pub privacy: Privacy,
+    pub weather: Weather,
     pub calendar: Calendar,
     pub update: Update,
     pub desktop: Desktop,
@@ -249,6 +250,7 @@ impl Default for Config {
             dock: Dock::default(),
             idle: Idle::default(),
             privacy: Privacy::default(),
+            weather: Weather::default(),
             calendar: Calendar::default(),
             update: Update::default(),
             desktop: Desktop::default(),
@@ -274,6 +276,26 @@ impl Default for Config {
             ],
         }
     }
+}
+
+/// The Weather widget (E7.2): off until turned on, and then only for the place given here.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Weather {
+    pub enabled: bool,
+    /// Geocoded once by Open-Meteo; empty = `latitude`/`longitude`.
+    pub city: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub units: Units,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Units {
+    #[default]
+    Celsius,
+    Fahrenheit,
 }
 
 /// The dock (E3.1); defaults are the owner's Plank settings.

@@ -110,6 +110,16 @@ lock = true
 screen_recording = []
 screen_recording_denied = []
 
+[weather]
+# The Weather widget in Notification Center, from Open-Meteo (no account, no key). Off by default: while on, the
+# forecast for this one place is fetched every 30 minutes; your location is never looked up from your IP.
+enabled = false
+# A city name, looked up once; empty = use latitude and longitude.
+city = ""
+latitude = 0.0
+longitude = 0.0
+# "celsius" or "fahrenheit".
+units = "celsius"
 [calendar]
 # Events for Notification Center's Up Next, the calendar's dots and reminders: .ics files, folders, or "dir/*.ics".
 # Saved changes show at once. (CalDAV and Google calendars: later.)
