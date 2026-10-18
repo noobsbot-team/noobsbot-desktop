@@ -180,6 +180,10 @@ pub struct State {
     pub spaces: crate::spaces::Spaces,
     /// Mission Control (E5.2), while up or closing.
     pub mission: Option<crate::mission::Mission>,
+    /// The system touchpad gesture in progress (E5.3).
+    pub gesture: Option<crate::gestures::Tracker>,
+    /// Hot corners (E5.4).
+    pub corners: crate::gestures::Corners,
 }
 
 impl State {
@@ -351,6 +355,8 @@ impl State {
             launchpad: None,
             spaces: Default::default(),
             mission: None,
+            gesture: None,
+            corners: Default::default(),
             display_handle: dh,
         })
     }

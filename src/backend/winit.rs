@@ -171,7 +171,9 @@ impl State {
         let overview = self.mission_frame();
         let slide = if overview.is_none() { self.slide_frame() } else { None };
         let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
-        let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
+        let output_size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size);
+        let ripple = output_size.and_then(|size| self.ripple_frame(size));
+        let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some() || ripple.is_some();
         let Some(Winit {
             backend,
             output,
@@ -268,6 +270,16 @@ impl State {
                 }
                 if let Some((count, current)) = indicator {
                     bar.extend(mission.indicator(shaders, count, current, width, dark, appearance.glass_opacity, scale));
+                }
+                // The hot-corner ripple (E5.4): a faint glass disc with a light rim, growing out of the corner and fading.
+                if let Some((rect, alpha)) = ripple {
+                    let spec = render::Material::Hud.spec(dark);
+                    let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
+                    let radius = f64::from(rect.size.w) / 2.0;
+                    let rim = if dark { [1.0, 1.0, 1.0, 0.5 * alpha] } else { [0.0, 0.0, 0.0, 0.22 * alpha] };
+                    bar.push(render::SceneElement::Shader(shaders.ring(rect, radius, 1, rim, scale)));
+                    let fill = [r, g, b, spec.opacity * appearance.glass_opacity * alpha * 0.8];
+                    bar.push(render::SceneElement::Shader(shaders.glass_shape(rect, fill, radius, false, dark, scale)));
                 }
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));

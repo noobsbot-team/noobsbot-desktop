@@ -38,6 +38,19 @@ mac_keys = false
 [touchpad]
 tap_to_click = true
 natural_scroll = true
+# 3-finger swipes switch Spaces (left/right), open Mission Control (up) and App Exposé (down); 4 = use 4 fingers
+# instead, leaving 3-finger swipes to apps. A 4-finger pinch opens Launchpad.
+swipe_fingers = 3
+# Higher = a shorter swipe or pinch is enough (0.25 … 4).
+gesture_sensitivity = 1.0
+
+[hot_corners]
+# Rest the pointer in a screen corner for a moment to trigger an action (any action from [bindings] below, like
+# mission-control, app-expose, launchpad, notification-center), or "none".
+top_left = "none"
+top_right = "none"
+bottom_left = "none"
+bottom_right = "none"
 
 [windows]
 # Hold this key and drag anywhere in a window to move it: "super" or "alt".
