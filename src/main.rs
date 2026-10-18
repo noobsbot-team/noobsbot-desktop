@@ -29,7 +29,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code] [-- command [args...]]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -130,13 +130,18 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             state.expanded = Some(shell::control::Module::Sound);
         }
         // No countdown timer: it never acts by itself.
-        Some("alert") => {
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            state.alert = Some(shell::alert::Alert { power: shell::alert::Power::Restart, deadline });
+        Some("alert") => state.alert = Some(shell::alert::Alert::power(shell::alert::Power::Restart, std::time::Instant::now())),
+        Some("alert-pair") => {
+            let pairing = services::bluetooth::Pairing { device: "Magic Keyboard".into(), code: Some("012345".into()), answer: true };
+            state.alert = Some(shell::alert::Alert { kind: shell::alert::Kind::Pair(pairing), deadline: None });
+        }
+        Some("alert-code") => {
+            let pairing = services::bluetooth::Pairing { device: "Magic Keyboard".into(), code: Some("012345".into()), answer: false };
+            state.alert = Some(shell::alert::Alert { kind: shell::alert::Kind::Pair(pairing), deadline: None });
         }
         // Stays up: no hide timer.
         Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),
-        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert)"),
+        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert, alert-pair, alert-code)"),
         None => {}
     }
 

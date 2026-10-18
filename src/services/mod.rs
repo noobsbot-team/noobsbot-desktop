@@ -36,6 +36,8 @@ pub enum Update {
     Sound(Option<sound::Sound>),
     /// `None`: nothing playing or paused.
     Media(Option<media::Media>),
+    /// A device asks to pair; `None`: BlueZ gave up.
+    Pairing(Option<bluetooth::Pairing>),
 }
 
 /// Requests from the frame loop.
@@ -61,6 +63,8 @@ pub enum Command {
     Output(u32),
     /// To the player `Update::Media` named.
     Media { player: String, action: media::Action },
+    /// The pairing alert's answer.
+    PairingAnswer(bool),
     /// Logo menu ▸ Sleep.
     Suspend,
     /// After the Restart alert.
@@ -80,17 +84,18 @@ impl Services {
     }
 }
 
-pub fn spawn(updates: Sender<Update>) -> Services {
+/// `agents`: answer for the system (BlueZ pairing). Off when nested, so the host desktop keeps its own agent.
+pub fn spawn(updates: Sender<Update>, agents: bool) -> Services {
     let (commands, rx) = async_channel::unbounded();
     sound::spawn(updates.clone());
-    let thread = std::thread::Builder::new().name("services".into()).spawn(move || future::block_on(run(updates, rx)));
+    let thread = std::thread::Builder::new().name("services".into()).spawn(move || future::block_on(run(updates, rx, agents)));
     if let Err(err) = thread {
         tracing::warn!("system services off: {err}");
     }
     Services { commands }
 }
 
-async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>) {
+async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>, agents: bool) {
     // A missing bus leaves its states at `None` (hidden) in the frame loop, so there is nothing to send.
     let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into())
         .await
@@ -102,6 +107,10 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing hidden: {err}"))
         .ok();
     brightness::send_current(&updates);
+    let pairing = bluetooth::Answer::default();
+    if let (true, Some(bus)) = (agents, &system) {
+        bluetooth::serve_agent(bus, &updates, &pairing).await;
+    }
     let system_clients = async {
         if let Some(bus) = &system {
             future::zip(
@@ -117,7 +126,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         }
     };
     let clients = future::zip(system_clients, session_clients);
-    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates)).await;
+    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing)).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
@@ -184,7 +193,13 @@ async fn relay<'a, T, F>(
     }
 }
 
-async fn handle(system: Option<&Connection>, session: Option<&Connection>, commands: async_channel::Receiver<Command>, updates: &Sender<Update>) {
+async fn handle(
+    system: Option<&Connection>,
+    session: Option<&Connection>,
+    commands: async_channel::Receiver<Command>,
+    updates: &Sender<Update>,
+    pairing: &bluetooth::Answer,
+) {
     while let Ok(command) = commands.recv().await {
         let name = command_name(&command);
         match (command, system, session) {
@@ -197,6 +212,7 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
             (Command::Bluetooth(on), Some(bus), _) => bluetooth::set_powered(bus, on).await,
             (Command::BluetoothDevice { path, connect }, Some(bus), _) => bluetooth::connect(bus, &path, connect).await,
             (Command::WifiScan, Some(bus), _) => network::scan(bus).await,
+            (Command::PairingAnswer(yes), ..) => pairing.give(yes),
             (Command::WifiJoin { ssid, ap, device, password }, Some(bus), _) => network::join(bus, &ssid, &ap, &device, password.as_deref()).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),

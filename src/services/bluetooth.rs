@@ -1,10 +1,13 @@
 //! Bluetooth state from BlueZ (E2.3): whether it is on, and the paired devices with their battery level.
 
+use std::sync::{Arc, Mutex};
+
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
     Connection,
     fdo::{ManagedObjects, ObjectManagerProxy},
     proxy::CacheProperties,
+    zvariant::OwnedObjectPath,
 };
 
 use super::{Interfaces, Update, get};
@@ -48,6 +51,10 @@ async fn read(bus: &Connection) -> Option<Bluetooth> {
 
 #[zbus::proxy(interface = "org.bluez.Device1", default_service = "org.bluez")]
 trait BluezDevice {
+    #[zbus(property)]
+    fn alias(&self) -> zbus::Result<String>;
+    #[zbus(property)]
+    fn paired(&self) -> zbus::Result<bool>;
     fn connect(&self) -> zbus::Result<()>;
     fn disconnect(&self) -> zbus::Result<()>;
 }
@@ -60,6 +67,138 @@ pub async fn connect(bus: &Connection, path: &str, on: bool) {
     };
     if let Err(err) = result.await {
         tracing::warn!("Bluetooth {} {path}: {err}", if on { "connect" } else { "disconnect" });
+    }
+}
+
+/// What a device pairing with us asks for (E2.3), shown as an alert.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pairing {
+    pub device: String,
+    /// The six-digit code to compare, or to type on the device.
+    pub code: Option<String>,
+    /// Pair / Cancel; `false`: the code is only shown.
+    pub answer: bool,
+}
+
+/// Where the pairing alert's answer goes: the D-Bus call BlueZ is waiting on.
+#[derive(Clone, Default)]
+pub struct Answer(Arc<Mutex<Option<async_channel::Sender<bool>>>>);
+
+impl Answer {
+    pub fn give(&self, yes: bool) {
+        if let Some(waiting) = self.0.lock().ok().and_then(|mut w| w.take()) {
+            let _ = waiting.try_send(yes);
+        }
+    }
+}
+
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.bluez.Error")]
+enum AgentError {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    Rejected(String),
+}
+
+/// Our `org.bluez.Agent1` (plan.md E2.3): without an agent, pairing keyboards and phones fails.
+struct Agent {
+    bus: Connection,
+    updates: Sender<super::Update>,
+    answer: Answer,
+}
+
+impl Agent {
+    async fn name(&self, device: &OwnedObjectPath) -> String {
+        let alias = async { BluezDeviceProxy::builder(&self.bus).path(device)?.build().await?.alias().await };
+        alias.await.unwrap_or_else(|_| "Device".into())
+    }
+
+    fn show(&self, pairing: Option<Pairing>) {
+        let _ = self.updates.send(super::Update::Pairing(pairing));
+    }
+
+    /// Shows the alert and waits for Pair / Cancel (or BlueZ's own timeout, which calls `Cancel`).
+    async fn ask(&self, device: &OwnedObjectPath, code: Option<String>) -> Result<(), AgentError> {
+        let (tx, rx) = async_channel::bounded(1);
+        if let Ok(mut waiting) = self.answer.0.lock() {
+            *waiting = Some(tx);
+        }
+        self.show(Some(Pairing { device: self.name(device).await, code, answer: true }));
+        match rx.recv().await {
+            Ok(true) => Ok(()),
+            _ => Err(AgentError::Rejected("declined".into())),
+        }
+    }
+}
+
+#[zbus::interface(name = "org.bluez.Agent1")]
+impl Agent {
+    fn release(&self) {}
+
+    // ponytail: legacy PIN / passkey entry needs the text field; until then such devices are refused (rare: we
+    // register as DisplayYesNo, so BlueZ asks for these only from very old devices).
+    fn request_pin_code(&self, _device: OwnedObjectPath) -> Result<String, AgentError> {
+        Err(AgentError::Rejected("PIN entry isn't supported yet".into()))
+    }
+
+    fn request_passkey(&self, _device: OwnedObjectPath) -> Result<u32, AgentError> {
+        Err(AgentError::Rejected("passkey entry isn't supported yet".into()))
+    }
+
+    async fn display_pin_code(&self, device: OwnedObjectPath, pincode: String) {
+        self.show(Some(Pairing { device: self.name(&device).await, code: Some(pincode), answer: false }));
+    }
+
+    async fn display_passkey(&self, device: OwnedObjectPath, passkey: u32, entered: u16) {
+        // Called again for every key typed on the device; the alert only needs showing once.
+        if entered == 0 {
+            self.show(Some(Pairing { device: self.name(&device).await, code: Some(format!("{passkey:06}")), answer: false }));
+        }
+    }
+
+    async fn request_confirmation(&self, device: OwnedObjectPath, passkey: u32) -> Result<(), AgentError> {
+        self.ask(&device, Some(format!("{passkey:06}"))).await
+    }
+
+    async fn request_authorization(&self, device: OwnedObjectPath) -> Result<(), AgentError> {
+        self.ask(&device, None).await
+    }
+
+    /// A paired device may use its services; anything else is refused.
+    async fn authorize_service(&self, device: OwnedObjectPath, _uuid: String) -> Result<(), AgentError> {
+        let paired = async { BluezDeviceProxy::builder(&self.bus).path(&device)?.cache_properties(CacheProperties::No).build().await?.paired().await };
+        if paired.await.unwrap_or(false) { Ok(()) } else { Err(AgentError::Rejected("not paired".into())) }
+    }
+
+    fn cancel(&self) {
+        if let Ok(mut waiting) = self.answer.0.lock() {
+            waiting.take();
+        }
+        self.show(None);
+    }
+}
+
+#[zbus::proxy(interface = "org.bluez.AgentManager1", default_service = "org.bluez", default_path = "/org/bluez")]
+trait AgentManager {
+    fn register_agent(&self, agent: &zbus::zvariant::ObjectPath<'_>, capability: &str) -> zbus::Result<()>;
+    fn request_default_agent(&self, agent: &zbus::zvariant::ObjectPath<'_>) -> zbus::Result<()>;
+}
+
+const AGENT: &str = "/org/noobsbot/bluetooth_agent";
+
+/// Serves the agent and makes it BlueZ's default.
+// ponytail: registered once; if bluetoothd restarts, pairing needs a desktop restart. Re-register on the BlueZ
+// name-owner change if that ever matters.
+pub async fn serve_agent(bus: &Connection, updates: &Sender<super::Update>, answer: &Answer) {
+    let result = async {
+        bus.object_server().at(AGENT, Agent { bus: bus.clone(), updates: updates.clone(), answer: answer.clone() }).await?;
+        let manager = AgentManagerProxy::new(bus).await?;
+        let path = zbus::zvariant::ObjectPath::from_static_str_unchecked(AGENT);
+        manager.register_agent(&path, "DisplayYesNo").await?;
+        manager.request_default_agent(&path).await
+    };
+    if let Err(err) = result.await {
+        tracing::warn!("Bluetooth pairing agent off: {err}");
     }
 }
 

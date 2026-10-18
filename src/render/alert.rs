@@ -13,7 +13,7 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
-    shell::alert::{Alert, Button},
+    shell::alert::{Alert, Button, Kind},
     symbols::{Symbol, Symbols, Weight},
     text::{Style, Text},
     wm::Rect,
@@ -71,7 +71,7 @@ impl AlertSheet {
         let label = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
         let title2 = Style { size: 17, line_height: 22, weight: 600, color: label, tabular: false };
         let body = Style { size: 13, line_height: 16, weight: 400, color: label, tabular: false };
-        let title = text.paragraph(alert.title(), title2, INNER as u32, scale);
+        let title = text.paragraph(&alert.title(), title2, INNER as u32, scale);
         let words = text.paragraph(&alert.body(Instant::now()), body, INNER as u32, scale);
         let logical = |px: u32| (f64::from(px) / scale).round() as i32;
         let (title_h, body_h) = (logical(title.height), logical(words.height));
@@ -83,10 +83,10 @@ impl AlertSheet {
         let icon = Rectangle::new((x + (WIDTH - ICON) / 2, y + PAD).into(), (ICON, ICON).into());
         let title_rect = Rectangle::new((x + PAD, icon.loc.y + ICON + 12).into(), (INNER, title_h).into());
         let body_rect = Rectangle::new((x + PAD, title_rect.loc.y + title_h + 8).into(), (INNER, body_h).into());
-        let button_w = (INNER - BUTTON_GAP) / 2;
+        let button_w = if alert.cancellable() { (INNER - BUTTON_GAP) / 2 } else { INNER };
         let button_y = body_rect.loc.y + body_h + PAD;
         let cancel = Rectangle::new((x + PAD, button_y).into(), (button_w, BUTTON_H).into());
-        let confirm = Rectangle::new((x + PAD + button_w + BUTTON_GAP, button_y).into(), (button_w, BUTTON_H).into());
+        let confirm = Rectangle::new((x + PAD + INNER - button_w, button_y).into(), (button_w, BUTTON_H).into());
 
         let key = (rect, confirm, dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
@@ -95,20 +95,23 @@ impl AlertSheet {
             let fill = if dark { [1.0, 1.0, 1.0, 0.16] } else { [0.0, 0.0, 0.0, 0.10] };
             let spec = Material::Sheet.spec(dark);
             let [sr, sg, sb] = spec.tint.map(|c| f32::from(c) / 255.0);
-            let mut glass = vec![
-                shaders.glass_shape(confirm, [r, g, b, 1.0], 6.0, false, dark, scale),
-                shaders.glass_shape(cancel, fill, 6.0, false, dark, scale),
-                shaders.glass_shape(rect, [sr, sg, sb, spec.opacity * glass_opacity], RADIUS, true, dark, scale),
-            ];
+            let mut glass = vec![shaders.glass_shape(confirm, [r, g, b, 1.0], 6.0, false, dark, scale)];
+            if cancel != confirm {
+                glass.push(shaders.glass_shape(cancel, fill, 6.0, false, dark, scale));
+            }
+            glass.push(shaders.glass_shape(rect, [sr, sg, sb, spec.opacity * glass_opacity], RADIUS, true, dark, scale));
             glass.extend(shaders.shadow(rect, RADIUS, spec.elevation, dark, scale, false));
             self.glass = Some((key, glass));
         }
 
         let pieces = [
-            symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
+            match alert.kind {
+                Kind::Pair(_) => symbols.get(Symbol::Bluetooth, Weight::Regular, ICON as u16, scale, label),
+                Kind::Power(_) => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
+            },
             title,
             words,
-            text.label("Cancel", body, button_w as u32, scale),
+            text.label(if cancel == confirm { "" } else { "Cancel" }, body, button_w as u32, scale),
             text.label(alert.confirm(), Style { color: [255, 255, 255, 255], ..body }, button_w as u32, scale),
         ];
         self.labels = keep_buffers(&self.labels, pieces);

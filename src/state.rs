@@ -200,7 +200,7 @@ impl State {
             }
         })?;
         let (services_tx, services_rx) = channel::channel();
-        let services = crate::services::spawn(services_tx);
+        let services = crate::services::spawn(services_tx, !nested);
         if !config.clock.timezone.is_empty() {
             services.send(crate::services::Command::Timezone(config.clock.timezone.clone()));
         }
@@ -215,6 +215,7 @@ impl State {
                     crate::services::Update::Brightness(brightness) => state.brightness = brightness,
                     crate::services::Update::Sound(sound) => state.sound = sound,
                     crate::services::Update::Media(media) => state.media = media,
+                    crate::services::Update::Pairing(pairing) => state.show_pairing(pairing),
                 }
                 state.schedule_redraw();
             }
