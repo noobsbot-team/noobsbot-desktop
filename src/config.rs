@@ -37,6 +37,7 @@ pub struct Config {
     pub appearance: Appearance,
     pub keyboard: Keyboard,
     pub touchpad: Touchpad,
+    pub hot_corners: HotCorners,
     pub windows: Windows,
     pub clock: Clock,
     pub dock: Dock,
@@ -166,6 +167,27 @@ fn parse_system_keyboard(text: &str) -> Keyboard {
 pub struct Touchpad {
     pub tap_to_click: bool,
     pub natural_scroll: bool,
+    /// Fingers of the Space / Mission Control swipes (E5.3): 3, or 4 to leave 3-finger swipes to apps.
+    pub swipe_fingers: u8,
+    /// Multiplies gesture travel: higher = a shorter swipe or pinch is enough (0.25 … 4).
+    pub gesture_sensitivity: f64,
+}
+
+/// Hot corners (E5.4): an action name per corner (as in `[bindings]`); "none" = off.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct HotCorners {
+    pub top_left: String,
+    pub top_right: String,
+    pub bottom_left: String,
+    pub bottom_right: String,
+}
+
+impl Default for HotCorners {
+    fn default() -> Self {
+        let none = || "none".to_string();
+        Self { top_left: none(), top_right: none(), bottom_left: none(), bottom_right: none() }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -205,6 +227,7 @@ impl Default for Config {
             appearance: Appearance::default(),
             keyboard: Keyboard::default(),
             touchpad: Touchpad::default(),
+            hot_corners: HotCorners::default(),
             windows: Windows::default(),
             clock: Clock::default(),
             dock: Dock::default(),
@@ -276,7 +299,7 @@ impl Default for Appearance {
 
 impl Default for Touchpad {
     fn default() -> Self {
-        Self { tap_to_click: true, natural_scroll: true }
+        Self { tap_to_click: true, natural_scroll: true, swipe_fingers: 3, gesture_sensitivity: 1.0 }
     }
 }
 

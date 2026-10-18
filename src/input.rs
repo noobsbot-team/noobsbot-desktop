@@ -2,12 +2,13 @@
 
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
+        InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
     },
     desktop::{Window, WindowSurfaceType},
     input::{
         keyboard::{FilterResult, Keysym, XkbConfig},
-        pointer::{AxisFrame, ButtonEvent, CursorIcon, GrabStartData},
+        pointer::{self as ptr, AxisFrame, ButtonEvent, CursorIcon, GrabStartData},
     },
     reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface},
     utils::{Logical, Point, SERIAL_COUNTER},
@@ -15,6 +16,7 @@ use smithay::{
 
 use crate::{
     config::Keyboard,
+    gestures::Kind,
     shortcuts::{self, Action},
     state::State,
     wm::{self, Edges},
@@ -213,6 +215,66 @@ impl State {
                 }
                 pointer.axis(self, frame);
                 pointer.frame(self);
+            }
+            // System gestures (E5.3) are ours; the rest (2-finger pinch, holds) go to the app (pointer-gestures).
+            InputEvent::GestureSwipeBegin { event } => {
+                if !self.gesture_begin(Kind::Swipe, event.fingers(), event.time_msec())
+                    && let Some(pointer) = self.seat.get_pointer()
+                {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    pointer.gesture_swipe_begin(self, &ptr::GestureSwipeBeginEvent { serial, time: event.time_msec(), fingers: event.fingers() });
+                }
+            }
+            InputEvent::GestureSwipeUpdate { event } => {
+                if !self.gesture_update(event.time_msec(), event.delta(), 1.0)
+                    && let Some(pointer) = self.seat.get_pointer()
+                {
+                    pointer.gesture_swipe_update(self, &ptr::GestureSwipeUpdateEvent { time: event.time_msec(), delta: event.delta() });
+                }
+            }
+            InputEvent::GestureSwipeEnd { event } => {
+                if !self.gesture_end(event.time_msec(), event.cancelled())
+                    && let Some(pointer) = self.seat.get_pointer()
+                {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    pointer.gesture_swipe_end(self, &ptr::GestureSwipeEndEvent { serial, time: event.time_msec(), cancelled: event.cancelled() });
+                }
+            }
+            InputEvent::GesturePinchBegin { event } => {
+                if !self.gesture_begin(Kind::Pinch, event.fingers(), event.time_msec())
+                    && let Some(pointer) = self.seat.get_pointer()
+                {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    pointer.gesture_pinch_begin(self, &ptr::GesturePinchBeginEvent { serial, time: event.time_msec(), fingers: event.fingers() });
+                }
+            }
+            InputEvent::GesturePinchUpdate { event } => {
+                if !self.gesture_update(event.time_msec(), event.delta(), event.scale())
+                    && let Some(pointer) = self.seat.get_pointer()
+                {
+                    let update = ptr::GesturePinchUpdateEvent { time: event.time_msec(), delta: event.delta(), scale: event.scale(), rotation: event.rotation() };
+                    pointer.gesture_pinch_update(self, &update);
+                }
+            }
+            InputEvent::GesturePinchEnd { event } => {
+                if !self.gesture_end(event.time_msec(), event.cancelled())
+                    && let Some(pointer) = self.seat.get_pointer()
+                {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    pointer.gesture_pinch_end(self, &ptr::GesturePinchEndEvent { serial, time: event.time_msec(), cancelled: event.cancelled() });
+                }
+            }
+            InputEvent::GestureHoldBegin { event } => {
+                if let Some(pointer) = self.seat.get_pointer() {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    pointer.gesture_hold_begin(self, &ptr::GestureHoldBeginEvent { serial, time: event.time_msec(), fingers: event.fingers() });
+                }
+            }
+            InputEvent::GestureHoldEnd { event } => {
+                if let Some(pointer) = self.seat.get_pointer() {
+                    let serial = SERIAL_COUNTER.next_serial();
+                    pointer.gesture_hold_end(self, &ptr::GestureHoldEndEvent { serial, time: event.time_msec(), cancelled: event.cancelled() });
+                }
             }
             _ => {}
         }

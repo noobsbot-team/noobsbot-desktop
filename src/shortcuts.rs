@@ -113,9 +113,9 @@ pub fn parse(text: &str) -> Option<Binding> {
     (binding.key != Keysym::NoSymbol).then_some(binding)
 }
 
-/// The shortcut table from the config's `[bindings]`; entries that don't parse are logged and skipped.
-pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
-    let action = |text: &str| match text.split_once(' ').map_or((text, ""), |(a, rest)| (a, rest.trim())) {
+/// An action name from the config (`"close"`, `"exec helium-browser"`, `"mission-control"`, …); None for anything else.
+pub fn action(config: &Config, text: &str) -> Option<Action> {
+    match text.split_once(' ').map_or((text, ""), |(a, rest)| (a, rest.trim())) {
         ("terminal", "") => Some(Action::Spawn(config.terminal.clone())),
         ("exec", command) if !command.is_empty() => Some(Action::Spawn(command.into())),
         ("quit", "") => Some(Action::QuitApp),
@@ -152,10 +152,14 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("mission-control", "") => Some(Action::MissionControl),
         ("app-expose", "") => Some(Action::AppExpose),
         _ => None,
-    };
+    }
+}
+
+/// The shortcut table from the config's `[bindings]`; entries that don't parse are logged and skipped.
+pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
     let mut table = Vec::new();
     for (combo, text) in &config.bindings {
-        match (parse(combo), action(text)) {
+        match (parse(combo), action(config, text)) {
             (Some(binding), Some(Action::Switcher { .. })) => {
                 // The same keys with Shift step back.
                 let held = crate::shell::switcher::Held { desktop: binding.desktop, ctrl: binding.ctrl, alt: binding.alt, key: binding.key };
