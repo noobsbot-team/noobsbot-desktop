@@ -42,8 +42,6 @@ type FieldKey = (TextField, Rect, bool, bool, [u8; 3], u32, u64);
 type Users = Vec<(String, Option<Arc<Rendered>>)>;
 type ShadeKey = (Size<i32, Logical>, u32, u64);
 type Drawn<K> = (K, Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>);
-/// A full name and round picture.
-type Person = (String, Option<Arc<Rendered>>);
 
 const WHITE: [u8; 4] = [255; 4];
 const WHITE85: [u8; 4] = [255, 255, 255, 217];
