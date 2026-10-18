@@ -13,7 +13,7 @@ use std::{
 use smithay::{
     backend::{
         allocator::Fourcc,
-        renderer::{ExportMem, gles::{GlesRenderer, GlesTarget}},
+        renderer::{ExportMem, gles::{GlesMapping, GlesRenderer, GlesTarget}},
     },
     output::Output,
     reexports::{
@@ -27,7 +27,7 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_shm},
         },
     },
-    utils::{Physical, Rectangle, Size},
+    utils::{Physical, Rectangle, Size, Transform},
     wayland::shm::with_buffer_contents_mut,
 };
 
@@ -76,12 +76,17 @@ impl Pixels {
     }
 }
 
-/// Reads the whole bound frame. GL's rows run bottom-up (the winit surface is drawn flipped, see backend/winit.rs),
-/// so they are turned over here.
-// ponytail: assumes the winit Flipped180 output; the udev backend's offscreen targets read top-down (M6).
-pub fn read(renderer: &mut GlesRenderer, target: &GlesTarget<'_>, size: Size<i32, Physical>) -> Option<Pixels> {
+/// Starts reading the whole bound frame, before the swap.
+pub fn read(renderer: &mut GlesRenderer, target: &GlesTarget<'_>, size: Size<i32, Physical>) -> Option<(GlesMapping, Size<i32, Physical>)> {
     let region = Rectangle::from_size((size.w, size.h).into());
     let mapping = renderer.copy_framebuffer(target, region, Fourcc::Abgr8888).inspect_err(|err| tracing::warn!("screen read: {err}")).ok()?;
+    Some((mapping, size))
+}
+
+/// Finishes a read, after the swap: mapping makes the context current without the window surface, which would fail
+/// the swap. GL's rows run bottom-up (the winit surface is drawn flipped, see backend/winit.rs), so they are turned over.
+// ponytail: assumes the winit Flipped180 output; the udev backend's offscreen targets read top-down (M6).
+pub fn map(renderer: &mut GlesRenderer, (mapping, size): (GlesMapping, Size<i32, Physical>)) -> Option<Pixels> {
     let bytes = renderer.map_texture(&mapping).inspect_err(|err| tracing::warn!("screen map: {err}")).ok()?;
     Some(Pixels { size, rgba: flip_rows(bytes, size.w as usize * 4) })
 }
@@ -120,7 +125,8 @@ impl Capture {
     }
 
     /// Fills every allowed copy that this frame satisfies; `now`: the frame's presentation time (monotonic).
-    pub fn deliver(&mut self, pixels: &Pixels, damaged: bool, now: Duration, allowed: impl Fn(&ClientId) -> bool) {
+    /// `inverted`: the output is flipped upside down (nested), so clients that undo its transform must flip back.
+    pub fn deliver(&mut self, pixels: &Pixels, damaged: bool, now: Duration, inverted: bool, allowed: impl Fn(&ClientId) -> bool) {
         let waiting = std::mem::take(&mut self.waiting);
         for w in waiting {
             let Some(client) = w.frame.client().map(|c| c.id()) else { continue };
@@ -133,7 +139,8 @@ impl Capture {
                 w.frame.failed();
                 continue;
             }
-            w.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
+            // ponytail: only the nested Flipped180 is undone; rotated outputs would need the pixels turned too.
+            w.frame.flags(if inverted { zwlr_screencopy_frame_v1::Flags::YInvert } else { zwlr_screencopy_frame_v1::Flags::empty() });
             if w.damage && w.frame.version() >= 2 {
                 // ponytail: the whole region; the damage tracker's rects would let recorders skip unchanged parts.
                 w.frame.damage(0, 0, w.region.size.w as u32, w.region.size.h as u32);
@@ -177,7 +184,8 @@ impl State {
         }
         let verdicts = self.capture.verdicts.clone();
         let now = Duration::from(self.protocols.clock.now());
-        self.capture.deliver(&pixels, damaged, now, |c| verdicts.get(c) == Some(&true));
+        let inverted = self.space.outputs().next().is_some_and(|o| o.current_transform() == Transform::Flipped180);
+        self.capture.deliver(&pixels, damaged, now, inverted, |c| verdicts.get(c) == Some(&true));
     }
 
     /// Whether this frame must be read back (before the swap, while it is still bound).

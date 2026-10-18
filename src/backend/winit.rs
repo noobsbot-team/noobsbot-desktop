@@ -499,6 +499,7 @@ impl State {
             }
         };
         let scale = output.current_scale().fractional_scale();
+        let frame = frame.map(|(damaged, read)| (damaged, read.and_then(|read| crate::capture::map(backend.renderer(), read))));
 
         let benchmark = gallery.is_some();
         // Everything on this output was shown. ponytail: stamped after the swap returns, without a vblank counter;
