@@ -90,14 +90,54 @@ impl Config {
         }
         save_atomic(&self.path, &self.doc.to_string())
     }
+
+    /// The `[[display.outputs]]` entry for the display `name`, if the file has one.
+    pub fn output(&self, name: &str) -> Option<&toml_edit::Table> {
+        self.doc.get("display")?.get("outputs")?.as_array_of_tables()?.iter().find(|t| t.get("name").and_then(Item::as_str) == Some(name))
+    }
+
+    /// Sets `(display, key, value)` in each display's `[[display.outputs]]` entry (made when missing) and saves once.
+    pub fn set_outputs(&mut self, changes: Vec<(String, &str, Value)>) -> io::Result<()> {
+        let display = self.doc.entry("display").or_insert(toml_edit::table());
+        let display = display.as_table_mut().ok_or_else(|| io::Error::other("[display] is not a table"))?;
+        let outputs = display.entry("outputs").or_insert(Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
+        let outputs = outputs.as_array_of_tables_mut().ok_or_else(|| io::Error::other("display.outputs is not [[display.outputs]]"))?;
+        for (name, key, value) in changes {
+            let at = outputs.iter().position(|t| t.get("name").and_then(Item::as_str) == Some(&name));
+            let entry = match at {
+                Some(i) => outputs.get_mut(i).expect("found above"),
+                None => {
+                    let mut table = toml_edit::Table::new();
+                    table.insert("name", toml_edit::value(name));
+                    outputs.push(table);
+                    outputs.get_mut(outputs.len() - 1).expect("just pushed")
+                }
+            };
+            entry.insert(key, Item::Value(value));
+        }
+        save_atomic(&self.path, &self.doc.to_string())
+    }
+
+    /// The whole file as it stands, for `restore`.
+    pub fn text(&self) -> String {
+        self.doc.to_string()
+    }
+
+    /// Writes back a `text` taken earlier (the display settings' "Revert").
+    pub fn restore(&mut self, text: String) -> io::Result<()> {
+        self.doc = text.parse().map_err(io::Error::other)?;
+        save_atomic(&self.path, &text)
+    }
 }
 
-/// A `()` each time `config.toml` is written, by us or elsewhere (the Control Center's Dark toggle, an editor):
-/// inotify on its folder through `notify`, as the desktop's own `config::watch`; no polling. Bursts coalesce in the
-/// one-slot channel: whatever is queued is read after the last write.
-pub fn changes() -> impl iced::futures::Stream<Item = ()> {
-    iced::stream::channel(1, async |tx: iced::futures::channel::mpsc::Sender<()>| {
-        let path = path();
+/// A `()` each time the file at `path` is written, by us or elsewhere (`config.toml`: the Control Center's Dark
+/// toggle, an editor; `displays.json`: the desktop): inotify on its folder through `notify`, as the desktop's own
+/// `config::watch`; no polling. Bursts coalesce in the one-slot channel: whatever is queued is read after the last
+/// write.
+#[expect(clippy::ptr_arg, reason = "Subscription::run_with hands its data over as &PathBuf")]
+pub fn changes(path: &PathBuf) -> impl iced::futures::Stream<Item = ()> + use<> {
+    let path = path.clone();
+    iced::stream::channel(1, async move |tx: iced::futures::channel::mpsc::Sender<()>| {
         let watcher = (|| {
             let dir = path.parent()?.to_owned();
             let name = path.file_name()?.to_owned();
@@ -229,6 +269,30 @@ mod tests {
         assert!(!written(&at(EventKind::Access(AccessKind::Close(AccessMode::Read)), "config.toml"), name));
         assert!(!written(&at(EventKind::Access(AccessKind::Open(AccessMode::Any)), "config.toml"), name));
         assert!(!written(&at(EventKind::Create(CreateKind::File), ".config.toml.42.tmp"), name));
+    }
+
+    #[test]
+    fn display_outputs_by_name() {
+        let path = temp("outputs", Some(DEFAULT_TOML));
+        let (mut config, _) = Config::load(path.clone());
+        let before = config.text();
+        config
+            .set_outputs(vec![("eDP-1".into(), "scale", 1.25.into()), ("HDMI-A-1".into(), "position", Value::Array([1536i64, 0].into_iter().collect()))])
+            .unwrap();
+        config.set_outputs(vec![("eDP-1".into(), "rotation", 90i64.into())]).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# One display's own settings"), "comments kept: {text}");
+        let doc: DocumentMut = text.parse().unwrap();
+        let outputs = doc["display"]["outputs"].as_array_of_tables().unwrap();
+        assert_eq!(outputs.len(), 2, "{text}");
+        assert_eq!(config.output("eDP-1").unwrap()["scale"].as_float(), Some(1.25));
+        assert_eq!(config.output("eDP-1").unwrap()["rotation"].as_integer(), Some(90));
+        assert_eq!(config.output("HDMI-A-1").unwrap()["position"].as_array().map(|a| a.len()), Some(2));
+        assert!(config.output("DP-1").is_none());
+        // Revert: the file as it was.
+        config.restore(before.clone()).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert!(config.output("eDP-1").is_none());
     }
 
     #[test]

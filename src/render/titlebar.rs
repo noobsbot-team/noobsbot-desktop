@@ -44,7 +44,8 @@ pub(super) fn label_element(renderer: &mut GlesRenderer, label: &Label, rect: Re
     let (rendered, Some(buffer)) = label else { return None };
     let size = Size::from(((f64::from(rendered.width) / scale).round() as i32, (f64::from(rendered.height) / scale).round() as i32));
     let loc = Point::from((rect.loc.x + (rect.size.w - size.w) / 2, rect.loc.y + (rect.size.h - size.h) / 2)).to_f64().to_physical(scale);
-    // The whole buffer as the source: left out, smithay derives it from the output scale and crops at fractional ones.
+    // The whole buffer (scale 1: its logical size is its pixel size), drawn at `size`; without `src` smithay would
+    // take `size` as the source too and show only its top-left corner, magnified, at any scale but 100%.
     let src = Rectangle::from_size((f64::from(rendered.width), f64::from(rendered.height)).into());
     MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, Some(src), Some(size), Kind::Unspecified)
         .inspect_err(|err| tracing::warn!("title bar label: {err}"))

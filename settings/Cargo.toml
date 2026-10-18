@@ -9,8 +9,11 @@ publish = false
 
 [dependencies]
 # Software rendering only: a settings window needs no GPU, and it starts faster without wgpu (E7.1, Open-2).
-iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "crisp", "wayland", "x11", "svg", "thread-pool", "advanced"] }
+iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "crisp", "wayland", "x11", "svg", "thread-pool", "advanced", "canvas"] }
 toml_edit = "0.25.17"
 zbus = "5.19.0"
 futures-lite = "2.6.1"
 notify = "8.2.0"
+# displays.json, which the desktop writes (src/display_info.rs, shared).
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.140"

@@ -207,6 +207,38 @@ pub struct Displays {
     pub gpu: String,
     /// Every display's scale (1.0 = 100%, 1.25, 1.5, 2.0 …); 0 = picked from each display's pixel density. Live.
     pub scale: f64,
+    /// `[[display.outputs]]`: one display's own settings, by connector name. Live.
+    pub outputs: Vec<OutputSettings>,
+}
+
+/// One display's settings (E6.2); a display without an entry gets the defaults below.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct OutputSettings {
+    /// The connector (`eDP-1`, `HDMI-A-1`, `DP-2`; `winit` when nested).
+    pub name: String,
+    pub enabled: bool,
+    /// `"1920x1080"`; empty = the display's preferred resolution.
+    pub mode: String,
+    /// Hz (`59.95`); 0 = the highest the resolution offers.
+    pub refresh: f64,
+    /// Overrides `[display] scale`; 0 = that one.
+    pub scale: f64,
+    /// Degrees clockwise: 0, 90, 180 or 270.
+    pub rotation: u16,
+    /// Top-left corner in logical px; unset = right of the others.
+    pub position: Option<[i32; 2]>,
+    /// The menu bar and dock go here.
+    pub primary: bool,
+}
+
+/// The keys an `[[display.outputs]]` entry may have (unknown ones are warned about).
+const OUTPUT_KEYS: [&str; 8] = ["name", "enabled", "mode", "refresh", "scale", "rotation", "position", "primary"];
+
+impl Default for OutputSettings {
+    fn default() -> Self {
+        Self { name: String::new(), enabled: true, mode: String::new(), refresh: 0.0, scale: 0.0, rotation: 0, position: None, primary: false }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -560,6 +592,14 @@ fn warn_unknown(prefix: &str, user: &toml::Table, known: &toml::Table) {
     for (key, value) in user {
         let name = if prefix.is_empty() { key.clone() } else { format!("{prefix}.{key}") };
         match (known.get(key), value) {
+            // Shipped commented out, so `known` has no `outputs`.
+            (None, toml::Value::Array(outputs)) if name == "display.outputs" => {
+                for (i, output) in outputs.iter().enumerate() {
+                    for key in output.as_table().into_iter().flat_map(|t| t.keys()).filter(|k| !OUTPUT_KEYS.contains(&k.as_str())) {
+                        tracing::warn!("config: unknown setting `{key}` in display {} ignored", i + 1);
+                    }
+                }
+            }
             (None, _) => tracing::warn!("config: unknown setting `{name}` ignored"),
             (Some(_), toml::Value::Array(rules)) if name == "rules" => {
                 for (i, rule) in rules.iter().enumerate() {
@@ -785,6 +825,32 @@ mod tests {
         assert!(!c.bindings.contains_key("Super+B"));
         assert_eq!(c.bindings["Super+K"], "exec kate");
         assert_eq!(c.bindings["Super+Q"], "quit");
+    }
+
+    #[test]
+    fn display_outputs() {
+        let c = parse(concat!(
+            "[display]\nscale = 1.5\n",
+            "[[display.outputs]]\nname = \"eDP-1\"\nmode = \"1920x1200\"\nrefresh = 59.95\nscale = 1.25\nrotation = 90\nposition = [0, -200]\nprimary = true\nshiny = 1\n",
+            "[[display.outputs]]\nname = \"HDMI-A-1\"\nenabled = false\n",
+        ))
+        .unwrap();
+        assert_eq!(c.display.scale, 1.5);
+        let [laptop, hdmi] = &c.display.outputs[..] else { panic!("{:?}", c.display.outputs) };
+        assert_eq!(
+            laptop,
+            &OutputSettings {
+                name: "eDP-1".into(),
+                enabled: true,
+                mode: "1920x1200".into(),
+                refresh: 59.95,
+                scale: 1.25,
+                rotation: 90,
+                position: Some([0, -200]),
+                primary: true
+            }
+        );
+        assert_eq!(hdmi, &OutputSettings { name: "HDMI-A-1".into(), enabled: false, ..Default::default() }, "unset keys: the defaults");
     }
 
     #[test]

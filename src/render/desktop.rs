@@ -120,7 +120,11 @@ impl DesktopView {
             let (size, src) = if *stretch {
                 (rect.size, Some(Rectangle::from_size((f64::from(rendered.width), f64::from(rendered.height)).into())))
             } else {
-                (Size::from((logical(rendered.width), logical(rendered.height))), None)
+                // The whole buffer: `None` would crop it to `size` at any scale but 100% (see `label_element`).
+                (
+                    Size::from((logical(rendered.width), logical(rendered.height))),
+                    Some(Rectangle::from_size((f64::from(rendered.width), f64::from(rendered.height)).into())),
+                )
             };
             let loc = rect.loc.to_f64().to_physical(scale);
             match MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, src, Some(size), Kind::Unspecified) {

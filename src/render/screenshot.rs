@@ -106,7 +106,9 @@ impl ScreenshotView {
         let Some((_, _, buffer, glass)) = &self.thumb else { return Vec::new() };
         let loc = rect.loc.to_f64().to_physical(scale);
         let mut out: Vec<SceneElement> = glass[..1].iter().cloned().map(SceneElement::Shader).collect();
-        match MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, None, Some(rect.size), Kind::Unspecified) {
+        // The whole picture scaled into `rect` (see `label_element`).
+        let src = Rectangle::from_size((f64::from(thumb.size.0), f64::from(thumb.size.1)).into());
+        match MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, Some(src), Some(rect.size), Kind::Unspecified) {
             Ok(image) => out.push(SceneElement::Memory(image)),
             Err(err) => tracing::warn!("screenshot thumbnail: {err}"),
         }

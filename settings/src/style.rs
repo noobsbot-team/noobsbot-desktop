@@ -3,7 +3,8 @@
 
 use iced::{
     Background, Border, Color, Shadow, Vector,
-    widget::{button, container, scrollable, slider, svg, text_input, toggler},
+    overlay::menu,
+    widget::{button, container, pick_list, scrollable, slider, svg, text_input, toggler},
 };
 
 /// D2's accent set: light and dark.
@@ -158,6 +159,74 @@ impl Tokens {
                 snap: true,
             }
         }
+    }
+
+    /// D8 push button: the default one accent-filled, the others a raised segment.
+    pub fn push(self, default: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+        move |theme, status| {
+            if !default {
+                let mut style = self.segment(true)(theme, status);
+                style.border = Border { color: self.separator(), width: 0.5, radius: 6.0.into() };
+                if status == button::Status::Pressed {
+                    style.background = Some(self.ink(0.12, 0.3).into());
+                }
+                return style;
+            }
+            let pressed = status == button::Status::Pressed;
+            button::Style {
+                background: Some(Color { a: if pressed { 0.8 } else { 1.0 }, ..self.accent }.into()),
+                text_color: Color::WHITE,
+                border: Border { radius: 6.0.into(), ..Default::default() },
+                shadow: Shadow { color: Color::from_rgba(0.0, 0.0, 0.0, 0.15), offset: Vector::new(0.0, 1.0), blur_radius: 2.0 },
+                snap: true,
+            }
+        }
+    }
+
+    /// A dropdown (D8 pop-up button): a raised field with the chevron in `label-secondary`.
+    pub fn pick(self) -> impl Fn(&iced::Theme, pick_list::Status) -> pick_list::Style {
+        move |_, status| {
+            let lift = if self.dark { rgb(0x4A4A4A) } else { rgb(0xFFFFFF) };
+            let opened = matches!(status, pick_list::Status::Opened { .. });
+            pick_list::Style {
+                text_color: self.label(),
+                placeholder_color: self.tertiary(),
+                handle_color: self.secondary(),
+                background: lift.into(),
+                border: Border {
+                    color: if opened { Color { a: 0.5, ..self.accent } } else { self.separator() },
+                    width: if opened { 2.0 } else { 0.5 },
+                    radius: 6.0.into(),
+                },
+            }
+        }
+    }
+
+    /// A dropdown's menu: `card` material, the hovered row in the accent.
+    pub fn menu(self) -> impl Fn(&iced::Theme) -> menu::Style {
+        move |_| menu::Style {
+            background: self.card().into(),
+            border: Border { color: self.separator(), width: 0.5, radius: 6.0.into() },
+            text_color: self.label(),
+            selected_text_color: Color::WHITE,
+            selected_background: self.accent.into(),
+            shadow: Shadow { color: Color::from_rgba(0.0, 0.0, 0.0, 0.2), offset: Vector::new(0.0, 4.0), blur_radius: 12.0 },
+        }
+    }
+
+    /// A sheet over the window (D8 alert): `card` material, radius 12, a level-3 shadow.
+    pub fn sheet(self) -> impl Fn(&iced::Theme) -> container::Style {
+        move |_| container::Style {
+            background: Some(self.card().into()),
+            border: Border { color: self.separator(), width: 0.5, radius: 12.0.into() },
+            shadow: Shadow { color: Color::from_rgba(0.0, 0.0, 0.0, 0.3), offset: Vector::new(0.0, 8.0), blur_radius: 24.0 },
+            ..Default::default()
+        }
+    }
+
+    /// The dimming behind a sheet.
+    pub fn dim(self) -> impl Fn(&iced::Theme) -> container::Style {
+        move |_| container::Style { background: Some(Color::from_rgba(0.0, 0.0, 0.0, if self.dark { 0.4 } else { 0.2 }).into()), ..Default::default() }
     }
 
     /// An accent swatch: a ring in the swatch's colour when it is chosen.

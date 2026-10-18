@@ -36,6 +36,13 @@ pub struct Winit {
     pub clock: FrameClock,
 }
 
+impl Winit {
+    /// The window's output.
+    pub fn output(&self) -> &Output {
+        &self.output
+    }
+}
+
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
     let (mut backend, winit) = winit::init::<GlesRenderer>()?;
     backend.window().set_title("Noobsbot Desktop");
@@ -64,9 +71,9 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
                 let mode = Mode { size, refresh: REFRESH_MHZ };
                 winit.output.change_current_state(Some(mode), None, None, None);
                 winit.output.set_preferred(mode);
-                layer_map_for_output(&winit.output).arrange();
             }
-            state.schedule_redraw();
+            // Lays the panels out again and rewrites displays.json with the new size.
+            state.apply_displays();
         }
         WinitEvent::Input(event) => state.process_input_event(event),
         WinitEvent::Redraw => state.schedule_redraw(),
