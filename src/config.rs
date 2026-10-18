@@ -48,6 +48,7 @@ pub struct Config {
     pub calendar: Calendar,
     pub update: Update,
     pub desktop: Desktop,
+    pub app_drawer: AppDrawer,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -256,6 +257,7 @@ impl Default for Config {
             calendar: Calendar::default(),
             update: Update::default(),
             desktop: Desktop::default(),
+            app_drawer: AppDrawer::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -322,6 +324,20 @@ pub struct Desktop {
 impl Default for Desktop {
     fn default() -> Self {
         Self { icons: true }
+    }
+}
+
+/// The app drawer (Cinnamon's application menu).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct AppDrawer {
+    /// Pressing and releasing Super on its own opens it.
+    pub super_tap: bool,
+}
+
+impl Default for AppDrawer {
+    fn default() -> Self {
+        Self { super_tap: true }
     }
 }
 
@@ -437,6 +453,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Ctrl+Q", "lock"),
         ("Super+N", "notification-center"),
         ("Super+Space", "spotlight"),
+        ("Super+A", "app-drawer"),
         ("Super+Ctrl+Space", "input-source"),
         ("Super+Ctrl+E", "emoji"),
         ("Super+period", "emoji"),

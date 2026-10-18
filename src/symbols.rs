@@ -106,6 +106,24 @@ symbols! {
     CloudSnow = "cloud-snow",
     CloudLightning = "cloud-lightning",
     CloudFog = "cloud-fog",
+    // The app drawer's categories and session buttons.
+    Star = "star",
+    SquaresFour = "squares-four",
+    ClockCounterClockwise = "clock-counter-clockwise",
+    Wrench = "wrench",
+    Code = "code",
+    GraduationCap = "graduation-cap",
+    GameController = "game-controller",
+    PaintBrush = "paint-brush",
+    Globe = "globe",
+    Briefcase = "briefcase",
+    FilmStrip = "film-strip",
+    Flask = "flask",
+    Gear = "gear",
+    Cpu = "cpu",
+    DotsThreeCircle = "dots-three-circle",
+    SignOut = "sign-out",
+    Power = "power",
 }
 
 type Key = (Symbol, Weight, u16, u64, [u8; 4]);

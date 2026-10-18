@@ -443,14 +443,16 @@ mod tests {
     }
 
     fn exec(exec: &str) -> Vec<String> {
-        App { id: "kate".into(), name: "Kate".into(), exec: unescape(exec), icon: "kate".into(), wm_class: None, no_display: false, ..Default::default() }.command()
+        App { id: "kate".into(), name: "Kate".into(), exec: unescape(exec), icon: "kate".into(), wm_class: None, no_display: false, ..Default::default() }
+            .command()
     }
 
     #[test]
     fn dropped_files_fill_field_codes() {
         let kate = |exec: &str, uris: &[&str]| {
             let uris: Vec<String> = uris.iter().map(|u| u.to_string()).collect();
-            App { id: "kate".into(), name: "Kate".into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false, ..Default::default() }.command_with(&uris)
+            App { id: "kate".into(), name: "Kate".into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false, ..Default::default() }
+                .command_with(&uris)
         };
         let two = ["file:///home/a/My%20File.txt", "file://localhost/tmp/b"];
         assert_eq!(kate("kate -b %F", &two), ["kate", "-b", "/home/a/My File.txt", "/tmp/b"]);
@@ -488,7 +490,8 @@ mod tests {
 
     #[test]
     fn comment_keywords_and_categories() {
-        let base = "[Desktop Entry]\nType=Application\nName=Kate\nExec=kate\nGenericName=Text Editor\nKeywords=text;editor;\nCategories=Qt;KDE;Utility;TextEditor;\n";
+        let base =
+            "[Desktop Entry]\nType=Application\nName=Kate\nExec=kate\nGenericName=Text Editor\nKeywords=text;editor;\nCategories=Qt;KDE;Utility;TextEditor;\n";
         let Some(Entry::App(kate)) = app(&format!("{base}Comment=Edit text\nComment[de]=Text bearbeiten\nKeywords[de]=Text;Bearbeiter\n")) else { panic!() };
         assert_eq!((kate.comment.as_str(), kate.generic_name.as_str()), ("Text bearbeiten", "Text Editor"));
         assert_eq!(kate.keywords, ["Text", "Bearbeiter"]);

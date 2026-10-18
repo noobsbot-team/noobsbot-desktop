@@ -198,6 +198,10 @@ pub struct State {
     pub emoji: Option<crate::shell::emoji::Picker>,
     /// Launchpad (E4.4), while open or fading out.
     pub launchpad: Option<crate::shell::launchpad::Launchpad>,
+    /// The app drawer, when open.
+    pub drawer: Option<crate::shell::drawer::Drawer>,
+    /// Watches for a lone tap of Super, which opens the drawer.
+    pub super_tap: crate::shell::drawer::SuperTap,
     /// Spaces (E5.1).
     pub spaces: crate::spaces::Spaces,
     /// Mission Control (E5.2), while up or closing.
@@ -424,6 +428,8 @@ impl State {
             spotlight: None,
             emoji: None,
             launchpad: None,
+            drawer: None,
+            super_tap: Default::default(),
             spaces: Default::default(),
             mission: None,
             desktop_shown: None,

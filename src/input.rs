@@ -60,6 +60,10 @@ pub fn resize_icon(edges: Edges) -> CursorIcon {
 impl State {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         self.idle_activity();
+        // Clicks, scrolls and gestures with Super held aren't a Super tap; moving the pointer is fine.
+        if !matches!(event, InputEvent::Keyboard { .. } | InputEvent::PointerMotion { .. } | InputEvent::PointerMotionAbsolute { .. }) {
+            self.super_tap.cancel();
+        }
         match event {
             InputEvent::Keyboard { event } => {
                 let Some(keyboard) = self.seat.get_keyboard() else { return };
@@ -68,6 +72,8 @@ impl State {
                 let inhibited = self.shortcuts_inhibited();
                 let action = keyboard.input::<Option<Action>, _>(self, event.key_code(), key_state, serial, event.time_msec(), |state, mods, key| {
                     let code = key.raw_code();
+                    let logo = matches!(key.modified_sym(), Keysym::Super_L | Keysym::Super_R);
+                    state.super_tap.key(logo, key_state == KeyState::Pressed, !mods.ctrl && !mods.alt && !mods.shift, std::time::Instant::now());
                     if key_state == KeyState::Released {
                         state.switcher_release(mods);
                         // The release of a shortcut key never reaches the app, which never saw the press.
@@ -115,6 +121,12 @@ impl State {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }
+                    // So does the app drawer.
+                    if state.drawer_open() && shortcuts::lookup(&state.bindings, mods, raw, state.nested).is_none() {
+                        state.drawer_key(key.modified_sym(), mods.ctrl);
+                        state.suppressed.push(code);
+                        return FilterResult::Intercept(None);
+                    }
                     // Launchpad takes every key but desktop shortcuts (its own binding closes it).
                     if state.launchpad_open() && shortcuts::lookup(&state.bindings, mods, raw, state.nested).is_none() {
                         state.launchpad_key(key.modified_sym(), mods.ctrl);
@@ -137,6 +149,10 @@ impl State {
                     }
                 });
                 self.switcher_settle();
+                // A lone Super tap (its release goes on to the app, which saw the press).
+                if std::mem::take(&mut self.super_tap.fired) && self.config.app_drawer.super_tap && !inhibited && !self.locked() && self.alert.is_none() {
+                    self.run_action(Action::AppDrawer);
+                }
                 match action {
                     Some(Some(action)) => self.run_action(action),
                     // A key the app gets: is it still answering (E4.7)?
@@ -174,6 +190,7 @@ impl State {
                 if state == ButtonState::Pressed
                     && !pointer.is_grabbed()
                     && !self.shot_press(self.to_output(location), event.button_code() == BTN_LEFT)
+                    && !self.drawer_press(self.to_output(location), event.button_code() == BTN_RIGHT)
                     && !self.dock_press(self.to_output(location), event.button_code())
                     && !self.mission_press(self.to_output(location), event.button_code())
                     && !self.shell_press(self.to_output(location), event.button_code() == BTN_RIGHT)
@@ -242,7 +259,7 @@ impl State {
                 if self.launchpad_scroll(swipe, amount(Axis::Vertical), page_wheel, lifted) {
                     return;
                 }
-                if self.emoji_scroll(pos, amount(Axis::Vertical)) {
+                if self.emoji_scroll(pos, amount(Axis::Vertical)) || self.drawer_scroll(pos, amount(Axis::Vertical), wheel != 0.0) {
                     return;
                 }
                 if self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, wheel != 0.0) {
