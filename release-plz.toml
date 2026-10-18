@@ -1,0 +1,15 @@
+# Version bump policy (E6.13): feat → minor, fix/perf → patch, `!` or BREAKING CHANGE → major. The version lives only
+# in Cargo.toml; tags (`v1.3.0`) and GitHub Releases are made by release-plz, never by hand.
+[workspace]
+# Not on crates.io; releases are GitHub Releases with a signed tarball (release.yml).
+publish = false
+git_tag_name = "v{{ version }}"
+git_release_enable = true
+# `1.4.0-beta.2` becomes a GitHub pre-release, seen only by the Beta channel.
+git_release_type = "auto"
+changelog_update = true
+# While still 0.x, `feat:` bumps the minor too, as it will from 1.0 on.
+features_always_increment_minor = true
+semver_check = false
+# Tag and release only when the merged commit comes from a release PR, never on an ordinary push.
+release_always = false
