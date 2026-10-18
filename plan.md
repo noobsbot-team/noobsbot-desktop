@@ -53,7 +53,7 @@ and must be **very fast** while using **as little RAM and CPU as possible**.
 | R3 | Super fast, minimal system resources | Part C, Part I |
 | R4 | Rust (or a better language if one exists) | C1 |
 | R5 | Default terminal: **noobsbot-terminal** (owner's own) | F1 |
-| R6 | Default browser: **Brave** | F2 |
+| R6 | Default browser: **Helium** | F2 |
 | R7 | File manager: **Dolphin** | F3 |
 | R8 | Text editor, icons, fonts | F4, Part H |
 | R9 | Full hardware support: drivers, Wi-Fi, Bluetooth, sound, display, keyboard, USB | Part G + each milestone's "Hardware covered" |
@@ -78,7 +78,7 @@ and must be **very fast** while using **as little RAM and CPU as possible**.
 ## A4. How the desktop is put together
 ```
  ┌──────────────────────────────────────────────────────────────────────┐
- │  APPS: noobsbot-terminal · Brave · Dolphin · Kate · Settings · …      │  separate programs
+ │  APPS: noobsbot-terminal · Helium · Dolphin · Kate · Settings · …      │  separate programs
  ├──────────────────────────────────────────────────────────────────────┤
  │  noobsbot-desktop  (ONE program — this is what we write)              │
  │   ├ compositor + window manager (draws everything, owns the screen)   │
@@ -425,7 +425,7 @@ macOS-style glass windows.
 - **Built with:** Smithay (Wayland protocols: `wl_compositor`, `wl_subcompositor`, `wl_shm`, `linux-dmabuf`,
   `wl_seat`, `wl_output`, `xdg_shell`, `xdg-decoration`, `viewporter`, `fractional-scale`,
   `presentation-time`, `xdg-activation`, `wl_data_device` + `primary-selection` for the clipboard and drag-and-drop,
-  `xdg-foreign` + `xdg-dialog` (dialogs parented to the right window, e.g. the file picker over Brave),
+  `xdg-foreign` + `xdg-dialog` (dialogs parented to the right window, e.g. the file picker over Helium),
   `relative-pointer` + `pointer-constraints` (games, Google Maps, VMs), `keyboard-shortcuts-inhibit` (VMs, remote
   desktop), `cursor-shape`, `wlr-layer-shell` (third-party bars and launchers keep working), `tearing-control` (games),
   `kde-server-decoration` (see E1.3), `text-input-v3` (see E6.12), `security-context-v1` (Flatpak, see E6.11),
@@ -435,8 +435,8 @@ macOS-style glass windows.
   - **Clipboard persistence:** Wayland drops the clipboard when the source app quits; macOS keeps it. The compositor
     keeps a copy of the last clipboard contents (up to 10 MB, `clipboard.rs`) so copy → quit the app → paste works.
 - **Why:** Smithay + calloop (C3, C7); the winit backend lets us develop without logging out or risking the
-  real session. The protocol list is what modern apps (Brave, Qt, GTK, games, VMs, noobsbot) need to run fully.
-- **Done when:** noobsbot-terminal and Brave run inside it with working keyboard, mouse, clipboard and
+  real session. The protocol list is what modern apps (Helium, Qt, GTK, games, VMs, noobsbot) need to run fully.
+- **Done when:** noobsbot-terminal and Helium run inside it with working keyboard, mouse, clipboard and
   copy/paste between them.
 
 ### E1.2 Windows & window management
@@ -514,7 +514,7 @@ macOS-style glass windows.
   the portal file picker, draws its own title bar); SDF shader for the circles and glyphs.
 - **Why:** server-side is the only way **every** app gets the same macOS title bar. SDF keeps circles crisp at
   every scale. Apps that refuse server-side decorations (GTK4/libadwaita) keep their own (see L2).
-- **Done when:** noobsbot, Dolphin and Kate show our title bar (Brave keeps its own, see F2), and the
+- **Done when:** noobsbot, Dolphin and Kate show our title bar (Helium keeps its own, see F2), and the
   lights work.
 
 ### E1.4 Glass, corners & shadow shaders
@@ -553,7 +553,7 @@ macOS-style glass windows.
   binding set at once, so no key is ever bound twice.
   **Keyboard layout / input method switch:** Super+Ctrl+Space (macOS's Ctrl+Space clashes with IDE autocomplete),
   plus the menu-bar keyboard item (E6.12).
-- **Design:** shortcuts in M1: Super+Enter (noobsbot-terminal), Super+B (Brave), Super+E (Dolphin), Super+Q (quit
+- **Design:** shortcuts in M1: Super+Enter (noobsbot-terminal), Super+B (Helium), Super+E (Dolphin), Super+Q (quit
   app), Super+W (close window), Super+M (minimise), Super+H (hide), Super+Tab (basic cycling; the full switcher comes
   in M4). Added later: Super+Space Spotlight and Super+N Notification Center (M4), Super+Alt+Esc Force Quit (M4),
   Super+←/→ and Super+1…9 Spaces, Super+↑ Mission Control, Super+↓ App Exposé (M5), Super+Shift+3/4/5 screenshots
@@ -578,15 +578,15 @@ macOS-style glass windows.
   | 1-finger tap | click (tap-to-click, on by default) |
   | 2-finger tap / click | right-click |
   | 2-finger scroll | scroll, **natural** direction by default (like macOS) |
-  | 2-finger pinch | **passed to the app**: zoom in Brave, Dolphin and image viewers |
-  | 2-finger swipe left/right | a horizontal **scroll** passed to the app; Brave turns it into back/forward |
+  | 2-finger pinch | **passed to the app**: zoom in Helium, Dolphin and image viewers |
+  | 2-finger swipe left/right | a horizontal **scroll** passed to the app; Helium turns it into back/forward |
   | Click + drag | select / move windows |
   | Mouse back/forward buttons | passed to apps |
 - **Built with:** **libinput** via Smithay (tap, scroll, pinch and swipe events; libinput reports 2-finger movement as
   scrolling and only 3+ fingers as swipe gestures); `pointer-gestures` protocol to send pinch to apps.
 - **Why:** libinput is the Linux standard for touchpads, with tuned palm rejection and acceleration.
   Passing 2-finger gestures to apps keeps browser pinch-zoom working.
-- **Done when:** tap, right-click, natural scroll and pinch-zoom in Brave work on a real touchpad.
+- **Done when:** tap, right-click, natural scroll and pinch-zoom in Helium work on a real touchpad.
 
 ### E1.8 Settings file
 - **What it is:** `~/.config/noobsbot-desktop/config.toml`.
@@ -602,7 +602,7 @@ macOS-style glass windows.
 ### E1.9 Window rules
 - **What it is:** per-app rules in `config.toml`, the way macOS remembers how an app's windows behave.
 - **Design:** `[[rules]]` entries matched by Wayland `app_id` and an optional title pattern: `space = "all" | n`,
-  `float_above = true` (always on top, e.g. Brave's picture-in-picture window, matched by its title), `size`,
+  `float_above = true` (always on top, e.g. Helium's picture-in-picture window, matched by its title), `size`,
   `position`, `fullscreen`, `decorations = false` and `layer = "overlay"` (the quake terminal, E2.8: above fullscreen apps), `opacity`. Rules apply when a window
   appears and again when its title changes.
 - **Built with:** `rules.rs`, evaluated in `wm.rs`; `regex-lite` for title matching.
@@ -626,7 +626,7 @@ macOS-style glass windows.
   | **Render as late as possible** | we start drawing at `vblank − t_render − 1 ms`, where `t_render` is measured per output (moving average of the last 30 frames; starts at 4 ms). Drawing just before the deadline means the newest input is included: **input → photon ≤ 1 frame + ~2 ms** |
   | **Damage only** | a frame is scheduled only when something changed; the clock changes once per minute; a settled animation schedules nothing |
   | **Apps never stall the shell** | each app's latest buffer is drawn; an app that hasn't produced a new one is drawn with its last (this is what makes dragging and resizing smooth even with slow apps) |
-  | **Frame callbacks for apps** | apps get `wl_surface.frame` right after each vblank and `presentation-time` feedback, so Brave, Dolphin and noobsbot can run at the monitor's rate (60 / 120 / 144 Hz, per monitor) |
+  | **Frame callbacks for apps** | apps get `wl_surface.frame` right after each vblank and `presentation-time` feedback, so Helium, Dolphin and noobsbot can run at the monitor's rate (60 / 120 / 144 Hz, per monitor) |
   | **Direct scanout** | a fullscreen app's buffer goes straight to the display plane (E6.3); overlay planes for video where the driver has them |
   | **One thread for the frame** | the compositor loop is single-threaded (C7); anything slow (image decoding, icon rasterising, the app index, update checks) runs on worker threads and sends results back through calloop channels, so a frame is never blocked by I/O |
   | **GPU budget** | shell + windows at 1080p on an Intel iGPU: **< 2 ms** per frame; 4K @ 200%: < 6 ms (both leave room for 120 Hz) |
@@ -681,7 +681,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 - **Design:**
   ```
   ┌──────────────────────────────────────────────────────────────────────────────┐
-  │ ◆  Brave  File  Edit …            ⌨ EN  ▣ tray   Wi-Fi  BT  85% ▮  🔊  ⊞  Sat 17 Oct  9:41 │ 24 px
+  │ ◆  Helium  File  Edit …            ⌨ EN  ▣ tray   Wi-Fi  BT  85% ▮  🔊  ⊞  Sat 17 Oct  9:41 │ 24 px
   └──────────────────────────────────────────────────────────────────────────────┘
   ```
   - Height **24 px**, `bar` material, elevation 1, full width.
@@ -739,7 +739,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   | Bluetooth | **BlueZ**; Noobsbot Desktop registers an **`org.bluez.Agent1`** (PIN entry / passkey-confirm alert); without an agent, pairing keyboards and phones fails | the only Linux Bluetooth stack |
   | Display brightness | **logind** `SetBrightness` | changes brightness without root and without an extra daemon |
   | Sound: outputs **and input** (microphone device, level, mute, the mic-mute key) | **PipeWire** via `wpctl` (M2), the `pipewire` crate later | fastest path to working; native later avoids spawning a process |
-  | Now Playing | **MPRIS** | every media app (Brave, Spotify, mpv) publishes it |
+  | Now Playing | **MPRIS** | every media app (Helium, Spotify, mpv) publishes it |
   | Battery | **UPower** | standard; also gives Bluetooth device battery levels |
   | Power mode | **power-profiles-daemon** | standard power saver / balanced / performance switch |
   | Do Not Disturb | our notification server (M4; toggle stored now) | built in (C5) |
@@ -803,7 +803,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 - **Design:** full width, 40% height, slides down with `smooth`; same glass title-bar-less window with radius 10 at the bottom corners.
 - **Built with:** noobsbot's existing `noobsbot --quake` (it toggles a running instance through its own
   socket) + a window rule in Noobsbot Desktop for its placement.
-- **Why:** reuses the owner's existing feature; no change to noobsbot needed. F12 is also Brave's DevTools key: while
+- **Why:** reuses the owner's existing feature; no change to noobsbot needed. F12 is also Helium's DevTools key: while
   the desktop owns F12, DevTools still opens with Ctrl+Shift+I; the key is configurable.
 - **Done when:** F12 shows and hides it instantly, on top of fullscreen apps too.
 
@@ -846,7 +846,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   | `kdeglobals` fonts + icons | `font=Inter,10`, `fixed=JetBrains Mono,10`, `[Icons] Theme=WhiteSur` / `WhiteSur-dark` | KDE apps read these outside Plasma too |
   | Session env | `QT_QPA_PLATFORMTHEME=qt6ct`, `QT_STYLE_OVERRIDE=kvantum` (E6.7) | forces every Qt app to use the theme |
   | **GTK** (file-picker dialogs, any GTK app) | WhiteSur-gtk recoloured to Part D; `gsettings org.gnome.desktop.interface` for theme, icons, font, `color-scheme` | GTK apps read gsettings; GTK can't do translucent windows, so it gets the same colours, solid |
-  | **Brave** | **not themed: kept exactly as it is** (its own theme, its own tab-strip title bar, its own light/dark setting) | owner's choice (F2) |
+  | **Helium** | **not themed: kept exactly as it is** (its own theme, its own tab-strip title bar, its own light/dark setting) | owner's choice (F2) |
   | **Theme generator** | `noobsbot-desktop theme --write` writes all of the files above from `theme.rs` tokens, and runs on every accent/mode/opacity change. It **merges**, never overwrites: in `kdeglobals` it owns only `[General] ColorScheme/font/fixed`, `[Icons]` and `[Colors:*]`, so F1's `TerminalApplication` and anything the owner set survive; likewise for the gsettings keys | **one source of truth**: change the accent once, and the desktop and every app change together |
 - **Light/dark & accent switching:** toggling dark mode (Control Center) or changing the accent rewrites the Kvantum
   config, colour scheme, kdeglobals and gsettings, and sends the portal `color-scheme` change. GTK apps update
@@ -889,7 +889,7 @@ Goal: the owner's current dock (Plank, Transparent-Tight theme), rebuilt nativel
   | hide-mode | `intelligent` | **intelligent hide**: hides when the focused window overlaps the dock; shows again when nothing overlaps or when the pointer touches the bottom edge |
   | theme | `Transparent-Tight` | same look (see Design) |
   | docks per monitor | `dock1` (main screen) + `dock2` (`HDMI-1`), each with its own items | **one dock per monitor, each with its own pinned list** |
-  | dock-items (dock1) | Google Chrome, VS Code, Brave, Dolphin, Kate, Spectacle, kitty, noobsbot | same order. On a fresh system only installed apps are shown. Default fresh-install pins = Brave, Dolphin, Kate, noobsbot-terminal (Chrome, VS Code, Spectacle, kitty appear in their old places once installed) |
+  | dock-items (dock1) | Google Chrome, VS Code, Brave, Dolphin, Kate, Spectacle, kitty, noobsbot | same order (Brave's slot holds Helium, the new default browser). On a fresh system only installed apps are shown. Default fresh-install pins = Helium, Dolphin, Kate, noobsbot-terminal (Chrome, VS Code, Spectacle, kitty appear in their old places once installed) |
 - **Design (Transparent-Tight theme, copied value by value):**
   ```
        ┌────┐┌────┐┌────┐┌────┐┌────┐┌────┐      84 px icons, almost no gap between them
@@ -965,7 +965,7 @@ Goal: everything that informs you and helps you find things.
 - **Design:**
   ```
                                        ╭────────────────────────────────────╮
-                                       │ ▣  Brave                      now  │  card material, radius 16
+                                       │ ▣  Helium                      now  │  card material, radius 16
                                        │    Download complete               │  Headline
                                        │    report.pdf (2.4 MB)             │  Body, max 2 lines
                                        ╰────────────────────────────────────╯
@@ -996,7 +996,7 @@ Goal: everything that informs you and helps you find things.
                                                    │                              │
                                                    │ Notifications    Clear All  │ Subheadline / button
                                                    │ ╭──────────────────────────╮ │
-                                                   │ │ ▣ Brave            9:30  │ │ grouped by app
+                                                   │ │ ▣ Helium            9:30  │ │ grouped by app
                                                    │ │   Download complete      │ │ (stacked cards,
                                                    │ ╰┬────────────────────────┬╯ │  click to expand)
                                                    │  ╰────── 2 more ──────────╯  │
@@ -1042,7 +1042,7 @@ Goal: everything that informs you and helps you find things.
                ╭──────────────────────────────────────────────────────────╮
                │ 🔍  brav|                                                │ 52 px, Title 1
                ├──────────────────────────────────────────────────────────┤
-               │ ▣  Brave Browser                         Application  ⏎ │ top hit = accent row
+               │ ▣  Helium                                Application  ⏎ │ top hit = accent row
                │ ▣  …                                                      │
                ╰──────────────────────────────────────────────────────────╯
   ```
@@ -1056,7 +1056,7 @@ Goal: everything that informs you and helps you find things.
 - **Built with:** the shared app index (`apps.rs`); `nucleo-matcher` (the fast fuzzy matcher from the Helix
   editor); a tiny expression evaluator crate (e.g. `evalexpr`).
 - **Why:** the index lives in memory, so results appear on every keystroke with zero disk access.
-  Fuzzy matching finds "Brave" from "brv". Files and settings search come later (they need a file index;
+  Fuzzy matching finds "Helium" from "hlm". Files and settings search come later (they need a file index;
   decided at Open-4).
 - **Done when:** any installed app is found within 1 frame of typing and launches on Enter.
 
@@ -1105,7 +1105,7 @@ Goal: everything that informs you and helps you find things.
   │  If an app doesn't respond for a while,  │  Callout, label-secondary
   │  select its name and click Force Quit.   │
   │ ╭─────────────────────────────────────╮ │
-  │ │ ▣ Brave                              │ │  list rows 28 px, icon 20 px
+  │ │ ▣ Helium                              │ │  list rows 28 px, icon 20 px
   │ │ ▣ Kate               (not responding)│ │  red label for frozen apps
   │ │ ▣ noobsbot-terminal                  │ │
   │ ╰─────────────────────────────────────╯ │
@@ -1159,7 +1159,7 @@ Goal: multiple workspaces and the full macOS gesture experience.
 - **Design:**
   ```
    ┌──────────────────────────────────────────────────────────────────────┐
-   │   [ Desktop 1 ]  [ Desktop 2 ]  [ Brave (fullscreen) ]   [ + ]        │  Spaces bar, 96 px thumbnails
+   │   [ Desktop 1 ]  [ Desktop 2 ]  [ Helium (fullscreen) ]   [ + ]        │  Spaces bar, 96 px thumbnails
    │                                                                       │
    │        ╭─────────╮     ╭──────────────╮                               │
    │        │ window  │     │   window     │      windows spread out,      │
@@ -1187,8 +1187,8 @@ Goal: multiple workspaces and the full macOS gesture experience.
   | 1-finger tap | click | M1 |
   | 2-finger tap / click | right-click | M1 |
   | 2-finger scroll | scroll (natural direction, configurable) | M1 |
-  | 2-finger pinch | zoom inside the app (Brave, Dolphin, images) | M1 |
-  | 2-finger swipe left/right | horizontal scroll; back/forward in apps that map it (Brave) | M1 |
+  | 2-finger pinch | zoom inside the app (Helium, Dolphin, images) | M1 |
+  | 2-finger swipe left/right | horizontal scroll; back/forward in apps that map it (Helium) | M1 |
   | 2-finger swipe right on a banner | dismiss notification (horizontal scroll over our banner) | M4 |
   | **3-finger swipe left / right** | **switch Space** | M5 |
   | **3-finger swipe up** | **Mission Control** | M5 |
@@ -1269,9 +1269,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 
 ### E6.3 Direct scanout & idle inhibit
 - **What it is:** fullscreen video and games bypass compositing; videos keep the screen awake.
-- **Built with:** Smithay direct scanout; `idle-inhibit` protocol (Brave uses it during video).
+- **Built with:** Smithay direct scanout; `idle-inhibit` protocol (Helium uses it during video).
 - **Why:** lower power and latency (R3).
-- **Done when:** fullscreen YouTube in Brave shows lower power use (`powertop`) than windowed, and the screen doesn't dim.
+- **Done when:** fullscreen YouTube in Helium shows lower power use (`powertop`) than windowed, and the screen doesn't dim.
 
 ### E6.4 Lock screen
 - **What it is:** protects the session when you step away.
@@ -1337,7 +1337,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   (`noobsbot-desktop-session` is the wrapper from E6.13 that starts the current version and rolls back a broken
   update; the session `.desktop` file runs the same wrapper.)
   `install.sh` also adds `pam_gnome_keyring.so` (auth + session) to `/etc/pam.d/greetd`, so the keyring unlocks with
-  the login password; otherwise Brave and Wi-Fi ask for a keyring password after every boot.
+  the login password; otherwise Helium and Wi-Fi ask for a keyring password after every boot.
 - **Security (what greetd protects and what it can't):**
   | Threat | Protection |
   |---|---|
@@ -1372,7 +1372,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
      org.freedesktop.impl.portal.ScreenCast=wlr
      org.freedesktop.impl.portal.Screenshot=wlr
      ```
-     **One password store:** gnome-keyring (Secret Service) for Brave, Wi-Fi and everything else; KWallet is not
+     **One password store:** gnome-keyring (Secret Service) for Helium, Wi-Fi and everything else; KWallet is not
      installed and KDE apps are told so (`~/.config/kwalletrc`: `[Wallet] Enabled=false`), so no second wallet ever
      pops up (KIO network-share passwords are then asked once per session, L9).
   4. Run **XDG autostart** entries (`~/.config/autostart/*.desktop`), so "Open at Login" apps start.
@@ -1385,14 +1385,14 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   Super+Shift+5 = toolbar (glass `hud`: Screen · Window · Region · Record later · Options). A thumbnail floats at the
   bottom-right for 5 s (click = open, drag = drop into apps). Saved to `~/Pictures/Screenshots/Screenshot <date>.png`
   and copied to the clipboard. Shutter sound is optional.
-- **Built with:** the compositor already has the pixels → saved with `png`; screen sharing for Brave
+- **Built with:** the compositor already has the pixels → saved with `png`; screen sharing for Helium
   (Meet, Discord) through **xdg-desktop-portal-wlr** + PipeWire, using the `wlr-screencopy` /
   `ext-image-copy-capture` protocols we implement; portal-wlr's screen chooser is `chooser_type = simple` with `slurp`
   (package `slurp`), otherwise it cannot pick a screen. **Limit:** portal-wlr shares whole screens, not single windows
   (L7). **Recording** (Super+Shift+5 ▸ Record): `wf-recorder` (optional package) until our own recorder writes
   PipeWire frames (E7.2).
 - **Why:** browsers only share screens through the portal standard.
-- **Done when:** all three screenshot modes work; screen sharing works in Google Meet in Brave.
+- **Done when:** all three screenshot modes work; screen sharing works in Google Meet in Helium.
 
 ### E6.9 X11 app support
 - **Built with:** **xwayland-satellite** (C10), started automatically.
@@ -1403,7 +1403,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **What it is:** one script that turns a fresh Arch install into Noobsbot Desktop.
 - **Does:** runs **as the normal user** (AUR packages cannot be built as root) and uses `sudo` only for `pacman` and
   system files → detects hardware (`lspci`, `lsusb`) → installs the package list (G4) including only the needed
-  drivers → bootstraps an **AUR helper** (`paru`, built with `makepkg`) → installs `brave-bin` and the WhiteSur themes
+  drivers → bootstraps an **AUR helper** (`paru`, built with `makepkg`) → installs `helium-browser-bin` and the WhiteSur themes
   from AUR → installs Noobsbot Desktop and noobsbot-terminal from their latest **signed GitHub Release** tarballs (minisign
   verified, E6.13), or builds from **pinned git tags** with `--from-source` → writes system files from the repo (greetd config, `/etc/pam.d/noobsbot-desktop`,
   `pam_gnome_keyring` in `/etc/pam.d/greetd`, the portals.conf, `UPower.conf`, the session `.desktop`) → enables
@@ -1423,7 +1423,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   advertised to **trusted clients** (the portals, xwayland-satellite, our Settings app, anything started with
   `noobsbot-desktop --trusted <cmd>`). Any other client that binds one gets a one-time **alert** (D8): "Allow ‹app› to
   record the screen / control input?" with Allow / Deny, remembered per app in config (Settings ▸ Privacy later). Screen
-  sharing from Brave goes through the portal's own picker, as on every desktop.
+  sharing from Helium goes through the portal's own picker, as on every desktop.
 - **Built with:** Smithay's per-client global filter + the client's pid/exe from the socket credentials (`perms.rs`);
   `security-context-v1` so Flatpak apps never see the privileged set at all.
 - **Why:** a desktop that owns the whole screen must not hand that control to every program; this is where Wayland is
@@ -1440,7 +1440,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   set, started by autostart when installed; `XMODIFIERS=@im=fcitx` for XWayland apps only (`GTK_IM_MODULE` /
   `QT_IM_MODULE` are **not** set, so native Wayland apps use text-input-v3).
 - **Why:** fcitx5 is the best-maintained Wayland IME; these two protocols are what Qt 6, GTK 4 and Chromium speak.
-- **Done when:** Nepali can be typed in Kate, Brave and noobsbot-terminal with the candidate popup next to the cursor.
+- **Done when:** Nepali can be typed in Kate, Helium and noobsbot-terminal with the candidate popup next to the cursor.
 
 ### E6.13 Versioning, releases & Software Update (auto-updating)
 - **What it is:** how a version number is born, how a release is built, and how every installed desktop learns about
@@ -1601,17 +1601,22 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
   Software Update (E6.13). This needs the noobsbot-terminal repo to adopt the same release pipeline (release-plz +
   signed tarballs) before M6.
 
-## F2. Browser → **Brave** (default)
-- **Why:** owner requirement (R6). Chromium-based: native Wayland, hardware video decoding, screen sharing via portals.
+## F2. Browser → **Helium** (default) — https://helium.computer
+- **Why:** owner requirement (R6, changed from Brave on 2026-10-18). Helium (by imput, GPL-3.0) is Chromium-based
+  (ungoogled-chromium, no Google services, uBlock Origin built in): native Wayland, hardware video decoding, screen
+  sharing via portals, MPRIS, idle-inhibit — everything the plan relied on Helium for.
 - **Integration:** flags `--ozone-platform=wayland --password-store=gnome-libsecret` (Chromium only auto-detects
   the keyring on GNOME/KDE; on an unknown desktop it would store passwords **unencrypted**), written to
-  `~/.config/brave-flags.conf`, which the `brave-bin` launcher reads, so **every** launch path (dock, Spotlight,
-  `xdg-open` links from other apps) gets them; set as the system default (`xdg-settings set
-  default-web-browser brave-browser.desktop` + `xdg-mime` for http/https/html); passwords in gnome-keyring.
-- **Look: kept as it is.** Noobsbot Desktop does **not** theme Brave: it keeps its own theme, its own tab-strip
+  `~/.config/helium-browser-flags.conf`, which the `helium-browser-bin` launcher (`helium-browser`) reads, so **every**
+  launch path (dock, Spotlight, `xdg-open` links from other apps) gets them; set as the system default
+  (`xdg-settings set default-web-browser helium.desktop` + `xdg-mime` for http/https/html); passwords in gnome-keyring.
+  Its Wayland app_id is checked in M6 (expected `helium`); the picture-in-picture rule matches the title only, so it
+  works whatever the id is.
+- **Look: kept as it is.** Noobsbot Desktop does **not** theme Helium: it keeps its own theme, its own tab-strip
   title bar (with its own window buttons) and its own light/dark setting. The window still gets our rounded corners,
   shadow, dock icon, Mission Control and gestures, like every other window.
-- **Installed by:** `brave-bin` (AUR).
+- **Installed by:** `helium-browser-bin` (AUR; official signed release tarballs from github.com/imputnet/helium-linux).
+  Updates come with the AUR package (Helium's own auto-update is macOS/Windows only).
 
 ## F3. File manager → **Dolphin**
 - **Why:** owner choice (R7). Fast; tabs, split view, previews; network shares, phones (MTP) and archives via KIO.
@@ -1693,7 +1698,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Display / GPU | Intel `i915`/`xe`, AMD `amdgpu`, NVIDIA `nvidia-open` + `nvidia-utils`; `mesa`, `vulkan-intel`/`vulkan-radeon` | Noobsbot Desktop (DRM/KMS) | Displays settings, Night Shift | M6 (UI M7) |
 | External monitors | same GPU drivers | Noobsbot Desktop hotplug | auto-arrange, remembered layouts | M6 |
 | Brightness | `backlight` | logind | Control Center slider, keys, OSD | M2 |
-| Video decoding | `intel-media-driver` / `libva-mesa-driver` / NVIDIA VA-API | — | none (Brave uses less CPU) | M6 |
+| Video decoding | `intel-media-driver` / `libva-mesa-driver` / NVIDIA VA-API | — | none (Helium uses less CPU) | M6 |
 | Wi-Fi | `iwlwifi` (Intel), Realtek/MediaTek/Atheros in kernel; Broadcom → `broadcom-wl` | NetworkManager | menu bar + Control Center | M2 |
 | Ethernet | in kernel | NetworkManager | network menu | M2 |
 | Bluetooth | `btusb` + firmware | BlueZ | Control Center, pairing alert | M2 |
@@ -1705,7 +1710,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | USB drives, SD cards | `usb-storage`, `uas` | udisks2 | notification + Dolphin + Eject | M4 |
 | Phones | kernel | `libmtp` (kio-extras), `libimobiledevice` | Dolphin | M6 |
 | USB-C / Thunderbolt docks | `thunderbolt` | `bolt` | "Authorize dock?" alert | M6 |
-| Webcam | `uvcvideo` | PipeWire camera portal | none (works in Brave) | M6 |
+| Webcam | `uvcvideo` | PipeWire camera portal | none (works in Helium) | M6 |
 | Battery / power | ACPI | UPower, power-profiles-daemon | menu bar, Control Center, widget | M2 / M4 |
 | Sleep / lid / power button | ACPI | logind | E6.5 | M6 |
 | Printers (optional) | — | CUPS | app print dialogs | later |
@@ -1723,7 +1728,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | power-profiles-daemon | power modes | standard, one D-Bus call | TLP (no D-Bus toggle) |
 | udisks2 | USB mounting without root | standard, Dolphin uses it | scripts |
 | polkit + polkit-kde-agent | admin password prompts | standard; Qt agent matches Dolphin/Kate | own agent now (later, E7.2) |
-| gnome-keyring | stores passwords (Brave, Wi-Fi) | Secret Service standard, light | KWallet (heavier) |
+| gnome-keyring | stores passwords (Helium, Wi-Fi) | Secret Service standard, light | KWallet (heavier) |
 | xdg-desktop-portal + -gtk + -wlr | file pickers, screen sharing | required by browsers; `-wlr` matches our protocols | portal-kde (pulls in Plasma) |
 | systemd-timesyncd / timedated | time sync, time zone | already in systemd | chrony |
 | greetd + tuigreet | login | minimal, independent | SDDM, GDM |
@@ -1743,7 +1748,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Graphics | `wayland` `xorg-xwayland` `xwayland-satellite` |
 | Login | `greetd` `greetd-tuigreet` |
 | Services | `upower` `power-profiles-daemon` `udisks2` `polkit` `polkit-kde-agent` `gnome-keyring` `xdg-desktop-portal` `xdg-desktop-portal-gtk` `xdg-desktop-portal-wlr` `xdg-utils` `xdg-user-dirs` `xdg-terminal-exec` `slurp` |
-| Apps | noobsbot-terminal (repo) · `brave-bin` (AUR) · `dolphin` `kio-extras` `kdegraphics-thumbnailers` `ffmpegthumbs` `kimageformats` `qt6-imageformats` `kio-admin` `ark` `archlinux-xdg-menu` · `kate` `nano` · `partitionmanager` `filelight` · `plasma-systemmonitor` `btop` |
+| Apps | noobsbot-terminal (repo) · `helium-browser-bin` (AUR) · `dolphin` `kio-extras` `kdegraphics-thumbnailers` `ffmpegthumbs` `kimageformats` `qt6-imageformats` `kio-admin` `ark` `archlinux-xdg-menu` · `kate` `nano` · `partitionmanager` `filelight` · `plasma-systemmonitor` `btop` |
 | Disk tools | `smartmontools` `exfatprogs` `dosfstools` `ntfs-3g` `btrfs-progs` `e2fsprogs` |
 | Look | `inter-font` `ttf-jetbrains-mono` `noto-fonts` `noto-fonts-cjk` `noto-fonts-emoji` · `kvantum` `qt6ct` · WhiteSur icons, cursors, Kvantum and GTK themes (AUR/GitHub) · Phosphor icons (bundled with Noobsbot Desktop) |
 | Optional | `cups` `fprintd` `fwupd` `bolt` `libimobiledevice` `geoclue` `wf-recorder` · input methods: `fcitx5` `fcitx5-m17n` `fcitx5-configtool` (E6.12) |
@@ -1869,7 +1874,7 @@ Rule: **a crate is added only when its feature is built.**
 | Fresh-system test | Arch in a QEMU VM → `install.sh` → login | M6+ |
 | Real hardware | Wi-Fi, Bluetooth, sound, sleep/wake, external monitor, all gestures | M6+ |
 | Safety net | Ctrl+Alt+F3 → text console | M6+ |
-| **Spikes** | three pass/fail experiments in the first coding week: (a) the nested compositor runs Brave + Dolphin + the portal file picker with the portals.conf; (b) Dolphin translucent through Kvantum on Wayland (E2.9); (c) a GTK3 dialog takes our title bar through `kde-server-decoration` (E1.3). A failed spike updates the plan before M1 continues | first week |
+| **Spikes** | three pass/fail experiments in the first coding week: (a) the nested compositor runs Helium + Dolphin + the portal file picker with the portals.conf; (b) Dolphin translucent through Kvantum on Wayland (E2.9); (c) a GTK3 dialog takes our title bar through `kde-server-decoration` (E1.3). A failed spike updates the plan before M1 continues | first week |
 | Lints + CI | `cargo clippy -D warnings`, with `unwrap_used` / `expect_used` / `panic` denied in `src/shell` and `src/ui`; GitHub Actions runs fmt, clippy and tests on every push | every commit |
 | Release pipeline | a `feat:` commit on a test branch → release PR → tag → signed tarball; a VM on the previous version updates and a broken build rolls back (E6.13) | M6 |
 | Latency + resize | 240 fps camera drag test; slow-app resize anchoring; screen-size matrix from D13 (720p … 4K @ 200%, portrait) checked in mockups and real runs | M1, every milestone |
@@ -1882,7 +1887,7 @@ Rule: **a crate is added only when its feature is built.**
 # Part L — Known limits, risks & open questions
 
 ## Known limits (accepted)
-- **L1 — Global app menus:** most Linux apps (incl. Brave) don't publish File/Edit/View menus, so the menu bar shows
+- **L1 — Global app menus:** most Linux apps (incl. Helium) don't publish File/Edit/View menus, so the menu bar shows
   the app name + About/Hide/Quit.
 - **L2 — Apps with their own title bars** (GTK4/libadwaita) won't show our traffic lights; themes make them look close.
 - **L3 — No Apple fonts, icons, symbols or wallpapers** (license). Open look-alikes (Part H).
