@@ -30,12 +30,22 @@ pub struct App {
 }
 
 impl App {
-    /// The argv `Exec` runs, with field codes expanded or dropped (we never pass files or URLs).
+    /// The argv `Exec` runs, with field codes expanded or dropped.
     pub fn command(&self) -> Vec<String> {
+        self.command_with(&[])
+    }
+
+    /// The argv that opens `uris` (dropped on the dock): `%u`/`%U` get the URIs, `%f`/`%F` their local paths.
+    pub fn command_with(&self, uris: &[String]) -> Vec<String> {
+        let paths: Vec<String> = uris.iter().filter_map(|u| file_path(u)).collect();
         let mut argv = Vec::new();
         for word in split_exec(&self.exec) {
             match word.as_str() {
-                "%f" | "%F" | "%u" | "%U" | "%d" | "%D" | "%n" | "%N" | "%v" | "%m" | "%k" => {}
+                "%u" => argv.extend(uris.first().cloned()),
+                "%U" => argv.extend(uris.iter().cloned()),
+                "%f" => argv.extend(paths.first().cloned()),
+                "%F" => argv.extend(paths.iter().cloned()),
+                "%d" | "%D" | "%n" | "%N" | "%v" | "%m" | "%k" => {}
                 "%i" if !self.icon.is_empty() => argv.extend(["--icon".to_owned(), self.icon.clone()]),
                 "%i" => {}
                 "%c" => argv.push(self.name.clone()),
@@ -60,6 +70,21 @@ impl App {
         }
         argv
     }
+}
+
+/// The local path of a `file://` URI, percent-decoded.
+pub fn file_path(uri: &str) -> Option<String> {
+    let rest = uri.strip_prefix("file://")?;
+    // Skip a host part (`file://localhost/…`).
+    let rest = &rest[rest.find('/')?..];
+    let (bytes, mut out) = (rest.as_bytes(), Vec::new());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = (bytes[i] == b'%').then(|| rest.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok())).flatten();
+        out.push(hex.unwrap_or(bytes[i]));
+        i += if hex.is_some() { 3 } else { 1 };
+    }
+    String::from_utf8(out).ok()
 }
 
 /// `Exec` split into words: blanks separate, `"…"` quotes, and inside quotes `\` escapes `"`, `` ` ``, `$` and `\`.
@@ -397,6 +422,20 @@ mod tests {
 
     fn exec(exec: &str) -> Vec<String> {
         App { id: "kate".into(), name: "Kate".into(), exec: unescape(exec), icon: "kate".into(), wm_class: None, no_display: false }.command()
+    }
+
+    #[test]
+    fn dropped_files_fill_field_codes() {
+        let kate = |exec: &str, uris: &[&str]| {
+            let uris: Vec<String> = uris.iter().map(|u| u.to_string()).collect();
+            App { id: "kate".into(), name: "Kate".into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false }.command_with(&uris)
+        };
+        let two = ["file:///home/a/My%20File.txt", "file://localhost/tmp/b"];
+        assert_eq!(kate("kate -b %F", &two), ["kate", "-b", "/home/a/My File.txt", "/tmp/b"]);
+        assert_eq!(kate("kate %f", &two), ["kate", "/home/a/My File.txt"]);
+        assert_eq!(kate("helium %U", &two), ["helium", two[0], two[1]]);
+        assert_eq!(kate("app %u x", &[]), ["app", "x"]);
+        assert_eq!(file_path("https://x/y"), None);
     }
 
     #[test]
