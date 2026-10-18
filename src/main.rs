@@ -1,5 +1,6 @@
 //! Noobsbot Desktop: start-up, logging and backend selection.
 
+mod anim;
 mod apps;
 mod backend;
 mod calendar;

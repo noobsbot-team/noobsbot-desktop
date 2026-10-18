@@ -8,7 +8,7 @@ use smithay::{
         renderer::{ImportDma, damage::OutputDamageTracker, gles::GlesRenderer},
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
-    desktop::{layer_map_for_output, utils::OutputPresentationFeedback},
+    desktop::{Space, Window, layer_map_for_output, utils::OutputPresentationFeedback},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{EventLoop, channel},
@@ -54,6 +54,9 @@ pub struct Winit {
     spotlight: SpotlightPanel,
     launchpad: LaunchpadView,
     mission: MissionView,
+    /// Closing and minimising windows still animating (E5.5).
+    pub ghosts: Vec<render::motion::Ghost>,
+    entrances: render::motion::Entrances,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -119,6 +122,8 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         components: None,
         spotlight: SpotlightPanel::default(),
         launchpad: LaunchpadView::default(),
+        ghosts: Vec::new(),
+        entrances: Default::default(),
     });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
@@ -138,6 +143,15 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     })?;
 
     Ok(())
+}
+
+impl Winit {
+    /// A snapshot of `window` as it is drawn now, to animate once it is gone.
+    pub fn ghost(&mut self, text: &mut crate::text::Text, space: &Space<Window>, window: &Window, dark: bool) -> Option<render::motion::Ghost> {
+        let output_loc = space.output_geometry(&self.output)?.loc;
+        let scale = self.output.current_scale().fractional_scale();
+        render::motion::Ghost::capture(self.backend.renderer(), &self.shaders, text, space, window, output_loc, scale, dark)
+    }
 }
 
 impl State {
@@ -195,6 +209,8 @@ impl State {
             spotlight,
             launchpad: pad_view,
             mission,
+            ghosts,
+            entrances,
         }) = self.backend.as_mut()
         else {
             return;
@@ -209,6 +225,9 @@ impl State {
                 let dark = render::is_dark(appearance);
                 let (geo_origin, width) = self.space.output_geometry(output).map_or(((0, 0).into(), 0), |g| (g.loc, g.size.w));
                 let accent = render::accent(appearance.accent, dark);
+                let now = Instant::now();
+                let banner = cards.iter().map(|c| c.id).max();
+                entrances.update(self.popup, self.osd.is_some(), banner, appearance.reduce_motion, now, &mut self.anim_until);
                 // The alert in front of the switcher and the Force Quit window, those in front of the OSD, the OSD in front of popups, popups in front of the bar, the bar in
                 // front of windows.
                 let mut bar = Vec::new();
@@ -281,10 +300,13 @@ impl State {
                     let fill = [r, g, b, spec.opacity * appearance.glass_opacity * alpha * 0.8];
                     bar.push(render::SceneElement::Shader(shaders.glass_shape(rect, fill, radius, false, dark, scale)));
                 }
+                let mark = bar.len();
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
                 }
+                render::motion::appear(entrances.osd(), renderer, &mut bar, mark, scale, now);
                 let hour24 = self.config.clock.format.hour24;
+                let mark = bar.len();
                 if !cards.is_empty() {
                     let view = View::Banners { cards: &cards, more };
                     bar.extend(notifications.elements(
@@ -301,6 +323,8 @@ impl State {
                         scale,
                     ));
                 }
+                render::motion::appear(entrances.banner(), renderer, &mut bar, mark, scale, now);
+                let mark = bar.len();
                 match self.popup {
                     Some(Popup::Notifications { year, month }) => {
                         let shown =
@@ -365,6 +389,7 @@ impl State {
                     }
                     None => {}
                 }
+                render::motion::appear(entrances.popup(), renderer, &mut bar, mark, scale, now);
                 let active = self.popup.and_then(Popup::item);
                 // Launchpad covers the menu bar.
                 match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
@@ -413,6 +438,9 @@ impl State {
                         scale,
                     ));
                 }
+                // Ghosts of closing and minimising windows: behind the dock, in front of windows.
+                ghosts.retain(|g| !g.anim.done(now));
+                bar.extend(ghosts.iter().map(|g| g.element(renderer, now, scale)));
                 if let (Some(components), Some(geo)) = (components.as_mut(), self.space.output_geometry(output)) {
                     bar.extend(components.elements(
                         renderer,
@@ -510,7 +538,7 @@ impl State {
         let _ = self.display_handle.flush_clients();
         // The test scene redraws every frame (its cards are rebuilt each time, so each frame repaints them).
         // The dock redraws only while it bounces, slides, zooms or glows.
-        if benchmark || dock_frame.animating || animating {
+        if benchmark || dock_frame.animating || animating || self.animating() {
             self.schedule_redraw();
         }
     }

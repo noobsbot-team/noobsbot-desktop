@@ -2,8 +2,8 @@
 
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _, GestureSwipeUpdateEvent as _,
-        InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent, GestureEndEvent, GesturePinchUpdateEvent as _,
+        GestureSwipeUpdateEvent as _, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent,
     },
     desktop::{Window, WindowSurfaceType},
     input::{
@@ -252,7 +252,8 @@ impl State {
                 if !self.gesture_update(event.time_msec(), event.delta(), event.scale())
                     && let Some(pointer) = self.seat.get_pointer()
                 {
-                    let update = ptr::GesturePinchUpdateEvent { time: event.time_msec(), delta: event.delta(), scale: event.scale(), rotation: event.rotation() };
+                    let update =
+                        ptr::GesturePinchUpdateEvent { time: event.time_msec(), delta: event.delta(), scale: event.scale(), rotation: event.rotation() };
                     pointer.gesture_pinch_update(self, &update);
                 }
             }

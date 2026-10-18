@@ -381,7 +381,7 @@ impl State {
     }
 
     /// Shows `osd` for 1.5 s after the latest call.
-    // ponytail: appears and goes without the `snappy` fade; animation comes with the spring module.
+    // ponytail: fades in (render::motion::Entrances) but goes at once; a fade out needs its last elements kept.
     pub fn show_osd(&mut self, osd: Osd) {
         if let Some(token) = self.osd_timer.take() {
             self.loop_handle.remove(token);

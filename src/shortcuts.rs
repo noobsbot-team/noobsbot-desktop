@@ -370,6 +370,7 @@ impl State {
             let Some(loc) = self.frame(&window).map(|f| f.loc) else { continue };
             crate::shell::dock_fx::not_minimised(&window);
             window.set_activated(false);
+            self.window_minimising(&window);
             self.space.unmap_elem(&window);
             self.hidden.push((window, loc));
         }

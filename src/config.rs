@@ -60,6 +60,8 @@ pub struct Appearance {
     pub wallpaper_dark: String,
     /// The Control Center's Dark Mode toggle also rewrites the Qt/KDE app theme (E2.9).
     pub theme_apps: bool,
+    /// Every movement becomes a 150 ms crossfade (D10).
+    pub reduce_motion: bool,
 }
 
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
@@ -293,7 +295,15 @@ impl Default for Dock {
 
 impl Default for Appearance {
     fn default() -> Self {
-        Self { mode: Mode::Light, accent: Accent::Blue, glass_opacity: 1.0, wallpaper: String::new(), wallpaper_dark: String::new(), theme_apps: false }
+        Self {
+            mode: Mode::Light,
+            accent: Accent::Blue,
+            glass_opacity: 1.0,
+            wallpaper: String::new(),
+            wallpaper_dark: String::new(),
+            theme_apps: false,
+            reduce_motion: false,
+        }
     }
 }
 
