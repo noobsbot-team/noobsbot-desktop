@@ -97,6 +97,8 @@ pub struct State {
     pub suppressed: Vec<Keycode>,
     /// Minimised and hidden windows with where they were.
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
+    /// The pid of the `noobsbot --quake` the quake action started; its window gets `rules::QUAKE_ID`.
+    pub quake: Option<u32>,
     pub zones: crate::input::Zones,
 
     pub compositor_state: CompositorState,
@@ -244,6 +246,7 @@ impl State {
             config,
             suppressed: Vec::new(),
             hidden: Vec::new(),
+            quake: None,
             zones: Default::default(),
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
@@ -446,7 +449,8 @@ impl State {
 
     /// Window rules (E1.9), resolved before the first configure so the app opens at the ruled size, and again if the
     /// app sets its app_id only after that (then the window is resized and moved where the rule says).
-    /// ponytail: space, layer, decorations and opacity wait for Spaces (M4), layers, server-side bars (E1.3) and alpha.
+    /// `layer` is kept by `restack`, `decorations` by decorations.rs.
+    /// ponytail: space and opacity wait for Spaces (M4) and alpha.
     fn apply_rules(&mut self, surface: &ToplevelSurface) {
         let actions = self.resolve_rules(surface);
         let (window, area) = (self.window_for(surface.wl_surface()).cloned(), self.work_area());
@@ -476,14 +480,20 @@ impl State {
             let data = states.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok().map(|d| (d.app_id.clone(), d.title.clone())));
             data.map(|(a, t)| (a.unwrap_or_default(), t.unwrap_or_default())).unwrap_or_default()
         });
+        let quake = app_id.is_empty() && self.window_for(surface.wl_surface()).is_some_and(|w| self.is_quake(w));
+        let app_id = if quake { rules::QUAKE_ID.to_owned() } else { app_id };
         let actions = rules::resolve(&self.rules, &app_id, &title);
         tracing::debug!(app_id, title, ?actions, "window rules");
         actions
     }
 
-    /// Keeps `float_above` windows over every normal one.
+    /// Keeps `float_above` windows over every normal one, and `layer = "overlay"` ones (the quake terminal) over those
+    /// and over fullscreen apps.
     fn restack(&mut self) {
-        let above: Vec<Window> = self.space.elements().filter(|w| ruled(w).is_some_and(|a| a.float_above == Some(true))).cloned().collect();
+        let is = |w: &Window, f: fn(&Actions) -> bool| ruled(w).is_some_and(|a| f(&a));
+        let float = |a: &Actions| a.float_above == Some(true);
+        let overlay = |a: &Actions| a.layer == Some(rules::Layer::Overlay);
+        let above: Vec<Window> = self.space.elements().filter(|w| is(w, float)).chain(self.space.elements().filter(|w| is(w, overlay))).cloned().collect();
         for window in above {
             self.space.raise_element(&window, false);
         }
@@ -623,11 +633,12 @@ impl XdgShellHandler for State {
         let client = |s: &WlSurface| s.client().map(|c| c.id());
         let focused = self.seat.get_keyboard().and_then(|k| k.current_focus());
         let only = self.space.elements().next().is_none() && self.hidden.is_empty();
-        let takes_focus = only || focused.as_ref().is_some_and(|f| client(f).is_some() && client(f) == client(surface.wl_surface()));
+        let window = Window::new_wayland_window(surface.clone());
+        // The quake terminal opens on its key press, to be typed in.
+        let takes_focus = only || focused.as_ref().is_some_and(|f| client(f).is_some() && client(f) == client(surface.wl_surface())) || self.is_quake(&window);
         if takes_focus {
             surface.with_pending_state(|state| state.states.set(xdg_toplevel::State::Activated));
         }
-        let window = Window::new_wayland_window(surface);
         // Positioned on its first buffer, once its size is known (see commit).
         self.space.map_element(window.clone(), (0, 0), takes_focus);
         if takes_focus {

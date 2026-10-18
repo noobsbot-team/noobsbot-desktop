@@ -54,7 +54,7 @@ seconds = false
 week_start = "sunday"
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
-# Actions: terminal, quit, close, minimise, hide, hide-others, show-all, sleep, restart, shut-down, log-out, cycle, "exec <command>", "volume up|down", mute, mic-mute,
+# Actions: terminal, quit, close, minimise, hide, hide-others, show-all, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous".
 [bindings]
 "Super+Return" = "terminal"
@@ -66,7 +66,7 @@ week_start = "sunday"
 "Super+H" = "hide"
 "Super+Alt+H" = "hide-others"
 "Super+Tab" = "cycle"
-"F12" = "exec noobsbot --quake"
+"F12" = "quake"
 "XF86AudioRaiseVolume" = "volume up"
 "XF86AudioLowerVolume" = "volume down"
 "XF86AudioMute" = "mute"
@@ -93,15 +93,15 @@ week_start = "sunday"
 #   layer = "overlay"                 above fullscreen apps ("normal" to undo)
 #   opacity = 0.9
 #
-# The quake terminal (F12; assumes `noobsbot --quake` titles its window "Quake"):
-#   [[rules]]
-#   app_id = "noobsbot"
-#   title = "^Quake$"
-#   space = "all"
-#   size = ["100%", "40%"]
-#   position = [0, 0]
-#   decorations = false
-#   layer = "overlay"
+# The quake terminal (the "quake" binding): full width, 40% high, at the top, above fullscreen apps.
+# noobsbot gives it no app_id of its own, so the desktop calls the window it started "noobsbot-quake".
+[[rules]]
+app_id = "noobsbot-quake"
+space = "all"
+size = ["100%", "40%"]
+position = [0, 0]
+decorations = false
+layer = "overlay"
 
 # The browser's (Helium, any Chromium) picture-in-picture window stays on top.
 [[rules]]

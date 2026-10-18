@@ -7,6 +7,10 @@ use serde::Deserialize;
 /// Every key a rule understands; config.rs warns about the rest.
 pub const RULE_KEYS: &[&str] = &["app_id", "title", "space", "float_above", "size", "position", "fullscreen", "decorations", "layer", "opacity"];
 
+/// The app_id rules see for the quake terminal's window. `noobsbot --quake` sets no app_id and the same title
+/// ("Noobsbot Terminal") as any noobsbot window, so the desktop names it after the process it started (`quake` action).
+pub const QUAKE_ID: &str = "noobsbot-quake";
+
 /// One `[[rules]]` entry as written in config.toml.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
@@ -204,6 +208,16 @@ mod tests {
 
         let private = resolve(&r, "helium", "New Private Tab");
         assert_eq!((private.space, private.opacity), (Some(Space::Number(2)), Some(1.0)));
+    }
+
+    #[test]
+    fn default_quake_rule() {
+        let r = compile(&crate::config::Config::default().rules);
+        let quake = resolve(&r, QUAKE_ID, "Noobsbot Terminal");
+        assert_eq!((quake.layer, quake.decorations, quake.space), (Some(Layer::Overlay), Some(false), Some(Space::All(AllSpaces::All))));
+        assert_eq!(quake.size.map(|[w, h]| (w.to_px(1920), h.to_px(1000))), Some((1920, 400)));
+        assert_eq!(quake.position.map(|[x, y]| (x.to_px(1920), y.to_px(1000))), Some((0, 0)));
+        assert_eq!(resolve(&r, "", "Noobsbot Terminal"), Actions::default(), "a normal noobsbot window is left alone");
     }
 
     #[test]

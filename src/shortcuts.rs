@@ -35,6 +35,8 @@ pub enum Action {
     Power(crate::shell::alert::Power),
     /// Basic window cycling; the full switcher comes in M4.
     CycleWindows,
+    /// Shows or hides the quake terminal, starting `noobsbot --quake` the first time (E2.8).
+    Quake,
     /// The default output's volume by one step; `true`: up (E2.7).
     Volume(bool),
     /// Mutes or unmutes the default output.
@@ -102,6 +104,7 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("shut-down", "") => Some(Action::Power(Power::ShutDown)),
         ("log-out", "") => Some(Action::Power(Power::LogOut)),
         ("cycle", "") => Some(Action::CycleWindows),
+        ("quake", "") => Some(Action::Quake),
         ("volume", "up") => Some(Action::Volume(true)),
         ("volume", "down") => Some(Action::Volume(false)),
         ("mute", "") => Some(Action::Mute),
@@ -140,7 +143,10 @@ impl State {
         tracing::debug!(?action, "shortcut");
         let focused = self.focused_window();
         match action.clone() {
-            Action::Spawn(command) => self.spawn(&command.split_whitespace().map(String::from).collect::<Vec<_>>()),
+            Action::Spawn(command) => {
+                self.spawn(&command.split_whitespace().map(String::from).collect::<Vec<_>>());
+            }
+            Action::Quake => self.toggle_quake(),
             Action::CloseWindow => {
                 if let Some(toplevel) = focused.as_ref().and_then(|w| w.toplevel()) {
                     toplevel.send_close();
@@ -240,8 +246,8 @@ impl State {
 
     /// Starts a program on this display; a thread reaps it so no zombie is left. The user launched it, so it gets an
     /// activation token: its first window may take focus (see `request_activation`).
-    pub fn spawn(&mut self, command: &[String]) {
-        let Some((program, args)) = command.split_first() else { return };
+    pub fn spawn(&mut self, command: &[String]) -> Option<u32> {
+        let (program, args) = command.split_first()?;
         self.activation_state.retain_tokens(|_, data| data.timestamp.elapsed() < crate::wm::ACTIVATION_TIMEOUT);
         let token = self.activation_state.create_external_token(None).0.to_string();
         // ponytail: fire and forget; supervised launching lives in apps.rs (M3).
@@ -249,9 +255,44 @@ impl State {
         command.args(args).env("WAYLAND_DISPLAY", &self.socket_name).env("XDG_ACTIVATION_TOKEN", &token).env("DESKTOP_STARTUP_ID", &token);
         match command.spawn() {
             Ok(mut child) => {
+                let pid = child.id();
                 std::thread::spawn(move || child.wait());
+                Some(pid)
             }
-            Err(err) => tracing::warn!("could not start {program}: {err}"),
+            Err(err) => {
+                tracing::warn!("could not start {program}: {err}");
+                None
+            }
+        }
+    }
+
+    /// Is `window` the quake terminal's (opened by the process the `quake` action started)?
+    pub fn is_quake(&self, window: &Window) -> bool {
+        let pid = window.toplevel().and_then(|t| t.wl_surface().client()).and_then(|c| c.get_credentials(&self.display_handle).ok()).map(|c| c.pid as u32);
+        self.quake.is_some() && pid == self.quake
+    }
+
+    /// The quake action (E2.8). On Wayland noobsbot can't hide its own window (winit has no unmap), so the desktop does
+    /// it: a focused quake window hides, one behind others comes forward, a hidden one comes back; none starts it.
+    /// ponytail: shows and hides at once; the `smooth` slide down comes with the animation module.
+    fn toggle_quake(&mut self) {
+        let serial = SERIAL_COUNTER.next_serial();
+        let shown = self.space.elements().find(|w| self.is_quake(w)).cloned();
+        if let Some(window) = shown {
+            if self.focused_window().as_ref() == Some(&window) {
+                self.hide_windows(vec![window]);
+            } else {
+                self.focus_window(Some(window), serial);
+            }
+        } else if let Some(i) = self.hidden.iter().position(|(w, _)| self.is_quake(w)) {
+            let (window, loc) = self.hidden.remove(i);
+            self.set_visible_loc(&window, loc);
+            self.focus_window(Some(window), serial);
+        } else if !self.quake.is_some_and(|pid| std::path::Path::new(&format!("/proc/{pid}")).exists()) {
+            // Nested, DISPLAY is the host's: noobsbot would grab its hotkey (F12) there and steal it from the host
+            // desktop. `env` execs, so the pid stays the terminal's.
+            let command: &[&str] = if self.nested { &["env", "-u", "DISPLAY", "noobsbot", "--quake"] } else { &["noobsbot", "--quake"] };
+            self.quake = self.spawn(&command.iter().map(|s| s.to_string()).collect::<Vec<_>>());
         }
     }
 
@@ -327,7 +368,7 @@ mod tests {
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::b, false), None, "Shift is not part of Super+B");
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::b, false), None, "plain b goes to the app");
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::c, false), None, "Super+C passes through");
-        assert_eq!(lookup(&table, &mods(false, false, false), Keysym::F12, false), Some(&Action::Spawn("noobsbot --quake".into())));
+        assert_eq!(lookup(&table, &mods(false, false, false), Keysym::F12, false), Some(&Action::Quake));
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::F12, false), None, "Super+F12 is not F12");
         assert_eq!(lookup(&table, &mods(false, true, false), Keysym::b, true), Some(&Action::Spawn("helium-browser".into())), "nested: Alt is the desktop key");
     }
