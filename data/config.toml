@@ -19,6 +19,9 @@ glass_opacity = 1.0
 wallpaper = ""
 # Used in dark mode; empty = the built-in dark opal gradient.
 wallpaper_dark = ""
+# The Dark Mode toggle also rewrites the Noobsbot Glass theme for Qt/KDE apps (Kvantum, colour scheme, kdeglobals),
+# like `noobsbot-desktop theme --write`. Off by default: it edits files in ~/.config and ~/.local/share.
+theme_apps = false
 
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).

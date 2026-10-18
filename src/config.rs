@@ -54,6 +54,8 @@ pub struct Appearance {
     pub wallpaper: String,
     /// PNG or JPEG for dark mode; empty = the built-in dark opal gradient.
     pub wallpaper_dark: String,
+    /// The Control Center's Dark Mode toggle also rewrites the Qt/KDE app theme (E2.9).
+    pub theme_apps: bool,
 }
 
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
@@ -211,7 +213,7 @@ impl Default for Config {
 
 impl Default for Appearance {
     fn default() -> Self {
-        Self { mode: Mode::Light, accent: Accent::Blue, glass_opacity: 1.0, wallpaper: String::new(), wallpaper_dark: String::new() }
+        Self { mode: Mode::Light, accent: Accent::Blue, glass_opacity: 1.0, wallpaper: String::new(), wallpaper_dark: String::new(), theme_apps: false }
     }
 }
 
@@ -256,13 +258,17 @@ fn default_bindings() -> BTreeMap<String, String> {
     .collect()
 }
 
-/// `$XDG_CONFIG_HOME/noobsbot-desktop/config.toml`, else `~/.config/noobsbot-desktop/config.toml`.
-pub fn path() -> PathBuf {
-    let base = std::env::var_os("XDG_CONFIG_HOME")
+/// An XDG base directory: `$var` if it is absolute, else `~/<fallback>`.
+pub fn xdg_dir(var: &str, fallback: &str) -> PathBuf {
+    std::env::var_os(var)
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".config"));
-    base.join("noobsbot-desktop").join("config.toml")
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(fallback))
+}
+
+/// `$XDG_CONFIG_HOME/noobsbot-desktop/config.toml`, else `~/.config/noobsbot-desktop/config.toml`.
+pub fn path() -> PathBuf {
+    xdg_dir("XDG_CONFIG_HOME", ".config").join("noobsbot-desktop").join("config.toml")
 }
 
 /// Parses a config. The error's Display names the line and column. Unknown keys are logged, never an error.
