@@ -116,7 +116,7 @@ impl AlertSheet {
 
         let pieces = [
             match alert.kind {
-                Kind::Pair(_) => symbols.get(Symbol::Bluetooth, Weight::Regular, ICON as u16, scale, label),
+                Kind::Pair(_) | Kind::Pin { .. } => symbols.get(Symbol::Bluetooth, Weight::Regular, ICON as u16, scale, label),
                 Kind::Wifi { .. } => symbols.get(Symbol::WifiHigh, Weight::Regular, ICON as u16, scale, label),
                 Kind::Power(_) | Kind::NotResponding { .. } => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
             },
@@ -133,7 +133,7 @@ impl AlertSheet {
                 let key = (field.clone(), field_rect, dark, accent, scale.to_bits());
                 if self.field.as_ref().is_none_or(|(k, _, _)| *k != key) {
                     let mut ui = Ui { shaders, text, symbols, dark, accent, glass_opacity, scale, glass: Vec::new(), pieces: Vec::new() };
-                    ui.field(field_rect, field, "Password", State::Focused);
+                    ui.field(field_rect, field, if field.secure { "Password" } else { "" }, State::Focused);
                     let (mut glass, pieces) = (ui.glass, ui.pieces);
                     glass.reverse();
                     self.field = Some((key, glass, pieces));

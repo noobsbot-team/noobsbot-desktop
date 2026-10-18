@@ -32,7 +32,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|dock-zoom|gallery|switcher|force-quit] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|gallery|switcher|force-quit] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -162,6 +162,10 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         Some("alert-wifi") => {
             let field = ui::field::TextField { text: "hunter22".into(), caret: 8, secure: true, all: false };
             state.alert = Some(shell::alert::Alert { kind: shell::alert::Kind::Wifi { ssid: "Home Network".into(), join: None, field }, deadline: None });
+        }
+        Some("alert-pin") => {
+            let field = ui::field::TextField { text: "0000".into(), caret: 4, secure: false, all: false };
+            state.alert = Some(shell::alert::Alert { kind: shell::alert::Kind::Pin { device: "Old Keyboard".into(), passkey: false, field }, deadline: None });
         }
         Some("alert-code") => {
             let pairing = services::bluetooth::Pairing { device: "Magic Keyboard".into(), code: Some("012345".into()), answer: false };

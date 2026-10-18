@@ -49,6 +49,8 @@ pub enum Update {
     Pairing(Option<bluetooth::Pairing>),
     /// NetworkManager asks for this network's password; `None`: it gave up.
     WifiSecret(Option<String>),
+    /// A pairing device needs a PIN (or, `passkey`, six digits) typed for it.
+    PinEntry { device: String, passkey: bool },
     /// Shown tray items, left to right.
     Tray(Vec<tray::TrayItem>),
     /// The rows of a tray item's menu, after `Command::TrayMenu`.
@@ -88,6 +90,8 @@ pub enum Command {
     PairingAnswer(bool),
     /// The password NetworkManager asked for, or `None`: cancelled.
     WifiSecret(Option<String>),
+    /// The PIN or passkey typed for a pairing device, or `None`: cancelled.
+    PinEntry(Option<String>),
     /// A click on a tray item without a menu, at screen `x`, `y`.
     TrayActivate { service: String, path: String, x: i32, y: i32 },
     /// Fetch a tray item's dbusmenu.
@@ -142,9 +146,9 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing and tray hidden: {err}"))
         .ok();
     brightness::send_current(&updates);
-    let (pairing, secret) = (Answer::default(), Answer::default());
+    let (pairing, secret, entry) = (Answer::default(), Answer::default(), Answer::default());
     if let (true, Some(bus)) = (agents, &system) {
-        bluetooth::serve_agent(bus, &updates, &pairing).await;
+        bluetooth::serve_agent(bus, &updates, &pairing, &entry).await;
         network::serve_agent(bus, &updates, &secret).await;
     }
     let system_clients = async {
@@ -162,7 +166,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         }
     };
     let clients = future::zip(system_clients, session_clients);
-    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing, &secret)).await;
+    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing, &secret, &entry)).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
@@ -236,6 +240,7 @@ async fn handle(
     updates: &Sender<Update>,
     pairing: &Answer<bool>,
     secret: &Answer<Option<String>>,
+    entry: &Answer<Option<String>>,
 ) {
     while let Ok(command) = commands.recv().await {
         let name = command_name(&command);
@@ -254,6 +259,7 @@ async fn handle(
             (Command::WifiScan, Some(bus), _) => network::scan(bus).await,
             (Command::PairingAnswer(yes), ..) => pairing.give(yes),
             (Command::WifiSecret(psk), ..) => secret.give(psk),
+            (Command::PinEntry(typed), ..) => entry.give(typed),
             (Command::WifiJoin { ssid, ap, device, password }, Some(bus), _) => network::join(bus, &ssid, &ap, &device, password.as_deref()).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),

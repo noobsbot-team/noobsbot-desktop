@@ -81,6 +81,8 @@ pub struct Pairing {
 
 /// Where the pairing alert's answer goes: the D-Bus call BlueZ is waiting on.
 pub type Answer = super::Answer<bool>;
+/// Where a typed PIN or passkey goes, or `None`: cancelled.
+pub type Entry = super::Answer<Option<String>>;
 
 #[derive(Debug, zbus::DBusError)]
 #[zbus(prefix = "org.bluez.Error")]
@@ -95,6 +97,7 @@ struct Agent {
     bus: Connection,
     updates: Sender<super::Update>,
     answer: Answer,
+    entry: Entry,
 }
 
 impl Agent {
@@ -116,20 +119,30 @@ impl Agent {
             _ => Err(AgentError::Rejected("declined".into())),
         }
     }
+
+    /// Shows the entry alert and waits for what is typed; `passkey`: six digits rather than a PIN.
+    async fn type_in(&self, device: &OwnedObjectPath, passkey: bool) -> Result<String, AgentError> {
+        let rx = self.entry.wait();
+        let _ = self.updates.send(super::Update::PinEntry { device: self.name(device).await, passkey });
+        match rx.recv().await {
+            Ok(Some(typed)) => Ok(typed),
+            _ => Err(AgentError::Rejected("cancelled".into())),
+        }
+    }
 }
 
 #[zbus::interface(name = "org.bluez.Agent1")]
 impl Agent {
     fn release(&self) {}
 
-    // ponytail: legacy PIN / passkey entry needs the text field; until then such devices are refused (rare: we
-    // register as DisplayYesNo, so BlueZ asks for these only from very old devices).
-    fn request_pin_code(&self, _device: OwnedObjectPath) -> Result<String, AgentError> {
-        Err(AgentError::Rejected("PIN entry isn't supported yet".into()))
+    // Legacy PIN / passkey entry (rare: we register as DisplayYesNo, so only very old devices ask).
+    async fn request_pin_code(&self, device: OwnedObjectPath) -> Result<String, AgentError> {
+        self.type_in(&device, false).await
     }
 
-    fn request_passkey(&self, _device: OwnedObjectPath) -> Result<u32, AgentError> {
-        Err(AgentError::Rejected("passkey entry isn't supported yet".into()))
+    async fn request_passkey(&self, device: OwnedObjectPath) -> Result<u32, AgentError> {
+        let typed = self.type_in(&device, true).await?;
+        typed.trim().parse().ok().filter(|n| *n <= 999_999).ok_or_else(|| AgentError::Rejected("not a passkey".into()))
     }
 
     async fn display_pin_code(&self, device: OwnedObjectPath, pincode: String) {
@@ -159,6 +172,7 @@ impl Agent {
 
     fn cancel(&self) {
         self.answer.cancel();
+        self.entry.cancel();
         self.show(None);
     }
 }
@@ -174,9 +188,9 @@ const AGENT: &str = "/org/noobsbot/bluetooth_agent";
 /// Serves the agent and makes it BlueZ's default.
 // ponytail: registered once; if bluetoothd restarts, pairing needs a desktop restart. Re-register on the BlueZ
 // name-owner change if that ever matters.
-pub async fn serve_agent(bus: &Connection, updates: &Sender<super::Update>, answer: &Answer) {
+pub async fn serve_agent(bus: &Connection, updates: &Sender<super::Update>, answer: &Answer, entry: &Entry) {
     let result = async {
-        bus.object_server().at(AGENT, Agent { bus: bus.clone(), updates: updates.clone(), answer: answer.clone() }).await?;
+        bus.object_server().at(AGENT, Agent { bus: bus.clone(), updates: updates.clone(), answer: answer.clone(), entry: entry.clone() }).await?;
         let manager = AgentManagerProxy::new(bus).await?;
         let path = zbus::zvariant::ObjectPath::from_static_str_unchecked(AGENT);
         manager.register_agent(&path, "DisplayYesNo").await?;

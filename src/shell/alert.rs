@@ -38,6 +38,8 @@ pub enum Kind {
     /// A Wi-Fi password (E2.3): `join` has the access point and device paths when we join, `None` when
     /// NetworkManager asked (its secret agent); `field` is the password typed so far.
     Wifi { ssid: String, join: Option<(String, String)>, field: TextField },
+    /// An old Bluetooth device needs a PIN (or six-digit passkey) typed (E2.3).
+    Pin { device: String, passkey: bool, field: TextField },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -66,6 +68,7 @@ impl Alert {
             Kind::Pair(p) => format!("Pair with “{}”", p.device),
             Kind::NotResponding { app, .. } => format!("{app} is not responding."),
             Kind::Wifi { ssid, .. } => format!("Join “{ssid}”?"),
+            Kind::Pin { device, .. } => format!("Pair with “{device}”"),
         }
     }
 
@@ -79,6 +82,8 @@ impl Alert {
             Kind::Pair(Pairing { device, code: None, .. }) => format!("“{device}” wants to pair with this computer."),
             Kind::Pair(Pairing { device, code: Some(code), answer: false }) => format!("Type {code} on “{device}”, then press Return."),
             Kind::Wifi { .. } => "Enter the password for this Wi-Fi network.".into(),
+            Kind::Pin { passkey: false, .. } => "Enter the PIN shown on the device or in its manual.".into(),
+            Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
         }
     }
@@ -99,13 +104,14 @@ impl Alert {
             Kind::Pair(_) => "OK",
             Kind::NotResponding { .. } => "Force Quit",
             Kind::Wifi { .. } => "Join",
+            Kind::Pin { .. } => "Pair",
         }
     }
 
     /// The text field the alert types into, if it has one.
     pub fn field(&self) -> Option<&TextField> {
         match &self.kind {
-            Kind::Wifi { field, .. } => Some(field),
+            Kind::Wifi { field, .. } | Kind::Pin { field, .. } => Some(field),
             _ => None,
         }
     }
@@ -156,7 +162,7 @@ impl State {
     pub fn alert_key(&mut self, keysym: Keysym, ctrl: bool) -> bool {
         let Some(alert) = self.alert.as_mut() else { return false };
         let edit = match &mut alert.kind {
-            Kind::Wifi { field, .. } => field.key(keysym, keysym.key_char().map(String::from).as_deref(), ctrl),
+            Kind::Wifi { field, .. } | Kind::Pin { field, .. } => field.key(keysym, keysym.key_char().map(String::from).as_deref(), ctrl),
             _ => match keysym {
                 Keysym::Escape => Edit::Cancel,
                 Keysym::Return | Keysym::KP_Enter => Edit::Submit,
@@ -181,6 +187,11 @@ impl State {
         }
     }
 
+    /// BlueZ wants a PIN or passkey typed for `device`.
+    pub fn show_pin_entry(&mut self, device: String, passkey: bool) {
+        self.open_ask(Kind::Pin { device, passkey, field: TextField::default() });
+    }
+
     /// BlueZ asks (`Some`) or gives up (`None`, which closes only a pairing alert).
     pub fn show_pairing(&mut self, pairing: Option<Pairing>) {
         match pairing {
@@ -190,7 +201,7 @@ impl State {
                 self.alert = Some(Alert { kind: Kind::Pair(pairing), deadline: None });
                 self.schedule_redraw();
             }
-            None if matches!(&self.alert, Some(Alert { kind: Kind::Pair(_), .. })) => self.close_alert(),
+            None if matches!(&self.alert, Some(Alert { kind: Kind::Pair(_) | Kind::Pin { .. }, .. })) => self.close_alert(),
             None => {}
         }
     }
@@ -208,7 +219,7 @@ impl State {
     pub fn alert_answer(&mut self, button: Button) {
         let Some(alert) = self.alert.clone() else { return };
         // ponytail: WPA's 8-character minimum for every secured network; WEP keys (5/13) can't be typed yet.
-        if button == Button::Confirm && alert.field().is_some_and(|f| f.text.chars().count() < 8) {
+        if button == Button::Confirm && matches!(&alert.kind, Kind::Wifi { field, .. } if field.text.chars().count() < 8) {
             return;
         }
         self.close_alert();
@@ -223,6 +234,7 @@ impl State {
             Kind::Power(power) => power,
             Kind::NotResponding { .. } if button == Button::Cancel => return,
             Kind::NotResponding { pid, client, .. } => return self.kill(pid, client),
+            Kind::Pin { field, .. } => return self.services.send(Command::PinEntry((button == Button::Confirm).then_some(field.text))),
             Kind::Wifi { join: None, field, .. } => return self.services.send(Command::WifiSecret((button == Button::Confirm).then_some(field.text))),
             Kind::Wifi { .. } if button == Button::Cancel => return,
             Kind::Wifi { ssid, join: Some((ap, device)), field } => return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) }),
