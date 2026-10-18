@@ -55,6 +55,8 @@ pub enum Command {
     Output(u32),
     /// To the player `Update::Media` named.
     Media { player: String, action: media::Action },
+    /// Logo menu ▸ Sleep.
+    Suspend,
 }
 
 pub struct Services {
@@ -172,6 +174,7 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
             (Command::PowerProfile(profile), Some(bus), _) => profiles::set(bus, &profile).await,
             (Command::Brightness(percent), Some(bus), _) => brightness::set(bus, percent, updates).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
+            (Command::Suspend, Some(bus), _) => suspend(bus).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
             (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),
@@ -189,6 +192,21 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
 )]
 trait Timedate {
     fn set_timezone(&self, timezone: &str, interactive: bool) -> zbus::Result<()>;
+}
+
+#[zbus::proxy(interface = "org.freedesktop.login1.Manager", default_service = "org.freedesktop.login1", default_path = "/org/freedesktop/login1")]
+trait Login {
+    fn suspend(&self, interactive: bool) -> zbus::Result<()>;
+}
+
+async fn suspend(bus: &Connection) {
+    let result = match LoginProxy::new(bus).await {
+        Ok(login) => login.suspend(true).await,
+        Err(err) => Err(err),
+    };
+    if let Err(err) = result {
+        tracing::warn!("sleep: {err}");
+    }
 }
 
 /// systemd-timedated replaces `/etc/localtime`; chrono's `Local` notices the change, so the clock follows by itself.

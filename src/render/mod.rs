@@ -4,6 +4,7 @@
 
 pub mod calendar;
 mod gallery;
+mod menu;
 pub mod menubar;
 mod titlebar;
 mod wallpaper;
@@ -33,6 +34,7 @@ use smithay::{
 };
 pub use gallery::Gallery;
 pub use calendar::CalendarPopover;
+pub use menu::MenuPopover;
 pub use menubar::MenuBar;
 pub use wallpaper::Wallpaper;
 

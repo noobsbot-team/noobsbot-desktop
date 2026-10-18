@@ -6,6 +6,7 @@ use smithay::utils::{Logical, Point, Rectangle};
 
 use crate::{
     render::menubar::{self, BarItem},
+    shortcuts::Action,
     state::State,
     wm::Rect,
 };
@@ -14,6 +15,107 @@ use crate::{
 pub enum Popup {
     /// The month shown, as (year, month 1–12).
     Calendar { year: i32, month: u32 },
+    Menu(Menu),
+}
+
+impl Popup {
+    /// The bar item it hangs from, which shows the pressed pill.
+    pub fn item(self) -> BarItem {
+        match self {
+            Popup::Calendar { .. } => BarItem::Clock,
+            Popup::Menu(Menu::Logo) => BarItem::Logo,
+            Popup::Menu(Menu::App) => BarItem::App,
+        }
+    }
+}
+
+/// What a click on `item` opens.
+// ponytail: Control Center and the status items' menus come next; until then they open nothing.
+fn popup_for(item: BarItem) -> Option<Popup> {
+    match item {
+        BarItem::Logo => Some(Popup::Menu(Menu::Logo)),
+        BarItem::App => Some(Popup::Menu(Menu::App)),
+        BarItem::Clock => {
+            let (year, month) = this_month();
+            Some(Popup::Calendar { year, month })
+        }
+        BarItem::Status(_) | BarItem::ControlCenter => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Menu {
+    Logo,
+    App,
+}
+
+/// A menu row (D8); `None` in a row list is a separator. No action: drawn disabled.
+#[derive(Debug, PartialEq)]
+pub struct Row {
+    pub label: String,
+    /// macOS-style glyphs; ⌘ is the desktop key.
+    pub shortcut: &'static str,
+    pub action: Option<Action>,
+}
+
+/// The rows of `menu`; `app` is the focused app's name.
+// ponytail: rows whose window isn't built yet (About, Settings, Force Quit, the power alerts, the lock screen) are
+// disabled until their milestone adds it.
+pub fn menu_rows(menu: Menu, app: &str) -> Vec<Option<Row>> {
+    let row = |label: String, shortcut, action| Some(Row { label, shortcut, action });
+    match menu {
+        Menu::Logo => vec![
+            row("About This Computer".into(), "", None),
+            row("System Settings…".into(), "", None),
+            row("Software Update…".into(), "", None),
+            None,
+            row("Force Quit…".into(), "⌥⌘⎋", None),
+            None,
+            row("Sleep".into(), "", Some(Action::Sleep)),
+            row("Restart…".into(), "", None),
+            row("Shut Down…".into(), "", None),
+            None,
+            row("Lock Screen".into(), "⌃⌘Q", None),
+            row("Log Out…".into(), "", None),
+        ],
+        Menu::App => vec![
+            row(format!("About {app}"), "", None),
+            None,
+            row(format!("Hide {app}"), "⌘H", Some(Action::Hide)),
+            row("Hide Others".into(), "⌥⌘H", Some(Action::HideOthers)),
+            row("Show All".into(), "", Some(Action::ShowAll)),
+            None,
+            row(format!("Quit {app}"), "⌘Q", Some(Action::QuitApp)),
+        ],
+    }
+}
+
+/// Menus (D8), in logical px.
+pub mod menu {
+    pub const PAD: i32 = 5;
+    pub const ROW: i32 = 22;
+    /// 1 px line with 5 px above and below.
+    pub const SEPARATOR: i32 = 11;
+    pub const SIDE: i32 = 12;
+    pub const MIN_WIDTH: i32 = 180;
+}
+
+/// A `width`-wide menu under the bar, left edge at `anchor_x` but kept on screen; its rect and one rect per row.
+pub fn menu_layout(anchor_x: i32, output_width: i32, width: i32, rows: &[Option<Row>]) -> (Rect, Vec<Rect>) {
+    use menu::*;
+    let x = anchor_x.min(output_width - MARGIN - width).max(MARGIN);
+    let top = menubar::HEIGHT + DROP;
+    let mut y = top + PAD;
+    let rects = rows
+        .iter()
+        .map(|row| {
+            let h = if row.is_some() { ROW } else { SEPARATOR };
+            let rect = Rectangle::new((x + PAD, y).into(), (width - 2 * PAD, h).into());
+            y += h;
+            rect
+        })
+        .collect();
+    (Rectangle::new((x, top).into(), (width, y + PAD - top).into()), rects)
 }
 
 /// Popups hang this far below the bar and keep this far from the screen's edge.
@@ -95,6 +197,8 @@ impl State {
         let width = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size.w;
         match self.popup? {
             Popup::Calendar { year, month } => Some(calendar_layout(width, grid(year, month, self.config.clock.week_start.into()).len()).rect),
+            // A menu's width follows its text, so the last frame's layout is the one to hit.
+            Popup::Menu(_) => self.backend.as_ref()?.menu.rect(),
         }
     }
 
@@ -110,27 +214,13 @@ impl State {
         let open = self.popup;
         let in_popup = self.popup_rect().is_some_and(|r| r.to_f64().contains(location));
         let taken = match (open, item) {
-            (Some(Popup::Calendar { year, month }), _) if in_popup => {
-                let width = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.w);
-                let layout = calendar_layout(width, grid(year, month, self.config.clock.week_start.into()).len());
-                if let Some((year, month)) = calendar_click(&layout, location, (year, month)) {
-                    self.popup = Some(Popup::Calendar { year, month });
-                }
+            (Some(popup), _) if in_popup => {
+                self.popup_press(popup, location);
                 true
             }
-            // The clock again closes its calendar, as on macOS.
-            (Some(Popup::Calendar { .. }), Some(BarItem::Clock)) => {
-                self.popup = None;
-                true
-            }
-            (_, Some(BarItem::Clock)) => {
-                let (year, month) = this_month();
-                self.popup = Some(Popup::Calendar { year, month });
-                true
-            }
-            // ponytail: the other items' menus (logo, app, Control Center) come next; until then a click only closes.
-            (_, Some(_)) => {
-                self.popup = None;
+            // Its own item again closes the popup, as on macOS.
+            (_, Some(item)) => {
+                self.popup = if open.map(Popup::item) == Some(item) { None } else { popup_for(item) };
                 true
             }
             // Outside: closes the popup and the click goes no further.
@@ -144,6 +234,39 @@ impl State {
             self.schedule_redraw();
         }
         taken
+    }
+
+    fn popup_press(&mut self, popup: Popup, location: Point<f64, Logical>) {
+        match popup {
+            Popup::Calendar { year, month } => {
+                let width = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.w);
+                let layout = calendar_layout(width, grid(year, month, self.config.clock.week_start.into()).len());
+                if let Some((year, month)) = calendar_click(&layout, location, (year, month)) {
+                    self.popup = Some(Popup::Calendar { year, month });
+                }
+            }
+            Popup::Menu(menu) => {
+                let index = self.backend.as_ref().and_then(|b| b.menu.row_at(location));
+                // Separators and disabled rows keep the menu open, as on macOS.
+                if let Some(action) = index.and_then(|i| menu_rows(menu, "").into_iter().nth(i)).flatten().and_then(|row| row.action) {
+                    self.popup = None;
+                    self.run_action(action);
+                }
+            }
+        }
+    }
+
+    /// The pointer moved from `from` to `to` (output-relative). With a popup open, sliding along the bar opens the
+    /// next item's popup, as on macOS; in a menu, the hovered row follows.
+    pub fn shell_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
+        let Some(open) = self.popup else { return };
+        let Some(backend) = self.backend.as_ref() else { return };
+        if let Some(next) = backend.menu_bar.hit(to).filter(|item| *item != open.item()).and_then(popup_for) {
+            self.popup = Some(next);
+            self.schedule_redraw();
+        } else if matches!(open, Popup::Menu(_)) && backend.menu.row_at(from) != backend.menu.row_at(to) {
+            self.schedule_redraw();
+        }
     }
 
     /// Esc: closes the open popup. `true` if there was one.
@@ -188,6 +311,20 @@ mod tests {
         assert!(layout.cells.iter().chain([&layout.prev, &layout.next, &layout.title]).all(|c| layout.rect.contains_rect(*c)));
         assert_eq!(layout.cells.len(), 35);
         assert!(!layout.prev.overlaps(layout.next) && !layout.title.overlaps(layout.prev));
+    }
+
+    #[test]
+    fn menus_stay_on_screen_and_stack_rows() {
+        let rows = menu_rows(Menu::App, "Kate");
+        let (rect, cells) = menu_layout(6, 1280, 200, &rows);
+        // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
+        assert_eq!(rect, Rectangle::new((8, 28).into(), (200, 142).into()));
+        assert_eq!(cells[0], Rectangle::new((13, 33).into(), (190, 22).into()));
+        assert_eq!(cells[2].loc.y, 33 + 22 + 11);
+        assert!(cells.iter().all(|c| rect.contains_rect(*c)));
+        // Near the right edge it moves left to fit.
+        assert_eq!(menu_layout(1200, 1280, 200, &rows).0.loc.x, 1280 - 8 - 200);
+        assert_eq!(rows[2].as_ref().map(|r| (r.label.as_str(), r.action.clone())), Some(("Hide Kate", Some(Action::Hide))));
     }
 
     #[test]

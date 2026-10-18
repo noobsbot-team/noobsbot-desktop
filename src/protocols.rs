@@ -102,6 +102,7 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let delta = self.protocols.last_host_pointer.replace(host).map_or_else(Point::default, |last| host - last);
         let current = pointer.current_location();
+        self.shell_motion(self.to_output(current), self.to_output(host));
         let under = self.surface_under(current);
 
         let (mut locked, mut confined, mut region) = (false, false, None::<RegionAttributes>);

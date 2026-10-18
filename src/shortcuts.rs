@@ -23,6 +23,12 @@ pub enum Action {
     Minimise,
     /// Hide every window of the focused app (Super+H).
     Hide,
+    /// Hide every other app's windows (Super+Alt+H).
+    HideOthers,
+    /// Bring back every hidden window.
+    ShowAll,
+    /// Suspend the computer (logo menu ▸ Sleep).
+    Sleep,
     /// Basic window cycling; the full switcher comes in M4.
     CycleWindows,
     /// The default output's volume by one step; `true`: up (E2.7).
@@ -85,6 +91,9 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("close", "") => Some(Action::CloseWindow),
         ("minimise" | "minimize", "") => Some(Action::Minimise),
         ("hide", "") => Some(Action::Hide),
+        ("hide-others", "") => Some(Action::HideOthers),
+        ("show-all", "") => Some(Action::ShowAll),
+        ("sleep", "") => Some(Action::Sleep),
         ("cycle", "") => Some(Action::CycleWindows),
         ("volume", "up") => Some(Action::Volume(true)),
         ("volume", "down") => Some(Action::Volume(false)),
@@ -137,6 +146,19 @@ impl State {
                 let windows = self.app_windows(focused.as_ref());
                 self.hide_windows(windows);
             }
+            Action::HideOthers => {
+                let mine = self.app_windows(focused.as_ref());
+                let others = self.space.elements().filter(|w| !mine.contains(w)).cloned().collect();
+                // hide_windows then focuses the top window left, which is the app's own.
+                self.hide_windows(others);
+            }
+            Action::ShowAll => {
+                for (window, loc) in std::mem::take(&mut self.hidden) {
+                    self.set_visible_loc(&window, loc);
+                }
+                self.schedule_redraw();
+            }
+            Action::Sleep => self.services.send(Command::Suspend),
             // ponytail: brings back the oldest hidden window first, else rotates the stack; the real switcher is M4.
             Action::CycleWindows => {
                 let next = if self.hidden.is_empty() {

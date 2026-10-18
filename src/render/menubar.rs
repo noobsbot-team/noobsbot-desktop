@@ -104,7 +104,7 @@ pub fn volume(sound: &Sound) -> Symbol {
 
 /// The name an app goes by: its `.desktop` entry's `Name`, else its id, capitalised (`org.kde.dolphin` → `Dolphin`).
 // ponytail: looks up `<id>.desktop` only; StartupWMClass matching and localised names come with the app index (M3).
-fn app_name(id: &str) -> String {
+pub fn app_name(id: &str) -> String {
     let home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
     let system = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
     let entry = std::iter::once(home.as_str())
@@ -145,6 +145,17 @@ impl MenuBar {
     /// The item under `location` (output-relative).
     pub fn hit(&self, location: smithay::utils::Point<f64, smithay::utils::Logical>) -> Option<BarItem> {
         self.hits.iter().find(|(_, rect)| rect.to_f64().contains(location)).map(|(item, _)| *item)
+    }
+
+    /// The pressed pill behind `item`: rounded, a little inside the bar's height (macOS). Menus line up with it.
+    pub fn pill(&self, item: BarItem) -> Option<Rect> {
+        let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
+        Some(Rectangle::new((area.loc.x + GAP / 2 - 6, 2).into(), (area.size.w - GAP + 12, HEIGHT - 4).into()))
+    }
+
+    /// The display name of app `id`, looked up once.
+    pub fn name(&mut self, id: &str) -> String {
+        self.names.entry(id.to_owned()).or_insert_with(|| app_name(id)).clone()
     }
 
     /// A fullscreen window covers the bar: it takes no clicks.
@@ -225,11 +236,7 @@ impl MenuBar {
         self.labels = keep_buffers(&self.labels, left.into_iter().chain(right).map(|(piece, _, _)| piece));
         let mut out: Vec<SceneElement> =
             self.labels.iter().zip(rects).filter_map(|(label, rect): (&Label, Rect)| label_element(renderer, label, rect, scale)).collect();
-        let pill = active.and_then(|a| self.hits.iter().find(|(item, _)| *item == a)).map(|(_, area)| {
-            // macOS: a rounded highlight a little inside the bar's height.
-            Rectangle::new((area.loc.x + GAP / 2 - 6, 2).into(), (area.size.w - GAP + 12, HEIGHT - 4).into())
-        });
-        match pill {
+        match active.and_then(|item| self.pill(item)) {
             Some(rect) => {
                 let key = (rect, dark, scale.to_bits());
                 if self.pill.as_ref().is_none_or(|(k, _)| *k != key) {
