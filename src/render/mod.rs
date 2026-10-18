@@ -5,6 +5,7 @@
 mod alert;
 pub mod calendar;
 mod control;
+mod dock;
 mod gallery;
 mod menu;
 pub mod menubar;
@@ -39,6 +40,7 @@ pub use gallery::Gallery;
 pub use alert::AlertSheet;
 pub use calendar::CalendarPopover;
 pub use control::ControlCenter;
+pub use dock::{DockView, Icon as DockIcon};
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
 pub use osd::OsdPopover;
@@ -131,6 +133,14 @@ impl Shaders {
             (true, false) => (0.04, 0.25, 0.40, 0.10),
         };
         self.glass_element(rect, fill, radius, [sheen, highlight, highlight_top, hairline], scale)
+    }
+
+    /// An opaque square rect shading from grey `top` to grey `bottom` (0–1, `bottom` < 1). The glass shader's sheen
+    /// paints white at strength `s` fading downwards; a negative `s` darkens instead: over `bottom` it gives
+    /// `bottom + s (bottom - 1)` at the top edge, which is `top` for the `s` below.
+    pub fn gradient(&self, rect: Rect, top: f32, bottom: f32, scale: f64) -> PixelShaderElement {
+        let sheen = (top - bottom) / (1.0 - bottom);
+        self.glass_element(rect, [bottom, bottom, bottom, 1.0], 0.0, [sheen, 0.0, 0.0, 0.0], scale)
     }
 
     /// A traffic light (D2): a flat circle, edged 0.5 px darker only on a focused window.

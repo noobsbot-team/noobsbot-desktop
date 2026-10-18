@@ -37,6 +37,7 @@ pub struct Config {
     pub touchpad: Touchpad,
     pub windows: Windows,
     pub clock: Clock,
+    pub dock: Dock,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -199,6 +200,7 @@ impl Default for Config {
             touchpad: Touchpad::default(),
             windows: Windows::default(),
             clock: Clock::default(),
+            dock: Dock::default(),
             bindings: default_bindings(),
             rules: vec![Rule {
                 app_id: None,
@@ -206,6 +208,32 @@ impl Default for Config {
                 actions: crate::rules::Actions { float_above: Some(true), ..Default::default() },
             }],
         }
+    }
+}
+
+/// The dock (E3.1); defaults are the owner's Plank settings.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Dock {
+    /// Pinned apps, left to right: anything `apps::Apps::find` takes.
+    pub items: Vec<String>,
+    pub icon_size: u16,
+    pub zoom: bool,
+    pub zoom_percent: u16,
+    pub hide: DockHide,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockHide {
+    Intelligent,
+    Never,
+}
+
+impl Default for Dock {
+    fn default() -> Self {
+        let items = ["google-chrome", "com.microsoft.VSCode", "helium-browser", "org.kde.dolphin", "org.kde.kate", "org.kde.spectacle", "kitty", "noobsbot"];
+        Self { items: items.map(String::from).to_vec(), icon_size: 84, zoom: true, zoom_percent: 150, hide: DockHide::Intelligent }
     }
 }
 
@@ -281,6 +309,8 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
     bindings.retain(|_, action| action != "none");
     config.bindings = bindings;
     config.appearance.glass_opacity = config.appearance.glass_opacity.clamp(0.0, 1.0);
+    config.dock.icon_size = config.dock.icon_size.clamp(crate::shell::dock::MIN_ICON as u16, 256);
+    config.dock.zoom_percent = config.dock.zoom_percent.clamp(100, 300);
     Ok(config)
 }
 

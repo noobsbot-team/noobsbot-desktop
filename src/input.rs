@@ -115,7 +115,11 @@ impl State {
                 let location = pointer.current_location();
                 // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
                 // pointer comes to the front.
-                if state == ButtonState::Pressed && !pointer.is_grabbed() && !self.shell_press(self.to_output(location)) {
+                if state == ButtonState::Pressed
+                    && !pointer.is_grabbed()
+                    && !self.dock_press(self.to_output(location), event.button_code())
+                    && !self.shell_press(self.to_output(location))
+                {
                     let zone = self.zone_under(location);
                     let bar = if zone.is_some() { None } else { self.bar_under(location) };
                     let window = zone
@@ -154,6 +158,11 @@ impl State {
             InputEvent::PointerAxis { event } => {
                 let Some(pointer) = self.seat.get_pointer() else { return };
                 let source = event.source();
+                // Over the dock, a wheel step cycles the app's windows; touchpad scrolling there is just swallowed.
+                let wheel = event.amount_v120(Axis::Vertical).unwrap_or(0.0);
+                if self.dock_scroll(self.to_output(pointer.current_location()), wheel != 0.0) {
+                    return;
+                }
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);
                 for axis in [Axis::Horizontal, Axis::Vertical] {
                     let v120 = event.amount_v120(axis);

@@ -1,5 +1,6 @@
 //! Noobsbot Desktop: start-up, logging and backend selection.
 
+mod apps;
 mod backend;
 mod calendar;
 mod clock;
@@ -29,7 +30,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|dock-zoom] [-- command [args...]]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -136,7 +137,12 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         }
         // Stays up: no hide timer.
         Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),
-        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert)"),
+        // The dock zoomed as if the pointer were over it, left of centre.
+        Some("dock-zoom") => {
+            let size = state.space.outputs().next().and_then(|o| state.space.output_geometry(o)).map(|g| g.size).unwrap_or_default();
+            state.dock_pointer = Some((f64::from(size.w) / 2.0 - 60.0, f64::from(size.h) - 40.0).into());
+        }
+        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert, dock-zoom)"),
         None => {}
     }
 

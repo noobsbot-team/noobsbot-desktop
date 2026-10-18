@@ -3,6 +3,7 @@
 
 pub mod alert;
 pub mod control;
+pub mod dock;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use smithay::utils::{Logical, Point, Rectangle};
@@ -231,14 +232,14 @@ impl State {
         }
     }
 
-    /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar or an open popup.
+    /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar, an open popup or the dock.
     pub fn shell_covers(&self, location: Point<f64, Logical>) -> bool {
         let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(location));
         if on_alert {
             return true;
         }
         let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
-        on_bar || self.popup_rect().is_some_and(|r| r.to_f64().contains(location))
+        on_bar || self.popup_rect().is_some_and(|r| r.to_f64().contains(location)) || self.dock_covers(location)
     }
 
     /// A press at `location` (output-relative). `true`: the shell took it, so no window gets focus or the click.

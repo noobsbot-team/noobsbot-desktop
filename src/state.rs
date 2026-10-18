@@ -148,6 +148,13 @@ pub struct State {
     pub shell_drag: Option<crate::shell::control::Control>,
     /// Hides the OSD; replaced on every key press.
     pub osd_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// Installed apps (E2.1); empty until the first scan lands.
+    pub apps: crate::apps::Apps,
+    pub icons: crate::apps::Icons,
+    /// The pointer touched the bottom edge: the dock shows over the focused window until the pointer leaves it.
+    pub dock_reveal: bool,
+    /// `--show dock-zoom`: a fake pointer position the dock zooms around.
+    pub dock_pointer: Option<Point<f64, Logical>>,
 }
 
 impl State {
@@ -219,6 +226,15 @@ impl State {
                 state.schedule_redraw();
             }
         })?;
+        // The app index (dock, Spotlight, Launchpad) loads off the frame thread and follows installs.
+        let (apps_tx, apps_rx) = channel::channel();
+        crate::apps::watch(move |apps| apps_tx.send(apps).is_ok());
+        handle.insert_source(apps_rx, |event, _, state| {
+            if let channel::Event::Msg(apps) = event {
+                state.apps = apps;
+                state.schedule_redraw();
+            }
+        })?;
         // The menu-bar clock (E2.4): one redraw per minute (second, with seconds on), on the boundary.
         let tick = |state: &Self| crate::clock::until_next_tick(&chrono::Local::now(), state.config.clock.format.seconds);
         handle.insert_source(Timer::from_duration(crate::clock::until_next_tick(&chrono::Local::now(), config.clock.format.seconds)), move |_, _, state| {
@@ -278,6 +294,10 @@ impl State {
             expanded: None,
             shell_drag: None,
             osd_timer: None,
+            apps: Default::default(),
+            icons: Default::default(),
+            dock_reveal: false,
+            dock_pointer: None,
             display_handle: dh,
         })
     }
@@ -313,14 +333,7 @@ impl State {
         if toplevel.is_some_and(|t| t.current_state().states.contains(xdg_toplevel::State::Fullscreen)) {
             return None;
         }
-        let app = toplevel.and_then(|t| {
-            let id = with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.app_id.clone()));
-            // noobsbot and others set no app id: fall back to the process name.
-            id.filter(|id| !id.is_empty()).or_else(|| {
-                let pid = t.wl_surface().client()?.get_credentials(&self.display_handle).ok()?.pid;
-                Some(std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim().to_owned())
-            })
-        });
+        let app = focused.as_ref().and_then(|w| self.app_key(w));
         let simple = |symbol| Item { symbol, text: None };
         let status = [
             self.network.as_ref().map(|n| simple(menubar::wifi(n))),
@@ -336,6 +349,9 @@ impl State {
     pub fn work_area(&self) -> Option<Rect> {
         let output = self.space.outputs().next()?;
         let mut zone = crate::render::menubar::below(layer_map_for_output(output).non_exclusive_zone());
+        // Above the dock (E1.2: zoom fills the screen between the menu bar and the dock).
+        let bottom = self.space.output_geometry(output)?.size.h - crate::shell::dock::reserve(&self.config.dock);
+        zone.size.h = zone.size.h.min(bottom - zone.loc.y).max(0);
         zone.loc += self.space.output_geometry(output)?.loc;
         Some(zone)
     }
