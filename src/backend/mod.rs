@@ -5,6 +5,9 @@ mod cursor;
 pub mod udev;
 pub mod winit;
 
+/// What shows where nothing is drawn.
+const CLEAR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
+
 use smithay::{
     backend::{
         allocator::format::FormatSet,

@@ -1,8 +1,9 @@
 //! Reading the screen back (E6.8): our own screenshots, and `wlr-screencopy-unstable-v1` for other programs (grim,
-//! wf-recorder, xdg-desktop-portal-wlr's screen sharing) into their shm buffers. The frame just drawn is read once
-//! when someone waits for it, so capturing costs nothing while nobody asks. Who may capture is perms.rs's call.
+//! wf-recorder, xdg-desktop-portal-wlr's screen sharing) into their shm buffers. When someone waits, the frame just
+//! drawn is drawn once more into an offscreen buffer and read (both backends, see `render`), so capturing costs
+//! nothing while nobody asks. Who may capture is perms.rs's call.
 // ponytail: shm copies only (a 1080p frame is 8 MB through the CPU); dmabuf frames for zero-copy recording and
-// `ext-image-copy-capture` come with the udev backend (M6). The cursor is never drawn in (nested it's the host's).
+// `ext-image-copy-capture` later. The cursor is never drawn in (nested it's the host's; grim -c is not honoured).
 
 use std::{
     collections::{HashMap, HashSet},
@@ -14,8 +15,10 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            ExportMem,
-            gles::{GlesMapping, GlesRenderer, GlesTarget},
+            Bind, ExportMem, Offscreen,
+            damage::OutputDamageTracker,
+            element::RenderElement,
+            gles::{GlesRenderer, GlesTexture},
         },
     },
     output::Output,
@@ -30,15 +33,16 @@ use smithay::{
             protocol::{wl_buffer::WlBuffer, wl_shm},
         },
     },
-    utils::{Physical, Rectangle, Size, Transform},
+    utils::{Physical, Point, Rectangle, Size, Transform},
     wayland::shm::with_buffer_contents_mut,
 };
 
 use crate::state::State;
 
-/// A copy waiting for the next frame (or, `damage`, the next frame that changed).
+/// A copy waiting for the next frame of `output` (or, `damage`, the next frame that changed).
 struct Waiting {
     frame: ZwlrScreencopyFrameV1,
+    output: Output,
     buffer: WlBuffer,
     region: Rectangle<i32, Physical>,
     damage: bool,
@@ -53,19 +57,40 @@ pub struct Capture {
     pub verdicts: HashMap<ClientId, bool>,
 }
 
-/// A frame object's region in output px; a frame copies once.
+/// A frame object's output and region (output buffer px); a frame copies once.
 pub struct FrameData {
+    output: Option<Output>,
     region: Rectangle<i32, Physical>,
     used: AtomicBool,
 }
 
-/// One output frame read back: RGBA, top row first.
+/// One output frame read back: RGBA rows as the output's buffer holds them (before its transform, which is what
+/// screencopy clients expect: they apply the transform themselves).
 pub struct Pixels {
     pub size: Size<i32, Physical>,
     pub rgba: Vec<u8>,
+    pub transform: Transform,
 }
 
 impl Pixels {
+    /// The frame as it is seen (the output's transform applied), top row first.
+    pub fn shown(&self) -> Pixels {
+        let t = self.transform;
+        let size = t.transform_size(self.size);
+        let (w, h) = (self.size.w as usize, self.size.h as usize);
+        let mut rgba = vec![0u8; w * h * 4];
+        // Pixel corners: `transform_point_in` maps the area's corners, so a pixel's far corner lands on its new one.
+        let last = Size::from((self.size.w - 1, self.size.h - 1));
+        for y in 0..self.size.h {
+            for x in 0..self.size.w {
+                let to = t.transform_point_in(Point::<i32, Physical>::from((x, y)), &last);
+                let (from, to) = ((y as usize * w + x as usize) * 4, (to.y as usize * size.w as usize + to.x as usize) * 4);
+                rgba[to..to + 4].copy_from_slice(&self.rgba[from..from + 4]);
+            }
+        }
+        Pixels { size, rgba, transform: Transform::Normal }
+    }
+
     /// `region` (clipped to the frame) as its own RGBA rows.
     pub fn crop(&self, region: Rectangle<i32, Physical>) -> (Vec<u8>, Size<i32, Physical>) {
         let region = region.intersection(Rectangle::from_size(self.size)).unwrap_or_default();
@@ -79,23 +104,25 @@ impl Pixels {
     }
 }
 
-/// Starts reading the whole bound frame, before the swap.
-pub fn read(renderer: &mut GlesRenderer, target: &GlesTarget<'_>, size: Size<i32, Physical>) -> Option<(GlesMapping, Size<i32, Physical>)> {
-    let region = Rectangle::from_size((size.w, size.h).into());
-    let mapping = renderer.copy_framebuffer(target, region, Fourcc::Abgr8888).inspect_err(|err| tracing::warn!("screen read: {err}")).ok()?;
-    Some((mapping, size))
-}
-
-/// Finishes a read, after the swap: mapping makes the context current without the window surface, which would fail
-/// the swap. GL's rows run bottom-up (the winit surface is drawn flipped, see backend/winit.rs), so they are turned over.
-// ponytail: assumes the winit Flipped180 output; the udev backend's offscreen targets read top-down (M6).
-pub fn map(renderer: &mut GlesRenderer, (mapping, size): (GlesMapping, Size<i32, Physical>)) -> Option<Pixels> {
-    let bytes = renderer.map_texture(&mapping).inspect_err(|err| tracing::warn!("screen map: {err}")).ok()?;
-    Some(Pixels { size, rgba: flip_rows(bytes, size.w as usize * 4) })
-}
-
-fn flip_rows(bytes: &[u8], stride: usize) -> Vec<u8> {
-    bytes.chunks_exact(stride.max(1)).rev().flatten().copied().collect()
+/// Draws `elements` (the frame just shown, without the cursor) once more into an offscreen texture the size of
+/// `output`'s mode, with its transform, and reads it back: the same pixels the output's buffer got. Used by both
+/// backends, so the nested window exercises the real screen's path; call it after the swap (nested, binding a texture
+/// before it would fail the swap).
+// ponytail: a fresh texture and full redraw per captured frame; keep one per output (and its damage) if recording
+// ever shows up in the frame budget.
+pub fn render<E: RenderElement<GlesRenderer>>(renderer: &mut GlesRenderer, output: &Output, elements: &[E], clear: [f32; 4]) -> Option<Pixels> {
+    let size = output.current_mode()?.size;
+    let (scale, transform) = (output.current_scale().fractional_scale(), output.current_transform());
+    let read = |renderer: &mut GlesRenderer| -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (size.w, size.h).into())?;
+        let mut target = renderer.bind(&mut texture)?;
+        OutputDamageTracker::new(size, scale, transform).render_output(renderer, &mut target, 0, elements, clear)?;
+        let mapping = renderer.copy_framebuffer(&target, Rectangle::from_size((size.w, size.h).into()), Fourcc::Abgr8888)?;
+        drop(target);
+        Ok(renderer.map_texture(&mapping)?.to_vec())
+    };
+    let rgba = read(renderer).inspect_err(|err| tracing::warn!("screen read: {err}")).ok()?;
+    Some(Pixels { size, rgba, transform })
 }
 
 impl Capture {
@@ -103,9 +130,9 @@ impl Capture {
         Self { _global: dh.create_global::<State, ZwlrScreencopyManagerV1, _>(3, ()), waiting: Vec::new(), served: HashSet::new(), verdicts: HashMap::new() }
     }
 
-    /// Does the frame just drawn (`damaged`: it changed) have to be read?
-    pub fn wants(&self, damaged: bool, allowed: impl Fn(&ClientId) -> bool) -> bool {
-        self.waiting.iter().any(|w| self.ready(w, damaged) && w.frame.client().is_some_and(|c| allowed(&c.id())))
+    /// Does the frame just drawn on `output` (`damaged`: it changed) have to be read?
+    pub fn wants(&self, output: &Output, damaged: bool, allowed: impl Fn(&ClientId) -> bool) -> bool {
+        self.waiting.iter().any(|w| w.output == *output && self.ready(w, damaged) && w.frame.client().is_some_and(|c| allowed(&c.id())))
     }
 
     fn ready(&self, w: &Waiting, damaged: bool) -> bool {
@@ -127,13 +154,12 @@ impl Capture {
         });
     }
 
-    /// Fills every allowed copy that this frame satisfies; `now`: the frame's presentation time (monotonic).
-    /// `inverted`: the output is flipped upside down (nested), so clients that undo its transform must flip back.
-    pub fn deliver(&mut self, pixels: &Pixels, damaged: bool, now: Duration, inverted: bool, allowed: impl Fn(&ClientId) -> bool) {
+    /// Fills every allowed copy of `output` that this frame satisfies; `now`: the frame's presentation time (monotonic).
+    pub fn deliver(&mut self, output: &Output, pixels: &Pixels, damaged: bool, now: Duration, allowed: impl Fn(&ClientId) -> bool) {
         let waiting = std::mem::take(&mut self.waiting);
         for w in waiting {
             let Some(client) = w.frame.client().map(|c| c.id()) else { continue };
-            if !self.ready(&w, damaged) || !allowed(&client) {
+            if w.output != *output || !self.ready(&w, damaged) || !allowed(&client) {
                 self.waiting.push(w);
                 continue;
             }
@@ -142,8 +168,8 @@ impl Capture {
                 w.frame.failed();
                 continue;
             }
-            // ponytail: only the nested Flipped180 is undone; rotated outputs would need the pixels turned too.
-            w.frame.flags(if inverted { zwlr_screencopy_frame_v1::Flags::YInvert } else { zwlr_screencopy_frame_v1::Flags::empty() });
+            // Buffer px as they are: the client applies the output's transform (wl_output.geometry).
+            w.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
             if w.damage && w.frame.version() >= 2 {
                 // ponytail: the whole region; the damage tracker's rects would let recorders skip unchanged parts.
                 w.frame.damage(0, 0, w.region.size.w as u32, w.region.size.h as u32);
@@ -177,33 +203,43 @@ fn copy_into(buffer: &WlBuffer, pixels: &Pixels, region: Rectangle<i32, Physical
 }
 
 impl State {
-    /// After drawing: reads the frame if a screenshot or an allowed copy waits for it, and hands it out.
-    pub fn after_frame(&mut self, pixels: Option<Pixels>, damaged: bool, scale: f64) {
+    /// After drawing `output`'s frame: hands the pixels read back (see `frame_wanted`) to a screenshot and the copies.
+    pub fn after_frame(&mut self, output: &Output, pixels: Option<Pixels>, damaged: bool) {
         let Some(pixels) = pixels else { return };
-        if let Some(rect) = self.screenshots.pending.take() {
+        // Screenshots are of the first display (their rect is relative to it, see shell/screenshot.rs).
+        if self.space.outputs().next() == Some(output)
+            && let Some(rect) = self.screenshots.pending.take()
+        {
+            let scale = output.current_scale().fractional_scale();
             let region = rect.to_f64().to_physical(scale).to_i32_round();
-            let (rgba, size) = pixels.crop(region);
+            let (rgba, size) = pixels.shown().crop(region);
             self.screenshot_taken(rgba, (size.w as u32, size.h as u32), scale);
         }
         let verdicts = self.capture.verdicts.clone();
         let now = Duration::from(self.protocols.clock.now());
-        let inverted = self.space.outputs().next().is_some_and(|o| o.current_transform() == Transform::Flipped180);
-        self.capture.deliver(&pixels, damaged, now, inverted, |c| verdicts.get(c) == Some(&true));
+        self.capture.deliver(output, &pixels, damaged, now, |c| verdicts.get(c) == Some(&true));
     }
 
-    /// Whether this frame must be read back (before the swap, while it is still bound).
-    pub fn frame_wanted(&self, damaged: bool) -> bool {
-        self.screenshots.pending.is_some() || self.capture.wants(damaged, |c| self.capture.verdicts.get(c) == Some(&true))
+    /// Whether `output`'s frame just drawn (`damaged`: it changed) must be read back.
+    pub fn frame_wanted(&self, output: &Output, damaged: bool) -> bool {
+        (self.screenshots.pending.is_some() && self.space.outputs().next() == Some(output))
+            || self.capture.wants(output, damaged, |c| self.capture.verdicts.get(c) == Some(&true))
     }
 }
 
-/// The output a frame object captures, its region in output px (`None`: the whole output).
+/// The region a frame object captures in the output's buffer px (`None`: the whole output). `region` is logical,
+/// as seen; the buffer is before the output's transform.
 fn frame_region(output: &Output, region: Option<Rectangle<i32, smithay::utils::Logical>>) -> Rectangle<i32, Physical> {
     let mode = output.current_mode().map_or((0, 0).into(), |m| m.size);
-    let full = Rectangle::from_size(mode);
-    let Some(region) = region else { return full };
-    let scale = output.current_scale().fractional_scale();
-    region.to_f64().to_physical(scale).to_i32_round().intersection(full).unwrap_or_default()
+    let Some(region) = region else { return Rectangle::from_size(mode) };
+    buffer_region(region.to_f64().to_physical(output.current_scale().fractional_scale()).to_i32_round(), mode, output.current_transform())
+}
+
+/// A region as seen (physical px) in the buffer of `mode` size under `transform`.
+fn buffer_region(seen: Rectangle<i32, Physical>, mode: Size<i32, Physical>, transform: Transform) -> Rectangle<i32, Physical> {
+    let shown = transform.transform_size(mode);
+    let seen = seen.intersection(Rectangle::from_size(shown)).unwrap_or_default();
+    transform.invert().transform_rect_in(seen, &shown)
 }
 
 impl GlobalDispatch<ZwlrScreencopyManagerV1, ()> for State {
@@ -234,8 +270,9 @@ impl Dispatch<ZwlrScreencopyManagerV1, ()> for State {
             }
             _ => return,
         };
-        let region = Output::from_resource(&output).map(|o| frame_region(&o, region)).unwrap_or_default();
-        let frame = init.init(frame, FrameData { region, used: AtomicBool::new(false) });
+        let output = Output::from_resource(&output);
+        let region = output.as_ref().map(|o| frame_region(o, region)).unwrap_or_default();
+        let frame = init.init(frame, FrameData { output, region, used: AtomicBool::new(false) });
         if region.is_empty() {
             frame.failed();
             return;
@@ -281,7 +318,8 @@ impl Dispatch<ZwlrScreencopyFrameV1, FrameData> for State {
             frame.failed();
             return;
         }
-        state.capture.waiting.push(Waiting { frame: frame.clone(), buffer, region: data.region, damage });
+        let Some(output) = data.output.clone() else { return frame.failed() };
+        state.capture.waiting.push(Waiting { frame: frame.clone(), output, buffer, region: data.region, damage });
         state.capture_ask();
         state.schedule_redraw();
     }
@@ -295,13 +333,62 @@ impl Dispatch<ZwlrScreencopyFrameV1, FrameData> for State {
 mod tests {
     use super::*;
 
+    /// A 3×2 buffer, one byte value per pixel: 1 2 3 / 4 5 6.
+    fn buffer(transform: Transform) -> Pixels {
+        Pixels { size: (3, 2).into(), rgba: (1..=6).flat_map(|v| [v; 4]).collect(), transform }
+    }
+
+    fn values(p: &Pixels) -> Vec<u8> {
+        p.rgba.chunks(4).map(|c| c[0]).collect()
+    }
+
     #[test]
-    fn rows_turn_over_and_crop() {
-        // 2×2: rows bottom-up as GL reads them.
-        let gl = [3u8, 3, 3, 3, 4, 4, 4, 4, 1, 1, 1, 1, 2, 2, 2, 2];
-        let pixels = Pixels { size: (2, 2).into(), rgba: flip_rows(&gl, 8) };
-        assert_eq!(&pixels.rgba[..8], &[1, 1, 1, 1, 2, 2, 2, 2]);
-        let (one, size) = pixels.crop(Rectangle::new((1, 1).into(), (5, 5).into()));
-        assert_eq!((one, size), (vec![4, 4, 4, 4], (1, 1).into()));
+    fn crop_clips() {
+        let (one, size) = buffer(Transform::Normal).crop(Rectangle::new((2, 1).into(), (5, 5).into()));
+        assert_eq!((one, size), (vec![6; 4], (1, 1).into()));
+    }
+
+    #[test]
+    fn shown_applies_the_transform() {
+        let shown = |t| {
+            let p = buffer(t).shown();
+            (values(&p), (p.size.w, p.size.h))
+        };
+        assert_eq!(shown(Transform::Normal), (vec![1, 2, 3, 4, 5, 6], (3, 2)));
+        // Nested: the GL rows run bottom-up.
+        assert_eq!(shown(Transform::Flipped180), (vec![4, 5, 6, 1, 2, 3], (3, 2)));
+        assert_eq!(shown(Transform::_180), (vec![6, 5, 4, 3, 2, 1], (3, 2)));
+        assert_eq!(shown(Transform::Flipped), (vec![3, 2, 1, 6, 5, 4], (3, 2)));
+        // A turned display: 2 wide, 3 high.
+        assert_eq!(shown(Transform::_90), (vec![4, 1, 5, 2, 6, 3], (2, 3)));
+        assert_eq!(shown(Transform::_270), (vec![3, 6, 2, 5, 1, 4], (2, 3)));
+        assert_eq!(shown(Transform::Flipped90), (vec![1, 4, 2, 5, 3, 6], (2, 3)));
+        assert_eq!(shown(Transform::Flipped270), (vec![6, 3, 5, 2, 4, 1], (2, 3)));
+    }
+
+    #[test]
+    fn region_as_seen_is_the_same_buffer_px() {
+        let all = [
+            Transform::Normal,
+            Transform::_90,
+            Transform::_180,
+            Transform::_270,
+            Transform::Flipped,
+            Transform::Flipped90,
+            Transform::Flipped180,
+            Transform::Flipped270,
+        ];
+        for t in all {
+            let raw = buffer(t);
+            let seen = raw.shown();
+            for x in 0..seen.size.w {
+                for y in 0..seen.size.h {
+                    let px = Rectangle::new((x, y).into(), (1, 1).into());
+                    let at = buffer_region(px, raw.size, t);
+                    assert_eq!(raw.crop(at).0, seen.crop(px).0, "{t:?} at {x},{y}");
+                }
+            }
+            assert_eq!(buffer_region(Rectangle::from_size((9, 9).into()), raw.size, t), Rectangle::from_size(raw.size), "{t:?}");
+        }
     }
 }

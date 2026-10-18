@@ -57,7 +57,7 @@ use smithay::{
     wayland::{compositor::with_states, presentation::Refresh},
 };
 
-use super::{Device, Views, cursor};
+use super::{CLEAR, Device, Views, cursor};
 use crate::{config::Touchpad, frame::FrameClock, render::SceneElement, state::State};
 
 type Api = GbmGlesBackend<GlesRenderer, DrmDeviceFd>;
@@ -70,7 +70,6 @@ type Cursors = HashMap<(CursorIcon, u32), Option<(MemoryRenderBuffer, Point<i32,
 
 /// 8-bit only in v1 (no HDR or 10-bit colour, E6.2).
 const FORMATS: [Fourcc; 2] = [Fourcc::Argb8888, Fourcc::Xrgb8888];
-const CLEAR: [f32; 4] = [0.1, 0.1, 0.1, 1.0];
 
 pub struct Udev {
     session: LibSeatSession,
@@ -315,9 +314,20 @@ impl State {
         };
         let Some((elements, animating)) = self.frame_elements(renderer.as_mut(), &screen.output) else { return };
         let mut all: Vec<OnGpu> = self.cursor_elements(renderer.as_mut(), &mut udev.cursors, &screen.output).into_iter().map(OnGpu).collect();
+        let cursors = all.len();
         all.extend(elements.into_iter().map(OnGpu));
         let frame = screen.compositor.render_frame(&mut renderer, &all, CLEAR, FrameFlags::DEFAULT).map(|f| f.is_empty);
+        // A screenshot or an allowed copy waits: the frame drawn once more offscreen on the render GPU, without the
+        // cursor (the scanout buffer may be on another GPU, and planes hold the cursor and direct-scanout apps).
+        let pixels = match frame {
+            Ok(empty) if self.frame_wanted(&screen.output, !empty) => {
+                let scene: Vec<&SceneElement> = all[cursors..].iter().map(|e| &e.0).collect();
+                crate::capture::render(renderer.as_mut(), &screen.output, &scene, CLEAR)
+            }
+            _ => None,
+        };
         drop(renderer);
+        let (output, damaged) = (screen.output.clone(), frame.as_ref().ok().map(|empty| !empty));
         screen.render_time = started.elapsed();
         match frame {
             Ok(false) => {
@@ -353,6 +363,9 @@ impl State {
         }
         if animating {
             screen.again = true;
+        }
+        if let Some(damaged) = damaged {
+            self.after_frame(&output, pixels, damaged);
         }
         self.frame_done();
     }

@@ -92,6 +92,43 @@ impl Config {
     }
 }
 
+/// A `()` each time `config.toml` is written, by us or elsewhere (the Control Center's Dark toggle, an editor):
+/// inotify on its folder through `notify`, as the desktop's own `config::watch`; no polling. Bursts coalesce in the
+/// one-slot channel: whatever is queued is read after the last write.
+pub fn changes() -> impl iced::futures::Stream<Item = ()> {
+    iced::stream::channel(1, async |tx: iced::futures::channel::mpsc::Sender<()>| {
+        let path = path();
+        let watcher = (|| {
+            let dir = path.parent()?.to_owned();
+            let name = path.file_name()?.to_owned();
+            let mut tx = tx.clone();
+            let _ = fs::create_dir_all(&dir);
+            let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                if event.is_ok_and(|e| written(&e, &name)) {
+                    let _ = tx.try_send(());
+                }
+            })
+            .inspect_err(|err| eprintln!("config watch off: {err}"))
+            .ok()?;
+            notify::Watcher::watch(&mut watcher, &dir, notify::RecursiveMode::NonRecursive)
+                .inspect_err(|err| eprintln!("config watch off: {}: {err}", dir.display()))
+                .ok()?;
+            Some(watcher)
+        })();
+        // The watcher lives as long as the subscription.
+        std::future::pending::<()>().await;
+        drop(watcher);
+    })
+}
+
+/// A write, rename or delete of the file `name`; reads (ours included) don't count, or every reload would loop.
+fn written(event: &notify::Event, name: &std::ffi::OsStr) -> bool {
+    use notify::{EventKind, event::{AccessKind, AccessMode}};
+    let write = matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_))
+        || matches!(event.kind, EventKind::Access(AccessKind::Close(AccessMode::Write)));
+    write && event.paths.iter().any(|p| p.file_name() == Some(name))
+}
+
 fn lookup<'a>(doc: &'a DocumentMut, key: &str) -> Option<&'a Value> {
     let (table, name) = key.rsplit_once('.').map_or((None, key), |(t, k)| (Some(t), k));
     let parent = match table {
@@ -173,6 +210,22 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# Noobsbot Desktop settings."));
         assert!(text.contains("hour24 = true"));
+    }
+
+    #[test]
+    fn only_writes_of_the_file_count() {
+        use notify::{
+            Event, EventKind,
+            event::{AccessKind, AccessMode, CreateKind, ModifyKind, RenameMode},
+        };
+        let at = |kind, file: &str| Event::new(kind).add_path(PathBuf::from("/c/noobsbot-desktop").join(file));
+        let name = std::ffi::OsStr::new("config.toml");
+        assert!(written(&at(EventKind::Modify(ModifyKind::Name(RenameMode::To)), "config.toml"), name));
+        assert!(written(&at(EventKind::Create(CreateKind::File), "config.toml"), name));
+        assert!(written(&at(EventKind::Access(AccessKind::Close(AccessMode::Write)), "config.toml"), name));
+        assert!(!written(&at(EventKind::Access(AccessKind::Close(AccessMode::Read)), "config.toml"), name));
+        assert!(!written(&at(EventKind::Access(AccessKind::Open(AccessMode::Any)), "config.toml"), name));
+        assert!(!written(&at(EventKind::Create(CreateKind::File), ".config.toml.42.tmp"), name));
     }
 
     #[test]
