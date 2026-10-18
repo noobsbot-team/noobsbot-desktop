@@ -146,6 +146,7 @@ impl State {
             components,
             menu_bar,
             notifications,
+            entering,
             menu,
             osd,
             control,
@@ -256,10 +257,31 @@ impl State {
             bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
         }
         render::motion::appear(entrances.osd(), renderer, &mut bar, mark, scale, now);
+        let reduce = appearance.reduce_motion;
+        entrances.fade_osd.track(renderer, &mut bar, mark, false, false, reduce, scale, now, &mut self.anim_until);
         let hour24 = self.config.clock.format.hour24;
         let mark = bar.len();
-        if !cards.is_empty() {
-            let view = View::Banners { cards: &cards, more };
+        // Only the new card slides in, drawn on its own; the cards under it are already there.
+        let split = usize::from(cards.first().is_some_and(|c| entrances.entering_banner(now) == Some(c.id)));
+        if split == 1 {
+            let view = View::Banners { cards: &cards[..1], more: None };
+            bar.extend(entering.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                view,
+                &self.notifications,
+                hour24,
+                dark,
+                accent,
+                appearance.glass_opacity,
+                scale,
+            ));
+            render::motion::appear(entrances.banner(), renderer, &mut bar, mark, scale, now);
+        }
+        if cards.len() > split {
+            let view = View::Banners { cards: &cards[split..], more };
             bar.extend(notifications.elements(
                 renderer,
                 shaders,
@@ -274,7 +296,28 @@ impl State {
                 scale,
             ));
         }
-        render::motion::appear(entrances.banner(), renderer, &mut bar, mark, scale, now);
+        entrances.fade_banners.track(renderer, &mut bar, mark, false, false, reduce, scale, now, &mut self.anim_until);
+        // The bar is laid out before its menus, so they line up with this frame's items (it is drawn behind them).
+        let active = self.popup.and_then(Popup::item);
+        // Launchpad covers the menu bar.
+        let strip = match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
+            Some(content) => menu_bar.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                content,
+                active,
+                width,
+                dark,
+                appearance.glass_opacity,
+                scale,
+            ),
+            None => {
+                menu_bar.hide();
+                Vec::new()
+            }
+        };
         let mark = bar.len();
         match self.popup {
             Some(Popup::Notifications { year, month }) => {
@@ -328,23 +371,9 @@ impl State {
             None => {}
         }
         render::motion::appear(entrances.popup(), renderer, &mut bar, mark, scale, now);
-        let active = self.popup.and_then(Popup::item);
-        // Launchpad covers the menu bar.
-        match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
-            Some(content) => bar.extend(menu_bar.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                content,
-                active,
-                width,
-                dark,
-                appearance.glass_opacity,
-                scale,
-            )),
-            None => menu_bar.hide(),
-        }
+        let replaced = entrances.replaced;
+        entrances.fade_popup.track(renderer, &mut bar, mark, replaced, true, reduce, scale, now, &mut self.anim_until);
+        bar.extend(strip);
         // The dock: behind the bar and popups, above windows.
         if let Some(layout) = &dock_layout {
             let icons: Vec<DockIcon> = dock_items

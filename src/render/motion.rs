@@ -9,6 +9,7 @@ use smithay::{
         allocator::Fourcc,
         renderer::{
             Bind, Color32F, Frame, Offscreen, Renderer,
+            utils::CommitCounter,
             element::{Element, Id, Kind, RenderElement, texture::TextureRenderElement},
             gles::{GlesRenderer, GlesTexture},
         },
@@ -19,7 +20,7 @@ use smithay::{
 
 use super::{SceneElement, Shaders, Shadow, grow, window_elements};
 use crate::{
-    anim::{Anim, Entrance, Look, Motion},
+    anim::{Anim, CROSSFADE, Curve, Entrance, FADE_OUT, Look, Motion},
     text::Text,
 };
 
@@ -124,14 +125,71 @@ pub fn transformed(renderer: &mut GlesRenderer, elements: Vec<SceneElement>, sca
     }
 }
 
-/// When the open popup, the OSD and the newest banner appeared.
-// ponytail: entrances only; they still vanish at once (a 150 ms fade out needs their last elements kept). A new
-// banner slides the whole stack in, not just itself.
+/// What a shell piece is made of: changes when anything in it does.
+type Signature = Vec<(Id, CommitCounter, Rectangle<i32, Physical>)>;
+
+/// One shell piece's last drawn look, kept to fade it out after it closes (D10: 150 ms; popovers shrink to 0.98).
+#[derive(Default)]
+pub struct Fading {
+    last: Option<(Signature, Shot, Rectangle<f64, Logical>)>,
+    exit: Option<(Shot, Rectangle<f64, Logical>, Look, Anim)>,
+}
+
+impl Fading {
+    /// Draws `bar[from..]` (the piece) as it is; once it is gone (or `replaced` by another popover), its last
+    /// look fades out behind whatever follows. Snapshots only frames where the piece changed.
+    #[expect(clippy::too_many_arguments, reason = "the piece, its exit, and the frame it is in")]
+    pub fn track(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        bar: &mut Vec<SceneElement>,
+        from: usize,
+        replaced: bool,
+        shrink: bool,
+        reduce: bool,
+        scale: f64,
+        now: Instant,
+        until: &mut Option<Instant>,
+    ) {
+        let from = from.min(bar.len());
+        if (from == bar.len() || replaced)
+            && let Some((_, shot, area)) = self.last.take()
+        {
+            let to = if shrink && !reduce { Look::scaled(area, 0.98, 0.0) } else { Look { rect: area, alpha: 0.0 } };
+            let anim = Anim { start: now, curve: Curve::Ease(if reduce { CROSSFADE } else { FADE_OUT }) };
+            crate::anim::extend(until, anim.end());
+            self.exit = Some((shot, area, to, anim));
+        }
+        if from < bar.len() {
+            let signature: Signature = bar[from..].iter().map(|e| (e.id().clone(), e.current_commit(), e.geometry(scale.into()))).collect();
+            if self.last.as_ref().is_none_or(|(s, _, _)| *s != signature) {
+                let bounds = signature.iter().map(|(_, _, g)| *g).reduce(|a, b| a.merge(b)).unwrap_or_default();
+                self.last = snapshot(renderer, &bar[from..], bounds, scale).map(|shot| {
+                    let area = shot.src.to_f64().to_logical(scale);
+                    (signature, shot, area)
+                });
+            }
+        }
+        self.exit = self.exit.take().filter(|(_, _, _, anim)| !anim.done(now));
+        if let Some((shot, area, to, anim)) = &self.exit {
+            bar.push(quad(renderer, shot, *area, Look::at(*area).lerp(*to, anim.progress(now)), scale));
+        }
+    }
+}
+
+/// When the open popup, the OSD and the newest banner appeared, and their exits.
+// ponytail: a banner dismissed from a stack of several disappears at once (the stack fades as one piece); a fade
+// per card needs per-card snapshots.
 #[derive(Default)]
 pub struct Entrances {
     popup: Option<(std::mem::Discriminant<crate::shell::Popup>, Entrance)>,
     osd: Option<Entrance>,
     banner: Option<(u32, Entrance)>,
+    /// The popup was swapped for another kind this frame (a menu for Control Center): the old one fades out.
+    pub replaced: bool,
+    pub fade_popup: Fading,
+    pub fade_osd: Fading,
+    pub fade_banners: Fading,
 }
 
 impl Entrances {
@@ -144,7 +202,9 @@ impl Entrances {
         };
         // Switching between menus while one is open (or the calendar's month) is not a new entrance.
         let kind = popup.as_ref().map(std::mem::discriminant);
-        if kind != self.popup.map(|(k, _)| k) {
+        let old = self.popup.map(|(k, _)| k);
+        self.replaced = kind.is_some() && old.is_some() && kind != old;
+        if kind != old {
             self.popup = kind.map(|k| (k, new(false)));
         }
         if osd != self.osd.is_some() {
@@ -165,6 +225,11 @@ impl Entrances {
 
     pub fn banner(&self) -> Option<Entrance> {
         self.banner.map(|(_, e)| e)
+    }
+
+    /// The banner sliding in right now, if any.
+    pub fn entering_banner(&self, now: Instant) -> Option<u32> {
+        self.banner.filter(|(_, e)| now < e.end()).map(|(id, _)| id)
     }
 }
 
