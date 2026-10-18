@@ -143,6 +143,10 @@ install_aur() {
 use_version() {
     as_root ln -sfn "$LIB/versions/$1/noobsbot-desktop" /usr/bin/noobsbot-desktop
     as_root ln -sfn "$LIB/versions/$1/noobsbot-desktop-settings" /usr/bin/noobsbot-desktop-settings
+    # Software Update's privileged helper, at the fixed path its polkit action (org.noobsbot.desktop.update) names.
+    if ((DRY)) || [[ -f $LIB/versions/$1/noobsbot-desktop-update ]]; then
+        as_root install -Dm755 "$LIB/versions/$1/noobsbot-desktop-update" "$LIB/noobsbot-desktop-update"
+    fi
 }
 
 install_desktop_release() {
@@ -188,6 +192,10 @@ install_desktop_source() {
     run cargo build --workspace --release --locked --manifest-path "$src/Cargo.toml"
     as_root install -Dm755 "$src/target/release/noobsbot-desktop" "$LIB/versions/$ver/noobsbot-desktop"
     as_root install -Dm755 "$src/target/release/noobsbot-desktop-settings" "$LIB/versions/$ver/noobsbot-desktop-settings"
+    # Tags before Software Update's helper existed don't build it.
+    if ((DRY)) || [[ -f $src/target/release/noobsbot-desktop-update ]]; then
+        as_root install -Dm755 "$src/target/release/noobsbot-desktop-update" "$LIB/versions/$ver/noobsbot-desktop-update"
+    fi
     use_version "$ver"
 }
 

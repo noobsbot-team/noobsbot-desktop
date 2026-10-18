@@ -45,6 +45,7 @@ pub struct Config {
     pub idle: Idle,
     pub privacy: Privacy,
     pub calendar: Calendar,
+    pub update: Update,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -248,6 +249,7 @@ impl Default for Config {
             idle: Idle::default(),
             privacy: Privacy::default(),
             calendar: Calendar::default(),
+            update: Update::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -303,6 +305,13 @@ impl Default for Calendar {
 pub struct Privacy {
     pub screen_recording: Vec<String>,
     pub screen_recording_denied: Vec<String>,
+}
+
+/// Software Update (E6.13); read at start.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Update {
+    pub channel: crate::services::update::Channel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]

@@ -184,8 +184,12 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         }
         Some("usb") => shell::disks::sample(&mut state),
         Some("update") => {
-            let release =
-                services::update::Release { version: semver::Version::new(1, 3, 0), url: "https://github.com/anil0403/noobsbot-desktop/releases".into() };
+            let release = services::update::Release {
+                version: semver::Version::new(1, 3, 0),
+                tag: "v1.3.0".into(),
+                url: "https://github.com/anil0403/noobsbot-desktop/releases/tag/v1.3.0".into(),
+                download: services::update::Download::Ready(std::env::temp_dir()),
+            };
             // Kept up and hovered (buttons showing) for the screenshot.
             let notice = services::notifications::Notification { expire: 0, ..services::update::notice(&release) };
             state.notifications.hovered = Some(notice.id);
