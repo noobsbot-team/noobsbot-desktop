@@ -23,7 +23,7 @@ use crate::{
     frame::FrameClock,
     render::{
         self, AlertSheet, Components, ControlCenter, DockIcon, DockView, ForceQuitWindow, Gallery, LaunchpadFrame, LaunchpadView, MenuBar, MenuPopover,
-        MissionView, NotificationViews, OsdPopover, Shaders, SpotlightPanel, SwitcherPanel, View, Wallpaper,
+        MissionView, NotificationViews, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, View, Wallpaper,
     },
     shell::Popup,
     state::State,
@@ -54,6 +54,7 @@ pub struct Winit {
     spotlight: SpotlightPanel,
     launchpad: LaunchpadView,
     mission: MissionView,
+    screenshot: ScreenshotView,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -119,6 +120,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         components: None,
         spotlight: SpotlightPanel::default(),
         launchpad: LaunchpadView::default(),
+        screenshot: ScreenshotView::default(),
     });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
@@ -143,6 +145,11 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
+        self.capture_ask();
+        let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
+        let thumbnail = self.thumbnail_rect().zip(self.screenshots.thumbnail.as_ref().map(|(t, _)| t.clone()));
+        // Read back only when a screenshot or an allowed copy waits (decided per damage, after drawing).
+        let read_back = (self.frame_wanted(false), self.frame_wanted(true));
         let content = self.menu_bar();
         let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
         let icon_names: Vec<Option<String>> =
@@ -193,6 +200,7 @@ impl State {
             spotlight,
             launchpad: pad_view,
             mission,
+            screenshot,
         }) = self.backend.as_mut()
         else {
             return;
@@ -227,6 +235,27 @@ impl State {
                         ));
                     }
                     None => sheet.hide(),
+                }
+                // The screenshot overlay and its thumbnail: in front of all but the alert.
+                if let Some(shot) = &self.screenshots.shot {
+                    let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
+                    bar.extend(screenshot.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &mut self.symbols,
+                        shot,
+                        shot_flags,
+                        size,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
+                }
+                match &thumbnail {
+                    Some((rect, thumb)) => bar.extend(screenshot.thumbnail(renderer, shaders, thumb, *rect, dark, scale)),
+                    None => screenshot.hide_thumbnail(),
                 }
                 let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
                 if let Some(open) = self.switcher.open.as_ref().filter(|o| o.visible) {
@@ -439,6 +468,7 @@ impl State {
                     // Above the wallpaper (the last element), below every window.
                     elements.splice(elements.len().saturating_sub(1)..elements.len().saturating_sub(1), cards);
                 }
+                let size = output.current_mode().map_or_else(Default::default, |m| m.size);
                 damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, [0.1, 0.1, 0.1, 1.0]).map(|result| {
                     if gallery.is_some() {
                         // The test scene is a benchmark: wait for the GPU so the time includes its work (E1.4 budget).
@@ -447,7 +477,10 @@ impl State {
                         let _ = result.sync.wait();
                         tracing::debug!(?cpu, cpu_gpu = ?started.elapsed(), "test scene frame");
                     }
-                    result.damage.cloned()
+                    let damage = result.damage.cloned();
+                    let damaged = damage.as_ref().is_some_and(|d| !d.is_empty());
+                    let wanted = if damaged { read_back.1 } else { read_back.0 };
+                    (damage, damaged, wanted.then(|| crate::capture::read(renderer, &framebuffer, size)).flatten())
                 })
             }
             Err(err) => {
@@ -458,13 +491,14 @@ impl State {
         // Always swap, even without damage: the swap waits for vblank, which keeps an app that commits
         // in a loop at the refresh rate. When drawing starts is up to frame.rs (E1.10, see schedule_redraw).
         let render_time = started.elapsed();
-        let shown = match damage {
-            Ok(damage) => backend.submit(damage.as_deref()).inspect_err(|err| tracing::warn!("submit: {err}")).is_ok(),
+        let (shown, frame) = match damage {
+            Ok((damage, damaged, pixels)) => (backend.submit(damage.as_deref()).inspect_err(|err| tracing::warn!("submit: {err}")).is_ok(), Some((damaged, pixels))),
             Err(err) => {
                 tracing::warn!("render: {err}");
-                false
+                (false, None)
             }
         };
+        let scale = output.current_scale().fractional_scale();
 
         let benchmark = gallery.is_some();
         // Everything on this output was shown. ponytail: stamped after the swap returns, without a vblank counter;
@@ -492,6 +526,9 @@ impl State {
             tracing::trace!(?render_time, "frame");
             let refresh = Refresh::fixed(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
             feedback.presented(self.protocols.clock.now(), refresh, 0, wp_presentation_feedback::Kind::empty());
+        }
+        if let Some((damaged, pixels)) = frame {
+            self.after_frame(pixels, damaged, scale);
         }
         self.space.refresh();
         self.popups.cleanup();

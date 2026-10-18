@@ -10,6 +10,7 @@ pub mod force_quit;
 pub mod launchpad;
 pub mod notify;
 pub mod plank;
+pub mod screenshot;
 pub mod spotlight;
 pub mod switcher;
 

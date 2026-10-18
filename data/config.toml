@@ -73,10 +73,18 @@ zoom_percent = 150
 # "intelligent": hide while the focused window overlaps the dock (touch the bottom edge to show it); "never".
 hide = "intelligent"
 
+[privacy]
+# Programs (by path) allowed to record the screen through wlr-screencopy (grim, wf-recorder, OBS), and those denied.
+# The first time a program asks, an alert asks you and the answer is saved here. The screen-sharing portal,
+# xwayland-satellite and anything started with `noobsbot-desktop --trusted <command>` never ask; sandboxed (Flatpak)
+# apps never see screen recording at all.
+screen_recording = []
+screen_recording_denied = []
+
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, hide, hide-others, show-all, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",
-# mission-control, app-expose.
+# mission-control, app-expose, screenshot (the whole screen), screenshot-region, screenshot-toolbar.
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec helium-browser"
@@ -108,6 +116,10 @@ hide = "intelligent"
 "Super+Shift+Right" = "move-to-space right"
 "Super+Up" = "mission-control"
 "Super+Down" = "app-expose"
+# Screenshots (E6.8), saved to ~/Pictures/Screenshots and copied to the clipboard.
+"Super+Shift+3" = "screenshot"
+"Super+Shift+4" = "screenshot-region"
+"Super+Shift+5" = "screenshot-toolbar"
 "F12" = "quake"
 # Launchpad also opens from its dock icon; F4 is free for apps unless you bind it.
 # "F4" = "launchpad"

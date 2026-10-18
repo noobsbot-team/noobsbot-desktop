@@ -15,6 +15,7 @@ pub mod menubar;
 mod mission;
 mod notify;
 mod osd;
+mod screenshot;
 mod spotlight;
 mod switcher;
 mod titlebar;
@@ -35,6 +36,7 @@ pub use menubar::MenuBar;
 pub use mission::{MissionView, sliding};
 pub use notify::{NotificationViews, View};
 pub use osd::OsdPopover;
+pub use screenshot::ScreenshotView;
 use smithay::{
     backend::renderer::{
         Texture,

@@ -98,7 +98,7 @@ impl Ui<'_> {
     }
 
     /// D2 `fill` × `times`: controls on glass use it at 2× (D7 toggles), so they show.
-    fn fill(&self, times: f32) -> [f32; 4] {
+    pub(super) fn fill(&self, times: f32) -> [f32; 4] {
         if self.dark { [1.0, 1.0, 1.0, 0.08 * times] } else { [0.0, 0.0, 0.0, 0.05 * times] }
     }
 
@@ -125,7 +125,7 @@ impl Ui<'_> {
     }
 
     /// D7 hover / pressed overlay and focus ring over a control drawn at `rect`.
-    fn states(&mut self, rect: Rect, radius: f64, state: State) {
+    pub(super) fn states(&mut self, rect: Rect, radius: f64, state: State) {
         let overlay = match (state, self.dark) {
             (State::Hover, false) => Some([0.0, 0.0, 0.0, 0.06]),
             (State::Hover, true) => Some([1.0, 1.0, 1.0, 0.08]),

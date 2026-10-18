@@ -180,6 +180,10 @@ pub struct State {
     pub spaces: crate::spaces::Spaces,
     /// Mission Control (E5.2), while up or closing.
     pub mission: Option<crate::mission::Mission>,
+    /// The screenshot overlay, toolbar and thumbnail (E6.8).
+    pub screenshots: crate::shell::screenshot::Screenshots,
+    /// wlr-screencopy for other programs (E6.8, E6.11).
+    pub capture: crate::capture::Capture,
 }
 
 impl State {
@@ -202,6 +206,13 @@ impl State {
         handle.insert_source(socket, |stream, _, state| {
             if let Err(err) = state.display_handle.insert_client(stream, Arc::new(ClientState::default())) {
                 tracing::warn!("rejected client: {err}");
+            }
+        })?;
+        // `noobsbot-desktop --trusted <command>` connects here (E6.11, perms.rs).
+        let trusted = ListeningSocketSource::with_name(&crate::perms::trusted_socket(&socket_name).to_string_lossy())?;
+        handle.insert_source(trusted, |stream, _, state| {
+            if let Err(err) = state.display_handle.insert_client(stream, Arc::new(ClientState { trusted: true, ..Default::default() })) {
+                tracing::warn!("rejected trusted client: {err}");
             }
         })?;
         handle.insert_source(Generic::new(display, Interest::READ, Mode::Level), |_, display, state| {
@@ -351,6 +362,8 @@ impl State {
             launchpad: None,
             spaces: Default::default(),
             mission: None,
+            screenshots: Default::default(),
+            capture: crate::capture::Capture::new(&dh),
             display_handle: dh,
         })
     }
@@ -613,6 +626,8 @@ pub struct ClientState {
     pub compositor_state: CompositorClientState,
     /// Set for clients of a sandbox (security-context-v1); they get no privileged globals.
     pub security_context: Option<SecurityContext>,
+    /// Connected through the trusted socket (perms.rs): may record the screen without asking.
+    pub trusted: bool,
 }
 
 impl ClientData for ClientState {

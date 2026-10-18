@@ -52,6 +52,12 @@ pub enum Kind {
         passkey: bool,
         field: TextField,
     },
+    /// An app asks to capture the screen (E6.11): `exe` is its program, remembered in `[privacy]`.
+    ScreenRecording {
+        app: String,
+        exe: String,
+        client: ClientId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +87,7 @@ impl Alert {
             Kind::NotResponding { app, .. } => format!("{app} is not responding."),
             Kind::Wifi { ssid, .. } => format!("Join “{ssid}”?"),
             Kind::Pin { device, .. } => format!("Pair with “{device}”"),
+            Kind::ScreenRecording { app, .. } => format!("“{app}” would like to record this computer's screen."),
         }
     }
 
@@ -97,12 +104,14 @@ impl Alert {
             Kind::Pin { passkey: false, .. } => "Enter the PIN shown on the device or in its manual.".into(),
             Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
+            Kind::ScreenRecording { .. } => "It will see everything on the screen, including other apps' windows. The answer is kept in config.toml.".into(),
         }
     }
 
     pub fn cancel(&self) -> &'static str {
         match &self.kind {
             Kind::NotResponding { .. } => "Wait",
+            Kind::ScreenRecording { .. } => "Don't Allow",
             _ => "Cancel",
         }
     }
@@ -117,6 +126,7 @@ impl Alert {
             Kind::NotResponding { .. } => "Force Quit",
             Kind::Wifi { .. } => "Join",
             Kind::Pin { .. } => "Pair",
+            Kind::ScreenRecording { .. } => "Allow",
         }
     }
 
@@ -252,6 +262,7 @@ impl State {
             Kind::Wifi { ssid, join: Some((ap, device)), field } => {
                 return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
             }
+            Kind::ScreenRecording { exe, client, .. } => return self.recording_answer(client, exe, button == Button::Confirm),
         };
         match (power, self.nested) {
             (Power::LogOut, _) => self.loop_signal.stop(),

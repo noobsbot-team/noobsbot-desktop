@@ -83,7 +83,10 @@ impl State {
                     }
                     // The app switcher takes every key while it's up; the Force Quit window its few.
                     let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
-                    if state.switcher_key(raw, mods)
+                    // The screenshot overlay takes every key but desktop shortcuts (Super+Shift+5 closes it).
+                    let shot = state.screenshots.shot.is_some() && shortcuts::lookup(&state.bindings, mods, raw, state.nested).is_none();
+                    if (shot && state.shot_key(key.modified_sym()))
+                        || state.switcher_key(raw, mods)
                         || state.force_quit_key(key.modified_sym())
                         || state.mission_key(key.modified_sym())
                         || state.spotlight_key(key.modified_sym(), raw, mods)
@@ -136,6 +139,7 @@ impl State {
                 // pointer comes to the front.
                 if state == ButtonState::Pressed
                     && !pointer.is_grabbed()
+                    && !self.shot_press(self.to_output(location), event.button_code() == BTN_LEFT)
                     && !self.dock_press(self.to_output(location), event.button_code())
                     && !self.mission_press(self.to_output(location), event.button_code())
                     && !self.shell_press(self.to_output(location), event.button_code() == BTN_RIGHT)
@@ -172,6 +176,7 @@ impl State {
                     }
                 }
                 if state == ButtonState::Released && event.button_code() == BTN_LEFT {
+                    self.shot_release();
                     self.bar_release(pointer.current_location());
                     self.mission_release(self.to_output(pointer.current_location()));
                     self.shell_release();

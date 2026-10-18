@@ -72,6 +72,8 @@ pub enum Action {
     MissionControl,
     /// Mission Control with only the focused app's windows.
     AppExpose,
+    /// Super+Shift+3 / 4 / 5 (E6.8).
+    Screenshot(crate::shell::screenshot::Start),
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -151,6 +153,9 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("move-to-space", "right") => Some(Action::MoveToSpace(1)),
         ("mission-control", "") => Some(Action::MissionControl),
         ("app-expose", "") => Some(Action::AppExpose),
+        ("screenshot", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Screen)),
+        ("screenshot-region", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Region)),
+        ("screenshot-toolbar", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Toolbar)),
         _ => None,
     };
     let mut table = Vec::new();
@@ -285,6 +290,7 @@ impl State {
             }
             Action::Dock(command) => self.dock_command(command),
             Action::Launchpad => self.toggle_launchpad(),
+            Action::Screenshot(start) => self.screenshot(start),
         }
     }
 
