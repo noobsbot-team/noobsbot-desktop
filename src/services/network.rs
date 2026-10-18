@@ -29,6 +29,8 @@ trait Manager {
     #[zbus(property)]
     fn wireless_enabled(&self) -> zbus::Result<bool>;
     #[zbus(property)]
+    fn set_wireless_enabled(&self, on: bool) -> zbus::Result<()>;
+    #[zbus(property)]
     fn primary_connection(&self) -> zbus::Result<OwnedObjectPath>;
 }
 
@@ -57,6 +59,17 @@ pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
 }
 
 /// `None` when NetworkManager doesn't answer.
+/// Control Center ▸ Wi-Fi.
+pub async fn set_wifi(bus: &Connection, on: bool) {
+    let result = match ManagerProxy::builder(bus).cache_properties(CacheProperties::No).build().await {
+        Ok(manager) => manager.set_wireless_enabled(on).await,
+        Err(err) => Err(err),
+    };
+    if let Err(err) = result {
+        tracing::warn!("Wi-Fi {}: {err}", if on { "on" } else { "off" });
+    }
+}
+
 async fn read(bus: &Connection) -> Option<Network> {
     let manager = ManagerProxy::builder(bus).cache_properties(CacheProperties::No).build().await.ok()?;
     let wifi_enabled = manager.wireless_enabled().await.ok()?;

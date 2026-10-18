@@ -136,6 +136,10 @@ pub struct State {
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
     pub osd: Option<crate::shell::Osd>,
+    /// Do Not Disturb, from Control Center; the notification server (M4) honours it.
+    pub dnd: bool,
+    /// The Control Center slider being dragged.
+    pub shell_drag: Option<crate::shell::control::Control>,
     /// Hides the OSD; replaced on every key press.
     pub osd_timer: Option<smithay::reexports::calloop::RegistrationToken>,
 }
@@ -262,6 +266,8 @@ impl State {
             symbols: Default::default(),
             popup: None,
             osd: None,
+            dnd: false,
+            shell_drag: None,
             osd_timer: None,
             display_handle: dh,
         })

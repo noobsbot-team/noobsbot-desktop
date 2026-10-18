@@ -43,8 +43,9 @@ pub enum Update {
 pub enum Command {
     /// An IANA zone such as `Asia/Kathmandu` (E2.6).
     Timezone(String),
-    #[expect(dead_code, reason = "the Control Center (E2.3) waits for the M2 mockup approval")]
     PowerProfile(String),
+    Wifi(bool),
+    Bluetooth(bool),
     /// Percent.
     Brightness(u8),
     /// Percent of the default output (`true`) or input.
@@ -175,6 +176,8 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
             (Command::Brightness(percent), Some(bus), _) => brightness::set(bus, percent, updates).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
             (Command::Suspend, Some(bus), _) => suspend(bus).await,
+            (Command::Wifi(on), Some(bus), _) => network::set_wifi(bus, on).await,
+            (Command::Bluetooth(on), Some(bus), _) => bluetooth::set_powered(bus, on).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
             (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),

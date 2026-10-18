@@ -1,6 +1,8 @@
 //! Shell popups opened from the menu bar (E2.2): which one is open, where it sits, and what a click on the bar or in
 //! a popup does. Layout lives here as plain rectangles so drawing (render/) and clicks share it.
 
+pub mod control;
+
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use smithay::utils::{Logical, Point, Rectangle};
 
@@ -37,6 +39,7 @@ pub enum Popup {
     /// The month shown, as (year, month 1–12).
     Calendar { year: i32, month: u32 },
     Menu(Menu),
+    Control,
 }
 
 impl Popup {
@@ -46,12 +49,14 @@ impl Popup {
             Popup::Calendar { .. } => BarItem::Clock,
             Popup::Menu(Menu::Logo) => BarItem::Logo,
             Popup::Menu(Menu::App) => BarItem::App,
+            Popup::Control => BarItem::ControlCenter,
         }
     }
 }
 
 /// What a click on `item` opens.
-// ponytail: Control Center and the status items' menus come next; until then they open nothing.
+// ponytail: the status items' own menus (Wi-Fi list, Bluetooth devices) come with module expansion; until then they
+// open nothing.
 fn popup_for(item: BarItem) -> Option<Popup> {
     match item {
         BarItem::Logo => Some(Popup::Menu(Menu::Logo)),
@@ -60,7 +65,8 @@ fn popup_for(item: BarItem) -> Option<Popup> {
             let (year, month) = this_month();
             Some(Popup::Calendar { year, month })
         }
-        BarItem::Status(_) | BarItem::ControlCenter => None,
+        BarItem::ControlCenter => Some(Popup::Control),
+        BarItem::Status(_) => None,
     }
 }
 
@@ -220,6 +226,7 @@ impl State {
             Popup::Calendar { year, month } => Some(calendar_layout(width, grid(year, month, self.config.clock.week_start.into()).len()).rect),
             // A menu's width follows its text, so the last frame's layout is the one to hit.
             Popup::Menu(_) => self.backend.as_ref()?.menu.rect(),
+            Popup::Control => Some(self.control_layout().rect),
         }
     }
 
@@ -274,12 +281,16 @@ impl State {
                     self.run_action(action);
                 }
             }
+            Popup::Control => self.control_press(location),
         }
     }
 
     /// The pointer moved from `from` to `to` (output-relative). With a popup open, sliding along the bar opens the
     /// next item's popup, as on macOS; in a menu, the hovered row follows.
     pub fn shell_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
+        if self.shell_drag.is_some() {
+            return self.control_drag(to);
+        }
         let Some(open) = self.popup else { return };
         let Some(backend) = self.backend.as_ref() else { return };
         if let Some(next) = backend.menu_bar.hit(to).filter(|item| *item != open.item()).and_then(popup_for) {
@@ -309,6 +320,7 @@ impl State {
 
     /// Esc: closes the open popup. `true` if there was one.
     pub fn close_popup(&mut self) -> bool {
+        self.shell_drag = None;
         let open = self.popup.take().is_some();
         if open {
             self.schedule_redraw();

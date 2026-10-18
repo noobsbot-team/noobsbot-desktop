@@ -7,6 +7,7 @@ use zbus::{
     Connection,
     fdo::{ManagedObjects, ObjectManagerProxy},
     names::OwnedInterfaceName,
+    proxy::CacheProperties,
     zvariant::OwnedValue,
 };
 
@@ -38,6 +39,30 @@ pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
 async fn read(bus: &Connection) -> Option<Bluetooth> {
     let manager = ObjectManagerProxy::builder(bus).destination(SERVICE).ok()?.path("/").ok()?.build().await.ok()?;
     summarize(&manager.get_managed_objects().await.ok()?)
+}
+
+#[zbus::proxy(interface = "org.bluez.Adapter1", default_service = "org.bluez")]
+trait Adapter {
+    #[zbus(property)]
+    fn powered(&self) -> zbus::Result<bool>;
+    #[zbus(property)]
+    fn set_powered(&self, on: bool) -> zbus::Result<()>;
+}
+
+/// Control Center ▸ Bluetooth: every adapter on or off.
+pub async fn set_powered(bus: &Connection, on: bool) {
+    let set = async {
+        let manager = ObjectManagerProxy::builder(bus).destination(SERVICE)?.path("/")?.build().await?;
+        for (path, interfaces) in manager.get_managed_objects().await? {
+            if get(&interfaces, "org.bluez.Adapter1", "Address").is_some() {
+                AdapterProxy::builder(bus).path(path)?.cache_properties(CacheProperties::No).build().await?.set_powered(on).await?;
+            }
+        }
+        zbus::Result::Ok(())
+    };
+    if let Err(err) = set.await {
+        tracing::warn!("Bluetooth {}: {err}", if on { "on" } else { "off" });
+    }
 }
 
 type Interfaces = HashMap<OwnedInterfaceName, HashMap<String, OwnedValue>>;

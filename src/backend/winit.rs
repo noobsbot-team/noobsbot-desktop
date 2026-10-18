@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, CalendarPopover, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
+    render::{self, CalendarPopover, ControlCenter, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
     shell::Popup,
     state::State,
 };
@@ -41,6 +41,7 @@ pub struct Winit {
     calendar: CalendarPopover,
     pub menu: MenuPopover,
     osd: OsdPopover,
+    control: ControlCenter,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -85,7 +86,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default() });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default() });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -110,7 +111,8 @@ impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
         let content = self.menu_bar();
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar, menu, osd }) = self.backend.as_mut() else { return };
+        let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar, menu, osd, control }) = self.backend.as_mut() else { return };
         let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
@@ -137,6 +139,11 @@ impl State {
                         let anchor = menu_bar.pill(popup.item()).map_or(0, |r| r.loc.x);
                         let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
                         bar.extend(menu.elements(renderer, shaders, &mut self.text, &rows, anchor, width, hover, dark, accent, appearance.glass_opacity, scale));
+                    }
+                    Some(Popup::Control) => {
+                        if let Some(status) = &status {
+                            bar.extend(control.elements(renderer, shaders, &mut self.text, &mut self.symbols, status, width, dark, accent, appearance.glass_opacity, scale));
+                        }
                     }
                     None => {}
                 }

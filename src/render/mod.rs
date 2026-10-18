@@ -3,6 +3,7 @@
 //! damages nothing and an idle desktop draws nothing.
 
 pub mod calendar;
+mod control;
 mod gallery;
 mod menu;
 pub mod menubar;
@@ -35,6 +36,7 @@ use smithay::{
 };
 pub use gallery::Gallery;
 pub use calendar::CalendarPopover;
+pub use control::ControlCenter;
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
 pub use osd::OsdPopover;
