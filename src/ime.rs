@@ -75,7 +75,12 @@ impl Field {
     }
 }
 
-pub type TextInputs = Vec<(ZwpTextInputV3, Field)>;
+#[derive(Debug, Default)]
+pub struct TextInputs {
+    fields: Vec<(ZwpTextInputV3, Field)>,
+    /// The surface we sent text-input `enter` for; smithay only does while an input method runs.
+    entered: Option<WlSurface>,
+}
 
 /// Pairs the configured codes with xkb's names; a missing code (the layout fell back to xkb's default) becomes the
 /// name's first two letters.
@@ -172,10 +177,27 @@ impl State {
         popup.set_location(at - origin);
     }
 
+    /// Keyboard focus moved to `focused`: without an input method smithay sends text-input `enter`/`leave` to nobody,
+    /// so apps never enable their text fields; send them ourselves.
+    // ponytail: smithay hides whether an input method runs, so with fcitx5 the app gets enter/leave twice (Qt and GTK
+    // just enable again); intercept zwp_input_method_v2 the way text input is, if a client minds.
+    pub fn text_input_focus(&mut self, focused: Option<&WlSurface>) {
+        let handle = self.seat.text_input().clone();
+        if let Some(old) = self.text_inputs.entered.take().filter(|old| old.is_alive() && Some(old) != focused) {
+            handle.set_focus(Some(old));
+            handle.leave();
+            handle.set_focus(focused.cloned());
+        }
+        if focused.is_some() {
+            handle.enter();
+        }
+        self.text_inputs.entered = focused.cloned();
+    }
+
     /// The enabled text field of the app with keyboard focus, and its surface.
     fn focused_field(&self) -> Option<(ZwpTextInputV3, Field, WlSurface)> {
         let focus = self.seat.text_input().focus()?;
-        let (input, field) = self.text_inputs.iter().find(|(t, f)| f.enabled && t.is_alive() && t.id().same_client_as(&focus.id()))?;
+        let (input, field) = self.text_inputs.fields.iter().find(|(t, f)| f.enabled && t.is_alive() && t.id().same_client_as(&focus.id()))?;
         Some((input.clone(), *field, focus))
     }
 
@@ -246,19 +268,19 @@ impl Dispatch<ZwpTextInputV3, TextInputUserData> for State {
         dh: &DisplayHandle,
         init: &mut DataInit<'_, Self>,
     ) {
-        match state.text_inputs.iter_mut().find(|(t, _)| t == resource) {
+        match state.text_inputs.fields.iter_mut().find(|(t, _)| t == resource) {
             Some((_, field)) => field.request(&request),
             None => {
                 let mut field = Field::default();
                 field.request(&request);
-                state.text_inputs.push((resource.clone(), field));
+                state.text_inputs.fields.push((resource.clone(), field));
             }
         }
         <TextInputManagerState as Dispatch<ZwpTextInputV3, TextInputUserData, State>>::request(state, client, resource, request, data, dh, init);
     }
 
     fn destroyed(state: &mut Self, client: ClientId, resource: &ZwpTextInputV3, data: &TextInputUserData) {
-        state.text_inputs.retain(|(t, _)| t != resource);
+        state.text_inputs.fields.retain(|(t, _)| t != resource);
         <TextInputManagerState as Dispatch<ZwpTextInputV3, TextInputUserData, State>>::destroyed(state, client, resource, data);
     }
 }
