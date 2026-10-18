@@ -303,6 +303,7 @@ impl State {
                     crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
                     crate::services::Update::Resumed => state.idle_activity(),
+                    crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                 }
                 state.schedule_redraw();
             }

@@ -310,8 +310,11 @@ impl State {
             (_, Some(item)) => {
                 let again = open.and_then(Popup::item) == Some(item);
                 self.popup = if again { None } else { popup_for(item) };
-                if let (BarItem::Tray(i), false) = (item, again) {
-                    self.tray_press(i, location, secondary);
+                match (item, again) {
+                    (BarItem::Tray(i), false) => self.tray_press(i, location, secondary),
+                    // fcitx5 tells nobody when its method changes: ask now.
+                    (BarItem::Input, false) => self.services.send(crate::services::Command::FcitxRead),
+                    _ => {}
                 }
                 true
             }

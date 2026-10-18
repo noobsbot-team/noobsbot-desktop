@@ -30,6 +30,8 @@ pub struct Layouts {
     pub active: usize,
     /// fcitx5 is installed: the menu offers its settings.
     pub fcitx: bool,
+    /// fcitx5's input methods while it is on the bus.
+    pub methods: Option<crate::services::fcitx::Fcitx>,
 }
 
 /// Pairs the configured codes with xkb's names; a missing code (the layout fell back to xkb's default) becomes the
@@ -55,6 +57,28 @@ fn place(cursor: Rectangle<i32, Logical>, size: Size<i32, Logical>, screen: Rect
     (x, y).into()
 }
 
+/// The input menu's rows: layouts, fcitx5's methods (a click switches), its settings.
+fn menu_rows(layouts: &Layouts) -> Vec<Option<Row>> {
+    let tick = |on: bool| if on { "✓" } else { "" };
+    let mut rows: Vec<Option<Row>> = layouts
+        .list
+        .iter()
+        .enumerate()
+        .map(|(i, (_, name))| Some(Row { label: name.clone(), shortcut: tick(i == layouts.active), action: Some(Action::Layout(Some(i))) }))
+        .collect();
+    if let Some(fcitx) = layouts.methods.as_ref().filter(|f| !f.methods.is_empty()) {
+        rows.push(None);
+        rows.extend(fcitx.methods.iter().map(|(id, name)| {
+            Some(Row { label: name.clone(), shortcut: tick(*id == fcitx.current), action: Some(Action::InputMethod(id.clone())) })
+        }));
+    }
+    if layouts.fcitx || layouts.methods.is_some() {
+        rows.push(None);
+        rows.push(Some(Row { label: "Input Method Settings…".into(), shortcut: "", action: Some(Action::Spawn("fcitx5-configtool".into())) }));
+    }
+    rows
+}
+
 fn on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
@@ -67,7 +91,7 @@ impl State {
             let xkb = ctx.xkb().lock().unwrap();
             xkb.layouts().map(|l| xkb.layout_name(l).to_owned()).collect()
         });
-        self.layouts = Layouts { list: pair(codes, names), active: 0, fcitx: on_path("fcitx5") };
+        self.layouts = Layouts { list: pair(codes, names), active: 0, fcitx: on_path("fcitx5"), methods: self.layouts.methods.take() };
     }
 
     /// Switches to layout `index`, or the next one (Super+Ctrl+Space), and says which in the OSD.
@@ -85,27 +109,13 @@ impl State {
     pub fn input_item(&self) -> Option<String> {
         let layouts = &self.layouts;
         let code = layouts.list.get(layouts.active).map_or_else(|| "EN".into(), |(code, _)| code.to_uppercase());
-        (layouts.list.len() > 1 || layouts.fcitx).then_some(code)
+        (layouts.list.len() > 1 || layouts.fcitx || layouts.methods.is_some()).then_some(code)
     }
 
-    /// The input menu: every layout (the active one ticked), then fcitx5's settings when it's installed.
-    // ponytail: fcitx5's own input methods (m17n Nepali, Pinyin) are picked in its tray icon and configtool; listing
-    // them here needs its D-Bus controller (org.fcitx.Fcitx.Controller1) on the services thread.
+    /// The input menu: every layout (the active one ticked), fcitx5's input methods while it runs, then its settings
+    /// when it's installed.
     pub fn input_menu_rows(&self) -> Vec<Option<Row>> {
-        let layouts = &self.layouts;
-        let mut rows: Vec<Option<Row>> = layouts
-            .list
-            .iter()
-            .enumerate()
-            .map(|(i, (_, name))| {
-                Some(Row { label: name.clone(), shortcut: if i == layouts.active { "✓" } else { "" }, action: Some(Action::Layout(Some(i))) })
-            })
-            .collect();
-        if layouts.fcitx {
-            rows.push(None);
-            rows.push(Some(Row { label: "Input Method Settings…".into(), shortcut: "", action: Some(Action::Spawn("fcitx5-configtool".into())) }));
-        }
-        rows
+        menu_rows(&self.layouts)
     }
 
     /// Moves an input-method popup to under its text cursor, now that its size or the cursor changed.
@@ -173,6 +183,21 @@ mod tests {
         let names = || vec!["English (US)".to_string(), "Nepali".to_string()];
         assert_eq!(pair("us, np", names()), [("us".into(), "English (US)".into()), ("np".into(), "Nepali".into())]);
         assert_eq!(pair("", names()), [("en".into(), "English (US)".into()), ("ne".into(), "Nepali".into())]);
+    }
+
+    #[test]
+    fn menu_lists_fcitx_methods_while_it_runs() {
+        let mut layouts = Layouts { list: vec![("us".into(), "English (US)".into())], ..Default::default() };
+        assert_eq!(menu_rows(&layouts).len(), 1);
+        let methods = vec![("keyboard-us".into(), "English (US)".into()), ("m17n_ne_rom".into(), "Nepali (Romanized)".into())];
+        layouts.methods = Some(crate::services::fcitx::Fcitx { methods, current: "m17n_ne_rom".into() });
+        let rows = menu_rows(&layouts);
+        // Layout, gap, two methods, gap, settings.
+        assert_eq!(rows.len(), 6);
+        assert!(rows[1].is_none() && rows[4].is_none());
+        let nepali = rows[3].as_ref().unwrap();
+        assert_eq!((nepali.shortcut, &nepali.action), ("✓", &Some(Action::InputMethod("m17n_ne_rom".into()))));
+        assert_eq!(rows[2].as_ref().unwrap().shortcut, "");
     }
 
     #[test]

@@ -78,6 +78,8 @@ pub enum Action {
     ShowDesktop,
     /// Keyboard layout n, from 0, or the next one (Super+Ctrl+Space, E6.12).
     Layout(Option<usize>),
+    /// An fcitx5 input method, by unique name (the input menu).
+    InputMethod(String),
     /// Super+Shift+3 / 4 / 5 (E6.8).
     Screenshot(crate::shell::screenshot::Start),
 }
@@ -244,6 +246,7 @@ impl State {
             Action::ForceQuit => self.open_force_quit(),
             Action::Spotlight => self.toggle_spotlight(),
             Action::Layout(index) => self.switch_layout(index),
+            Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
             // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
             Action::Volume(up) => {
