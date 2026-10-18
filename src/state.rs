@@ -99,6 +99,8 @@ pub struct State {
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
     /// The pid of the `noobsbot --quake` the quake action started; its window gets `rules::QUAKE_ID`.
     pub quake: Option<u32>,
+    /// xwayland-satellite's `DISPLAY` (E6.9), given to every program we start.
+    pub x_display: Option<String>,
     pub zones: crate::input::Zones,
 
     pub compositor_state: CompositorState,
@@ -295,6 +297,7 @@ impl State {
             redraw_pending: false,
             resize: None,
             nested,
+            x_display: None,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
             config,

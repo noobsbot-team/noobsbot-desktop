@@ -25,6 +25,7 @@ mod text;
 mod theme;
 mod ui;
 mod wm;
+mod xwayland;
 
 use smithay::reexports::{
     calloop::{EventLoop, channel},
@@ -245,6 +246,7 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
     }
 
     tracing::info!("listening on WAYLAND_DISPLAY={}", state.socket_name.to_string_lossy());
+    state.x_display = xwayland::spawn(&state.socket_name);
     if !command.is_empty() {
         state.spawn(&command);
     }

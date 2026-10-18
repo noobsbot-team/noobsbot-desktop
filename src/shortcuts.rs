@@ -304,6 +304,9 @@ impl State {
         // ponytail: fire and forget; supervised launching lives in apps.rs (M3).
         let mut command = std::process::Command::new(program);
         command.args(args).env("WAYLAND_DISPLAY", &self.socket_name).env("XDG_ACTIVATION_TOKEN", &token).env("DESKTOP_STARTUP_ID", &token);
+        if let Some(display) = &self.x_display {
+            command.env("DISPLAY", display);
+        }
         match command.spawn() {
             Ok(mut child) => {
                 let pid = child.id();
