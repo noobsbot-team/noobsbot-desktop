@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, AlertSheet, CalendarPopover, ControlCenter, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
+    render::{self, AlertSheet, CalendarPopover, Components, ControlCenter, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
     shell::Popup,
     state::State,
 };
@@ -37,6 +37,8 @@ pub struct Winit {
     pub clock: FrameClock,
     /// The `--test-scene` material gallery (E1.4), drawn over the wallpaper when set.
     pub gallery: Option<Gallery>,
+    /// The `--show gallery` component gallery (E2.1), over the whole output under the bar and popups.
+    pub components: Option<Components>,
     pub menu_bar: MenuBar,
     calendar: CalendarPopover,
     pub menu: MenuPopover,
@@ -87,7 +89,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default() });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, components: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default() });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -113,7 +115,7 @@ impl State {
     pub fn render(&mut self) {
         let content = self.menu_bar();
         let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar, menu, osd, control, alert: sheet }) = self.backend.as_mut() else { return };
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, calendar, menu, osd, control, alert: sheet }) = self.backend.as_mut() else { return };
         let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
@@ -171,6 +173,9 @@ impl State {
                         scale,
                     )),
                     None => menu_bar.hide(),
+                }
+                if let (Some(components), Some(geo)) = (components.as_mut(), self.space.output_geometry(output)) {
+                    bar.extend(components.elements(renderer, shaders, &mut self.text, &mut self.symbols, geo.size, dark, accent, appearance.glass_opacity, scale));
                 }
                 let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar);
                 if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {

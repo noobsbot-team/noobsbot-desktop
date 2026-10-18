@@ -19,6 +19,7 @@ mod state;
 mod symbols;
 mod sync;
 mod text;
+mod ui;
 mod wm;
 
 use smithay::reexports::{
@@ -29,7 +30,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|gallery] [-- command [args...]]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -136,7 +137,13 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         }
         // Stays up: no hide timer.
         Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),
-        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert)"),
+        // Every D8 component in its D7 states (E2.1 done check).
+        Some("gallery") => {
+            if let Some(winit) = state.backend.as_mut() {
+                winit.components = Some(Default::default());
+            }
+        }
+        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert, gallery)"),
         None => {}
     }
 
