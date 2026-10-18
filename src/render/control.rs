@@ -11,7 +11,7 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
-    shell::control::{self, Layout, Status, TOGGLE, media_buttons, profile_name, slider_fill, tile_toggle, toggle_in, track_in},
+    shell::control::{self, LIST_ROW, Layout, Status, TOGGLE, media_buttons, profile_name, slider_fill, tile_toggle, toggle_in, track_in},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
     wm::Rect,
@@ -44,6 +44,23 @@ fn battery_symbol((percent, charging): (u8, bool)) -> Symbol {
         38.. => Symbol::BatteryMedium,
         13.. => Symbol::BatteryLow,
         _ => Symbol::BatteryEmpty,
+    }
+}
+
+/// From `x` to `right` at `y`, `h` tall; at least 1 px wide.
+fn row_rect(x: i32, y: i32, right: i32, h: i32) -> Rect {
+    Rectangle::new((x, y).into(), ((right - x).max(1), h).into())
+}
+
+/// A sound output's symbol, from its name.
+fn output_symbol(name: &str) -> Symbol {
+    let name = name.to_lowercase();
+    if name.contains("headphone") || name.contains("headset") {
+        Symbol::Headphones
+    } else if name.contains("hdmi") || name.contains("displayport") {
+        Symbol::Monitor
+    } else {
+        Symbol::Speaker
     }
 }
 
@@ -87,7 +104,7 @@ impl ControlCenter {
         // (piece, rect, left-aligned); a left-aligned piece's rect shrinks to its width.
         let mut pieces: Vec<(std::sync::Arc<Rendered>, Rect, bool)> = Vec::new();
         let mut put = |piece, rect, left| pieces.push((piece, rect, left));
-        let row = |x: i32, y: i32, right: i32, h: i32| Rectangle::new((x, y).into(), ((right - x).max(1), h).into());
+        let row = row_rect;
 
         let unavailable = (false, "Unavailable".to_owned());
         for (i, (symbol, name, (on, sub))) in
@@ -118,6 +135,20 @@ impl ControlCenter {
             put(text.label(name, title, 200, scale), row(card.loc.x + 12, card.loc.y + 8, card.loc.x + card.size.w - 12, 16), true);
             let track = track_in(card);
             put(symbols.get(symbol, Weight::Fill, 16, scale, on_fill), Rectangle::new((track.loc.x + 6, track.loc.y + 6).into(), (16, 16).into()), false);
+        }
+        if let Some(card) = layout.sound {
+            let caret = if status.sound_open { Symbol::CaretDown } else { Symbol::CaretRight };
+            put(symbols.get(caret, Weight::Regular, 12, scale, secondary), Rectangle::new((card.loc.x + card.size.w - 24, card.loc.y + 10).into(), (12, 12).into()), false);
+        }
+        for (row, (_, name, current)) in layout.outputs.iter().zip(&status.outputs) {
+            let icon = Rectangle::new((row.loc.x + 6, row.loc.y + (LIST_ROW - 16) / 2).into(), (16, 16).into());
+            put(symbols.get(output_symbol(name), Weight::Regular, 16, scale, label), icon, false);
+            let x = icon.loc.x + 16 + 8;
+            let right = row.loc.x + row.size.w - 30;
+            put(text.label(name, body, (right - x) as u32, scale), row_rect(x, row.loc.y, right, LIST_ROW), true);
+            if *current {
+                put(symbols.get(Symbol::Check, Weight::Regular, 14, scale, label), Rectangle::new((row.loc.x + row.size.w - 22, row.loc.y + (LIST_ROW - 14) / 2).into(), (14, 14).into()), false);
+            }
         }
 
         let media = layout.media;

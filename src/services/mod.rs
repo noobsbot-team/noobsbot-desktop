@@ -52,7 +52,6 @@ pub enum Command {
     Volume { output: bool, percent: u8 },
     Mute { output: bool, muted: bool },
     /// The sound picker: a `sound::Output` id.
-    #[expect(dead_code, reason = "the Control Center (E2.3) waits for the M2 mockup approval")]
     Output(u32),
     /// To the player `Update::Media` named.
     Media { player: String, action: media::Action },

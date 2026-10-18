@@ -16,6 +16,10 @@ const TOP: i32 = 104;
 const SLIDER_CARD: i32 = 62;
 const MEDIA_CARD: i32 = 56;
 const POWER_CARD: i32 = 44;
+/// D8 list row.
+pub const LIST_ROW: i32 = 28;
+/// Above and below an expanded list.
+const LIST_PAD: i32 = 6;
 
 /// Everything Control Center shows, read from the services and the theme.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -35,6 +39,10 @@ pub struct Status {
     pub battery: Option<(u8, bool)>,
     /// The active power-profiles-daemon profile.
     pub profile: Option<String>,
+    /// Sound outputs: PipeWire id, short name, current.
+    pub outputs: Vec<(u32, String, bool)>,
+    /// The Sound module shows its outputs.
+    pub sound_open: bool,
 }
 
 /// A clickable or draggable part.
@@ -50,6 +58,10 @@ pub enum Control {
     PlayPause,
     Next,
     Power,
+    /// The Sound module's title row: shows or hides the outputs.
+    SoundMore,
+    /// A sound output, by PipeWire id.
+    Output(u32),
 }
 
 /// Every module's place, output-relative.
@@ -64,6 +76,8 @@ pub struct Layout {
     pub dark: Rect,
     pub display: Option<Rect>,
     pub sound: Option<Rect>,
+    /// The output rows of an open Sound module.
+    pub outputs: Vec<Rect>,
     pub media: Rect,
     pub power: Option<Rect>,
 }
@@ -111,17 +125,30 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
     let mut hits = vec![(Control::Wifi, toggle_in(network, 0)), (Control::Bluetooth, toggle_in(network, 1)), (Control::Dnd, dnd), (Control::Dark, dark)];
     let mut cards = vec![network, dnd, dark];
     y += TOP + GAP;
-    let mut slider = |control, present: bool, y: &mut i32| {
+    let mut slider = |control, present: bool, extra: i32, y: &mut i32| {
         present.then(|| {
-            let c = card(PAD, *y, INNER, SLIDER_CARD);
+            let c = card(PAD, *y, INNER, SLIDER_CARD + extra);
             hits.push((control, track_in(c)));
             cards.push(c);
-            *y += SLIDER_CARD + GAP;
+            *y += SLIDER_CARD + extra + GAP;
             c
         })
     };
-    let display = slider(Control::Brightness, status.brightness.is_some(), &mut y);
-    let sound = slider(Control::Volume, status.volume.is_some(), &mut y);
+    let display = slider(Control::Brightness, status.brightness.is_some(), 0, &mut y);
+    let open = status.sound_open && !status.outputs.is_empty();
+    let extra = if open { 2 * LIST_PAD + status.outputs.len() as i32 * LIST_ROW } else { 0 };
+    let sound = slider(Control::Volume, status.volume.is_some(), extra, &mut y);
+    let mut outputs = Vec::new();
+    if let Some(c) = sound {
+        hits.push((Control::SoundMore, Rectangle::new(c.loc, (c.size.w, 28).into())));
+        if open {
+            for (i, (id, _, _)) in status.outputs.iter().enumerate() {
+                let row = Rectangle::new((c.loc.x + LIST_PAD, c.loc.y + SLIDER_CARD + LIST_PAD + i as i32 * LIST_ROW).into(), (c.size.w - 2 * LIST_PAD, LIST_ROW).into());
+                hits.push((Control::Output(*id), row));
+                outputs.push(row);
+            }
+        }
+    }
     let media = card(PAD, y, INNER, MEDIA_CARD);
     cards.push(media);
     if status.media.is_some() {
@@ -138,7 +165,7 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
         c
     });
     // The last gap becomes the bottom padding.
-    Layout { rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()), cards, hits, network, dnd, dark, display, sound, media, power }
+    Layout { rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()), cards, hits, network, dnd, dark, display, sound, outputs, media, power }
 }
 
 /// The percent a slider shows with the pointer at `x`: the knob end follows the pointer, as on macOS.
@@ -150,6 +177,27 @@ pub fn slider_value(track: Rect, x: f64) -> u8 {
 /// The filled width of a slider at `percent`: never less than its height, so the glyph always sits on the fill.
 pub fn slider_fill(track: Rect, percent: u8) -> i32 {
     TOGGLE + (track.size.w - TOGGLE) * i32::from(percent.min(100)) / 100
+}
+
+/// Output names without what they all share (the sound card, "Raptor Lake-P/U/H cAVS") or PipeWire's
+/// "Output (Stereo)": `HDMI / DisplayPort 2`, `Speaker`.
+pub fn short_names(names: &[String]) -> Vec<String> {
+    let common = match names {
+        [first, rest @ ..] if !rest.is_empty() => {
+            let shared = rest.iter().fold(first.len(), |n, other| first.bytes().zip(other.bytes()).take(n).take_while(|(a, b)| a == b).count());
+            // Back to a word boundary, so "Speaker" and "Spdif" keep their first letters.
+            first[..shared].rfind(' ').map_or(0, |i| i + 1)
+        }
+        _ => 0,
+    };
+    names
+        .iter()
+        .map(|name| {
+            let name = name.get(common..).unwrap_or(name);
+            let name = name.trim_end_matches(" (Stereo)").trim_end_matches(" (Mono)").trim_end_matches(" Output").trim();
+            if name.is_empty() { "Output".to_owned() } else { name.to_owned() }
+        })
+        .collect()
 }
 
 /// Power-profiles-daemon's names, as Control Center shows them.
@@ -192,6 +240,11 @@ impl State {
             media: self.media.as_ref().map(|m| (m.title.clone(), m.artist.clone(), m.playing)),
             battery: self.battery.as_ref().map(|b| (b.percent, b.charging)),
             profile: self.profiles.as_ref().map(|p| p.active.clone()),
+            outputs: self.sound.as_ref().map_or_else(Vec::new, |s| {
+                let names = short_names(&s.outputs.iter().map(|o| o.name.clone()).collect::<Vec<_>>());
+                s.outputs.iter().zip(names).map(|(o, name)| (o.id, name, o.current)).collect()
+            }),
+            sound_open: self.sound_open,
         }
     }
 
@@ -236,6 +289,14 @@ impl State {
                     let next = profiles.available.iter().position(|p| *p == profiles.active).map_or(0, |i| (i + 1) % profiles.available.len());
                     profiles.active = profiles.available[next].clone();
                     self.services.send(Command::PowerProfile(profiles.active.clone()));
+                }
+            }
+            // ponytail: opens at once; the in-place `smooth` spring comes with the animation module.
+            Control::SoundMore => self.sound_open = !self.sound_open,
+            Control::Output(id) => {
+                if let Some(sound) = self.sound.as_mut() {
+                    sound.outputs.iter_mut().for_each(|o| o.current = o.id == id);
+                    self.services.send(Command::Output(id));
                 }
             }
         }
@@ -326,6 +387,29 @@ mod tests {
         assert_eq!(l.hit(centre(l.dark)), Some(Control::Dark));
         assert_eq!(l.hit(centre(media_buttons(l.media)[1])), Some(Control::PlayPause));
         assert_eq!(l.hit(centre(track_in(l.sound.unwrap()))), Some(Control::Volume));
+    }
+
+    #[test]
+    fn open_sound_lists_outputs() {
+        let mut status = full();
+        status.outputs = vec![(51, "Speaker".into(), true), (52, "HDMI".into(), false)];
+        let closed = layout(1280, &status);
+        status.sound_open = true;
+        let open = layout(1280, &status);
+        assert_eq!(open.rect.size.h - closed.rect.size.h, 2 * LIST_PAD + 2 * LIST_ROW);
+        assert_eq!(open.outputs.len(), 2);
+        let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
+        assert_eq!(open.hit(centre(open.outputs[1])), Some(Control::Output(52)));
+        assert!(open.outputs.iter().all(|r| open.sound.unwrap().contains_rect(*r)));
+        assert_eq!(closed.hit(closed.sound.unwrap().loc.to_f64() + Point::from((100.0, 10.0))), Some(Control::SoundMore));
+    }
+
+    #[test]
+    fn output_names_drop_the_shared_card_name() {
+        let names = ["Raptor Lake-P/U/H cAVS HDMI / DisplayPort 2 Output (Stereo)", "Raptor Lake-P/U/H cAVS Speaker"].map(String::from);
+        assert_eq!(short_names(&names), ["HDMI / DisplayPort 2", "Speaker"]);
+        assert_eq!(short_names(&["Built-in Audio Analog Stereo".into()]), ["Built-in Audio Analog Stereo"]);
+        assert_eq!(short_names(&["USB Speaker".into(), "USB Spdif".into()]), ["Speaker", "Spdif"]);
     }
 
     #[test]

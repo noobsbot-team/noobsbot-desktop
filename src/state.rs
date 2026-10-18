@@ -142,6 +142,8 @@ pub struct State {
     pub alert_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Do Not Disturb, from Control Center; the notification server (M4) honours it.
     pub dnd: bool,
+    /// Control Center's Sound module lists the outputs.
+    pub sound_open: bool,
     /// The Control Center slider being dragged.
     pub shell_drag: Option<crate::shell::control::Control>,
     /// Hides the OSD; replaced on every key press.
@@ -273,6 +275,7 @@ impl State {
             alert: None,
             alert_timer: None,
             dnd: false,
+            sound_open: false,
             shell_drag: None,
             osd_timer: None,
             display_handle: dh,
