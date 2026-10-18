@@ -16,7 +16,7 @@ TERMINAL_REPO=anil0403/noobsbot-terminal
 DESKTOP_TAG=${NOOBSBOT_DESKTOP_TAG:-v0.1.0}
 TERMINAL_TAG=${NOOBSBOT_TERMINAL_TAG:-v0.5.1}
 # The release signing key (E6.13); its private half lives only in the release CI secret.
-MINISIGN_PUBKEY=""
+MINISIGN_PUBKEY="RWQgk/P2Bfb6JYQ3p8/ObaP2nG0S1gYPhE/KIJa7jYnCArCLukiRPTyR"
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/noobsbot-desktop
 LIB=/usr/lib/noobsbot-desktop
 DESTDIR=${DESTDIR:-}
