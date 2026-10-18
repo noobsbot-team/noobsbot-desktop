@@ -13,3 +13,4 @@ iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", 
 toml_edit = "0.25.17"
 zbus = "5.19.0"
 futures-lite = "2.6.1"
+notify = "8.2.0"

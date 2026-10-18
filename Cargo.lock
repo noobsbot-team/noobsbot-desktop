@@ -2016,6 +2016,7 @@ version = "0.1.0"
 dependencies = [
  "futures-lite",
  "iced",
+ "notify",
  "toml_edit",
  "zbus",
 ]

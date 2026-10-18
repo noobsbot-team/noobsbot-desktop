@@ -27,9 +27,20 @@ fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .title("System Settings")
         .theme(|app: &App| app.tokens.theme())
+        .subscription(|_: &App| {
+            iced::Subscription::batch([iced::Subscription::run(config::changes).map(|()| Message::Reload), iced::event::listen_with(type_ahead)])
+        })
         .window(window)
         .default_font(font(Weight::Normal))
         .run()
+}
+
+/// Typing while no field has focus searches (as in macOS). The search field isn't focused up front: a focused field's
+/// caret blinks, which woke the app every 500 ms for as long as its window was active.
+fn type_ahead(event: iced::Event, status: iced::event::Status, _: iced::window::Id) -> Option<Message> {
+    let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { text: Some(text), modifiers, .. }) = event else { return None };
+    let typed = status == iced::event::Status::Ignored && !(modifiers.control() || modifiers.alt() || modifiers.logo());
+    (typed && !text.chars().any(char::is_control)).then(|| Message::TypeAhead(text.to_string()))
 }
 
 /// Inter (D4) in `weight`, or the system sans-serif when it isn't installed.
@@ -75,6 +86,10 @@ pub enum Message {
     Bluetooth(bool),
     /// Output (`true`) or input muted.
     Mute(bool, bool),
+    /// `config.toml` was written (here or elsewhere, e.g. the Control Center's Dark toggle).
+    Reload,
+    /// Typed with no field focused: goes to the search field.
+    TypeAhead(String),
 }
 
 impl App {
@@ -93,8 +108,8 @@ impl App {
             user: system::user(),
         };
         app.retheme();
-        // Typing searches at once, as in macOS.
-        (app, Task::batch([Task::perform(system::read(), Message::Status), iced::widget::operation::focus("search")]))
+        // Typing searches at once, as in macOS (see `type_ahead`).
+        (app, Task::perform(system::read(), Message::Status))
     }
 
     fn retheme(&mut self) {
@@ -144,6 +159,20 @@ impl App {
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
+            Message::Reload => {
+                // A half-written or broken file keeps what is shown, with the error under it.
+                let (config, error) = config::Config::load(config::path());
+                if error.is_none() {
+                    self.config = config;
+                    self.retheme();
+                }
+                self.error = error;
+            }
+            Message::TypeAhead(text) => {
+                self.query.push_str(&text);
+                use iced::widget::operation::{focus, move_cursor_to_end};
+                return Task::batch([focus("search"), move_cursor_to_end("search")]);
+            }
         }
         Task::none()
     }
