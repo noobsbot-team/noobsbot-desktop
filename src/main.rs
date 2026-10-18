@@ -152,7 +152,11 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             }
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
+            let rescale = config.display.scale != state.config.display.scale;
             state.config = config;
+            if rescale {
+                state.rescale();
+            }
             state.calendar_watch();
             state.desktop_start();
         }
@@ -163,6 +167,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     } else {
         backend::udev::init(&mut event_loop, &mut state)?;
     }
+    state.rescale();
     state.idle_arm();
     if greeter {
         state.start_greeter(shell::greeter::Greeter::load());

@@ -57,6 +57,9 @@ bottom_right = "none"
 [display]
 # The GPU that draws the desktop, e.g. "/dev/dri/card1"; empty = the one the computer booted with. Applies at next login.
 gpu = ""
+# How big everything is drawn: 1.0 = 100%, 1.25, 1.5, 2.0 …, or 0 = picked from the display's pixel density
+# (about 110 px per inch per 100%). Applies at once to every display.
+scale = 0.0
 
 [windows]
 # Hold this key and drag anywhere in a window to move it: "super" or "alt".
@@ -180,6 +183,8 @@ icons = true
 "Super+Shift+3" = "screenshot"
 "Super+Shift+4" = "screenshot-region"
 "Super+Shift+5" = "screenshot-toolbar"
+"Print" = "screenshot-toolbar"
+"Shift+Print" = "screenshot-region"
 "F12" = "quake"
 # Launchpad also opens from its dock icon; F4 is free for apps unless you bind it.
 # "F4" = "launchpad"

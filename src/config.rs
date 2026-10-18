@@ -204,6 +204,8 @@ impl Default for HotCorners {
 pub struct Displays {
     /// The GPU that draws the desktop (`/dev/dri/card1`); empty: the one the firmware booted with. Read at start.
     pub gpu: String,
+    /// Every display's scale (1.0 = 100%, 1.25, 1.5, 2.0 …); 0 = picked from each display's pixel density. Live.
+    pub scale: f64,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -456,6 +458,8 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Shift+3", "screenshot"),
         ("Super+Shift+4", "screenshot-region"),
         ("Super+Shift+5", "screenshot-toolbar"),
+        ("Print", "screenshot-toolbar"),
+        ("Shift+Print", "screenshot-region"),
         ("F12", "quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),

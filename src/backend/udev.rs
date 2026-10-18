@@ -51,10 +51,14 @@ use smithay::{
         input::{Device as InputDevice, Libinput},
         rustix::fs::OFlags,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{DisplayHandle, backend::GlobalId},
+        wayland_server::{DisplayHandle, backend::GlobalId, protocol::wl_surface::WlSurface},
     },
     utils::{Buffer, DeviceFd, Logical, Monotonic, Physical, Point, Rectangle, Scale, Size, Time, Transform},
-    wayland::{compositor::with_states, presentation::Refresh},
+    wayland::{
+        compositor::{SurfaceData, send_surface_state, with_states},
+        fractional_scale::with_fractional_scale,
+        presentation::Refresh,
+    },
 };
 
 use super::{CLEAR, Device, Views, cursor};
@@ -281,6 +285,44 @@ impl State {
                     card.screens.insert(crtc, screen);
                 }
                 Err(err) => tracing::warn!("display {}-{}: {err}", info.interface().as_str(), info.interface_id()),
+            }
+        }
+        self.rescale();
+    }
+
+    /// Applies `[display] scale` (0 = from each display's pixel density) to every display, lines them up left to
+    /// right again, and tells every window and panel its new scale (E6.2, D13). At start, on hotplug and on reload.
+    // ponytail: windows keep their logical size (maximised ones aren't refitted), and every surface gets the first
+    // display's scale; per-window scale when displays with different scales are both in use.
+    pub fn rescale(&mut self) {
+        let configured = self.config.display.scale;
+        let mut outputs: Vec<Output> = self.space.outputs().cloned().collect();
+        outputs.sort_by_key(|o| self.space.output_geometry(o).map_or(0, |g| g.loc.x));
+        let mut x = 0;
+        for output in &outputs {
+            let Some(mode) = output.current_mode() else { continue };
+            let mm = output.physical_properties().size;
+            let scale = if configured > 0.0 {
+                configured.clamp(1.0, 3.0)
+            } else {
+                pick_scale((mode.size.w, mode.size.h), (mm.w.max(0) as u32, mm.h.max(0) as u32))
+            };
+            output.change_current_state(None, None, Some(OutputScale::Fractional(scale)), Some((x, 0).into()));
+            self.space.map_output(output, (x, 0));
+            layer_map_for_output(output).arrange();
+            x += self.space.output_geometry(output).map_or(0, |g| g.size.w);
+        }
+        let scale = outputs.first().map_or(1.0, |o| o.current_scale().fractional_scale());
+        let tell = |surface: &WlSurface, states: &SurfaceData| {
+            with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale));
+            send_surface_state(surface, states, scale.ceil() as i32, Transform::Normal);
+        };
+        for window in self.space.elements() {
+            window.with_surfaces(tell);
+        }
+        for output in &outputs {
+            for layer in layer_map_for_output(output).layers() {
+                layer.with_surfaces(tell);
             }
         }
         self.schedule_redraw();
