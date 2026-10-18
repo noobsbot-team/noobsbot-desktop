@@ -288,6 +288,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Tab", "switcher"),
         ("Super+Alt+Escape", "force-quit"),
         ("Super+N", "notification-center"),
+        ("Super+Space", "spotlight"),
         ("F12", "quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),

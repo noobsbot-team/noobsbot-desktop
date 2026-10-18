@@ -233,7 +233,6 @@ impl Apps {
     }
 
     /// Every app, by name; launchers skip `no_display` ones.
-    #[cfg_attr(not(test), expect(dead_code, reason = "for Spotlight and Launchpad (M4)"))]
     pub fn list(&self) -> &[App] {
         &self.apps
     }

@@ -7,6 +7,7 @@ pub mod disks;
 pub mod dock;
 pub mod force_quit;
 pub mod notify;
+pub mod spotlight;
 pub mod switcher;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
@@ -249,6 +250,9 @@ impl State {
         if on_alert || self.on_banner(location) {
             return true;
         }
+        if self.spotlight.is_some() && self.spotlight_layout(self.spotlight_results().len()).is_some_and(|l| l.rect.to_f64().contains(location)) {
+            return true;
+        }
         if self.force_quit.is_some() && self.force_quit_layout(0).is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
@@ -263,7 +267,7 @@ impl State {
         if self.alert.is_some() && self.alert_press(location) {
             return true;
         }
-        if self.banner_press(location) || self.force_quit_press(location) {
+        if self.banner_press(location) || self.force_quit_press(location) || self.spotlight_press(location) {
             return true;
         }
         let item = self.backend.as_ref().and_then(|b| b.menu_bar.hit(location));

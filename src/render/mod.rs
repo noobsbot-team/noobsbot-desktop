@@ -13,6 +13,7 @@ mod menu;
 pub mod menubar;
 mod notify;
 mod osd;
+mod spotlight;
 mod switcher;
 mod titlebar;
 mod ui;
@@ -51,6 +52,7 @@ use smithay::{
     utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
     wayland::shell::wlr_layer::Layer,
 };
+pub use spotlight::SpotlightPanel;
 pub use switcher::SwitcherPanel;
 pub use wallpaper::Wallpaper;
 

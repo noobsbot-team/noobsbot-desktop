@@ -56,6 +56,8 @@ pub enum Action {
     TrayMenu(i32),
     /// Opens or closes Notification Center (Super+N).
     NotificationCenter,
+    /// Opens or closes Spotlight (Super+Space, E4.3).
+    Spotlight,
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -126,6 +128,7 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
         ("notification-center", "") => Some(Action::NotificationCenter),
+        ("spotlight", "") => Some(Action::Spotlight),
         _ => None,
     };
     let mut table = Vec::new();
@@ -198,6 +201,7 @@ impl State {
             Action::Power(power) => self.open_alert(power),
             Action::Switcher { back, held } => self.switcher_start(back, held),
             Action::ForceQuit => self.open_force_quit(),
+            Action::Spotlight => self.toggle_spotlight(),
             // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
             Action::Volume(up) => {

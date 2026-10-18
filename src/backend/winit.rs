@@ -23,7 +23,7 @@ use crate::{
     frame::FrameClock,
     render::{
         self, AlertSheet, Components, ControlCenter, DockIcon, DockView, ForceQuitWindow, Gallery, MenuBar, MenuPopover, NotificationViews, OsdPopover,
-        Shaders, SwitcherPanel, View, Wallpaper,
+        Shaders, SpotlightPanel, SwitcherPanel, View, Wallpaper,
     },
     shell::Popup,
     state::State,
@@ -51,6 +51,7 @@ pub struct Winit {
     dock: DockView,
     switcher: SwitcherPanel,
     force_quit: ForceQuitWindow,
+    spotlight: SpotlightPanel,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -113,6 +114,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         switcher: SwitcherPanel::default(),
         force_quit: ForceQuitWindow::default(),
         components: None,
+        spotlight: SpotlightPanel::default(),
     });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
@@ -146,6 +148,10 @@ impl State {
             let selected = f.selection(&entries);
             (entries, selected)
         });
+        let search = self.spotlight.clone().and_then(|s| {
+            let hits = self.spotlight_results();
+            Some((self.spotlight_layout(hits.len())?, hits, s))
+        });
         let center = self.center_layout();
         let (cards, more) = self.banner_layout();
         let batteries = self.batteries();
@@ -170,6 +176,7 @@ impl State {
             dock,
             switcher,
             force_quit,
+            spotlight,
         }) = self.backend.as_mut()
         else {
             return;
@@ -224,6 +231,24 @@ impl State {
                 }
                 if let Some((entries, selected)) = &quit_list {
                     bar.extend(force_quit.elements(renderer, shaders, &mut self.text, &mut self.icons, entries, *selected, size, dark, accent, scale));
+                }
+                if let Some((layout, hits, open)) = &search {
+                    let selected = open.selected.min(layout.rows.len().saturating_sub(1));
+                    bar.extend(spotlight.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &mut self.symbols,
+                        &mut self.icons,
+                        hits,
+                        selected,
+                        &open.field,
+                        layout,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
                 }
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));

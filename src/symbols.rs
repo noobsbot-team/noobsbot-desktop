@@ -84,12 +84,14 @@ symbols! {
     MusicNote = "music-note",
     Leaf = "leaf",
     Gauge = "gauge",
+    Calculator = "calculator",
     Lightning = "lightning",
     Ethernet = "plugs-connected",
     Network = "network",
     Bell = "bell",
     BellSlash = "bell-slash",
     X = "x",
+    MagnifyingGlass = "magnifying-glass",
 }
 
 type Key = (Symbol, Weight, u16, u64, [u8; 4]);
