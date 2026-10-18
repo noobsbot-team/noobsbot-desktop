@@ -12,6 +12,7 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
+    apps::Icons,
     shell::force_quit::{Entry, layout},
     text::{Style, Text},
 };
@@ -36,6 +37,7 @@ impl ForceQuitWindow {
         renderer: &mut GlesRenderer,
         shaders: &Shaders,
         text: &mut Text,
+        icons: &mut Icons,
         entries: &[Entry],
         selected: Option<i32>,
         output: Size<i32, Logical>,
@@ -50,12 +52,13 @@ impl ForceQuitWindow {
             Rectangle::new((row.loc.x + 6, y).into(), (layout::ICON, layout::ICON).into())
         };
         let rows = &l.rows;
-        let (tiles, letters): (Vec<_>, Vec<_>) = entries.iter().zip(rows).map(|(e, r)| app_icon(shaders, text, &e.name, icon(*r), dark, scale)).unzip();
+        let (tiles, letters): (Vec<_>, Vec<_>) =
+            entries.iter().zip(rows).map(|(e, r)| app_icon(shaders, text, icons, &e.name, e.icon.as_deref(), icon(*r), dark, scale)).unzip();
 
         let key = (entries.to_vec(), selected, dark, accent, scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             let [ar, ag, ab] = accent.map(|c| f32::from(c) / 255.0);
-            let mut glass = tiles;
+            let mut glass: Vec<_> = tiles.into_iter().flatten().collect();
             if let Some(i) = selected {
                 glass.push(shaders.glass_shape(rows[i], [ar, ag, ab, 1.0], 4.0, false, dark, scale));
             }

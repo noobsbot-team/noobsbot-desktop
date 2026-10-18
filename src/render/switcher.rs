@@ -13,16 +13,28 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
+    apps::Icons,
     config::Accent,
     shell::switcher::layout::{self, RADIUS},
     text::{Rendered, Style, Text},
     wm::Rect,
 };
 
-/// An app's icon in `rect`: the glass behind it and the label on it.
-// ponytail: a tile with the name's first letter until the app index (M3, dock) gives real icons; swap this one
-// function for an icon lookup then.
-pub(super) fn app_icon(shaders: &Shaders, text: &mut Text, name: &str, rect: Rect, dark: bool, scale: f64) -> (PixelShaderElement, Arc<Rendered>) {
+/// An app's icon in `rect`: its theme icon, or (no icon found) a tile with the name's first letter on it.
+#[expect(clippy::too_many_arguments, reason = "the frame's drawing context")]
+pub(super) fn app_icon(
+    shaders: &Shaders,
+    text: &mut Text,
+    icons: &mut Icons,
+    name: &str,
+    icon: Option<&str>,
+    rect: Rect,
+    dark: bool,
+    scale: f64,
+) -> (Option<PixelShaderElement>, Arc<Rendered>) {
+    if let Some(found) = icon.and_then(|i| icons.get(i, (f64::from(rect.size.w) * scale).round() as u32)) {
+        return (None, found);
+    }
     const HUES: [Accent; 7] = [Accent::Blue, Accent::Purple, Accent::Pink, Accent::Red, Accent::Orange, Accent::Green, Accent::Graphite];
     let hash = name.bytes().fold(0usize, |h, b| h.wrapping_mul(31).wrapping_add(usize::from(b)));
     let [r, g, b] = super::accent(HUES[hash % HUES.len()], dark).map(|c| f32::from(c) / 255.0);
@@ -31,7 +43,7 @@ pub(super) fn app_icon(shaders: &Shaders, text: &mut Text, name: &str, rect: Rec
     let letter = name.chars().next().map(|c| c.to_uppercase().to_string()).unwrap_or_default();
     let size = (rect.size.h / 2).max(8) as u16;
     let style = Style { size, line_height: size + size / 4, weight: 600, color: [255, 255, 255, 255], tabular: false };
-    (tile, text.label(&letter, style, rect.size.w as u32, scale))
+    (Some(tile), text.label(&letter, style, rect.size.w as u32, scale))
 }
 
 /// Panel, highlight, names, dark, opacity, scale: what the glass depends on.
@@ -51,7 +63,9 @@ impl SwitcherPanel {
         renderer: &mut GlesRenderer,
         shaders: &Shaders,
         text: &mut Text,
+        icons: &mut Icons,
         names: &[String],
+        icon_names: &[Option<String>],
         selected: usize,
         output: Size<i32, Logical>,
         dark: bool,
@@ -60,15 +74,20 @@ impl SwitcherPanel {
     ) -> Vec<SceneElement> {
         let (panel, cells, name_rect) = crate::shell::switcher::layout(output, names.len());
         let inset = (layout::CELL - layout::ICON) / 2;
-        let icons: Vec<Rect> =
+        let cells_icons: Vec<Rect> =
             cells.iter().map(|c| Rectangle::new((c.loc.x + inset, c.loc.y + inset).into(), (c.size.w - 2 * inset, c.size.h - 2 * inset).into())).collect();
         let highlight = cells.get(selected).copied().unwrap_or_default();
 
         // The tiles are cheap to make; they are kept only when the glass is rebuilt, so their damage ids last.
-        let (tiles, letters): (Vec<_>, Vec<_>) = names.iter().zip(&icons).map(|(name, icon)| app_icon(shaders, text, name, *icon, dark, scale)).unzip();
+        let (tiles, letters): (Vec<_>, Vec<_>) = names
+            .iter()
+            .zip(&cells_icons)
+            .zip(icon_names)
+            .map(|((name, rect), icon)| app_icon(shaders, text, icons, name, icon.as_deref(), *rect, dark, scale))
+            .unzip();
         let key = (panel, highlight, names.to_vec(), dark, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
-            let mut glass = tiles;
+            let mut glass: Vec<_> = tiles.into_iter().flatten().collect();
             // White @ 20% (E4.5) vanishes on light hud glass: there, black @ 10%.
             let fill = if dark { [1.0, 1.0, 1.0, 0.20] } else { [0.0, 0.0, 0.0, 0.10] };
             glass.push(shaders.glass_shape(highlight, fill, 12.0, false, dark, scale));
@@ -82,7 +101,7 @@ impl SwitcherPanel {
         let label = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
         let body = Style { size: 13, line_height: 16, weight: 400, color: label, tabular: false };
         let name = text.label(names.get(selected).map_or("", String::as_str), body, name_rect.size.w as u32, scale);
-        let rects = icons.iter().copied().chain([name_rect]);
+        let rects = cells_icons.iter().copied().chain([name_rect]);
         self.labels = keep_buffers(&self.labels, letters.into_iter().chain([name]));
         let mut out: Vec<SceneElement> = self.labels.iter().zip(rects).filter_map(|(l, r)| label_element(renderer, l, r, scale)).collect();
         if let Some((_, glass)) = &self.glass {

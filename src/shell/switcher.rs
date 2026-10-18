@@ -135,6 +135,11 @@ pub fn layout(output: Size<i32, smithay::utils::Logical>, count: usize) -> (Rect
 }
 
 impl State {
+    /// The theme icon of the installed app `window` belongs to.
+    pub fn app_icon(&self, window: &Window) -> Option<String> {
+        self.apps.find(&self.app_key(window)?).map(|a| a.icon.clone())
+    }
+
     /// The apps with a window, most recently used first.
     pub fn switcher_apps(&mut self) -> Vec<App> {
         let all: Vec<Window> = self.space.elements().rev().cloned().chain(self.hidden.iter().map(|(w, _)| w.clone())).collect();

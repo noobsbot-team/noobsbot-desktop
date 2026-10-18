@@ -139,6 +139,8 @@ impl State {
     pub fn render(&mut self) {
         let content = self.menu_bar();
         let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
+        let icon_names: Vec<Option<String>> =
+            self.switcher.open.as_ref().map(|o| o.apps.iter().map(|a| a.windows.first().and_then(|w| self.app_icon(w))).collect()).unwrap_or_default();
         let quit_list = self.force_quit.clone().map(|f| {
             let entries = self.force_quit_entries();
             let selected = f.selection(&entries);
@@ -206,10 +208,22 @@ impl State {
                 let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
                 if let Some(open) = self.switcher.open.as_ref().filter(|o| o.visible) {
                     let names: Vec<String> = open.apps.iter().map(|a| a.name.clone()).collect();
-                    bar.extend(switcher.elements(renderer, shaders, &mut self.text, &names, open.selected, size, dark, appearance.glass_opacity, scale));
+                    bar.extend(switcher.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &mut self.icons,
+                        &names,
+                        &icon_names,
+                        open.selected,
+                        size,
+                        dark,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
                 }
                 if let Some((entries, selected)) = &quit_list {
-                    bar.extend(force_quit.elements(renderer, shaders, &mut self.text, entries, *selected, size, dark, accent, scale));
+                    bar.extend(force_quit.elements(renderer, shaders, &mut self.text, &mut self.icons, entries, *selected, size, dark, accent, scale));
                 }
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));

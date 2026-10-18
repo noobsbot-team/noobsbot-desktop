@@ -90,6 +90,8 @@ pub fn frozen(window: &Window) -> bool {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub name: String,
+    /// Its theme icon, when the app is installed.
+    pub icon: Option<String>,
     pub pid: i32,
     pub client: ClientId,
     pub frozen: bool,
@@ -219,7 +221,7 @@ impl State {
             .into_iter()
             .filter_map(|(client, windows)| {
                 let window = windows.first()?;
-                Some(Entry { name: self.app_name(window), pid: self.pid(window)?, client, frozen: windows.iter().any(frozen) })
+                Some(Entry { name: self.app_name(window), icon: self.app_icon(window), pid: self.pid(window)?, client, frozen: windows.iter().any(frozen) })
             })
             .collect()
     }
