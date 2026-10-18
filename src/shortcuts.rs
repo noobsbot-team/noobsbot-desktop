@@ -175,7 +175,7 @@ impl State {
             }
             // ponytail: closes the app's windows and lets the app decide to exit; a real quit comes with app tracking (M3).
             Action::QuitApp => self.app_windows(focused.as_ref()).iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
-            Action::Minimise => self.hide_windows(focused.into_iter().collect()),
+            Action::Minimise => self.minimise(focused.into_iter().collect()),
             Action::Hide => {
                 let windows = self.app_windows(focused.as_ref());
                 self.hide_windows(windows);
@@ -335,6 +335,7 @@ impl State {
         }
         for window in windows {
             let Some(loc) = self.frame(&window).map(|f| f.loc) else { continue };
+            crate::shell::dock_fx::not_minimised(&window);
             window.set_activated(false);
             self.space.unmap_elem(&window);
             self.hidden.push((window, loc));

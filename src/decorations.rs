@@ -157,7 +157,7 @@ impl State {
         }
         match part {
             Part::Close => self.close_window(&window),
-            Part::Minimise => self.hide_windows(vec![window]),
+            Part::Minimise => self.minimise(vec![window]),
             Part::Zoom => self.toggle_zoom(&window),
             Part::Title => {}
         }

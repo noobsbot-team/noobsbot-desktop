@@ -156,7 +156,8 @@ impl State {
         let (cards, more) = self.banner_layout();
         let batteries = self.batteries();
         let dock_items = self.dock_items();
-        let dock_layout = self.dock_layout(dock_items.len()).filter(|l| !dock_items.is_empty() && self.dock_visible(l));
+        let dock_frame = self.dock_frame(&dock_items);
+        let dock_layout = dock_frame.layout.clone();
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
         let Some(Winit {
             backend,
@@ -354,8 +355,11 @@ impl State {
                         .collect();
                     let zoom = if self.config.dock.zoom { f64::from(self.config.dock.zoom_percent) / 100.0 } else { 1.0 };
                     let px = (layout.icon * zoom * scale).ceil() as u32;
+                    let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
+                    bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
                     bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, layout, px, scale));
                 }
+                bar.extend(DockView::glows(shaders, &dock_frame.glows, scale));
                 if let (Some(components), Some(geo)) = (components.as_mut(), self.space.output_geometry(output)) {
                     bar.extend(components.elements(
                         renderer,
@@ -431,7 +435,8 @@ impl State {
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();
         // The test scene redraws every frame (its cards are rebuilt each time, so each frame repaints them).
-        if benchmark {
+        // The dock redraws only while it bounces, slides, zooms or glows.
+        if benchmark || dock_frame.animating {
             self.schedule_redraw();
         }
     }

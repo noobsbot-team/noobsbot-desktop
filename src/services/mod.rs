@@ -5,6 +5,7 @@
 pub mod bluetooth;
 pub mod brightness;
 pub mod disks;
+pub mod launcher;
 pub mod media;
 pub mod network;
 pub mod notifications;
@@ -66,6 +67,8 @@ pub enum Update {
     Disks(Vec<disks::Volume>),
     /// Mounting or ejecting `name` failed.
     DiskFailed { name: String, error: String },
+    /// An app's dock badge, progress and urgency (LauncherEntry), by desktop-file id.
+    Launcher { app: String, entry: launcher::Entry },
 }
 
 /// Requests from the frame loop.
@@ -213,7 +216,8 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     };
     let session_clients = async {
         if let Some(bus) = &session {
-            future::zip(future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)), notifications::serve(bus, &updates)).await;
+            let ours = future::zip(notifications::serve(bus, &updates), launcher::watch(bus, &updates));
+            future::zip(future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)), ours).await;
         }
     };
     let clients = future::zip(system_clients, session_clients);

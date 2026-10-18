@@ -32,7 +32,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|gallery|switcher|force-quit|spotlight|spotlight-calc] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|gallery|switcher|force-quit|spotlight|spotlight-calc] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -56,6 +56,10 @@ fn main() {
     // `theme --write`: the app theme generator (E2.9), no compositor.
     if std::env::args().nth(1).as_deref() == Some("theme") {
         std::process::exit(theme::cli(std::env::args().skip(2)));
+    }
+    // `dock --import-plank`: the one-time Plank importer (E3.1).
+    if std::env::args().nth(1).as_deref() == Some("dock") {
+        std::process::exit(shell::plank::cli(std::env::args().skip(2)));
     }
 
     let mut args = std::env::args().skip(1);
@@ -194,6 +198,8 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             let size = state.space.outputs().next().and_then(|o| state.space.output_geometry(o)).map(|g| g.size).unwrap_or_default();
             state.dock_pointer = Some((f64::from(size.w) / 2.0 - 60.0, f64::from(size.h) - 40.0).into());
         }
+        // Sample LauncherEntry counts and progress bars on the default pins.
+        Some("dock-badges") => state.sample_badges(),
         // Every D8 component in its D7 states (E2.1 done check).
         Some("gallery") => {
             if let Some(winit) = state.backend.as_mut() {

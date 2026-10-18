@@ -162,6 +162,8 @@ pub struct State {
     pub dock_reveal: bool,
     /// `--show dock-zoom`: a fake pointer position the dock zooms around.
     pub dock_pointer: Option<Point<f64, Logical>>,
+    /// The dock's bounces, glow, slide, zoom easing and badges.
+    pub dock_fx: crate::shell::dock_fx::Fx,
     /// Notifications, their banners and Notification Center's state (E4.1, E4.2).
     pub notifications: crate::shell::notify::Store,
     /// The app switcher (E4.5) and its most-recently-used order.
@@ -251,6 +253,7 @@ impl State {
                     crate::services::Update::History(list) => state.restore_notifications(list),
                     crate::services::Update::Disks(volumes) => state.disks_changed(volumes),
                     crate::services::Update::DiskFailed { name, error } => state.disk_failed(name, error),
+                    crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
                 }
                 state.schedule_redraw();
             }
@@ -331,6 +334,7 @@ impl State {
             icons: Default::default(),
             dock_reveal: false,
             dock_pointer: None,
+            dock_fx: Default::default(),
             notifications: Default::default(),
             switcher: Default::default(),
             force_quit: None,
@@ -720,7 +724,8 @@ impl XdgShellHandler for State {
         if takes_focus {
             self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
         } else if let Some(focused) = self.focused_window() {
-            // ponytail: no dock yet, so nothing bounces (M3).
+            // It wants attention: its dock icon bounces (or glows while the dock is hidden) until it is focused.
+            self.dock_fx.urgent(window);
             self.space.raise_element(&focused, false);
             self.restack();
         }
@@ -925,6 +930,11 @@ impl XdgActivationHandler for State {
     /// ponytail: any valid token under ACTIVATION_TIMEOUT is honoured, without checking its input serial.
     fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
         if token_data.timestamp.elapsed() >= wm::ACTIVATION_TIMEOUT {
+            // Too late to take focus: the app asks for attention in the dock instead.
+            if let Some(window) = self.window_for(&surface).cloned() {
+                self.dock_fx.urgent(window);
+                self.schedule_redraw();
+            }
             return;
         }
         if let Some(window) = self.window_for(&surface).cloned() {

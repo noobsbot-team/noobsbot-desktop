@@ -5,8 +5,10 @@ pub mod alert;
 pub mod control;
 pub mod disks;
 pub mod dock;
+pub mod dock_fx;
 pub mod force_quit;
 pub mod notify;
+pub mod plank;
 pub mod spotlight;
 pub mod switcher;
 
