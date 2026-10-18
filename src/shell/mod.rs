@@ -11,6 +11,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::{
     render::menubar::{self, BarItem},
+    services::{Command, tray::MenuRow},
     shortcuts::Action,
     state::State,
     symbols::Symbol,
@@ -50,6 +51,7 @@ impl Popup {
             Popup::Calendar { .. } => BarItem::Clock,
             Popup::Menu(Menu::Logo) => BarItem::Logo,
             Popup::Menu(Menu::App) => BarItem::App,
+            Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
             Popup::Control => BarItem::ControlCenter,
         }
     }
@@ -67,7 +69,8 @@ fn popup_for(item: BarItem) -> Option<Popup> {
             Some(Popup::Calendar { year, month })
         }
         BarItem::ControlCenter => Some(Popup::Control),
-        BarItem::Status(_) => None,
+        // Its menu comes over D-Bus first: see `tray_press`.
+        BarItem::Status(_) | BarItem::Tray(_) => None,
     }
 }
 
@@ -75,6 +78,8 @@ fn popup_for(item: BarItem) -> Option<Popup> {
 pub enum Menu {
     Logo,
     App,
+    /// `State::tray[i]`'s dbusmenu, rows in `State::tray_menu`.
+    Tray(usize),
 }
 
 /// A menu row (D8); `None` in a row list is a separator. No action: drawn disabled.
@@ -86,10 +91,10 @@ pub struct Row {
     pub action: Option<Action>,
 }
 
-/// The rows of `menu`; `app` is the focused app's name.
+/// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows.
 // ponytail: rows whose window isn't built yet (About, Settings, Force Quit, the lock screen) are disabled until
 // their milestone adds it.
-pub fn menu_rows(menu: Menu, app: &str) -> Vec<Option<Row>> {
+pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>]) -> Vec<Option<Row>> {
     let row = |label: String, shortcut, action| Some(Row { label, shortcut, action });
     match menu {
         Menu::Logo => vec![
@@ -115,6 +120,7 @@ pub fn menu_rows(menu: Menu, app: &str) -> Vec<Option<Row>> {
             None,
             row(format!("Quit {app}"), "⌘Q", Some(Action::QuitApp)),
         ],
+        Menu::Tray(_) => tray.iter().map(|r| r.as_ref().and_then(|r| row(r.label.clone(), "", r.enabled.then_some(Action::TrayMenu(r.id))))).collect(),
     }
 }
 
@@ -241,8 +247,9 @@ impl State {
         on_bar || self.popup_rect().is_some_and(|r| r.to_f64().contains(location))
     }
 
-    /// A press at `location` (output-relative). `true`: the shell took it, so no window gets focus or the click.
-    pub fn shell_press(&mut self, location: Point<f64, Logical>) -> bool {
+    /// A press at `location` (output-relative); `secondary`: the right button. `true`: the shell took it, so no
+    /// window gets focus or the click.
+    pub fn shell_press(&mut self, location: Point<f64, Logical>, secondary: bool) -> bool {
         // The alert is above everything else.
         if self.alert.is_some() && self.alert_press(location) {
             return true;
@@ -257,7 +264,11 @@ impl State {
             }
             // Its own item again closes the popup, as on macOS.
             (_, Some(item)) => {
-                self.popup = if open.map(Popup::item) == Some(item) { None } else { popup_for(item) };
+                let again = open.map(Popup::item) == Some(item);
+                self.popup = if again { None } else { popup_for(item) };
+                if let (BarItem::Tray(i), false) = (item, again) {
+                    self.tray_press(i, location, secondary);
+                }
                 true
             }
             // Outside: closes the popup and the click goes no further.
@@ -285,7 +296,8 @@ impl State {
             Popup::Menu(menu) => {
                 let index = self.backend.as_ref().and_then(|b| b.menu.row_at(location));
                 // Separators and disabled rows keep the menu open, as on macOS.
-                if let Some(action) = index.and_then(|i| menu_rows(menu, "").into_iter().nth(i)).flatten().and_then(|row| row.action) {
+                let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
+                if let Some(action) = index.and_then(|i| menu_rows(menu, "", tray).into_iter().nth(i)).flatten().and_then(|row| row.action) {
                     self.popup = None;
                     self.run_action(action);
                 }
@@ -307,6 +319,30 @@ impl State {
             self.schedule_redraw();
         } else if matches!(open, Popup::Menu(_)) && backend.menu.row_at(from) != backend.menu.row_at(to) {
             self.schedule_redraw();
+        }
+    }
+
+    /// A click on tray item `i`: its menu (fetched, then shown by `show_tray_menu`) if it is a menu or this is a
+    /// right click, else Activate at the click.
+    fn tray_press(&mut self, i: usize, location: Point<f64, Logical>, secondary: bool) {
+        let Some(item) = self.tray.get(i) else { return };
+        let command = match &item.menu {
+            Some(menu) if item.item_is_menu || secondary => Command::TrayMenu { service: item.service.clone(), menu: menu.clone() },
+            _ => {
+                let origin = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or((0, 0).into(), |g| g.loc);
+                let at = location.to_i32_round() + origin;
+                Command::TrayActivate { service: item.service.clone(), path: item.path.clone(), x: at.x, y: at.y }
+            }
+        };
+        self.services.send(command);
+    }
+
+    /// A tray menu's rows arrived: opens it under its item.
+    pub fn show_tray_menu(&mut self, service: String, menu: String, rows: Vec<Option<MenuRow>>) {
+        let Some(i) = self.tray.iter().position(|t| t.service == service) else { return };
+        if !rows.is_empty() {
+            self.popup = Some(Popup::Menu(Menu::Tray(i)));
+            self.tray_menu = Some((service, menu, rows));
         }
     }
 
@@ -374,7 +410,7 @@ mod tests {
 
     #[test]
     fn menus_stay_on_screen_and_stack_rows() {
-        let rows = menu_rows(Menu::App, "Kate");
+        let rows = menu_rows(Menu::App, "Kate", &[]);
         let (rect, cells) = menu_layout(6, 1280, 200, &rows);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
         assert_eq!(rect, Rectangle::new((8, 28).into(), (200, 142).into()));

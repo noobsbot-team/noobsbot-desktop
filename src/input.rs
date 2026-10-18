@@ -22,6 +22,7 @@ use crate::{
 
 /// Linux input code of the left mouse button.
 const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
 
 /// The xkb names for a resolved `[keyboard]` section (see `Keyboard::resolved`).
 pub fn xkb(keyboard: &Keyboard) -> XkbConfig<'_> {
@@ -115,7 +116,7 @@ impl State {
                 let location = pointer.current_location();
                 // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
                 // pointer comes to the front.
-                if state == ButtonState::Pressed && !pointer.is_grabbed() && !self.shell_press(self.to_output(location)) {
+                if state == ButtonState::Pressed && !pointer.is_grabbed() && !self.shell_press(self.to_output(location), event.button_code() == BTN_RIGHT) {
                     let zone = self.zone_under(location);
                     let bar = if zone.is_some() { None } else { self.bar_under(location) };
                     let window = zone

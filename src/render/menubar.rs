@@ -1,8 +1,8 @@
 //! The menu bar (E2.2): a 24 px `bar` glass strip across the top. Left: the logo and the active app's name; right:
-//! Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4). Every piece is kept between frames, so a
-//! frame where only the minute changed damages only the clock.
+//! tray icons, Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4). Every piece is kept between
+//! frames, so a frame where only the minute changed damages only the clock.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
@@ -19,6 +19,7 @@ use crate::{
         network::{Link, Network},
         power::Battery,
         sound::Sound,
+        tray::{self, Image},
     },
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
@@ -40,6 +41,8 @@ const SYMBOL: u16 = 16;
 pub struct Content {
     /// The focused app's id (`brave-browser`), else its process name; `None`: no window focused.
     pub app: Option<String>,
+    /// Each tray item's icons, left to right.
+    pub tray: Vec<Arc<Vec<Image>>>,
     pub status: Vec<Item>,
     pub clock: String,
 }
@@ -49,6 +52,8 @@ pub struct Content {
 pub enum BarItem {
     Logo,
     App,
+    /// `Content::tray[i]`.
+    Tray(usize),
     /// `Content::status[i]`.
     Status(usize),
     ControlCenter,
@@ -131,6 +136,8 @@ pub struct MenuBar {
     glass: Option<(GlassKey, Vec<PixelShaderElement>)>,
     labels: Vec<Label>,
     names: HashMap<String, String>,
+    /// Tray icons as drawn, by their images and scale.
+    icons: Vec<(Arc<Vec<Image>>, u64, Arc<Rendered>)>,
     /// Each item's area from the last frame; empty while the bar is hidden.
     hits: Vec<(BarItem, Rect)>,
     /// The pressed pill behind the item whose popup is open, and what it was made for.
@@ -199,6 +206,19 @@ impl MenuBar {
             left.push((text.label(name, Style { weight: 600, tabular: false, ..body }, 300, scale), 0, BarItem::App));
         }
         let mut right = Vec::new();
+        let px = (f64::from(SYMBOL) * scale).round() as u32;
+        let icons: Vec<_> = content
+            .tray
+            .iter()
+            .map(|images| match self.icons.iter().find(|(i, s, _)| i == images && *s == scale.to_bits()) {
+                Some(drawn) => drawn.clone(),
+                None => (images.clone(), scale.to_bits(), Arc::new(tray::render(images, px))),
+            })
+            .collect();
+        for (i, (_, _, icon)) in icons.iter().enumerate() {
+            right.push((icon.clone(), GAP, BarItem::Tray(i)));
+        }
+        self.icons = icons;
         for (i, item) in content.status.iter().enumerate() {
             if let Some(t) = &item.text {
                 right.push((text.label(t, body, 100, scale), TIGHT, BarItem::Status(i)));

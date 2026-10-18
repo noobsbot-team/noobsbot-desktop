@@ -9,6 +9,7 @@ pub mod network;
 pub mod power;
 pub mod profiles;
 pub mod sound;
+pub mod tray;
 
 use std::{fmt::Debug, future::Future, os::unix::net::UnixStream, time::Duration};
 
@@ -36,6 +37,10 @@ pub enum Update {
     Sound(Option<sound::Sound>),
     /// `None`: nothing playing or paused.
     Media(Option<media::Media>),
+    /// Shown tray items, left to right.
+    Tray(Vec<tray::TrayItem>),
+    /// The rows of a tray item's menu, after `Command::TrayMenu`.
+    TrayMenu { service: String, menu: String, rows: Vec<Option<tray::MenuRow>> },
 }
 
 /// Requests from the frame loop.
@@ -55,6 +60,12 @@ pub enum Command {
     Output(u32),
     /// To the player `Update::Media` named.
     Media { player: String, action: media::Action },
+    /// A click on a tray item without a menu, at screen `x`, `y`.
+    TrayActivate { service: String, path: String, x: i32, y: i32 },
+    /// Fetch a tray item's dbusmenu.
+    TrayMenu { service: String, menu: String },
+    /// A row of that menu was clicked.
+    TrayClicked { service: String, menu: String, id: i32 },
     /// Logo menu ▸ Sleep.
     Suspend,
     /// After the Restart alert.
@@ -93,7 +104,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default();
     let session = connect("DBUS_SESSION_BUS_ADDRESS", format!("{runtime}/bus"))
         .await
-        .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing hidden: {err}"))
+        .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing and tray hidden: {err}"))
         .ok();
     brightness::send_current(&updates);
     let system_clients = async {
@@ -107,7 +118,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     };
     let session_clients = async {
         if let Some(bus) = &session {
-            media::watch(bus, &updates).await;
+            future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)).await;
         }
     };
     let clients = future::zip(system_clients, session_clients);
@@ -179,6 +190,9 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
             (Command::PowerProfile(profile), Some(bus), _) => profiles::set(bus, &profile).await,
             (Command::Brightness(percent), Some(bus), _) => brightness::set(bus, percent, updates).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
+            (Command::TrayActivate { service, path, x, y }, _, Some(bus)) => tray::activate(bus, &service, &path, x, y).await,
+            (Command::TrayMenu { service, menu }, _, Some(bus)) => tray::menu(bus, service, menu, updates).await,
+            (Command::TrayClicked { service, menu, id }, _, Some(bus)) => tray::clicked(bus, &service, &menu, id).await,
             (Command::Suspend | Command::Reboot | Command::PowerOff, Some(bus), _) => power(bus, &name).await,
             (Command::Wifi(on), Some(bus), _) => network::set_wifi(bus, on).await,
             (Command::Bluetooth(on), Some(bus), _) => bluetooth::set_powered(bus, on).await,

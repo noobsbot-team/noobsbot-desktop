@@ -45,6 +45,8 @@ pub enum Action {
     Brightness(bool),
     /// To the Now Playing player.
     Media(MediaAction),
+    /// A row of the open tray menu, by dbusmenu id.
+    TrayMenu(i32),
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -166,6 +168,11 @@ impl State {
                 self.schedule_redraw();
             }
             Action::Sleep => self.services.send(Command::Suspend),
+            Action::TrayMenu(id) => {
+                if let Some((service, menu, _)) = &self.tray_menu {
+                    self.services.send(Command::TrayClicked { service: service.clone(), menu: menu.clone(), id });
+                }
+            }
             Action::Power(power) => self.open_alert(power),
             // ponytail: brings back the oldest hidden window first, else rotates the stack; the real switcher is M4.
             Action::CycleWindows => {
