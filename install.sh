@@ -330,7 +330,8 @@ main() {
     real && enable_services
     user_settings
     security_check
-    say "Done. Reboot, log in at the text login screen, and Noobsbot Desktop starts."
+    if ((GREETER)); then say "Done. Reboot, log in at the login screen, and Noobsbot Desktop starts."
+    else say "Done. Reboot, log in at the text login screen, and Noobsbot Desktop starts."; fi
 }
 
 main
