@@ -170,6 +170,7 @@ impl State {
                 if state == ButtonState::Released && event.button_code() == BTN_LEFT {
                     self.bar_release(pointer.current_location());
                     self.shell_release();
+                    self.dock_release(self.to_output(pointer.current_location()));
                 }
                 pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
                 pointer.frame(self);

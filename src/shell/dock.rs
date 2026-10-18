@@ -2,18 +2,30 @@
 //! `[dock] items`, then running apps; a dot under each running one; click to launch, focus or minimise; Plank's
 //! parabolic zoom under the pointer; intelligent hide. Layout is a pure function so drawing and clicks share it.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::{
+    io::Read,
+    os::fd::AsFd,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 
 use smithay::{
     desktop::Window,
-    reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::Resource},
+    reexports::{
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_server::{Resource, protocol::wl_data_source::WlDataSource},
+    },
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
-    wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
+    wayland::{compositor::with_states, selection::data_device::with_source_metadata, shell::xdg::XdgToplevelSurfaceData},
 };
 
 use crate::{
     apps::App,
-    config::{Dock, DockHide},
+    config::{self, Dock, DockHide},
+    shell::Row,
+    shortcuts::Action,
     state::State,
     wm::Rect,
 };
@@ -127,6 +139,7 @@ fn seen(window: &Window) -> u64 {
 /// Linux input codes of the mouse buttons the dock answers.
 const BTN_LEFT: u32 = 0x110;
 const BTN_MIDDLE: u32 = 0x112;
+const BTN_RIGHT: u32 = 0x111;
 
 impl State {
     /// The app a window belongs to: its app id, else (noobsbot and others set none) its process name.
@@ -163,7 +176,7 @@ impl State {
         for item in &mut items {
             item.windows.sort_by_key(|w| stack.iter().position(|s| *s == w).unwrap_or(usize::MAX));
         }
-        items
+        self.dock_ui.preview(items)
     }
 
     /// The dock's layout for `n` items, zoomed around the pointer (or `--show dock-zoom`'s fake one).
@@ -185,7 +198,8 @@ impl State {
         }
         let origin = self.to_output((0.0, 0.0).into()).to_i32_round::<i32>();
         let overlaps = focused.and_then(|w| self.frame(&w)).is_some_and(|f| Rectangle::new(f.loc + origin, f.size).overlaps(layout.zone));
-        self.config.dock.hide == DockHide::Never || self.dock_reveal || !overlaps
+        let menu = self.popup == Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock));
+        self.config.dock.hide == DockHide::Never || self.dock_reveal || menu || self.dock_ui.drag.is_some() || !overlaps
     }
 
     /// A cheap first check for every pointer motion: is `location` low enough to be on the dock at all?
@@ -213,12 +227,14 @@ impl State {
         if !layout.zone.to_f64().contains(location) {
             return false;
         }
-        let Some(item) = hit(&layout, location).and_then(|i| items.into_iter().nth(i)) else { return true };
+        let Some((i, item)) = hit(&layout, location).and_then(|i| Some((i, items.into_iter().nth(i)?))) else { return true };
         match button {
-            BTN_LEFT => self.dock_activate(item),
+            // A click acts on release, unless it became a drag (`dock_release`).
+            BTN_LEFT => self.dock_ui.drag = Some(Drag { key: item.key, start: location, moved: false, slot: None }),
             BTN_MIDDLE => self.launch(item.app.as_ref()),
-            // ponytail: the right-click menu (windows · Keep in Dock · New Window · Close All), drag to reorder or
-            // unpin, drops, badges and the Plank importer are the rest of E3.1, not built yet.
+            BTN_RIGHT if self.modifiers().ctrl => self.dock_settings(),
+            BTN_RIGHT => self.dock_open_menu(item.key, &layout, i),
+            // ponytail: badges and the Plank importer are the rest of E3.1, not built yet.
             _ => {}
         }
         true
@@ -276,6 +292,7 @@ impl State {
     /// The pointer moved: redraw while it zooms the dock; touching the bottom edge calls up a hidden dock, leaving it
     /// lets it hide again.
     pub fn dock_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
+        self.dock_drag_motion(to);
         if !self.dock_reveal && !self.near_dock(from) && !self.near_dock(to) {
             return;
         }
@@ -292,6 +309,330 @@ impl State {
         }
     }
 }
+
+/// The dock's interactions: the right-click menu, dragging an icon, files dragged in from an app.
+#[derive(Default)]
+pub struct Ui {
+    /// The item key the open menu is for, and the point (output-relative) it stands centred over.
+    pub menu: Option<(String, Point<i32, Logical>)>,
+    drag: Option<Drag>,
+    /// The `text/uri-list` of the app drag in progress, read as it starts.
+    uris: Arc<Mutex<Option<String>>>,
+}
+
+/// An icon held down by the left button.
+struct Drag {
+    key: String,
+    start: Point<f64, Logical>,
+    /// Past the threshold: a drag, not a click.
+    moved: bool,
+    /// Where it would land; `None`: off the dock (released there, a pinned icon is removed).
+    slot: Option<usize>,
+}
+
+/// How far the pointer moves before a press becomes a drag.
+const DRAG_START: f64 = 8.0;
+
+impl Ui {
+    /// `items` as the drag would leave them: the dragged icon moved to its slot.
+    fn preview(&self, mut items: Vec<Item>) -> Vec<Item> {
+        let Some((key, slot)) = self.drag.as_ref().and_then(|d| Some((&d.key, d.slot?))) else { return items };
+        if let Some(from) = items.iter().position(|i| i.key == *key) {
+            let item = items.remove(from);
+            items.insert(slot.min(items.len()), item);
+        }
+        items
+    }
+}
+
+/// A row of a dock icon's menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    /// Brings the app's n-th window forward.
+    Window(usize),
+    /// Keep in Dock / Remove from Dock.
+    Pin,
+    /// New Window / Open.
+    Open,
+    /// Close All / Quit.
+    Close,
+}
+
+/// Plank's menu: the app's windows, then Keep in Dock (or Remove from Dock) and New Window (or Open) for apps with a
+/// desktop entry, then Close All (Quit with one window) while it runs.
+pub fn menu_rows(titles: &[String], pinned: bool, launchable: bool) -> Vec<Option<Row>> {
+    let row = |label: &str, command| Some(Row { label: label.to_owned(), shortcut: "", action: Some(Action::Dock(command)) });
+    let mut groups: Vec<Vec<Option<Row>>> = vec![titles.iter().enumerate().map(|(i, t)| row(t, Command::Window(i))).collect()];
+    if launchable {
+        let open = if titles.is_empty() { "Open" } else { "New Window" };
+        groups.push(vec![row(if pinned { "Remove from Dock" } else { "Keep in Dock" }, Command::Pin), row(open, Command::Open)]);
+    }
+    if !titles.is_empty() {
+        groups.push(vec![row(if titles.len() == 1 { "Quit" } else { "Close All" }, Command::Close)]);
+    }
+    let mut rows = Vec::new();
+    for group in groups.into_iter().filter(|g| !g.is_empty()) {
+        if !rows.is_empty() {
+            rows.push(None);
+        }
+        rows.extend(group);
+    }
+    rows
+}
+
+/// The slot an icon dragged to `x` lands in: the column under it, clamped to `0..=max`.
+pub fn slot(layout: &Layout, x: f64, max: usize) -> usize {
+    let n = layout.columns.iter().take_while(|(_, right)| x >= *right).count();
+    n.min(max)
+}
+
+/// `[dock] items` after moving `name` to shown slot `to` (`None`: unpinning it). `shown[i]` is the index in `items` of
+/// the i-th pinned icon on the dock, `from` the dragged icon's slot if it is pinned. Entries for apps that aren't
+/// installed keep their place.
+pub fn repin(items: &[String], shown: &[usize], name: &str, from: Option<usize>, to: Option<usize>) -> Vec<String> {
+    let mut list: Vec<(String, bool)> = items.iter().enumerate().map(|(i, s)| (s.clone(), shown.contains(&i))).collect();
+    if let Some(at) = from.and_then(|f| shown.get(f)) {
+        list.remove(*at);
+    }
+    if let Some(to) = to {
+        let at = list.iter().enumerate().filter(|(_, (_, shown))| *shown).nth(to).map_or(list.len(), |(i, _)| i);
+        list.insert(at, (name.to_owned(), true));
+    }
+    list.into_iter().map(|(s, _)| s).collect()
+}
+
+/// `text` (a config.toml) with `[dock] items` set to `items`; every other line, comments included, is kept.
+// ponytail: brackets inside quoted names or comments of a multi-line `items` array would confuse the line scan.
+pub fn set_items(text: &str, items: &[String]) -> String {
+    let quoted: Vec<String> = items.iter().map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))).collect();
+    let value = format!("items = [{}]\n", quoted.join(", "));
+    let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
+    if let Some(last) = lines.last_mut().filter(|l| !l.ends_with('\n')) {
+        last.push('\n');
+    }
+    let header = |l: &str| l.trim_start().starts_with('[');
+    let Some(dock) = lines.iter().position(|l| l.trim_start().starts_with("[dock]")) else {
+        let gap = if lines.is_empty() { "" } else { "\n" };
+        return format!("{}{gap}[dock]\n{value}", lines.concat());
+    };
+    let end = lines[dock + 1..].iter().position(|l| header(l)).map_or(lines.len(), |i| dock + 1 + i);
+    let key = |l: &str| l.trim_start().strip_prefix("items").is_some_and(|r| r.trim_start().starts_with('='));
+    match (dock + 1..end).find(|&i| key(&lines[i])) {
+        Some(start) => {
+            // A multi-line array runs until its brackets close.
+            let mut depth = 0;
+            let mut last = start;
+            for (i, line) in lines.iter().enumerate().skip(start) {
+                let code = line.split('#').next().unwrap_or("");
+                depth += code.matches('[').count() as i32 - code.matches(']').count() as i32;
+                last = i;
+                if depth <= 0 {
+                    break;
+                }
+            }
+            lines.splice(start..=last, [value]);
+        }
+        None => lines.insert(dock + 1, value),
+    }
+    lines.concat()
+}
+
+/// The URIs of a `text/uri-list` (comments and blank lines skipped).
+pub fn uri_list(text: &str) -> Vec<String> {
+    text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
+}
+
+impl State {
+    /// The pinned icons on the dock: (index in `[dock] items`, app id), left to right.
+    fn dock_pinned(&self) -> Vec<(usize, String)> {
+        let mut pinned: Vec<(usize, String)> = Vec::new();
+        for (i, name) in self.config.dock.items.iter().enumerate() {
+            if let Some(app) = self.apps.find(name).filter(|a| !pinned.iter().any(|(_, id)| *id == a.id)) {
+                pinned.push((i, app.id.clone()));
+            }
+        }
+        pinned
+    }
+
+    fn dock_item(&self, key: &str) -> Option<Item> {
+        self.dock_items().into_iter().find(|i| i.key == key)
+    }
+
+    /// The open dock menu's rows (empty without one).
+    pub fn dock_menu_rows(&self) -> Vec<Option<Row>> {
+        let Some(item) = self.dock_ui.menu.as_ref().and_then(|(key, _)| self.dock_item(key)) else { return Vec::new() };
+        let name = item.app.as_ref().map_or(item.key.as_str(), |a| a.name.as_str());
+        let titles: Vec<String> = item
+            .windows
+            .iter()
+            .map(|w| {
+                let title = w.toplevel().and_then(|t| with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.title.clone())));
+                title.filter(|t| !t.is_empty()).unwrap_or_else(|| name.to_owned())
+            })
+            .collect();
+        let pinned = self.dock_pinned().iter().any(|(_, id)| *id == item.key);
+        menu_rows(&titles, pinned, item.app.is_some())
+    }
+
+    /// Right click: icon `i`'s menu, centred over it.
+    fn dock_open_menu(&mut self, key: String, layout: &Layout, i: usize) {
+        let (left, right) = layout.columns[i];
+        let at = Point::from((((left + right) / 2.0).round() as i32, layout.icons[i].loc.y.round() as i32));
+        self.dock_ui.menu = Some((key, at));
+        self.popup = Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock));
+        self.schedule_redraw();
+    }
+
+    /// `--show dock-menu`: the first running app's menu, else the first icon's.
+    pub fn dock_show_menu(&mut self) {
+        let items = self.dock_items();
+        let Some(layout) = self.dock_layout(items.len()) else { return };
+        if let Some(i) = items.iter().position(|i| !i.windows.is_empty()).or((!items.is_empty()).then_some(0)) {
+            self.dock_open_menu(items[i].key.clone(), &layout, i);
+        }
+    }
+
+    /// Ctrl+right click: Plank's preferences, which are config.toml's `[dock]` until the Settings app (M7).
+    fn dock_settings(&mut self) {
+        let path = config::path();
+        if !path.exists() {
+            let _ = config::save_atomic(&path, config::DEFAULT_TOML).inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
+        }
+        // ponytail: always Kate, the default editor; the Settings app's Dock pane replaces this.
+        self.spawn(&["kate".to_owned(), path.to_string_lossy().into_owned()]);
+    }
+
+    pub fn dock_command(&mut self, command: Command) {
+        let Some(item) = self.dock_ui.menu.as_ref().and_then(|(key, _)| self.dock_item(key)) else { return };
+        match command {
+            Command::Window(i) => {
+                let Some(window) = item.windows.get(i).cloned() else { return };
+                if let Some(at) = self.hidden.iter().position(|(w, _)| *w == window) {
+                    let (_, loc) = self.hidden.remove(at);
+                    self.set_visible_loc(&window, loc);
+                }
+                self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
+            }
+            Command::Pin => {
+                let pinned = self.dock_pinned();
+                let to = (!pinned.iter().any(|(_, id)| *id == item.key)).then_some(pinned.len());
+                self.dock_repin(&item.key, to);
+            }
+            Command::Open => self.launch(item.app.as_ref()),
+            Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
+        }
+        self.schedule_redraw();
+    }
+
+    /// Moves `key` to pinned slot `to`, or unpins it, and saves `[dock] items`.
+    fn dock_repin(&mut self, key: &str, to: Option<usize>) {
+        let pinned = self.dock_pinned();
+        let shown: Vec<usize> = pinned.iter().map(|(i, _)| *i).collect();
+        let from = pinned.iter().position(|(_, id)| id == key);
+        let items = repin(&self.config.dock.items, &shown, key, from, to);
+        if items == self.config.dock.items {
+            return;
+        }
+        // Into the file the user edits (through a dotfiles symlink), so the live reload agrees.
+        let path = config::path();
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        if let Err(err) = config::save_atomic(&path, &set_items(&text, &items)) {
+            tracing::warn!("{}: {err}", path.display());
+        }
+        self.config.dock.items = items;
+        self.schedule_redraw();
+    }
+
+    /// The pointer moved to `to` with an icon held: past the threshold it drags, and the icons make room.
+    fn dock_drag_motion(&mut self, to: Point<f64, Logical>) {
+        let Some(drag) = self.dock_ui.drag.as_ref() else { return };
+        let (start, key) = (drag.start, drag.key.clone());
+        if !drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START {
+            return;
+        }
+        let n = self.dock_items().len();
+        let Some(layout) = self.dock_layout(n) else { return };
+        let pinned = self.dock_pinned();
+        let is_pinned = pinned.iter().any(|(_, id)| *id == key);
+        // Slightly above the icons still counts as on the dock.
+        let on = to.y >= f64::from(layout.zone.loc.y) - layout.icon && to.x >= f64::from(layout.zone.loc.x) - layout.icon;
+        let max = if is_pinned { pinned.len().saturating_sub(1) } else { pinned.len() };
+        let slot = on.then(|| slot(&layout, to.x, max));
+        if let Some(drag) = self.dock_ui.drag.as_mut() {
+            drag.moved = true;
+            if drag.slot != slot {
+                drag.slot = slot;
+                self.schedule_redraw();
+            }
+        }
+    }
+
+    /// The left button came up: a click on the held icon, or the end of its drag (reorder, pin, or remove).
+    pub fn dock_release(&mut self, _location: Point<f64, Logical>) {
+        let Some(drag) = self.dock_ui.drag.take() else { return };
+        let Some(item) = self.dock_item(&drag.key) else { return };
+        if !drag.moved {
+            return self.dock_activate(item);
+        }
+        let pinned = self.dock_pinned().iter().any(|(_, id)| *id == item.key);
+        match drag.slot {
+            Some(to) if item.app.is_some() => self.dock_repin(&item.key, Some(to)),
+            // ponytail: removed at once, without Plank's poof animation or the icon following the pointer.
+            None if pinned => self.dock_repin(&item.key, None),
+            _ => {}
+        }
+        self.schedule_redraw();
+    }
+
+    /// An app started a drag: its `text/uri-list`, if it offers one, is read now, since a drop on the dock (no client
+    /// surface) gets cancelled before we could ask.
+    pub fn dock_drag_started(&mut self, source: Option<WlDataSource>) {
+        let uris = self.dock_ui.uris.clone();
+        *uris.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        let Some(source) = source else { return };
+        let offers = with_source_metadata(&source, |m| m.mime_types.iter().any(|t| t == URI_LIST)).unwrap_or(false);
+        let Some((mut reader, writer)) = offers.then(|| std::io::pipe().ok()).flatten() else { return };
+        source.send(URI_LIST.to_owned(), writer.as_fd());
+        drop(writer);
+        // ponytail: a drop before the app has written the list is ignored.
+        crate::clipboard::transfer(move || {
+            let mut text = String::new();
+            if reader.by_ref().take(1 << 20).read_to_string(&mut text).is_ok() {
+                *uris.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
+            }
+        });
+    }
+
+    /// An app's drag ended over no window: on the dock, `.desktop` files are pinned where they land, other files open
+    /// with the app they land on.
+    // ponytail: only `.desktop` files of installed apps (in an `applications/` dir) pin; others are ignored.
+    pub fn dock_drop(&mut self) {
+        let Some(location) = self.seat.get_pointer().map(|p| self.to_output(p.current_location())) else { return };
+        let text = self.dock_ui.uris.lock().unwrap_or_else(|e| e.into_inner()).take();
+        let uris = uri_list(&text.unwrap_or_default());
+        if uris.is_empty() || !self.dock_covers(location) {
+            return;
+        }
+        let items = self.dock_items();
+        let Some(layout) = self.dock_layout(items.len()) else { return };
+        if uris.iter().all(|u| u.ends_with(".desktop")) {
+            let mut at = slot(&layout, location.x, self.dock_pinned().len());
+            for uri in &uris {
+                let stem = crate::apps::file_path(uri).and_then(|p| Some(std::path::Path::new(&p).file_stem()?.to_string_lossy().into_owned()));
+                if let Some(id) = stem.and_then(|s| self.apps.find(&s).map(|a| a.id.clone())) {
+                    self.dock_repin(&id, Some(at));
+                    at += 1;
+                }
+            }
+        } else if let Some(app) = hit(&layout, location).and_then(|i| items.into_iter().nth(i)).and_then(|i| i.app) {
+            tracing::info!(app = app.id, files = uris.len(), "dock: open dropped files");
+            self.spawn(&app.command_with(&uris));
+        }
+    }
+}
+
+const URI_LIST: &str = "text/uri-list";
 
 #[cfg(test)]
 mod tests {
@@ -354,6 +695,67 @@ mod tests {
             let i = hit(&z, p).expect("inside");
             assert!(z.icons.iter().all(|r| r.size.w <= z.icons[i].size.w + 1e-9), "at {px}");
         }
+    }
+
+    #[test]
+    fn menu_lists_windows_then_pin_and_open_then_close() {
+        let labels = |rows: Vec<Option<Row>>| rows.into_iter().map(|r| r.map(|r| r.label)).collect::<Vec<_>>();
+        let s = |l: &str| Some(l.to_owned());
+        let two = ["a.txt".to_owned(), "b.txt".to_owned()];
+        assert_eq!(labels(menu_rows(&two, true, true)), [s("a.txt"), s("b.txt"), None, s("Remove from Dock"), s("New Window"), None, s("Close All")]);
+        assert_eq!(labels(menu_rows(&[], false, true)), [s("Keep in Dock"), s("Open")]);
+        // No desktop entry: nothing to pin or launch.
+        assert_eq!(labels(menu_rows(&two[..1], false, false)), [s("a.txt"), None, s("Quit")]);
+        assert_eq!(menu_rows(&two, false, true)[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
+    }
+
+    #[test]
+    fn drag_slots_follow_columns() {
+        let l = layout(4, SCREEN.into(), 84, 1.0, None);
+        let mid = |i: usize| (l.columns[i].0 + l.columns[i].1) / 2.0;
+        assert_eq!(slot(&l, mid(0), 3), 0);
+        assert_eq!(slot(&l, mid(2), 3), 2);
+        assert_eq!(slot(&l, 0.0, 3), 0, "left of the dock");
+        assert_eq!(slot(&l, 1900.0, 3), 3, "right of it");
+        // Clamped to the pinned slots.
+        assert_eq!(slot(&l, mid(3), 1), 1);
+    }
+
+    #[test]
+    fn repin_keeps_uninstalled_entries_in_place() {
+        let items: Vec<String> = ["chrome", "kate", "vscode", "dolphin", "kitty"].map(String::from).to_vec();
+        // chrome and vscode aren't installed: shown slots 0, 1, 2 are kate, dolphin, kitty.
+        let shown = [1, 3, 4];
+        let v = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(repin(&items, &shown, "kitty", Some(2), Some(0)), v(&["chrome", "kitty", "kate", "vscode", "dolphin"]));
+        assert_eq!(repin(&items, &shown, "kate", Some(0), Some(2)), v(&["chrome", "vscode", "dolphin", "kitty", "kate"]));
+        assert_eq!(repin(&items, &shown, "dolphin", Some(1), None), v(&["chrome", "kate", "vscode", "kitty"]));
+        // A running app pinned between kate and dolphin.
+        assert_eq!(repin(&items, &shown, "helium", None, Some(1)), v(&["chrome", "kate", "vscode", "helium", "dolphin", "kitty"]));
+        assert_eq!(repin(&items, &shown, "helium", None, Some(3)), v(&["chrome", "kate", "vscode", "dolphin", "kitty", "helium"]));
+    }
+
+    #[test]
+    fn preview_moves_the_dragged_icon() {
+        let item = |k: &str| Item { key: k.into(), app: None, windows: Vec::new() };
+        let mut ui = Ui { drag: Some(Drag { key: "a".into(), start: (0.0, 0.0).into(), moved: true, slot: Some(2) }), ..Default::default() };
+        let keys: Vec<String> = ui.preview(vec![item("a"), item("b"), item("c")]).into_iter().map(|i| i.key).collect();
+        assert_eq!(keys, ["b", "c", "a"]);
+        ui.drag.as_mut().unwrap().slot = None;
+        assert_eq!(ui.preview(vec![item("a"), item("b")]).len(), 2, "off the dock it stays in place until released");
+    }
+
+    #[test]
+    fn items_rewritten_in_place() {
+        let names: Vec<String> = ["kate", "say \"hi\""].map(String::from).to_vec();
+        let text = "# top\n[dock]\n# pinned\nitems = [\n  \"a\", # first\n  \"b\",\n]\nzoom = true\n\n[bindings]\nitems = 1\n";
+        assert_eq!(set_items(text, &names), "# top\n[dock]\n# pinned\nitems = [\"kate\", \"say \\\"hi\\\"\"]\nzoom = true\n\n[bindings]\nitems = 1\n");
+        assert_eq!(set_items("[dock]\nzoom = false", &names[..1]), "[dock]\nitems = [\"kate\"]\nzoom = false\n");
+        assert_eq!(set_items("version = 1\n", &names[..1]), "version = 1\n\n[dock]\nitems = [\"kate\"]\n");
+        // The written file reads back as the new list.
+        let config = config::parse(&set_items(config::DEFAULT_TOML, &names)).unwrap();
+        assert_eq!(config.dock.items, names);
+        assert_eq!(uri_list("# c\r\nfile:///a.desktop\r\n\r\nfile:///b\n"), ["file:///a.desktop", "file:///b"]);
     }
 
     #[test]

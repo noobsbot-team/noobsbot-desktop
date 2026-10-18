@@ -161,6 +161,8 @@ pub struct State {
     pub dock_reveal: bool,
     /// `--show dock-zoom`: a fake pointer position the dock zooms around.
     pub dock_pointer: Option<Point<f64, Logical>>,
+    /// The dock's right-click menu, icon drag and file drop (E3.1).
+    pub dock_ui: crate::shell::dock::Ui,
     /// Notifications, their banners and Notification Center's state (E4.1, E4.2).
     pub notifications: crate::shell::notify::Store,
     /// The app switcher (E4.5) and its most-recently-used order.
@@ -323,6 +325,7 @@ impl State {
             icons: Default::default(),
             dock_reveal: false,
             dock_pointer: None,
+            dock_ui: Default::default(),
             notifications: Default::default(),
             switcher: Default::default(),
             force_quit: None,
@@ -860,7 +863,18 @@ impl DataDeviceHandler for State {
     }
 }
 
-impl ClientDndGrabHandler for State {}
+/// The dock is a drop target: files open with the app they land on, `.desktop` files pin (E3.1).
+impl ClientDndGrabHandler for State {
+    fn started(&mut self, source: Option<smithay::reexports::wayland_server::protocol::wl_data_source::WlDataSource>, _icon: Option<WlSurface>, _seat: Seat<Self>) {
+        self.dock_drag_started(source);
+    }
+
+    fn dropped(&mut self, _target: Option<WlSurface>, validated: bool, _seat: Seat<Self>) {
+        if !validated {
+            self.dock_drop();
+        }
+    }
+}
 impl ServerDndGrabHandler for State {}
 
 impl PrimarySelectionHandler for State {

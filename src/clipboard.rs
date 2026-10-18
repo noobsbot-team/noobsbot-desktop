@@ -28,7 +28,7 @@ const MAX_TRANSFERS: usize = 32;
 static TRANSFERS: AtomicUsize = AtomicUsize::new(0);
 
 /// Runs `work` on a worker thread, unless `MAX_TRANSFERS` are already running.
-fn transfer(work: impl FnOnce() + Send + 'static) {
+pub fn transfer(work: impl FnOnce() + Send + 'static) {
     if TRANSFERS.fetch_add(1, Ordering::Relaxed) >= MAX_TRANSFERS {
         TRANSFERS.fetch_sub(1, Ordering::Relaxed);
         tracing::warn!("{MAX_TRANSFERS} clipboard transfers in flight, dropping one");

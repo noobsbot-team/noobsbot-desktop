@@ -53,7 +53,7 @@ impl MenuPopover {
         shaders: &Shaders,
         text: &mut Text,
         rows: &[Option<Row>],
-        anchor_x: i32,
+        anchor: shell::Anchor,
         output_width: i32,
         hover: Point<f64, Logical>,
         dark: bool,
@@ -73,7 +73,7 @@ impl MenuPopover {
             let shortcut = if row.shortcut.is_empty() { 0 } else { SHORTCUT_GAP + logical(text.label(row.shortcut, body, 200, scale).width) };
             width = width.max(logical(text.label(&row.label, body, 400, scale).width) + shortcut + 2 * (SIDE + PAD));
         }
-        let (rect, cells) = shell::menu_layout(anchor_x, output_width, width, rows);
+        let (rect, cells) = shell::menu_layout(anchor, output_width, width, rows);
         let hovered = cells.iter().position(|c| c.to_f64().contains(hover)).filter(|&i| rows[i].as_ref().is_some_and(|r| r.action.is_some()));
 
         let separators: Vec<Rect> = rows
