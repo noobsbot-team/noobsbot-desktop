@@ -1289,6 +1289,7 @@ dependencies = [
  "png",
  "regex-lite",
  "resvg",
+ "semver",
  "serde",
  "smithay",
  "toml",

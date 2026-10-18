@@ -32,6 +32,8 @@ pub struct Config {
     pub version: u32,
     /// Opened by Super+Enter and the `terminal` action.
     pub terminal: String,
+    /// Software Update asks GitHub for a newer release once a day (E6.13); read at start.
+    pub check_updates: bool,
     pub appearance: Appearance,
     pub keyboard: Keyboard,
     pub touchpad: Touchpad,
@@ -194,6 +196,7 @@ impl Default for Config {
         Self {
             version: 1,
             terminal: "noobsbot".into(),
+            check_updates: true,
             appearance: Appearance::default(),
             keyboard: Keyboard::default(),
             touchpad: Touchpad::default(),

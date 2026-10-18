@@ -201,6 +201,10 @@ impl State {
         })?;
         let (services_tx, services_rx) = channel::channel();
         let services = crate::services::spawn(services_tx);
+        // Nested is a dev session: no network.
+        if !nested && config.check_updates {
+            crate::services::update::spawn();
+        }
         if !config.clock.timezone.is_empty() {
             services.send(crate::services::Command::Timezone(config.clock.timezone.clone()));
         }
