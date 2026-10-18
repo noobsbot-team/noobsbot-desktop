@@ -71,7 +71,7 @@ impl AlertSheet {
         let label = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
         let title2 = Style { size: 17, line_height: 22, weight: 600, color: label, tabular: false };
         let body = Style { size: 13, line_height: 16, weight: 400, color: label, tabular: false };
-        let title = text.paragraph(alert.title(), title2, INNER as u32, scale);
+        let title = text.paragraph(&alert.title(), title2, INNER as u32, scale);
         let words = text.paragraph(&alert.body(Instant::now()), body, INNER as u32, scale);
         let logical = |px: u32| (f64::from(px) / scale).round() as i32;
         let (title_h, body_h) = (logical(title.height), logical(words.height));
@@ -108,7 +108,7 @@ impl AlertSheet {
             symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
             title,
             words,
-            text.label("Cancel", body, button_w as u32, scale),
+            text.label(alert.cancel(), body, button_w as u32, scale),
             text.label(alert.confirm(), Style { color: [255, 255, 255, 255], ..body }, button_w as u32, scale),
         ];
         self.labels = keep_buffers(&self.labels, pieces);

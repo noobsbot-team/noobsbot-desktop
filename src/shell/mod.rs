@@ -3,6 +3,8 @@
 
 pub mod alert;
 pub mod control;
+pub mod force_quit;
+pub mod switcher;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use smithay::utils::{Logical, Point, Rectangle};
@@ -87,7 +89,7 @@ pub struct Row {
 }
 
 /// The rows of `menu`; `app` is the focused app's name.
-// ponytail: rows whose window isn't built yet (About, Settings, Force Quit, the lock screen) are disabled until
+// ponytail: rows whose window isn't built yet (About, Settings, the lock screen) are disabled until
 // their milestone adds it.
 pub fn menu_rows(menu: Menu, app: &str) -> Vec<Option<Row>> {
     let row = |label: String, shortcut, action| Some(Row { label, shortcut, action });
@@ -97,7 +99,7 @@ pub fn menu_rows(menu: Menu, app: &str) -> Vec<Option<Row>> {
             row("System Settings…".into(), "", None),
             row("Software Update…".into(), "", None),
             None,
-            row("Force Quit…".into(), "⌥⌘⎋", None),
+            row("Force Quit…".into(), "⌥⌘⎋", Some(Action::ForceQuit)),
             None,
             row("Sleep".into(), "", Some(Action::Sleep)),
             row("Restart…".into(), "", Some(Action::Power(alert::Power::Restart))),
@@ -237,6 +239,9 @@ impl State {
         if on_alert {
             return true;
         }
+        if self.force_quit.is_some() && self.force_quit_layout(0).is_some_and(|l| l.rect.to_f64().contains(location)) {
+            return true;
+        }
         let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
         on_bar || self.popup_rect().is_some_and(|r| r.to_f64().contains(location))
     }
@@ -245,6 +250,9 @@ impl State {
     pub fn shell_press(&mut self, location: Point<f64, Logical>) -> bool {
         // The alert is above everything else.
         if self.alert.is_some() && self.alert_press(location) {
+            return true;
+        }
+        if self.force_quit_press(location) {
             return true;
         }
         let item = self.backend.as_ref().and_then(|b| b.menu_bar.hit(location));

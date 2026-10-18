@@ -29,7 +29,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|switcher|force-quit] [-- command [args...]]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -132,11 +132,20 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         // No countdown timer: it never acts by itself.
         Some("alert") => {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
-            state.alert = Some(shell::alert::Alert { power: shell::alert::Power::Restart, deadline });
+            state.alert = Some(shell::alert::Alert { ask: shell::alert::Ask::Power(shell::alert::Power::Restart), deadline });
         }
+        // Both list the windows open by then: apps started with the compositor need a moment to map.
+        Some("switcher") => {
+            let open = |_: std::time::Instant, _: &mut (), state: &mut State| {
+                state.switcher_preview();
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            };
+            event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(5)), open)?;
+        }
+        Some("force-quit") => state.open_force_quit(),
         // Stays up: no hide timer.
         Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),
-        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert)"),
+        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert, switcher, force-quit)"),
         None => {}
     }
 

@@ -65,7 +65,10 @@ week_start = "sunday"
 "Super+M" = "minimise"
 "Super+H" = "hide"
 "Super+Alt+H" = "hide-others"
-"Super+Tab" = "cycle"
+# Hold Super and press Tab to switch apps (Shift+Tab steps back). Nested in another desktop, Super is Alt, and the
+# host may keep Alt+Tab for itself: bind another key here, e.g. "Super+grave" = "switcher".
+"Super+Tab" = "switcher"
+"Super+Alt+Escape" = "force-quit"
 "F12" = "exec noobsbot --quake"
 "XF86AudioRaiseVolume" = "volume up"
 "XF86AudioLowerVolume" = "volume down"

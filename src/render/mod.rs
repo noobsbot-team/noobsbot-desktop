@@ -5,10 +5,12 @@
 mod alert;
 pub mod calendar;
 mod control;
+mod force_quit;
 mod gallery;
 mod menu;
 pub mod menubar;
 mod osd;
+mod switcher;
 mod titlebar;
 mod wallpaper;
 
@@ -39,9 +41,11 @@ pub use gallery::Gallery;
 pub use alert::AlertSheet;
 pub use calendar::CalendarPopover;
 pub use control::ControlCenter;
+pub use force_quit::ForceQuitWindow;
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
 pub use osd::OsdPopover;
+pub use switcher::SwitcherPanel;
 pub use wallpaper::Wallpaper;
 
 use crate::{

@@ -128,7 +128,12 @@ pub fn elements(
     };
     let color = if dark { [255, 255, 255, alpha] } else { [0, 0, 0, alpha] };
     let max_width = (frame.size.w - 2 * TITLE_MARGIN).max(0) as u32;
-    let rendered = text.label(&title_of(window), Style { size: 13, line_height: 16, weight: 600, color, tabular: false }, max_width, scale);
+    // A frozen app (E4.7): dimmed to tertiary, "(Not Responding)" after the title.
+    let (title, color) = match crate::shell::force_quit::frozen(window) {
+        true => (format!("{} (Not Responding)", title_of(window)), if dark { [255, 255, 255, 64] } else { [0, 0, 0, 66] }),
+        false => (title_of(window), color),
+    };
+    let rendered = text.label(&title, Style { size: 13, line_height: 16, weight: 600, color, tabular: false }, max_width, scale);
     if !cache.title.as_ref().is_some_and(|(r, _)| Arc::ptr_eq(r, &rendered)) {
         cache.title = Some((rendered.clone(), text::to_buffer(&rendered)));
     }

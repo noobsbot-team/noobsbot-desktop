@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, AlertSheet, CalendarPopover, ControlCenter, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
+    render::{self, AlertSheet, CalendarPopover, ControlCenter, ForceQuitWindow, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, SwitcherPanel, Wallpaper},
     shell::Popup,
     state::State,
 };
@@ -43,6 +43,8 @@ pub struct Winit {
     osd: OsdPopover,
     control: ControlCenter,
     pub alert: AlertSheet,
+    switcher: SwitcherPanel,
+    force_quit: ForceQuitWindow,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -87,7 +89,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default() });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), switcher: SwitcherPanel::default(), force_quit: ForceQuitWindow::default() });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -113,7 +115,16 @@ impl State {
     pub fn render(&mut self) {
         let content = self.menu_bar();
         let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar, menu, osd, control, alert: sheet }) = self.backend.as_mut() else { return };
+        let quit_list = self.force_quit.clone().map(|f| {
+            let entries = self.force_quit_entries();
+            let selected = f.selection(&entries);
+            (entries, selected)
+        });
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar, menu, osd, control, alert: sheet, switcher, force_quit }) =
+            self.backend.as_mut()
+        else {
+            return;
+        };
         let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
@@ -124,7 +135,7 @@ impl State {
                 let dark = render::is_dark(appearance);
                 let (geo_origin, width) = self.space.output_geometry(output).map_or(((0, 0).into(), 0), |g| (g.loc, g.size.w));
                 let accent = render::accent(appearance.accent, dark);
-                // The alert in front of the OSD, the OSD in front of popups, popups in front of the bar, the bar in
+                // The alert in front of the switcher and the Force Quit window, those in front of the OSD, the OSD in front of popups, popups in front of the bar, the bar in
                 // front of windows.
                 let mut bar = Vec::new();
                 match &self.alert {
@@ -133,6 +144,14 @@ impl State {
                         bar.extend(sheet.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, size, dark, accent, appearance.glass_opacity, scale));
                     }
                     None => sheet.hide(),
+                }
+                let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
+                if let Some(open) = self.switcher.open.as_ref().filter(|o| o.visible) {
+                    let names: Vec<String> = open.apps.iter().map(|a| a.name.clone()).collect();
+                    bar.extend(switcher.elements(renderer, shaders, &mut self.text, &names, open.selected, size, dark, appearance.glass_opacity, scale));
+                }
+                if let Some((entries, selected)) = &quit_list {
+                    bar.extend(force_quit.elements(renderer, shaders, &mut self.text, entries, *selected, size, dark, accent, scale));
                 }
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
