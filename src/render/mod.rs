@@ -4,6 +4,7 @@
 
 mod alert;
 pub mod calendar;
+mod components;
 mod control;
 mod dock;
 mod gallery;
@@ -11,6 +12,7 @@ mod menu;
 pub mod menubar;
 mod osd;
 mod titlebar;
+mod ui;
 mod wallpaper;
 
 use std::cell::RefCell;
@@ -39,6 +41,7 @@ use smithay::{
 pub use gallery::Gallery;
 pub use alert::AlertSheet;
 pub use calendar::CalendarPopover;
+pub use components::Components;
 pub use control::ControlCenter;
 pub use dock::{DockView, Icon as DockIcon};
 pub use menu::MenuPopover;
@@ -100,7 +103,7 @@ fn floats(names: &[&'static str]) -> Vec<UniformName<'static>> {
 
 impl Shaders {
     pub fn new(renderer: &mut GlesRenderer) -> Result<Self, GlesError> {
-        let mut glass = floats(&["px", "inset", "radius", "sheen", "highlight", "highlight_top", "hairline"]);
+        let mut glass = floats(&["px", "inset", "radius", "sheen", "highlight", "highlight_top", "hairline", "hollow"]);
         glass.push(UniformName::new("fill", UniformType::_4f));
         let rounded =
             [UniformName::new("geo_size", UniformType::_2f), UniformName::new("radius", UniformType::_1f), UniformName::new("to_geo", UniformType::_4f)];
@@ -132,7 +135,12 @@ impl Shaders {
             (true, true) => (0.03, 0.12, 0.18, 0.50),
             (true, false) => (0.04, 0.25, 0.40, 0.10),
         };
-        self.glass_element(rect, fill, radius, [sheen, highlight, highlight_top, hairline], scale)
+        self.glass_element(rect, fill, radius, [sheen, highlight, highlight_top, hairline], 0.0, scale)
+    }
+
+    /// A `width` px ring of `color` just outside `rect`, following its `radius` (the D7 focus ring).
+    pub fn ring(&self, rect: Rect, radius: f64, width: i32, color: [f32; 4], scale: f64) -> PixelShaderElement {
+        self.glass_element(grow(rect, width), color, radius + f64::from(width), [0.0; 4], width as f32 * scale as f32, scale)
     }
 
     /// An opaque square rect shading from grey `top` to grey `bottom` (0–1, `bottom` < 1). The glass shader's sheen
@@ -140,13 +148,13 @@ impl Shaders {
     /// `bottom + s (bottom - 1)` at the top edge, which is `top` for the `s` below.
     pub fn gradient(&self, rect: Rect, top: f32, bottom: f32, scale: f64) -> PixelShaderElement {
         let sheen = (top - bottom) / (1.0 - bottom);
-        self.glass_element(rect, [bottom, bottom, bottom, 1.0], 0.0, [sheen, 0.0, 0.0, 0.0], scale)
+        self.glass_element(rect, [bottom, bottom, bottom, 1.0], 0.0, [sheen, 0.0, 0.0, 0.0], 0.0, scale)
     }
 
     /// A traffic light (D2): a flat circle, edged 0.5 px darker only on a focused window.
     pub fn light(&self, rect: Rect, fill: [f32; 4], edge: bool, scale: f64) -> PixelShaderElement {
         let radius = f64::from(rect.size.w) / 2.0;
-        self.glass_element(rect, fill, radius, [0.0, 0.0, 0.0, if edge { 0.15 } else { 0.0 }], scale)
+        self.glass_element(rect, fill, radius, [0.0, 0.0, 0.0, if edge { 0.15 } else { 0.0 }], 0.0, scale)
     }
 
     fn glass_element(
@@ -155,6 +163,7 @@ impl Shaders {
         [r, g, b, a]: [f32; 4],
         radius: f64,
         [sheen, highlight, highlight_top, hairline]: [f32; 4],
+        hollow: f32,
         scale: f64,
     ) -> PixelShaderElement {
         let px = scale as f32;
@@ -167,6 +176,7 @@ impl Shaders {
             Uniform::new("highlight", highlight),
             Uniform::new("highlight_top", highlight_top),
             Uniform::new("hairline", hairline),
+            Uniform::new("hollow", hollow),
         ];
         PixelShaderElement::new(self.glass.clone(), grow(rect, 1), None, 1.0, uniforms, Kind::Unspecified)
     }

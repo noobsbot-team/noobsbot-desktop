@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, AlertSheet, CalendarPopover, ControlCenter, DockIcon, DockView, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
+    render::{self, AlertSheet, CalendarPopover, Components, ControlCenter, DockIcon, DockView, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
     shell::Popup,
     state::State,
 };
@@ -37,6 +37,8 @@ pub struct Winit {
     pub clock: FrameClock,
     /// The `--test-scene` material gallery (E1.4), drawn over the wallpaper when set.
     pub gallery: Option<Gallery>,
+    /// The `--show gallery` component gallery (E2.1), over the whole output under the bar and popups.
+    pub components: Option<Components>,
     pub menu_bar: MenuBar,
     calendar: CalendarPopover,
     pub menu: MenuPopover,
@@ -88,7 +90,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default() });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default(), components: None });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -117,7 +119,7 @@ impl State {
         let dock_items = self.dock_items();
         let dock_layout = self.dock_layout(dock_items.len()).filter(|l| !dock_items.is_empty() && self.dock_visible(l));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar, menu, osd, control, alert: sheet, dock }) =
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, calendar, menu, osd, control, alert: sheet, dock }) =
             self.backend.as_mut()
         else {
             return;
@@ -191,6 +193,9 @@ impl State {
                     let zoom = if self.config.dock.zoom { f64::from(self.config.dock.zoom_percent) / 100.0 } else { 1.0 };
                     let px = (layout.icon * zoom * scale).ceil() as u32;
                     bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, layout, px, scale));
+                }
+                if let (Some(components), Some(geo)) = (components.as_mut(), self.space.output_geometry(output)) {
+                    bar.extend(components.elements(renderer, shaders, &mut self.text, &mut self.symbols, geo.size, dark, accent, appearance.glass_opacity, scale));
                 }
                 let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar);
                 if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {

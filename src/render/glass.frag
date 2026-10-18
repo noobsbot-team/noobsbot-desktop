@@ -28,6 +28,8 @@ uniform float sheen;
 uniform float highlight;
 uniform float highlight_top;
 uniform float hairline;
+// Above 0, only the outer `hollow` physical px of the shape are drawn: a ring (focus rings, D7).
+uniform float hollow;
 
 float rrect(vec2 p, vec2 size, float r) {
     vec2 q = abs(p - size * 0.5) - size * 0.5 + r;
@@ -47,6 +49,7 @@ void main() {
     vec2 p = v_coords * size * px - inset;
     float d = rrect(p, box, radius);
     float inside = clamp(0.5 - d, 0.0, 1.0);
+    if (hollow > 0.0) inside *= clamp(d + hollow + 0.5, 0.0, 1.0);
 
     vec4 c = vec4(fill.rgb * fill.a, fill.a);
     c = over(vec4(1.0) * sheen * clamp(1.0 - p.y / box.y, 0.0, 1.0), c);
