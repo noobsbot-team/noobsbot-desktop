@@ -250,7 +250,6 @@ impl State {
             BTN_MIDDLE => self.launch(item.app.as_ref()),
             BTN_RIGHT if self.modifiers().ctrl => self.dock_settings(),
             BTN_RIGHT => self.dock_open_menu(item.key, &layout, i),
-            // ponytail: badges and the Plank importer are the rest of E3.1, not built yet.
             _ => {}
         }
         true
