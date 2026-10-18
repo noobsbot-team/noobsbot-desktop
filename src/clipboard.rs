@@ -109,6 +109,14 @@ impl Clipboard {
         set_data_device_selection(dh, seat, self.data.iter().map(|(m, _)| m.clone()).collect(), ());
     }
 
+    /// The desktop copies `text` itself (Spotlight's calculator); apps paste it from us.
+    pub fn set_text(&mut self, dh: &DisplayHandle, seat: &Seat<State>, text: &str) {
+        self.replaced(None);
+        let bytes: Arc<[u8]> = text.as_bytes().into();
+        self.data = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"].map(|m| (m.to_owned(), bytes.clone())).into();
+        set_data_device_selection(dh, seat, self.data.iter().map(|(m, _)| m.clone()).collect(), ());
+    }
+
     /// An app pastes from our copy.
     pub fn send(&self, mime: &str, fd: OwnedFd) {
         let Some((_, bytes)) = self.data.iter().find(|(m, _)| m == mime) else { return };

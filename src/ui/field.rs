@@ -15,7 +15,6 @@ pub struct TextField {
 }
 
 /// What a key did to the field.
-#[cfg_attr(not(test), expect(dead_code, reason = "the Wi-Fi password alert types into it next"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Edit {
     /// The text changed.
@@ -44,8 +43,7 @@ impl TextField {
         if self.secure { self.text[..self.caret].chars().count() * '•'.len_utf8() } else { self.caret }
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "the Wi-Fi password alert types into it next"))]
-    /// One key press: `utf8` is what the key types (xkb's string for it), `ctrl` whether Ctrl is held.
+        /// One key press: `utf8` is what the key types (xkb's string for it), `ctrl` whether Ctrl is held.
     pub fn key(&mut self, keysym: Keysym, utf8: Option<&str>, ctrl: bool) -> Edit {
         let prev = self.text[..self.caret].chars().next_back().map_or(0, char::len_utf8);
         let next = self.text[self.caret..].chars().next().map_or(0, char::len_utf8);
@@ -75,15 +73,13 @@ impl TextField {
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code, reason = "the Wi-Fi password alert types into it next"))]
-    fn moved(&mut self, all: bool, caret: usize) -> Edit {
+        fn moved(&mut self, all: bool, caret: usize) -> Edit {
         (self.all, self.caret) = (all, caret);
         Edit::Moved
     }
 
     /// Types `typed` at the caret, over the selection if everything is selected.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the Wi-Fi password alert types into it next"))]
-    fn replace(&mut self, typed: &str) -> Edit {
+        fn replace(&mut self, typed: &str) -> Edit {
         if self.all {
             (self.text, self.caret, self.all) = (String::new(), 0, false);
         }

@@ -90,7 +90,7 @@ impl State {
                     }
                     // The app switcher takes every key while it's up; the Force Quit window its few.
                     let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
-                    if state.switcher_key(raw, mods) || state.force_quit_key(key.modified_sym()) {
+                    if state.switcher_key(raw, mods) || state.force_quit_key(key.modified_sym()) || state.spotlight_key(key.modified_sym(), raw, mods) {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }

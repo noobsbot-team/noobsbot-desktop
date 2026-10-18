@@ -13,6 +13,7 @@ mod menu;
 pub mod menubar;
 mod notify;
 mod osd;
+mod spotlight;
 mod switcher;
 mod titlebar;
 mod ui;
@@ -51,6 +52,7 @@ pub use menu::MenuPopover;
 pub use menubar::MenuBar;
 pub use notify::{NotificationViews, View};
 pub use osd::OsdPopover;
+pub use spotlight::SpotlightPanel;
 pub use switcher::SwitcherPanel;
 pub use wallpaper::Wallpaper;
 

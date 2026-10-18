@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, AlertSheet, Components, ControlCenter, ForceQuitWindow, DockIcon, DockView, Gallery, MenuBar, MenuPopover, NotificationViews, OsdPopover, Shaders, SwitcherPanel, View, Wallpaper},
+    render::{self, AlertSheet, Components, ControlCenter, ForceQuitWindow, DockIcon, DockView, Gallery, MenuBar, MenuPopover, NotificationViews, OsdPopover, Shaders, SpotlightPanel, SwitcherPanel, View, Wallpaper},
     shell::Popup,
     state::State,
 };
@@ -48,6 +48,7 @@ pub struct Winit {
     dock: DockView,
     switcher: SwitcherPanel,
     force_quit: ForceQuitWindow,
+    spotlight: SpotlightPanel,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -92,7 +93,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), notifications: NotificationViews::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default(), switcher: SwitcherPanel::default(), force_quit: ForceQuitWindow::default(), components: None });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), notifications: NotificationViews::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default(), switcher: SwitcherPanel::default(), force_quit: ForceQuitWindow::default(), spotlight: SpotlightPanel::default(), components: None });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -123,13 +124,17 @@ impl State {
             let selected = f.selection(&entries);
             (entries, selected)
         });
+        let search = self.spotlight.clone().and_then(|s| {
+            let hits = self.spotlight_results();
+            Some((self.spotlight_layout(hits.len())?, hits, s))
+        });
         let center = self.center_layout();
         let (cards, more) = self.banner_layout();
         let batteries = self.batteries();
         let dock_items = self.dock_items();
         let dock_layout = self.dock_layout(dock_items.len()).filter(|l| !dock_items.is_empty() && self.dock_visible(l));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, notifications, menu, osd, control, alert: sheet, dock, switcher, force_quit }) =
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, notifications, menu, osd, control, alert: sheet, dock, switcher, force_quit, spotlight }) =
             self.backend.as_mut()
         else {
             return;
@@ -161,6 +166,10 @@ impl State {
                 }
                 if let Some((entries, selected)) = &quit_list {
                     bar.extend(force_quit.elements(renderer, shaders, &mut self.text, entries, *selected, size, dark, accent, scale));
+                }
+                if let Some((layout, hits, open)) = &search {
+                    let selected = open.selected.min(layout.rows.len().saturating_sub(1));
+                    bar.extend(spotlight.elements(renderer, shaders, &mut self.text, &mut self.symbols, &mut self.icons, hits, selected, &open.field, layout, dark, accent, appearance.glass_opacity, scale));
                 }
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
