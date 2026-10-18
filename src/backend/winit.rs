@@ -19,7 +19,7 @@ use smithay::{
     wayland::{compositor::SurfaceData, presentation::Refresh},
 };
 
-use super::{Device, Views};
+use super::{CLEAR, Device, Views};
 use crate::{
     frame::FrameClock,
     render::{self, DockIcon, DockView, LaunchpadFrame, LockContent, SceneElement, View, Wallpaper},
@@ -451,16 +451,13 @@ impl State {
         // The test scene is a benchmark: it redraws every frame (its cards are rebuilt each time).
         let benchmark = self.backend.as_ref().is_some_and(|v| v.gallery.is_some());
         let animating;
-        // Read back only when a screenshot or an allowed copy waits (decided per damage, after drawing).
-        let read_back = (self.frame_wanted(false), self.frame_wanted(true));
-        let size = output.current_mode().map_or_else(Default::default, |m| m.size);
         let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
-        let damage = match backend.bind() {
+        let (damage, elements) = match backend.bind() {
             Ok((renderer, mut framebuffer)) => {
                 let Some((elements, more)) = self.frame_elements(renderer, output) else { return };
                 animating = more;
-                damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, [0.1, 0.1, 0.1, 1.0]).map(|result| {
+                let damage = damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, CLEAR).map(|result| {
                     if benchmark {
                         // The test scene is a benchmark: wait for the GPU so the time includes its work (E1.4 budget).
                         // Not glFinish via with_context: that unbinds the window surface and the swap then fails.
@@ -468,11 +465,9 @@ impl State {
                         let _ = result.sync.wait();
                         tracing::debug!(?cpu, cpu_gpu = ?started.elapsed(), "test scene frame");
                     }
-                    let damage = result.damage.cloned();
-                    let damaged = damage.as_ref().is_some_and(|d| !d.is_empty());
-                    let wanted = if damaged { read_back.1 } else { read_back.0 };
-                    (damage, damaged, wanted.then(|| crate::capture::read(renderer, &framebuffer, size)).flatten())
-                })
+                    result.damage.cloned()
+                });
+                (damage, elements)
             }
             Err(err) => {
                 tracing::warn!("bind: {err}");
@@ -482,17 +477,21 @@ impl State {
         // Always swap, even without damage: the swap waits for vblank, which keeps an app that commits
         // in a loop at the refresh rate. When drawing starts is up to frame.rs (E1.10, see schedule_redraw).
         let render_time = started.elapsed();
-        let (shown, frame) = match damage {
-            Ok((damage, damaged, pixels)) => {
-                (backend.submit(damage.as_deref()).inspect_err(|err| tracing::warn!("submit: {err}")).is_ok(), Some((damaged, pixels)))
-            }
+        let (shown, damaged) = match damage {
+            Ok(damage) => (
+                backend.submit(damage.as_deref()).inspect_err(|err| tracing::warn!("submit: {err}")).is_ok(),
+                Some(damage.is_some_and(|d| !d.is_empty())),
+            ),
             Err(err) => {
                 tracing::warn!("render: {err}");
                 (false, None)
             }
         };
-        let scale = output.current_scale().fractional_scale();
-        let frame = frame.map(|(damaged, read)| (damaged, read.and_then(|read| crate::capture::map(backend.renderer(), read))));
+        // Read back only when a screenshot or an allowed copy waits, the same way as on the real screen (udev.rs).
+        let pixels = damaged
+            .filter(|&damaged| self.frame_wanted(output, damaged))
+            .and_then(|_| crate::capture::render(backend.renderer(), output, &elements, CLEAR));
+        drop(elements);
 
         // Everything on this output was shown. ponytail: stamped after the swap returns, without a vblank counter;
         // the udev backend stamps DRM page-flip events.
@@ -505,8 +504,8 @@ impl State {
             let refresh = Refresh::fixed(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
             feedback.presented(self.protocols.clock.now(), refresh, 0, wp_presentation_feedback::Kind::empty());
         }
-        if let Some((damaged, pixels)) = frame {
-            self.after_frame(pixels, damaged, scale);
+        if let Some(damaged) = damaged {
+            self.after_frame(output, pixels, damaged);
         }
         self.frame_done();
         // The dock redraws only while it bounces, slides, zooms or glows.
