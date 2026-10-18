@@ -1570,13 +1570,13 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Extra | What | Built with |
 |---|---|---|
 | Graphical login screen (done, opt-in) | lock-screen-style login | greetd greeter mode of Noobsbot Desktop (`--greeter`, see E6.6) |
-| Calendar events | "Up Next" widget, event dots, reminders | `.ics` parser, later CalDAV |
-| Own polkit agent | password prompts in our alert design instead of KDE's | polkit agent D-Bus API + PAM helper |
-| Weather widget | forecast in Notification Center | online API (needs a decision on provider and privacy) |
+| Calendar events (done) | "Up Next" widget, event dots, reminders | own `.ics` parser (`ical.rs`, `events.rs`), `[calendar] files`; CalDAV later |
+| Own polkit agent (done) | password prompts in our alert design instead of KDE's | polkit agent D-Bus API + `polkit-agent-helper-1` (`services/polkit.rs`); KDE's agent is the fallback |
+| Weather widget (done, off by default) | forecast in Notification Center | Open-Meteo (no key, no account; city or lat/long, no IP lookup), `services/weather.rs` |
 | Fingerprint unlock | lock screen + sudo | `fprintd` |
 | Printers | printing from apps | CUPS |
-| Desktop icons | files in `~/Desktop` shown on the wallpaper, like macOS (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
-| Emoji picker | Super+Ctrl+E popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
+| Desktop icons (done) | files in `~/Desktop` shown on the wallpaper, like macOS (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
+| Emoji picker (done) | Super+Ctrl+E / Super+. popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
 | Own screen recorder | Super+Shift+5 ▸ Record without `wf-recorder` | compositor frames → PipeWire → `ffmpeg`/`gst` encoder |
 | Own Finder-style file manager | replace Dolphin | big project; only if wanted |
 
@@ -1896,7 +1896,8 @@ Rule: **a crate is added only when its feature is built.**
 - **L3 — No Apple fonts, icons, symbols or wallpapers** (license). Open look-alikes (Part H).
 - **L4 — Dolphin/Kate bring KDE libraries** (~300 MB disk); no RAM cost until opened.
 - **L5 — No 2-finger edge swipe for Notification Center** (libinput doesn't report finger position); click the clock / Super+N.
-- **L6 — Polkit password prompts** use KDE's dialog style until our own agent (E7.2).
+- **L6 — Polkit password prompts:** our own agent (E7.2) shows them in our alert; KDE's dialog appears only if ours
+  can't register.
 - **L7 — Screen sharing is per screen, not per window** (xdg-desktop-portal-wlr limit); window capture comes with our own
   `ext-image-copy-capture` toplevel support later.
 - **L8 — Dolphin's sidebar glass depends on Kvantum translucency on Wayland**; if the M2 spike fails, Qt apps get the
@@ -1904,7 +1905,7 @@ Rule: **a crate is added only when its feature is built.**
 - **L9 — KIO network-share passwords** are asked once per session (no KWallet; one keyring, E6.7).
 - **L10 — No hibernate** in v1 (sleep only).
 - **L11 — No VRR, HDR or 10-bit** in v1 (VRR toggle planned right after M6).
-- **L12 — No desktop icons** in v1 (E7.2 extra).
+- **L12 — Desktop icons** are a simple grid (E7.2): no multi-select, no thumbnails.
 - **L13 — English UI only** in v1 (dates and numbers follow the locale); no fast user switching.
 - **L14 — X11 apps are soft on HiDPI** (bitmap-scaled through XWayland); native apps are sharp.
 
@@ -1931,4 +1932,4 @@ Rule: **a crate is added only when its feature is built.**
 - **Open-2 (M7):** Settings app toolkit: iced (front-runner) vs slint.
 - **Open-3 (after M6):** AUR `PKGBUILD` as a second install path (Software Update, E6.13, covers updates already; the updater only notifies on AUR installs).
 - **Open-4 (M4):** file search in Spotlight: build our own index, or skip?
-- **Open-5 (later):** weather widget provider (needs an online service, and a privacy choice).
+- **Open-5 (decided):** weather uses Open-Meteo, off by default; it sends only the city or coordinates you set.
