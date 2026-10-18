@@ -10,6 +10,7 @@ pub mod login;
 pub mod media;
 pub mod network;
 pub mod notifications;
+pub mod polkit;
 pub mod power;
 pub mod profiles;
 pub mod sound;
@@ -54,6 +55,8 @@ pub enum Update {
     WifiSecret(Option<String>),
     /// A pairing device needs a PIN (or, `passkey`, six digits) typed for it.
     PinEntry { device: String, passkey: bool },
+    /// Our polkit agent asks for, rejects or is done with an admin password.
+    Polkit(polkit::Event),
     /// Shown tray items, left to right.
     Tray(Vec<tray::TrayItem>),
     /// The rows of a tray item's menu, after `Command::TrayMenu`.
@@ -122,6 +125,8 @@ pub enum Command {
     WifiSecret(Option<String>),
     /// The PIN or passkey typed for a pairing device, or `None`: cancelled.
     PinEntry(Option<String>),
+    /// The polkit alert's (user, password), or `None`: cancelled.
+    PolkitAnswer(polkit::Reply),
     /// A click on a tray item without a menu, at screen `x`, `y`.
     TrayActivate {
         service: String,
@@ -184,7 +189,7 @@ impl Services {
     }
 }
 
-/// `agents`: answer for the system (BlueZ pairing). Off when nested, so the host desktop keeps its own agent.
+/// `agents`: answer for the system (BlueZ pairing, Wi-Fi passwords, polkit). Off when nested, so the host desktop keeps its own agent.
 pub fn spawn(updates: Sender<Update>, agents: bool) -> Services {
     let (commands, rx) = async_channel::unbounded();
     sound::spawn(updates.clone());
@@ -207,10 +212,13 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing and tray hidden: {err}"))
         .ok();
     brightness::send_current(&updates);
-    let (pairing, secret, entry) = (Answer::default(), Answer::default(), Answer::default());
+    let (pairing, secret, entry, admin) = (Answer::default(), Answer::default(), Answer::default(), Answer::default());
     if let (true, Some(bus)) = (agents, &system) {
         bluetooth::serve_agent(bus, &updates, &pairing, &entry).await;
         network::serve_agent(bus, &updates, &secret).await;
+        if !polkit::serve(bus, &updates, &admin).await {
+            polkit::fallback();
+        }
     }
     // Inhibitors only in a real session: nested, the host keeps its own sleep and power key.
     let logind = async {
@@ -234,7 +242,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         }
     };
     let clients = future::zip(future::zip(system_clients, session_clients), logind);
-    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing, &secret, &entry)).await;
+    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing, &secret, &entry, &admin)).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
@@ -307,6 +315,7 @@ async fn relay<'a, T, F>(
     }
 }
 
+#[expect(clippy::too_many_arguments, reason = "one answer slot per agent")]
 async fn handle(
     system: Option<&Connection>,
     session: Option<&Connection>,
@@ -315,6 +324,7 @@ async fn handle(
     pairing: &Answer<bool>,
     secret: &Answer<Option<String>>,
     entry: &Answer<Option<String>>,
+    admin: &Answer<polkit::Reply>,
 ) {
     while let Ok(command) = commands.recv().await {
         let name = command_name(&command);
@@ -335,6 +345,7 @@ async fn handle(
             (Command::SleepReady, ..) => login::release_sleep(),
             (Command::WifiSecret(psk), ..) => secret.give(psk),
             (Command::PinEntry(typed), ..) => entry.give(typed),
+            (Command::PolkitAnswer(reply), ..) => admin.give(reply),
             (Command::WifiJoin { ssid, ap, device, password }, Some(bus), _) => network::join(bus, &ssid, &ap, &device, password.as_deref()).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),

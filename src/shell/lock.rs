@@ -24,7 +24,7 @@ use crate::{
 };
 
 /// How long a wrong password shakes the field.
-const SHAKE: Duration = Duration::from_millis(400);
+pub const SHAKE: Duration = Duration::from_millis(400);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Button {
@@ -123,7 +123,7 @@ impl Lock {
 }
 
 /// Overwrites a password before it is dropped.
-fn wipe(field: &mut TextField) {
+pub fn wipe(field: &mut TextField) {
     let mut bytes = std::mem::take(&mut field.text).into_bytes();
     bytes.fill(0);
     *field = TextField::secure();
