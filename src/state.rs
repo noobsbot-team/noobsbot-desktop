@@ -67,7 +67,7 @@ struct Restore(std::sync::Mutex<Option<Rect>>);
 /// The window rules that matched this window.
 struct Ruled(std::sync::Mutex<Actions>);
 
-fn ruled(window: &Window) -> Option<Actions> {
+pub(crate) fn ruled(window: &Window) -> Option<Actions> {
     window.user_data().get::<Ruled>().and_then(|r| r.0.lock().ok().map(|a| a.clone()))
 }
 
@@ -167,6 +167,10 @@ pub struct State {
     pub switcher: crate::shell::switcher::Switcher,
     /// The Force Quit window (E4.7), when open.
     pub force_quit: Option<crate::shell::force_quit::ForceQuit>,
+    /// Spaces (E5.1).
+    pub spaces: crate::spaces::Spaces,
+    /// Mission Control (E5.2), while up or closing.
+    pub mission: Option<crate::mission::Mission>,
 }
 
 impl State {
@@ -328,6 +332,8 @@ impl State {
             notifications: Default::default(),
             switcher: Default::default(),
             force_quit: None,
+            spaces: Default::default(),
+            mission: None,
             display_handle: dh,
         })
     }
@@ -462,6 +468,9 @@ impl State {
             surface.send_pending_configure();
         }
         self.set_visible_loc(&window, area.loc);
+        if state == xdg_toplevel::State::Fullscreen {
+            self.fullscreen_space(&window);
+        }
     }
 
     /// Leaves zoom or fullscreen; returns where the window went back to.
@@ -475,6 +484,9 @@ impl State {
         let size = saved.map(|r| self.content_size(&window, r.size));
         surface.with_pending_state(|s| s.size = size);
         surface.send_pending_configure();
+        if state == xdg_toplevel::State::Fullscreen {
+            self.leave_fullscreen_space(&window);
+        }
         if let Some(rect) = saved {
             self.set_visible_loc(&window, rect.loc);
         }
@@ -492,6 +504,7 @@ impl State {
         let exclusive = self.exclusive_layer().map(|l| l.wl_surface().clone());
         match window {
             Some(window) => {
+                self.reveal(&window);
                 self.switcher.touch(&window);
                 self.space.raise_element(&window, true);
                 self.restack();
@@ -554,7 +567,7 @@ impl State {
 
     /// Keeps `float_above` windows over every normal one, and `layer = "overlay"` ones (the quake terminal) over those
     /// and over fullscreen apps.
-    fn restack(&mut self) {
+    pub(crate) fn restack(&mut self) {
         let is = |w: &Window, f: fn(&Actions) -> bool| ruled(w).is_some_and(|a| f(&a));
         let float = |a: &Actions| a.float_above == Some(true);
         let overlay = |a: &Actions| a.layer == Some(rules::Layer::Overlay);
@@ -650,6 +663,7 @@ impl CompositorHandler for State {
                         let loc = position.map_or_else(|| wm::place(area, size), |[x, y]| area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))));
                         tracing::debug!(?size, ?loc, ?position, "placed");
                         self.set_visible_loc(&window, loc);
+                        self.apply_space_rule(&window);
                     }
                 }
             }
@@ -701,7 +715,7 @@ impl XdgShellHandler for State {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let client = |s: &WlSurface| s.client().map(|c| c.id());
         let focused = self.seat.get_keyboard().and_then(|k| k.current_focus());
-        let only = self.space.elements().next().is_none() && self.hidden.is_empty();
+        let only = !self.space.elements().any(|w| self.on_current(w)) && self.hidden.is_empty();
         let window = Window::new_wayland_window(surface.clone());
         // The quake terminal opens on its key press, to be typed in.
         let takes_focus = only || focused.as_ref().is_some_and(|f| client(f).is_some() && client(f) == client(surface.wl_surface())) || self.is_quake(&window);
@@ -722,7 +736,10 @@ impl XdgShellHandler for State {
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.schedule_redraw();
         self.hidden.retain(|(w, _)| w.toplevel() != Some(&surface));
-        let next = self.space.elements().rev().find(|w| w.toplevel() != Some(&surface)).cloned();
+        if let Some(window) = self.window_for(surface.wl_surface()).cloned() {
+            self.leave_fullscreen_space(&window);
+        }
+        let next = self.space.elements().rev().find(|w| w.toplevel() != Some(&surface) && self.on_current(w)).cloned();
         self.focus_window(next, SERIAL_COUNTER.next_serial());
     }
 

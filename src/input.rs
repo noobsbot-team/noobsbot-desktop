@@ -83,7 +83,7 @@ impl State {
                     }
                     // The app switcher takes every key while it's up; the Force Quit window its few.
                     let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
-                    if state.switcher_key(raw, mods) || state.force_quit_key(key.modified_sym()) {
+                    if state.switcher_key(raw, mods) || state.force_quit_key(key.modified_sym()) || state.mission_key(key.modified_sym()) {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }
@@ -127,6 +127,7 @@ impl State {
                 if state == ButtonState::Pressed
                     && !pointer.is_grabbed()
                     && !self.dock_press(self.to_output(location), event.button_code())
+                    && !self.mission_press(self.to_output(location), event.button_code())
                     && !self.shell_press(self.to_output(location), event.button_code() == BTN_RIGHT)
                 {
                     let zone = self.zone_under(location);
@@ -162,6 +163,7 @@ impl State {
                 }
                 if state == ButtonState::Released && event.button_code() == BTN_LEFT {
                     self.bar_release(pointer.current_location());
+                    self.mission_release(self.to_output(pointer.current_location()));
                     self.shell_release();
                 }
                 pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
@@ -201,7 +203,7 @@ impl State {
     /// The resize zone at `location`, if any: the topmost window whose zone or content is there decides, so a zone
     /// never reaches into a window above (or under a bar). Zoomed and fullscreen windows have none.
     pub fn zone_under(&self, location: Point<f64, Logical>) -> Option<(Window, Edges)> {
-        if self.layer_under(location, true).is_some() {
+        if self.layer_under(location, true).is_some() || self.mission_open() {
             return None;
         }
         for window in self.space.elements().rev() {

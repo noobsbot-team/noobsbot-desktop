@@ -10,12 +10,14 @@ mod decorations;
 mod frame;
 mod grabs;
 mod input;
+mod mission;
 mod protocols;
 mod render;
 mod rules;
 mod services;
 mod shell;
 mod shortcuts;
+mod spaces;
 mod state;
 mod symbols;
 mod sync;
@@ -32,7 +34,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|gallery|switcher|force-quit] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|gallery|switcher|force-quit|mission-control|mission-control-bar] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -180,6 +182,22 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(5)), open)?;
         }
         Some("force-quit") => state.open_force_quit(),
+        // Opened once the apps started with up.sh have mapped; `mission-control-bar` with the Spaces bar expanded and
+        // a second Space.
+        Some(name @ ("mission-control" | "mission-control-bar")) => {
+            let bar = name == "mission-control-bar";
+            let open = move |_: std::time::Instant, _: &mut (), state: &mut State| {
+                if bar {
+                    state.add_space();
+                }
+                state.toggle_mission_control();
+                if let Some(m) = state.mission.as_mut() {
+                    m.expanded = bar;
+                }
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            };
+            event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(5)), open)?;
+        }
         // Stays up: no hide timer.
         Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),
         // The dock zoomed as if the pointer were over it, left of centre.

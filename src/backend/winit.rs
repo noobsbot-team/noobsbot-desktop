@@ -22,8 +22,8 @@ use smithay::{
 use crate::{
     frame::FrameClock,
     render::{
-        self, AlertSheet, Components, ControlCenter, DockIcon, DockView, ForceQuitWindow, Gallery, MenuBar, MenuPopover, NotificationViews, OsdPopover,
-        Shaders, SwitcherPanel, View, Wallpaper,
+        self, AlertSheet, Components, ControlCenter, DockIcon, DockView, ForceQuitWindow, Gallery, MenuBar, MenuPopover, MissionView, NotificationViews,
+        OsdPopover, Shaders, SwitcherPanel, View, Wallpaper,
     },
     shell::Popup,
     state::State,
@@ -51,6 +51,7 @@ pub struct Winit {
     dock: DockView,
     switcher: SwitcherPanel,
     force_quit: ForceQuitWindow,
+    mission: MissionView,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -112,6 +113,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         dock: DockView::default(),
         switcher: SwitcherPanel::default(),
         force_quit: ForceQuitWindow::default(),
+        mission: MissionView::default(),
         components: None,
     });
 
@@ -150,6 +152,10 @@ impl State {
         let dock_items = self.dock_items();
         let dock_layout = self.dock_layout(dock_items.len()).filter(|l| !dock_items.is_empty() && self.dock_visible(l));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
+        let overview = self.mission_frame();
+        let slide = if overview.is_none() { self.slide_frame() } else { None };
+        let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
+        let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
         let Some(Winit {
             backend,
             output,
@@ -168,6 +174,7 @@ impl State {
             dock,
             switcher,
             force_quit,
+            mission,
         }) = self.backend.as_mut()
         else {
             return;
@@ -210,6 +217,9 @@ impl State {
                 }
                 if let Some((entries, selected)) = &quit_list {
                     bar.extend(force_quit.elements(renderer, shaders, &mut self.text, entries, *selected, size, dark, accent, scale));
+                }
+                if let Some((count, current)) = indicator {
+                    bar.extend(mission.indicator(shaders, count, current, width, dark, appearance.glass_opacity, scale));
                 }
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
@@ -291,7 +301,8 @@ impl State {
                     None => {}
                 }
                 let active = self.popup.map(Popup::item);
-                match &content {
+                // Mission Control has the whole screen: no menu bar.
+                match content.as_ref().filter(|_| overview.is_none()) {
                     Some(content) => bar.extend(menu_bar.elements(
                         renderer,
                         shaders,
@@ -330,7 +341,24 @@ impl State {
                         scale,
                     ));
                 }
-                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar);
+                let output_geo = self.space.output_geometry(output).unwrap_or_default();
+                let windows = match (&overview, &slide) {
+                    (Some(overview), _) => Some(mission.windows(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &self.space,
+                        overview,
+                        output_geo,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    )),
+                    (None, Some(slide)) => Some(render::sliding(renderer, shaders, &mut self.text, &self.space, slide, scale, dark)),
+                    (None, None) => None,
+                };
+                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows);
                 if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
                     let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
                     // Above the wallpaper (the last element), below every window.
@@ -369,7 +397,9 @@ impl State {
         let mut feedback = OutputPresentationFeedback::new(output);
         let on_output = |_: &WlSurface, _: &SurfaceData| Some(output.clone());
         let elapsed = self.start_time.elapsed();
-        for window in self.space.elements() {
+        // Hidden Spaces' apps get no frame callbacks, so they idle (E5.1).
+        let top = self.space.output_geometry(output).map_or(0, |g| g.loc.y);
+        for window in self.space.elements().filter(|w| self.space.element_location(w).is_some_and(|l| crate::spaces::row_at(l.y, top) == 0)) {
             window.send_frame(output, elapsed, Some(Duration::ZERO), on_output);
             window.take_presentation_feedback(&mut feedback, on_output, |_, _| wp_presentation_feedback::Kind::empty());
         }
@@ -392,7 +422,7 @@ impl State {
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();
         // The test scene redraws every frame (its cards are rebuilt each time, so each frame repaints them).
-        if benchmark {
+        if benchmark || animating {
             self.schedule_redraw();
         }
     }
