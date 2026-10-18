@@ -272,7 +272,7 @@ impl State {
         let items = self.dock_items();
         let icon = self
             .dock_layout(items.len())
-            .filter(|l| self.dock_visible(l))
+            .filter(|_| self.dock_shown())
             .and_then(|l| items.iter().position(|i| i.windows.contains(window)).and_then(|i| l.icons.get(i).copied()));
         // ponytail: without a dock icon it shrinks to the bottom centre; the dock's minimised-window spot (E3.1) is the
         // better target once it exists.

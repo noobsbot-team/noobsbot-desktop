@@ -262,7 +262,7 @@ impl State {
                 if self.emoji_scroll(pos, amount(Axis::Vertical)) || self.drawer_scroll(pos, amount(Axis::Vertical), wheel != 0.0) {
                     return;
                 }
-                if self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, wheel != 0.0) {
+                if self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, page_wheel) {
                     return;
                 }
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);

@@ -227,6 +227,37 @@ fn parse(id: &str, text: &str, locale: &str) -> Option<Entry> {
     }))
 }
 
+/// The desktop actions (`Actions=` and their `[Desktop Action …]` groups) of the app with desktop-file id `id`:
+/// (name, Exec). Read from its file when asked, for the dock menu.
+pub fn actions(id: &str) -> Vec<(String, String)> {
+    let file = data_dirs().into_iter().map(|d| d.join("applications").join(format!("{id}.desktop"))).find(|p| p.is_file());
+    file.and_then(|f| std::fs::read_to_string(f).ok()).map_or_else(Vec::new, |text| parse_actions(&text, &locale()))
+}
+
+fn parse_actions(text: &str, locale: &str) -> Vec<(String, String)> {
+    let mut groups: HashMap<String, HashMap<String, String>> = HashMap::new();
+    let mut group = String::new();
+    for line in text.lines().map(str::trim) {
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            group = name.to_owned();
+        } else if !line.starts_with('#')
+            && let Some((key, value)) = line.split_once('=')
+        {
+            groups.entry(group.clone()).or_default().entry(key.trim().to_owned()).or_insert_with(|| value.trim().to_owned());
+        }
+    }
+    let listed = groups.get("Desktop Entry").and_then(|g| g.get("Actions")).cloned().unwrap_or_default();
+    listed
+        .split(';')
+        .filter(|a| !a.is_empty())
+        .filter_map(|a| {
+            let g = groups.get(&format!("Desktop Action {a}"))?;
+            let name = locale_keys(locale).iter().find_map(|l| g.get(&format!("Name[{l}]"))).or(g.get("Name"))?;
+            Some((unescape(name), unescape(g.get("Exec")?)))
+        })
+        .collect()
+}
+
 fn data_home() -> PathBuf {
     std::env::var_os("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -499,6 +530,16 @@ mod tests {
         let Some(Entry::App(bare)) = app(base) else { panic!() };
         assert_eq!(bare.comment, "Text Editor", "no Comment: the generic name");
         assert_eq!(bare.keywords, ["text", "editor"]);
+    }
+
+    #[test]
+    fn desktop_actions_in_listed_order() {
+        let text = "[Desktop Entry]\nName=Chrome\nExec=chrome\nActions=new-private-window;new-window;gone;\n\n[Desktop Action new-window]\nName=New Window\nName[de]=Neues Fenster\nExec=chrome --new\n[Desktop Action new-private-window]\nName=New Incognito Window\nExec=chrome --incognito\n";
+        let names = |locale| parse_actions(text, locale).into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+        assert_eq!(names("C"), ["New Incognito Window", "New Window"]);
+        assert_eq!(names("de_DE.UTF-8"), ["New Incognito Window", "Neues Fenster"]);
+        assert_eq!(parse_actions(text, "C")[1].1, "chrome --new");
+        assert!(parse_actions("[Desktop Entry]\nExec=a\n", "C").is_empty());
     }
 
     #[test]

@@ -86,15 +86,29 @@ week_start = "sunday"
 [dock]
 # Pinned apps, left to right: desktop-file names (org.kde.kate), app ids or commands. Apps that aren't installed are
 # skipped, so they appear in their place once installed. "launchpad" is the Launchpad icon, "app-drawer" the app
-# drawer's.
-items = ["launchpad", "google-chrome", "com.microsoft.VSCode", "helium-browser", "org.kde.dolphin", "org.kde.kate", "org.kde.spectacle", "kitty", "noobsbot"]
+# drawer's, "screenshot" the screenshot toolbar (Spectacle, which needs KWin, opens it too). On first start an
+# existing Plank dock is imported.
+items = ["launchpad", "google-chrome", "com.microsoft.VSCode", "helium-browser", "org.kde.dolphin", "org.kde.kate", "screenshot", "kitty", "noobsbot"]
 # Icon size in px; icons shrink (down to 32) when they don't fit the screen.
 icon_size = 84
 # Icons grow under the pointer, to this percentage of icon_size.
 zoom = true
 zoom_percent = 150
-# "intelligent": hide while the focused window overlaps the dock (touch the bottom edge to show it); "never".
+# Plank's hide modes; touch the bottom edge under the dock to show a hidden one. "intelligent": hide while a window
+# of the focused app overlaps it; "auto": hide unless the pointer is on it; "dodge-maximized": hide while the focused
+# window is maximised; "window-dodge": hide while any window overlaps it; "dodge-active": hide while the focused
+# window overlaps it; "never": always shown, and windows keep clear of it.
 hide = "intelligent"
+# Milliseconds to wait before hiding, and before showing when the pointer calls it up.
+hide_delay = 0
+unhide_delay = 0
+# No dragging icons in, out or around, and no Keep in Dock.
+lock_items = false
+# Show only pinned apps; show only the current Space's running apps and windows.
+pinned_only = false
+current_workspace_only = false
+# The app's name over the hovered icon.
+tooltips = true
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.

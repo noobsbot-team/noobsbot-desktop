@@ -270,7 +270,7 @@ impl Ui<'_> {
         }
     }
 
-    fn width(&mut self, words: &str, style: Style) -> i32 {
+    pub fn width(&mut self, words: &str, style: Style) -> i32 {
         let piece = self.text.label(words, style, 4000, self.scale);
         self.logical(piece.width)
     }
