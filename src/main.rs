@@ -19,6 +19,7 @@ mod state;
 mod symbols;
 mod sync;
 mod text;
+mod theme;
 mod wm;
 
 use smithay::reexports::{
@@ -29,7 +30,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -42,6 +43,11 @@ fn main() {
         tracing::error!("panic at {location}: {}\n{backtrace}", info.payload_as_str().unwrap_or("(no message)"));
         default_hook(info);
     }));
+
+    // `theme --write`: the app theme generator (E2.9), no compositor.
+    if std::env::args().nth(1).as_deref() == Some("theme") {
+        std::process::exit(theme::cli(std::env::args().skip(2)));
+    }
 
     let mut args = std::env::args().skip(1);
     let mut command = Vec::new();
