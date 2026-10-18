@@ -382,7 +382,11 @@ impl State {
     pub fn notify(&mut self, mut n: Notification) {
         n.body_lines = self.body_lines(&n.body);
         let id = n.id;
-        let quiet = self.dnd || self.menu_bar().is_none() || self.center_open();
+        // Locked: no banner, only the count on the lock screen (privacy).
+        if let Some(lock) = self.lock.as_mut() {
+            lock.missed += 1;
+        }
+        let quiet = self.dnd || self.locked() || self.menu_bar().is_none() || self.center_open();
         let transient = n.transient;
         self.notifications.insert(n);
         self.notifications.banners.retain(|b| *b != id);

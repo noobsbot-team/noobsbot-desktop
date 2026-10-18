@@ -11,9 +11,11 @@ mod decorations;
 mod frame;
 mod gestures;
 mod grabs;
+mod idle;
 mod ime;
 mod input;
 mod mission;
+mod pam;
 mod protocols;
 mod render;
 mod rules;
@@ -38,7 +40,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -136,6 +138,7 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
     })?;
 
     backend::winit::init(&mut event_loop, &mut state)?;
+    state.idle_arm();
     if test_scene && let Some(winit) = state.backend.as_mut() {
         winit.gallery = Some(Default::default());
     }
@@ -264,6 +267,22 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         Some("gallery") => {
             if let Some(winit) = state.backend.as_mut() {
                 winit.components = Some(Default::default());
+            }
+        }
+        // The lock screen (E6.4): empty, with a password typed and two missed notifications, or just after a wrong
+        // one (frozen mid-shake, with its hint).
+        Some(show @ ("lock" | "lock-typing" | "lock-wrong")) => {
+            state.lock_screen();
+            if let Some(lock) = state.lock.as_mut() {
+                match show {
+                    "lock-typing" => {
+                        lock.field.text = "hunter2".into();
+                        lock.field.caret = 7;
+                        lock.missed = 2;
+                    }
+                    "lock-wrong" => lock.wrong = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600)),
+                    _ => {}
+                }
             }
         }
         Some(other) => tracing::warn!("--show {other}: unknown popup\n{USAGE}"),

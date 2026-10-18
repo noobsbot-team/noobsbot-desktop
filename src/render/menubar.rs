@@ -300,7 +300,7 @@ mod tests {
         assert_eq!(wifi_of(Link::None, false), Symbol::WifiSlash);
         assert_eq!(wifi_of(Link::Ethernet, false), Symbol::Ethernet);
 
-        let battery_of = |percent, charging| battery(&Battery { percent, charging, minutes_left: None });
+        let battery_of = |percent, charging| battery(&Battery { percent, charging, on_battery: !charging, minutes_left: None });
         assert_eq!(battery_of(85, false), Item { symbol: Symbol::BatteryHigh, text: Some("85%".into()) });
         assert_eq!(battery_of(100, false).symbol, Symbol::BatteryFull);
         assert_eq!(battery_of(5, false).symbol, Symbol::BatteryEmpty);

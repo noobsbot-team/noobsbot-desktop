@@ -92,6 +92,7 @@ symbols! {
     BellSlash = "bell-slash",
     X = "x",
     MagnifyingGlass = "magnifying-glass",
+    ArrowRight = "arrow-right",
 }
 
 type Key = (Symbol, Weight, u16, u64, [u8; 4]);

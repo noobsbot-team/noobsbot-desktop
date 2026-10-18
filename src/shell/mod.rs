@@ -8,6 +8,7 @@ pub mod dock;
 pub mod dock_fx;
 pub mod force_quit;
 pub mod launchpad;
+pub mod lock;
 pub mod notify;
 pub mod plank;
 pub mod spotlight;
@@ -118,7 +119,7 @@ pub struct Row {
 }
 
 /// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows.
-// ponytail: rows whose window isn't built yet (About, Settings, Force Quit, the lock screen) are disabled until
+// ponytail: rows whose window isn't built yet (About, Settings) are disabled until
 // their milestone adds it.
 pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>]) -> Vec<Option<Row>> {
     let row = |label: String, shortcut, action| Some(Row { label, shortcut, action });
@@ -134,7 +135,7 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>]) -> Vec<Option<
             row("Restart…".into(), "", Some(Action::Power(alert::Power::Restart))),
             row("Shut Down…".into(), "", Some(Action::Power(alert::Power::ShutDown))),
             None,
-            row("Lock Screen".into(), "⌃⌘Q", None),
+            row("Lock Screen".into(), "⌃⌘Q", Some(Action::Lock)),
             row("Log Out…".into(), "", Some(Action::Power(alert::Power::LogOut))),
         ],
         Menu::App => vec![

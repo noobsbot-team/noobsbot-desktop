@@ -106,6 +106,9 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let delta = self.protocols.last_host_pointer.replace(host).map_or_else(Point::default, |last| host - last);
         let current = pointer.current_location();
+        if self.locked() {
+            self.lock_motion(self.to_output(host));
+        }
         self.shell_motion(self.to_output(current), self.to_output(host));
         self.dock_motion(self.to_output(current), self.to_output(host));
         self.mission_motion(self.to_output(host));
@@ -225,7 +228,7 @@ impl State {
             layer.layer_surface().send_configure();
         }
         let Some(keyboard) = self.seat.get_keyboard() else { return };
-        if self.exclusive_layer().as_ref() == Some(&layer) && keyboard.current_focus().as_ref() != Some(surface) {
+        if !self.locked() && self.exclusive_layer().as_ref() == Some(&layer) && keyboard.current_focus().as_ref() != Some(surface) {
             keyboard.set_focus(self, Some(surface.clone()), SERIAL_COUNTER.next_serial());
         }
     }

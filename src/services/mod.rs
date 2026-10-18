@@ -6,6 +6,7 @@ pub mod bluetooth;
 pub mod brightness;
 pub mod disks;
 pub mod launcher;
+pub mod login;
 pub mod media;
 pub mod network;
 pub mod notifications;
@@ -69,6 +70,10 @@ pub enum Update {
     DiskFailed { name: String, error: String },
     /// An app's dock badge, progress and urgency (LauncherEntry), by desktop-file id.
     Launcher { app: String, entry: launcher::Entry },
+    /// logind is about to sleep: lock, then answer `Command::SleepReady` (E6.5).
+    PrepareForSleep,
+    /// Awake again.
+    Resumed,
 }
 
 /// Requests from the frame loop.
@@ -137,6 +142,8 @@ pub enum Command {
     },
     /// Logo menu ▸ Sleep.
     Suspend,
+    /// The lock screen is shown: release the sleep inhibitor.
+    SleepReady,
     /// After the Restart alert.
     Reboot,
     /// After the Shut Down alert.
@@ -205,6 +212,12 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         bluetooth::serve_agent(bus, &updates, &pairing, &entry).await;
         network::serve_agent(bus, &updates, &secret).await;
     }
+    // Inhibitors only in a real session: nested, the host keeps its own sleep and power key.
+    let logind = async {
+        if let (true, Some(bus)) = (agents, &system) {
+            login::watch(bus, &updates).await;
+        }
+    };
     let system_clients = async {
         if let Some(bus) = &system {
             future::zip(
@@ -220,7 +233,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
             future::zip(future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)), ours).await;
         }
     };
-    let clients = future::zip(system_clients, session_clients);
+    let clients = future::zip(future::zip(system_clients, session_clients), logind);
     future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing, &secret, &entry)).await;
 }
 
@@ -319,6 +332,7 @@ async fn handle(
             (Command::BluetoothDevice { path, connect }, Some(bus), _) => bluetooth::connect(bus, &path, connect).await,
             (Command::WifiScan, Some(bus), _) => network::scan(bus).await,
             (Command::PairingAnswer(yes), ..) => pairing.give(yes),
+            (Command::SleepReady, ..) => login::release_sleep(),
             (Command::WifiSecret(psk), ..) => secret.give(psk),
             (Command::PinEntry(typed), ..) => entry.give(typed),
             (Command::WifiJoin { ssid, ap, device, password }, Some(bus), _) => network::join(bus, &ssid, &ap, &device, password.as_deref()).await,

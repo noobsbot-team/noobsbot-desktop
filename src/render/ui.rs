@@ -216,10 +216,27 @@ impl Ui<'_> {
     /// the caret and the D7 ring; select-all tints the text accent.
     pub fn field(&mut self, rect: Rect, field: &TextField, placeholder: &str, state: State) {
         let k = state.alpha();
-        let large = rect.size.h >= 40;
-        let (style, pad) = if large { (TITLE1, 16) } else { (BODY, 6) };
         let [r, g, b, a] = self.fill(2.0);
         self.shape(rect, [r, g, b, a * k], 6.0);
+        self.field_text(rect, field, placeholder, state, Some(6.0));
+    }
+
+    /// The lock screen's password pill (E6.4): `sheet` glass, fully round, without a shadow; the text stops `trailing`
+    /// px early (room for the arrow).
+    pub fn pill_field(&mut self, rect: Rect, field: &TextField, placeholder: &str, trailing: i32) {
+        let spec = Material::Sheet.spec(self.dark);
+        let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
+        let radius = f64::from(rect.size.h) / 2.0;
+        self.glass.push(self.shaders.glass_shape(rect, [r, g, b, spec.opacity * self.glass_opacity], radius, true, self.dark, self.scale));
+        let inner = Rectangle::new((rect.loc.x + 6, rect.loc.y).into(), (rect.size.w - 12 - trailing, rect.size.h).into());
+        self.field_text(inner, field, placeholder, State::Focused, None);
+    }
+
+    /// A field's text, placeholder, selection and caret, and its D7 ring at `ring` radius, on a background drawn already.
+    fn field_text(&mut self, rect: Rect, field: &TextField, placeholder: &str, state: State, ring: Option<f64>) {
+        let k = state.alpha();
+        let large = rect.size.h >= 40;
+        let (style, pad) = if large { (TITLE1, 16) } else { (BODY, 6) };
         let inner = Rectangle::new((rect.loc.x + pad, rect.loc.y).into(), (rect.size.w - 2 * pad, rect.size.h).into());
         let shown = field.display();
         if shown.is_empty() {
@@ -248,7 +265,9 @@ impl Ui<'_> {
             let h = i32::from(style.line_height);
             self.shape(Rectangle::new((inner.loc.x, rect.loc.y + (rect.size.h - h) / 2).into(), (if large { 2 } else { 1 }, h).into()), self.accent(1.0), 0.0);
         }
-        self.states(rect, 6.0, if state == State::Focused { State::Focused } else { State::Normal });
+        if let Some(radius) = ring {
+            self.states(rect, radius, if state == State::Focused { State::Focused } else { State::Normal });
+        }
     }
 
     fn width(&mut self, words: &str, style: Style) -> i32 {
