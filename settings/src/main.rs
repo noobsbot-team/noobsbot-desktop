@@ -93,7 +93,8 @@ impl App {
             user: system::user(),
         };
         app.retheme();
-        (app, Task::perform(system::read(), Message::Status))
+        // Typing searches at once, as in macOS.
+        (app, Task::batch([Task::perform(system::read(), Message::Status), iced::widget::operation::focus("search")]))
     }
 
     fn retheme(&mut self) {
@@ -163,7 +164,7 @@ impl App {
         let search = container(
             row![
                 svg(pages::icon("magnifying-glass")).width(13).height(13).style(Tokens::tint(t.secondary())),
-                text_input("Search", &self.query).on_input(Message::Search).size(13).padding(0).style(t.input(true)),
+                text_input("Search", &self.query).id("search").on_input(Message::Search).size(13).padding(0).style(t.input(true)),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
