@@ -1,6 +1,7 @@
 //! Control Center (E2.3): what it shows, where each module sits, and what clicks and slider drags do. Drawn by
 //! render/control.rs from the same layout.
 
+use crate::{services::network::Link, symbols::Symbol};
 use smithay::utils::{Logical, Point, Rectangle};
 
 use super::{DROP, MARGIN};
@@ -41,8 +42,8 @@ pub struct Status {
     pub profile: Option<String>,
     /// Sound outputs: PipeWire id, short name, current.
     pub outputs: Vec<(u32, String, bool)>,
-    /// Paired Bluetooth devices: name, battery, connected.
-    pub devices: Vec<(String, Option<u8>, bool)>,
+    /// The rows of an open Wi-Fi or Bluetooth list.
+    pub rows: Vec<ListRow>,
     /// The module showing its list.
     pub expanded: Option<Module>,
 }
@@ -50,8 +51,22 @@ pub struct Status {
 /// A module that opens a list in place (one at a time, as on macOS).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Module {
+    Wifi,
     Bluetooth,
     Sound,
+}
+
+/// A network or device in an open list.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListRow {
+    pub symbol: Symbol,
+    pub name: String,
+    /// Battery %, right-aligned.
+    pub detail: Option<String>,
+    /// Needs a password.
+    pub lock: bool,
+    /// Connected: the icon's circle takes the accent.
+    pub on: bool,
 }
 
 /// A clickable or draggable part.
@@ -71,10 +86,12 @@ pub enum Control {
     SoundMore,
     /// A sound output, by PipeWire id.
     Output(u32),
+    /// The Wi-Fi label: shows or hides the networks.
+    WifiMore,
     /// The Bluetooth label: shows or hides the devices.
     BluetoothMore,
-    /// A Bluetooth device, by its index in `Status::devices`.
-    Device(usize),
+    /// A row of the open list, by its index in `Status::rows`.
+    Row(usize),
 }
 
 /// Every module's place, output-relative.
@@ -91,8 +108,8 @@ pub struct Layout {
     pub sound: Option<Rect>,
     /// The output rows of an open Sound module.
     pub outputs: Vec<Rect>,
-    /// The device list under the top row while Bluetooth is open, and its rows.
-    pub devices: Option<(Rect, Vec<Rect>)>,
+    /// The list under the top row while Wi-Fi or Bluetooth is open, and its rows.
+    pub list: Option<(Rect, Vec<Rect>)>,
     pub media: Rect,
     pub power: Option<Rect>,
 }
@@ -137,23 +154,31 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
     let small = (TOP - GAP) / 2;
     let dnd = card(PAD + HALF + GAP, y, HALF, small);
     let dark = card(PAD + HALF + GAP, y + small + GAP, HALF, small);
-    let bt_toggle = toggle_in(network, 1);
-    let bt_label = Rectangle::new((bt_toggle.loc.x + TOGGLE + 4, bt_toggle.loc.y - 4).into(), (network.loc.x + network.size.w - bt_toggle.loc.x - TOGGLE - 8, TOGGLE + 8).into());
+    // Right of a toggle: its title and subtitle.
+    let label_of = |t: Rect| Rectangle::new((t.loc.x + TOGGLE + 4, t.loc.y - 4).into(), (network.loc.x + network.size.w - t.loc.x - TOGGLE - 8, TOGGLE + 8).into());
     let mut hits = vec![
         (Control::Wifi, toggle_in(network, 0)),
-        (Control::Bluetooth, bt_toggle),
-        (Control::BluetoothMore, bt_label),
+        (Control::WifiMore, label_of(toggle_in(network, 0))),
+        (Control::Bluetooth, toggle_in(network, 1)),
+        (Control::BluetoothMore, label_of(toggle_in(network, 1))),
         (Control::Dnd, dnd),
         (Control::Dark, dark),
     ];
     let mut cards = vec![network, dnd, dark];
     y += TOP + GAP;
-    // An open Bluetooth module lists its devices full width under the top row; with none, one empty row says so.
-    let devices = (status.expanded == Some(Module::Bluetooth) && status.bluetooth.as_ref().is_some_and(|b| b.0)).then(|| {
-        let rows = status.devices.len().max(1) as i32;
+    // An open Wi-Fi or Bluetooth module lists its networks or devices full width under the top row; with none, one
+    // empty row says so.
+    let on = |module: &Option<(bool, String)>| module.as_ref().is_some_and(|m| m.0);
+    let open = match status.expanded {
+        Some(Module::Wifi) => on(&status.wifi),
+        Some(Module::Bluetooth) => on(&status.bluetooth),
+        _ => false,
+    };
+    let list = open.then(|| {
+        let rows = status.rows.len().max(1) as i32;
         let list = card(PAD, y, INNER, 2 * LIST_PAD + rows * LIST_ROW);
         let cells: Vec<Rect> = (0..rows).map(|i| Rectangle::new((list.loc.x + LIST_PAD, list.loc.y + LIST_PAD + i * LIST_ROW).into(), (list.size.w - 2 * LIST_PAD, LIST_ROW).into())).collect();
-        hits.extend(cells.iter().take(status.devices.len()).enumerate().map(|(i, r)| (Control::Device(i), *r)));
+        hits.extend(cells.iter().take(status.rows.len()).enumerate().map(|(i, r)| (Control::Row(i), *r)));
         cards.push(list);
         y += list.size.h + GAP;
         (list, cells)
@@ -198,7 +223,7 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
         c
     });
     // The last gap becomes the bottom padding.
-    Layout { rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()), cards, hits, network, dnd, dark, display, sound, outputs, devices, media, power }
+    Layout { rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()), cards, hits, network, dnd, dark, display, sound, outputs, list, media, power }
 }
 
 /// The percent a slider shows with the pointer at `x`: the knob end follows the pointer, as on macOS.
@@ -233,6 +258,23 @@ pub fn short_names(names: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// The Wi-Fi symbol for 1–3 bars.
+pub fn wifi_symbol(bars: u8) -> Symbol {
+    [Symbol::WifiLow, Symbol::WifiMedium, Symbol::WifiHigh][usize::from(bars.clamp(1, 3)) - 1]
+}
+
+/// A Bluetooth device's symbol, from its name.
+fn device_symbol(name: &str) -> Symbol {
+    let name = name.to_lowercase();
+    if ["airpods", "buds", "tws", "headphone", "headset", "wh-", "wf-"].iter().any(|k| name.contains(k)) {
+        Symbol::Headphones
+    } else if name.contains("keyboard") {
+        Symbol::Keyboard
+    } else {
+        Symbol::Bluetooth
+    }
+}
+
 /// Power-profiles-daemon's names, as Control Center shows them.
 pub fn profile_name(profile: &str) -> &str {
     match profile {
@@ -245,7 +287,6 @@ pub fn profile_name(profile: &str) -> &str {
 
 impl State {
     pub fn control_status(&self) -> Status {
-        use crate::services::network::Link;
         let wifi = self.network.as_ref().map(|n| {
             let name = match &n.link {
                 Link::Wifi { ssid, .. } => ssid.clone(),
@@ -277,7 +318,25 @@ impl State {
                 let names = short_names(&s.outputs.iter().map(|o| o.name.clone()).collect::<Vec<_>>());
                 s.outputs.iter().zip(names).map(|(o, name)| (o.id, name, o.current)).collect()
             }),
-            devices: self.bluetooth.as_ref().map_or_else(Vec::new, |b| b.devices.iter().map(|d| (d.name.clone(), d.battery, d.connected)).collect()),
+            rows: match self.expanded {
+                Some(Module::Wifi) => self.network.as_ref().map_or_else(Vec::new, |n| {
+                    let current = match &n.link {
+                        Link::Wifi { ssid, .. } => Some(ssid.as_str()),
+                        _ => None,
+                    };
+                    n.networks
+                        .iter()
+                        .map(|w| ListRow { symbol: wifi_symbol(w.bars), name: w.ssid.clone(), detail: None, lock: w.secure, on: current == Some(w.ssid.as_str()) })
+                        .collect()
+                }),
+                Some(Module::Bluetooth) => self.bluetooth.as_ref().map_or_else(Vec::new, |b| {
+                    b.devices
+                        .iter()
+                        .map(|d| ListRow { symbol: device_symbol(&d.name), name: d.name.clone(), detail: d.battery.map(|p| format!("{p}%")), lock: false, on: d.connected })
+                        .collect()
+                }),
+                _ => Vec::new(),
+            },
             expanded: self.expanded,
         }
     }
@@ -327,13 +386,30 @@ impl State {
             }
             // ponytail: opens at once; the in-place `smooth` spring comes with the animation module.
             Control::SoundMore => self.expanded = if self.expanded == Some(Module::Sound) { None } else { Some(Module::Sound) },
-            Control::BluetoothMore => self.expanded = if self.expanded == Some(Module::Bluetooth) { None } else { Some(Module::Bluetooth) },
-            Control::Device(i) => {
-                if let Some(device) = self.bluetooth.as_ref().and_then(|b| b.devices.get(i)) {
-                    // ponytail: no "Connecting…" state; the row flips when BlueZ reports the change.
-                    self.services.send(Command::BluetoothDevice { path: device.path.clone(), connect: !device.connected });
+            Control::WifiMore => {
+                self.expanded = if self.expanded == Some(Module::Wifi) { None } else { Some(Module::Wifi) };
+                if self.expanded.is_some() {
+                    self.services.send(Command::WifiScan);
                 }
             }
+            Control::BluetoothMore => self.expanded = if self.expanded == Some(Module::Bluetooth) { None } else { Some(Module::Bluetooth) },
+            // ponytail: no "Connecting…" state; the row flips when the service reports the change.
+            Control::Row(i) => match self.expanded {
+                Some(Module::Bluetooth) => {
+                    if let Some(device) = self.bluetooth.as_ref().and_then(|b| b.devices.get(i)) {
+                        self.services.send(Command::BluetoothDevice { path: device.path.clone(), connect: !device.connected });
+                    }
+                }
+                Some(Module::Wifi) => {
+                    if let Some(network) = self.network.as_ref().and_then(|n| n.networks.get(i)) {
+                        let joined = matches!(&self.network.as_ref().map(|n| &n.link), Some(Link::Wifi { ssid, .. }) if *ssid == network.ssid);
+                        if !joined {
+                            self.services.send(Command::WifiJoin { ssid: network.ssid.clone(), ap: network.ap.clone(), device: network.device.clone(), password: None });
+                        }
+                    }
+                }
+                _ => {}
+            },
             Control::Output(id) => {
                 if let Some(sound) = self.sound.as_mut() {
                     sound.outputs.iter_mut().for_each(|o| o.current = o.id == id);
@@ -448,18 +524,23 @@ mod tests {
     #[test]
     fn open_bluetooth_lists_devices_under_the_top_row() {
         let mut status = full();
-        status.devices = vec![("AirPods".into(), Some(80), true), ("Keyboard".into(), None, false)];
+        let row = |name: &str| ListRow { symbol: Symbol::Bluetooth, name: name.into(), detail: None, lock: false, on: false };
+        status.rows = vec![row("AirPods"), row("Keyboard")];
         status.expanded = Some(Module::Bluetooth);
         let l = layout(1280, &status);
-        let (list, rows) = l.devices.clone().unwrap();
+        let (list, rows) = l.list.clone().unwrap();
         assert_eq!(list.loc.y, l.network.loc.y + 104 + 10);
         assert_eq!(rows.len(), 2);
         assert!(l.display.unwrap().loc.y > list.loc.y + list.size.h);
         let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
-        assert_eq!(l.hit(centre(rows[1])), Some(Control::Device(1)));
-        // Off: no list.
+        assert_eq!(l.hit(centre(rows[1])), Some(Control::Row(1)));
+        assert_eq!(l.hit(centre(l.network) + Point::from((0.0, 30.0))), Some(Control::BluetoothMore));
+        // Off: no list. Wi-Fi on with no networks: one empty row.
         status.bluetooth = Some((false, "Off".into()));
-        assert_eq!(layout(1280, &status).devices, None);
+        assert_eq!(layout(1280, &status).list, None);
+        status.expanded = Some(Module::Wifi);
+        status.rows.clear();
+        assert_eq!(layout(1280, &status).list.unwrap().1.len(), 1);
     }
 
     #[test]

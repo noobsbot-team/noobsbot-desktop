@@ -48,6 +48,10 @@ pub enum Command {
     Bluetooth(bool),
     /// Connect (`true`) or disconnect a device by its BlueZ path.
     BluetoothDevice { path: String, connect: bool },
+    /// Ask the Wi-Fi devices for a fresh list of networks.
+    WifiScan,
+    /// Join a network: its saved connection, or a new one (with the password, when it needs one).
+    WifiJoin { ssid: String, ap: String, device: String, password: Option<String> },
     /// Percent.
     Brightness(u8),
     /// Percent of the default output (`true`) or input.
@@ -128,6 +132,13 @@ async fn connect(variable: &str, fallback: String) -> zbus::Result<Connection> {
 /// A client's whole life: `read` now, and again after every signal from `service` under `path` (properties, objects
 /// added or removed) and every change of its owner, so a service that starts later or restarts is picked up. Only a
 /// changed result reaches the frame loop.
+type Interfaces = std::collections::HashMap<zbus::names::OwnedInterfaceName, std::collections::HashMap<String, zbus::zvariant::OwnedValue>>;
+
+/// A property from a `GetManagedObjects` entry.
+fn get<'a>(interfaces: &'a Interfaces, interface: &str, property: &str) -> Option<&'a zbus::zvariant::OwnedValue> {
+    interfaces.iter().find(|(name, _)| name.as_str() == interface)?.1.get(property)
+}
+
 async fn follow<'a, T, F>(bus: &'a Connection, service: &str, path: &str, updates: &Sender<Update>, wrap: fn(Option<T>) -> Update, read: impl Fn(&'a Connection) -> F)
 where
     T: Clone + Debug + PartialEq,
@@ -185,6 +196,8 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
             (Command::Wifi(on), Some(bus), _) => network::set_wifi(bus, on).await,
             (Command::Bluetooth(on), Some(bus), _) => bluetooth::set_powered(bus, on).await,
             (Command::BluetoothDevice { path, connect }, Some(bus), _) => bluetooth::connect(bus, &path, connect).await,
+            (Command::WifiScan, Some(bus), _) => network::scan(bus).await,
+            (Command::WifiJoin { ssid, ap, device, password }, Some(bus), _) => network::join(bus, &ssid, &ap, &device, password.as_deref()).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
             (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),

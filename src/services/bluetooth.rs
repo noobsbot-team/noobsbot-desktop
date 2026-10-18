@@ -1,17 +1,13 @@
 //! Bluetooth state from BlueZ (E2.3): whether it is on, and the paired devices with their battery level.
 
-use std::collections::HashMap;
-
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
     Connection,
     fdo::{ManagedObjects, ObjectManagerProxy},
-    names::OwnedInterfaceName,
     proxy::CacheProperties,
-    zvariant::OwnedValue,
 };
 
-use super::Update;
+use super::{Interfaces, Update, get};
 
 const SERVICE: &str = "org.bluez";
 
@@ -91,12 +87,6 @@ pub async fn set_powered(bus: &Connection, on: bool) {
     }
 }
 
-type Interfaces = HashMap<OwnedInterfaceName, HashMap<String, OwnedValue>>;
-
-fn get<'a>(interfaces: &'a Interfaces, interface: &str, property: &str) -> Option<&'a OwnedValue> {
-    interfaces.iter().find(|(name, _)| name.as_str() == interface)?.1.get(property)
-}
-
 fn flag(interfaces: &Interfaces, interface: &str, property: &str) -> bool {
     get(interfaces, interface, property).and_then(|v| v.downcast_ref::<bool>().ok()).unwrap_or(false)
 }
@@ -125,6 +115,7 @@ mod tests {
     use zbus::zvariant::OwnedObjectPath;
 
     use super::*;
+    use zbus::{names::OwnedInterfaceName, zvariant::OwnedValue};
 
     fn object(interfaces: &[(&str, &[(&str, OwnedValue)])]) -> Interfaces {
         interfaces
