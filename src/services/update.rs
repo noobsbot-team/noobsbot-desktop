@@ -209,7 +209,8 @@ impl crate::state::State {
     /// "Restart to Update": the helper installs the verified download (pkexec asks for the admin password through the
     /// session's polkit agent), then the log-out alert, so the next login starts the new version.
     pub fn install_update(&mut self) {
-        let Some(release) = self.update.as_mut() else { return };
+        // Also keeps `--show update` (a pretend download) from ever reaching pkexec on a dev machine.
+        let Some(release) = self.update.as_mut().filter(|_| Path::new(HELPER).exists()) else { return };
         // Taken while the helper runs, so a second click doesn't ask twice.
         let Download::Ready(dir) = std::mem::replace(&mut release.download, Download::None) else { return };
         let (done, finished) = smithay::reexports::calloop::channel::channel();
