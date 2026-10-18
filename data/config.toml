@@ -48,7 +48,7 @@ gesture_sensitivity = 1.0
 
 [hot_corners]
 # Rest the pointer in a screen corner for a moment to trigger an action (any action from [bindings] below, like
-# mission-control, app-expose, launchpad, notification-center), or "none".
+# mission-control, app-expose, show-desktop, launchpad, notification-center), or "none".
 top_left = "none"
 top_right = "none"
 bottom_left = "none"
@@ -113,7 +113,7 @@ screen_recording_denied = []
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",
-# mission-control, app-expose, screenshot (the whole screen), screenshot-region, screenshot-toolbar.
+# mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar.
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec helium-browser"
