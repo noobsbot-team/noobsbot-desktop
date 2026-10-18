@@ -46,6 +46,8 @@ pub enum Command {
     PowerProfile(String),
     Wifi(bool),
     Bluetooth(bool),
+    /// Connect (`true`) or disconnect a device by its BlueZ path.
+    BluetoothDevice { path: String, connect: bool },
     /// Percent.
     Brightness(u8),
     /// Percent of the default output (`true`) or input.
@@ -182,6 +184,7 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
             (Command::Suspend | Command::Reboot | Command::PowerOff, Some(bus), _) => power(bus, &name).await,
             (Command::Wifi(on), Some(bus), _) => network::set_wifi(bus, on).await,
             (Command::Bluetooth(on), Some(bus), _) => bluetooth::set_powered(bus, on).await,
+            (Command::BluetoothDevice { path, connect }, Some(bus), _) => bluetooth::connect(bus, &path, connect).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
             (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),

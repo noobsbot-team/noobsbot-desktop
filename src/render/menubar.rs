@@ -73,10 +73,10 @@ pub fn wifi(network: &Network) -> Symbol {
 }
 
 pub fn bluetooth(bluetooth: &Bluetooth) -> Symbol {
-    match (bluetooth.powered, bluetooth.devices.is_empty()) {
+    match (bluetooth.powered, bluetooth.connected().next().is_some()) {
         (false, _) => Symbol::BluetoothSlash,
-        (true, false) => Symbol::BluetoothConnected,
-        (true, true) => Symbol::Bluetooth,
+        (true, true) => Symbol::BluetoothConnected,
+        (true, false) => Symbol::Bluetooth,
     }
 }
 

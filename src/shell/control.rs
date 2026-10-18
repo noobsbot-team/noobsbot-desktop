@@ -41,8 +41,17 @@ pub struct Status {
     pub profile: Option<String>,
     /// Sound outputs: PipeWire id, short name, current.
     pub outputs: Vec<(u32, String, bool)>,
-    /// The Sound module shows its outputs.
-    pub sound_open: bool,
+    /// Paired Bluetooth devices: name, battery, connected.
+    pub devices: Vec<(String, Option<u8>, bool)>,
+    /// The module showing its list.
+    pub expanded: Option<Module>,
+}
+
+/// A module that opens a list in place (one at a time, as on macOS).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Module {
+    Bluetooth,
+    Sound,
 }
 
 /// A clickable or draggable part.
@@ -62,6 +71,10 @@ pub enum Control {
     SoundMore,
     /// A sound output, by PipeWire id.
     Output(u32),
+    /// The Bluetooth label: shows or hides the devices.
+    BluetoothMore,
+    /// A Bluetooth device, by its index in `Status::devices`.
+    Device(usize),
 }
 
 /// Every module's place, output-relative.
@@ -78,6 +91,8 @@ pub struct Layout {
     pub sound: Option<Rect>,
     /// The output rows of an open Sound module.
     pub outputs: Vec<Rect>,
+    /// The device list under the top row while Bluetooth is open, and its rows.
+    pub devices: Option<(Rect, Vec<Rect>)>,
     pub media: Rect,
     pub power: Option<Rect>,
 }
@@ -122,9 +137,27 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
     let small = (TOP - GAP) / 2;
     let dnd = card(PAD + HALF + GAP, y, HALF, small);
     let dark = card(PAD + HALF + GAP, y + small + GAP, HALF, small);
-    let mut hits = vec![(Control::Wifi, toggle_in(network, 0)), (Control::Bluetooth, toggle_in(network, 1)), (Control::Dnd, dnd), (Control::Dark, dark)];
+    let bt_toggle = toggle_in(network, 1);
+    let bt_label = Rectangle::new((bt_toggle.loc.x + TOGGLE + 4, bt_toggle.loc.y - 4).into(), (network.loc.x + network.size.w - bt_toggle.loc.x - TOGGLE - 8, TOGGLE + 8).into());
+    let mut hits = vec![
+        (Control::Wifi, toggle_in(network, 0)),
+        (Control::Bluetooth, bt_toggle),
+        (Control::BluetoothMore, bt_label),
+        (Control::Dnd, dnd),
+        (Control::Dark, dark),
+    ];
     let mut cards = vec![network, dnd, dark];
     y += TOP + GAP;
+    // An open Bluetooth module lists its devices full width under the top row; with none, one empty row says so.
+    let devices = (status.expanded == Some(Module::Bluetooth) && status.bluetooth.as_ref().is_some_and(|b| b.0)).then(|| {
+        let rows = status.devices.len().max(1) as i32;
+        let list = card(PAD, y, INNER, 2 * LIST_PAD + rows * LIST_ROW);
+        let cells: Vec<Rect> = (0..rows).map(|i| Rectangle::new((list.loc.x + LIST_PAD, list.loc.y + LIST_PAD + i * LIST_ROW).into(), (list.size.w - 2 * LIST_PAD, LIST_ROW).into())).collect();
+        hits.extend(cells.iter().take(status.devices.len()).enumerate().map(|(i, r)| (Control::Device(i), *r)));
+        cards.push(list);
+        y += list.size.h + GAP;
+        (list, cells)
+    });
     let mut slider = |control, present: bool, extra: i32, y: &mut i32| {
         present.then(|| {
             let c = card(PAD, *y, INNER, SLIDER_CARD + extra);
@@ -135,7 +168,7 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
         })
     };
     let display = slider(Control::Brightness, status.brightness.is_some(), 0, &mut y);
-    let open = status.sound_open && !status.outputs.is_empty();
+    let open = status.expanded == Some(Module::Sound) && !status.outputs.is_empty();
     let extra = if open { 2 * LIST_PAD + status.outputs.len() as i32 * LIST_ROW } else { 0 };
     let sound = slider(Control::Volume, status.volume.is_some(), extra, &mut y);
     let mut outputs = Vec::new();
@@ -165,7 +198,7 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
         c
     });
     // The last gap becomes the bottom padding.
-    Layout { rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()), cards, hits, network, dnd, dark, display, sound, outputs, media, power }
+    Layout { rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()), cards, hits, network, dnd, dark, display, sound, outputs, devices, media, power }
 }
 
 /// The percent a slider shows with the pointer at `x`: the knob end follows the pointer, as on macOS.
@@ -223,7 +256,7 @@ impl State {
             (n.wifi_enabled, name)
         });
         let bluetooth = self.bluetooth.as_ref().map(|b| {
-            let name = match (b.powered, b.devices.first()) {
+            let name = match (b.powered, b.connected().next()) {
                 (false, _) => "Off".into(),
                 (true, Some(device)) => device.name.clone(),
                 (true, None) => "On".into(),
@@ -244,7 +277,8 @@ impl State {
                 let names = short_names(&s.outputs.iter().map(|o| o.name.clone()).collect::<Vec<_>>());
                 s.outputs.iter().zip(names).map(|(o, name)| (o.id, name, o.current)).collect()
             }),
-            sound_open: self.sound_open,
+            devices: self.bluetooth.as_ref().map_or_else(Vec::new, |b| b.devices.iter().map(|d| (d.name.clone(), d.battery, d.connected)).collect()),
+            expanded: self.expanded,
         }
     }
 
@@ -292,7 +326,14 @@ impl State {
                 }
             }
             // ponytail: opens at once; the in-place `smooth` spring comes with the animation module.
-            Control::SoundMore => self.sound_open = !self.sound_open,
+            Control::SoundMore => self.expanded = if self.expanded == Some(Module::Sound) { None } else { Some(Module::Sound) },
+            Control::BluetoothMore => self.expanded = if self.expanded == Some(Module::Bluetooth) { None } else { Some(Module::Bluetooth) },
+            Control::Device(i) => {
+                if let Some(device) = self.bluetooth.as_ref().and_then(|b| b.devices.get(i)) {
+                    // ponytail: no "Connecting…" state; the row flips when BlueZ reports the change.
+                    self.services.send(Command::BluetoothDevice { path: device.path.clone(), connect: !device.connected });
+                }
+            }
             Control::Output(id) => {
                 if let Some(sound) = self.sound.as_mut() {
                     sound.outputs.iter_mut().for_each(|o| o.current = o.id == id);
@@ -394,7 +435,7 @@ mod tests {
         let mut status = full();
         status.outputs = vec![(51, "Speaker".into(), true), (52, "HDMI".into(), false)];
         let closed = layout(1280, &status);
-        status.sound_open = true;
+        status.expanded = Some(Module::Sound);
         let open = layout(1280, &status);
         assert_eq!(open.rect.size.h - closed.rect.size.h, 2 * LIST_PAD + 2 * LIST_ROW);
         assert_eq!(open.outputs.len(), 2);
@@ -402,6 +443,23 @@ mod tests {
         assert_eq!(open.hit(centre(open.outputs[1])), Some(Control::Output(52)));
         assert!(open.outputs.iter().all(|r| open.sound.unwrap().contains_rect(*r)));
         assert_eq!(closed.hit(closed.sound.unwrap().loc.to_f64() + Point::from((100.0, 10.0))), Some(Control::SoundMore));
+    }
+
+    #[test]
+    fn open_bluetooth_lists_devices_under_the_top_row() {
+        let mut status = full();
+        status.devices = vec![("AirPods".into(), Some(80), true), ("Keyboard".into(), None, false)];
+        status.expanded = Some(Module::Bluetooth);
+        let l = layout(1280, &status);
+        let (list, rows) = l.devices.clone().unwrap();
+        assert_eq!(list.loc.y, l.network.loc.y + 104 + 10);
+        assert_eq!(rows.len(), 2);
+        assert!(l.display.unwrap().loc.y > list.loc.y + list.size.h);
+        let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
+        assert_eq!(l.hit(centre(rows[1])), Some(Control::Device(1)));
+        // Off: no list.
+        status.bluetooth = Some((false, "Off".into()));
+        assert_eq!(layout(1280, &status).devices, None);
     }
 
     #[test]

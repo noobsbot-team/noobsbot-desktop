@@ -1,4 +1,4 @@
-//! Bluetooth state from BlueZ (E2.3): whether it is on, and the connected devices with their battery level.
+//! Bluetooth state from BlueZ (E2.3): whether it is on, and the paired devices with their battery level.
 
 use std::collections::HashMap;
 
@@ -18,8 +18,14 @@ const SERVICE: &str = "org.bluez";
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bluetooth {
     pub powered: bool,
-    /// Connected devices, sorted by name.
+    /// Paired or connected devices: connected first, then by name.
     pub devices: Vec<Device>,
+}
+
+impl Bluetooth {
+    pub fn connected(&self) -> impl Iterator<Item = &Device> {
+        self.devices.iter().filter(|d| d.connected)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -27,6 +33,9 @@ pub struct Device {
     pub name: String,
     /// From BlueZ's Battery1 interface, when the device reports one.
     pub battery: Option<u8>,
+    pub connected: bool,
+    /// BlueZ's object path, for connecting.
+    pub path: String,
 }
 
 /// Sends the Bluetooth state now and after every change: adapters and devices appearing, connecting, powering.
@@ -39,6 +48,23 @@ pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
 async fn read(bus: &Connection) -> Option<Bluetooth> {
     let manager = ObjectManagerProxy::builder(bus).destination(SERVICE).ok()?.path("/").ok()?.build().await.ok()?;
     summarize(&manager.get_managed_objects().await.ok()?)
+}
+
+#[zbus::proxy(interface = "org.bluez.Device1", default_service = "org.bluez")]
+trait BluezDevice {
+    fn connect(&self) -> zbus::Result<()>;
+    fn disconnect(&self) -> zbus::Result<()>;
+}
+
+/// Control Center ▸ Bluetooth ▸ a device: connects or disconnects it.
+pub async fn connect(bus: &Connection, path: &str, on: bool) {
+    let result = async {
+        let device = BluezDeviceProxy::builder(bus).path(path)?.build().await?;
+        if on { device.connect().await } else { device.disconnect().await }
+    };
+    if let Err(err) = result.await {
+        tracing::warn!("Bluetooth {} {path}: {err}", if on { "connect" } else { "disconnect" });
+    }
 }
 
 #[zbus::proxy(interface = "org.bluez.Adapter1", default_service = "org.bluez")]
@@ -81,14 +107,16 @@ fn summarize(objects: &ManagedObjects) -> Option<Bluetooth> {
         return None;
     }
     let mut devices: Vec<Device> = objects
-        .values()
-        .filter(|i| flag(i, "org.bluez.Device1", "Connected"))
-        .map(|i| Device {
+        .iter()
+        .filter(|(_, i)| flag(i, "org.bluez.Device1", "Connected") || flag(i, "org.bluez.Device1", "Paired"))
+        .map(|(path, i)| Device {
             name: get(i, "org.bluez.Device1", "Alias").and_then(|v| v.downcast_ref::<&str>().ok()).unwrap_or_default().to_owned(),
             battery: get(i, "org.bluez.Battery1", "Percentage").and_then(|v| v.downcast_ref::<u8>().ok()),
+            connected: flag(i, "org.bluez.Device1", "Connected"),
+            path: path.to_string(),
         })
         .collect();
-    devices.sort_by(|a, b| a.name.cmp(&b.name));
+    devices.sort_by(|a, b| b.connected.cmp(&a.connected).then_with(|| a.name.cmp(&b.name)));
     Some(Bluetooth { powered: adapters.iter().any(|i| flag(i, "org.bluez.Adapter1", "Powered")), devices })
 }
 
@@ -122,7 +150,7 @@ mod tests {
     }
 
     #[test]
-    fn connected_devices_with_battery() {
+    fn paired_and_connected_devices() {
         let objects: ManagedObjects = [
             (path("/org/bluez/hci0"), object(&[("org.bluez.Adapter1", &[("Address", value("AA:BB")), ("Powered", value(true))])])),
             (
@@ -132,17 +160,21 @@ mod tests {
                     ("org.bluez.Battery1", &[("Percentage", value(80u8))]),
                 ]),
             ),
-            (path("/org/bluez/hci0/dev_2"), object(&[("org.bluez.Device1", &[("Alias", value("Keyboard")), ("Connected", value(false))])])),
+            (path("/org/bluez/hci0/dev_2"), object(&[("org.bluez.Device1", &[("Alias", value("Keyboard")), ("Connected", value(false)), ("Paired", value(true))])])),
+            (path("/org/bluez/hci0/dev_4"), object(&[("org.bluez.Device1", &[("Alias", value("Stranger")), ("Connected", value(false))])])),
             (path("/org/bluez/hci0/dev_3"), object(&[("org.bluez.Device1", &[("Alias", value("Mouse")), ("Connected", value(true))])])),
         ]
         .into_iter()
         .collect();
         let bluetooth = summarize(&objects).unwrap();
         assert!(bluetooth.powered);
+        let device = |name: &str, battery, connected, dev: &str| Device { name: name.into(), battery, connected, path: format!("/org/bluez/hci0/{dev}") };
+        // Connected first; an unpaired, unconnected device is left out.
         assert_eq!(
             bluetooth.devices,
-            [Device { name: "AirPods Pro".into(), battery: Some(80) }, Device { name: "Mouse".into(), battery: None }]
+            [device("AirPods Pro", Some(80), true, "dev_1"), device("Mouse", None, true, "dev_3"), device("Keyboard", None, false, "dev_2")]
         );
+        assert_eq!(bluetooth.connected().count(), 2);
     }
 
     #[test]

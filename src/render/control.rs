@@ -11,7 +11,7 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
-    shell::control::{self, LIST_ROW, Layout, Status, TOGGLE, media_buttons, profile_name, slider_fill, tile_toggle, toggle_in, track_in},
+    shell::control::{self, LIST_ROW, Layout, Module, Status, TOGGLE, media_buttons, profile_name, slider_fill, tile_toggle, toggle_in, track_in},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
     wm::Rect,
@@ -50,6 +50,21 @@ fn battery_symbol((percent, charging): (u8, bool)) -> Symbol {
 /// From `x` to `right` at `y`, `h` tall; at least 1 px wide.
 fn row_rect(x: i32, y: i32, right: i32, h: i32) -> Rect {
     Rectangle::new((x, y).into(), ((right - x).max(1), h).into())
+}
+
+/// The round icon behind a Bluetooth device: accent when connected.
+const DEVICE: i32 = 22;
+
+/// A Bluetooth device's symbol, from its name.
+fn device_symbol(name: &str) -> Symbol {
+    let name = name.to_lowercase();
+    if ["airpods", "buds", "tws", "headphone", "headset", "wh-", "wf-"].iter().any(|k| name.contains(k)) {
+        Symbol::Headphones
+    } else if name.contains("keyboard") {
+        Symbol::Keyboard
+    } else {
+        Symbol::Bluetooth
+    }
 }
 
 /// A sound output's symbol, from its name.
@@ -137,8 +152,26 @@ impl ControlCenter {
             put(symbols.get(symbol, Weight::Fill, 16, scale, on_fill), Rectangle::new((track.loc.x + 6, track.loc.y + 6).into(), (16, 16).into()), false);
         }
         if let Some(card) = layout.sound {
-            let caret = if status.sound_open { Symbol::CaretDown } else { Symbol::CaretRight };
+            let caret = if status.expanded == Some(Module::Sound) { Symbol::CaretDown } else { Symbol::CaretRight };
             put(symbols.get(caret, Weight::Regular, 12, scale, secondary), Rectangle::new((card.loc.x + card.size.w - 24, card.loc.y + 10).into(), (12, 12).into()), false);
+        }
+        if let Some((_, rows)) = &layout.devices {
+            if status.devices.is_empty() {
+                put(text.label("No Devices", Style { color: secondary, ..body }, 200, scale), row_rect(rows[0].loc.x + 6, rows[0].loc.y, rows[0].loc.x + rows[0].size.w, LIST_ROW), true);
+            }
+            for (row, (name, battery, connected)) in rows.iter().zip(&status.devices) {
+                let circle = Rectangle::new((row.loc.x + 3, row.loc.y + (LIST_ROW - DEVICE) / 2).into(), (DEVICE, DEVICE).into());
+                put(symbols.get(device_symbol(name), Weight::Fill, 12, scale, if *connected { white } else { label }), centred(circle, 12), false);
+                let x = circle.loc.x + DEVICE + 8;
+                let right = row.loc.x + row.size.w - 44;
+                put(text.label(name, body, (right - x) as u32, scale), row_rect(x, row.loc.y, right, LIST_ROW), true);
+                if let Some(percent) = battery {
+                    let piece = text.label(&format!("{percent}%"), Style { color: secondary, ..body }, 40, scale);
+                    let w = (f64::from(piece.width) / scale).round() as i32;
+                    let end = row.loc.x + row.size.w - 6;
+                    put(piece, row_rect(end - w, row.loc.y, end, LIST_ROW), false);
+                }
+            }
         }
         for (row, (_, name, current)) in layout.outputs.iter().zip(&status.outputs) {
             let icon = Rectangle::new((row.loc.x + 6, row.loc.y + (LIST_ROW - 16) / 2).into(), (16, 16).into());
@@ -220,6 +253,12 @@ fn glass(shaders: &Shaders, layout: &Layout, status: &Status, dark: bool, accent
     ];
     for (rect, state) in toggles {
         out.push(shaders.light(rect, if state { on } else { off }, false, scale));
+    }
+    if let Some((_, rows)) = &layout.devices {
+        for (row, (_, _, connected)) in rows.iter().zip(&status.devices) {
+            let circle = Rectangle::new((row.loc.x + 3, row.loc.y + (LIST_ROW - DEVICE) / 2).into(), (DEVICE, DEVICE).into());
+            out.push(shaders.light(circle, if *connected { on } else { off }, false, scale));
+        }
     }
     for (card, value) in [(layout.display, status.brightness), (layout.sound, status.volume.map(|(v, muted)| if muted { 0 } else { v }))] {
         let (Some(card), Some(value)) = (card, value) else { continue };
