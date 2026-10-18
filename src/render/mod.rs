@@ -11,6 +11,7 @@ mod force_quit;
 mod gallery;
 mod menu;
 pub mod menubar;
+pub mod motion;
 mod notify;
 mod osd;
 mod switcher;
@@ -487,8 +488,17 @@ pub fn scene(
 
     let mut out = layer_elements(renderer, upper);
     out.extend(bar);
+    let now = std::time::Instant::now();
     for window in space.elements().rev() {
-        out.extend(window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark));
+        let elements = window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark);
+        // Animating (E5.5): drawn as one moved, scaled, faded snapshot.
+        let moved = motion::current(window, now)
+            .zip(motion::window_frame(space, window, output_geo.loc))
+            .and_then(|(m, frame)| motion::moved(renderer, &elements, frame, m.look(frame, now), scale));
+        match moved {
+            Some(element) => out.push(element),
+            None => out.extend(elements),
+        }
     }
     out.extend(layer_elements(renderer, lower));
     out.push(wallpaper.element(shaders, output_geo.size, dark));

@@ -332,6 +332,7 @@ impl State {
         for window in windows {
             let Some(loc) = self.frame(&window).map(|f| f.loc) else { continue };
             window.set_activated(false);
+            self.window_minimising(&window);
             self.space.unmap_elem(&window);
             self.hidden.push((window, loc));
         }

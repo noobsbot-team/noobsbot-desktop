@@ -85,6 +85,8 @@ pub struct State {
     /// Set by the backend once the renderer exists.
     pub backend: Option<crate::backend::winit::Winit>,
     redraw_pending: bool,
+    /// Frames keep coming until then (anim.rs).
+    pub anim_until: Option<Instant>,
     pub resize: Option<Resize>,
     /// Nested in another desktop: Alt stands in for Super, which the host keeps.
     pub nested: bool,
@@ -277,6 +279,7 @@ impl State {
             clipboard: Clipboard::new(clipboard_tx),
             backend: None,
             redraw_pending: false,
+            anim_until: None,
             resize: None,
             nested,
             rules: rules::compile(&config.rules),
@@ -430,11 +433,15 @@ impl State {
     pub fn set_visible_loc(&mut self, window: &Window, loc: smithay::utils::Point<i32, smithay::utils::Logical>) {
         // map_element also raises the window: put back what was above it, so moving never restacks.
         let above: Vec<Window> = self.space.elements().skip_while(|w| *w != window).skip(1).cloned().collect();
+        let restored = !self.space.elements().any(|w| w == window);
         self.space.map_element(window.clone(), loc + Point::from((0, crate::decorations::bar_height(window))), false);
         for w in &above {
             self.space.raise_element(w, false);
         }
         self.restack();
+        if restored {
+            self.window_restored(window);
+        }
         self.schedule_redraw();
     }
 
@@ -449,6 +456,7 @@ impl State {
     /// ponytail: one output and no menu bar or dock yet, so both fill the same area; refitting on output resize comes with udev (M6).
     pub fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
         let (Some(window), Some(area)) = (self.window_for(surface.wl_surface()).cloned(), self.work_area()) else { return };
+        self.window_reframing(&window);
         let restore = window.user_data().get_or_insert(|| Restore(std::sync::Mutex::new(None)));
         if let (Ok(mut saved), Some(frame)) = (restore.0.lock(), self.frame(&window)) {
             saved.get_or_insert(frame);
@@ -470,6 +478,7 @@ impl State {
         if !surface.with_pending_state(|s| s.states.contains(state)) {
             return None;
         }
+        self.window_reframing(&window);
         let saved = window.user_data().get::<Restore>().and_then(|r| r.0.lock().ok()?.take());
         surface.with_pending_state(|s| s.states.unset(state));
         let size = saved.map(|r| self.content_size(&window, r.size));
@@ -650,6 +659,7 @@ impl CompositorHandler for State {
                         let loc = position.map_or_else(|| wm::place(area, size), |[x, y]| area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))));
                         tracing::debug!(?size, ?loc, ?position, "placed");
                         self.set_visible_loc(&window, loc);
+                        self.window_opened(&window);
                     }
                 }
             }
@@ -721,6 +731,12 @@ impl XdgShellHandler for State {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.schedule_redraw();
+        // Its buffers are still there unless the client is gone (then it just vanishes).
+        if let Some(window) =
+            self.window_for(surface.wl_surface()).filter(|_| smithay::reexports::wayland_server::Resource::is_alive(surface.wl_surface())).cloned()
+        {
+            self.window_closing(&window);
+        }
         self.hidden.retain(|(w, _)| w.toplevel() != Some(&surface));
         let next = self.space.elements().rev().find(|w| w.toplevel() != Some(&surface)).cloned();
         self.focus_window(next, SERIAL_COUNTER.next_serial());

@@ -25,6 +25,8 @@ wallpaper_dark = ""
 # The Dark Mode toggle also rewrites the Noobsbot Glass theme for Qt/KDE apps (Kvantum, colour scheme, kdeglobals),
 # like `noobsbot-desktop theme --write`. Off by default: it edits files in ~/.config and ~/.local/share.
 theme_apps = false
+# Reduce motion: windows, menus and banners crossfade (150 ms) instead of moving.
+reduce_motion = false
 
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).
