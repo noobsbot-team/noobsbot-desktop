@@ -151,9 +151,16 @@ pub enum Command {
     /// The history file's new text.
     SaveNotifications(String),
     /// Mount a `disks::Volume` (by its block path); `name` for the error notification.
-    Mount { block: String, name: String },
+    Mount {
+        block: String,
+        name: String,
+    },
     /// Unmount `blocks`, then power `drive` off.
-    Eject { drive: String, blocks: Vec<String>, name: String },
+    Eject {
+        drive: String,
+        blocks: Vec<String>,
+        name: String,
+    },
 }
 
 pub struct Services {

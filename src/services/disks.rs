@@ -161,7 +161,15 @@ mod tests {
             (
                 path("/org/freedesktop/UDisks2/block_devices/sda1"),
                 object(&[
-                    (BLOCK, vec![("Drive", value(ObjectPath::try_from(USB).unwrap())), ("IdLabel", value("")), ("HintAuto", value(true)), ("HintSystem", value(false))]),
+                    (
+                        BLOCK,
+                        vec![
+                            ("Drive", value(ObjectPath::try_from(USB).unwrap())),
+                            ("IdLabel", value("")),
+                            ("HintAuto", value(true)),
+                            ("HintSystem", value(false)),
+                        ],
+                    ),
                     (FILESYSTEM, vec![("MountPoints", value(points))]),
                 ]),
             ),

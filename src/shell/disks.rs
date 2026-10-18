@@ -152,7 +152,13 @@ mod tests {
     use super::*;
 
     fn volume(block: &str, drive: &str, mounted: bool) -> Volume {
-        Volume { block: block.into(), drive: drive.into(), name: drive.into(), mounts: if mounted { vec![format!("/run/media/{block}")] } else { vec![] }, auto: true }
+        Volume {
+            block: block.into(),
+            drive: drive.into(),
+            name: drive.into(),
+            mounts: if mounted { vec![format!("/run/media/{block}")] } else { vec![] },
+            auto: true,
+        }
     }
 
     #[test]
