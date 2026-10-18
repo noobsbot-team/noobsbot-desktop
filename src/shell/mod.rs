@@ -3,6 +3,7 @@
 
 pub mod alert;
 pub mod control;
+pub mod notify;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use smithay::utils::{Logical, Point, Rectangle};
@@ -37,8 +38,8 @@ pub fn osd_rect(output_width: i32) -> Rect {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Popup {
-    /// The month shown, as (year, month 1–12).
-    Calendar { year: i32, month: u32 },
+    /// Notification Center (E4.2); its calendar shows (year, month 1–12).
+    Notifications { year: i32, month: u32 },
     Menu(Menu),
     Control,
 }
@@ -47,7 +48,7 @@ impl Popup {
     /// The bar item it hangs from, which shows the pressed pill.
     pub fn item(self) -> BarItem {
         match self {
-            Popup::Calendar { .. } => BarItem::Clock,
+            Popup::Notifications { .. } => BarItem::Clock,
             Popup::Menu(Menu::Logo) => BarItem::Logo,
             Popup::Menu(Menu::App) => BarItem::App,
             Popup::Control => BarItem::ControlCenter,
@@ -64,7 +65,7 @@ fn popup_for(item: BarItem) -> Option<Popup> {
         BarItem::App => Some(Popup::Menu(Menu::App)),
         BarItem::Clock => {
             let (year, month) = this_month();
-            Some(Popup::Calendar { year, month })
+            Some(Popup::Notifications { year, month })
         }
         BarItem::ControlCenter => Some(Popup::Control),
         BarItem::Status(_) => None,
@@ -150,7 +151,7 @@ pub fn menu_layout(anchor_x: i32, output_width: i32, width: i32, rows: &[Option<
 const DROP: i32 = 4;
 const MARGIN: i32 = 8;
 
-/// The calendar popover (E2.5), in logical px relative to its top-left corner.
+/// The calendar (E2.5), in logical px relative to its top-left corner.
 pub mod calendar {
     pub const WIDTH: i32 = 280;
     pub const PAD: i32 = 16;
@@ -168,7 +169,7 @@ pub mod calendar {
 }
 
 /// Where each part of the calendar is, output-relative.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CalendarLayout {
     pub rect: Rect,
     pub title: Rect,
@@ -179,12 +180,11 @@ pub struct CalendarLayout {
     pub cells: Vec<Rect>,
 }
 
-pub fn calendar_layout(output_width: i32, rows: usize) -> CalendarLayout {
+/// The calendar with its top-left corner at (`x`, `y`), output-relative.
+pub fn calendar_layout(x: i32, y: i32, rows: usize) -> CalendarLayout {
     use calendar::*;
     let height = GRID_Y + rows as i32 * CELL_H + BOTTOM;
-    // Under the clock, which is always the bar's last item: right-aligned to the screen edge.
-    let x = (output_width - MARGIN - WIDTH).max(MARGIN);
-    let at = |dx: i32, dy: i32, w: i32, h: i32| Rectangle::new((x + dx, menubar::HEIGHT + DROP + dy).into(), (w, h).into());
+    let at = |dx: i32, dy: i32, w: i32, h: i32| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
     let next = at(WIDTH - PAD + 4 - ARROW, TITLE_Y - 2, ARROW, ARROW);
     let prev = at(WIDTH - PAD + 4 - 2 * ARROW, TITLE_Y - 2, ARROW, ARROW);
     CalendarLayout {
@@ -222,9 +222,8 @@ impl State {
 
     /// The open popup's area, output-relative.
     pub fn popup_rect(&self) -> Option<Rect> {
-        let width = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size.w;
         match self.popup? {
-            Popup::Calendar { year, month } => Some(calendar_layout(width, grid(year, month, self.config.clock.week_start.into()).len()).rect),
+            Popup::Notifications { .. } => self.center_layout().map(|c| c.rect),
             // A menu's width follows its text, so the last frame's layout is the one to hit.
             Popup::Menu(_) => self.backend.as_ref()?.menu.rect(),
             Popup::Control => Some(self.control_layout().rect),
@@ -234,7 +233,7 @@ impl State {
     /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar or an open popup.
     pub fn shell_covers(&self, location: Point<f64, Logical>) -> bool {
         let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(location));
-        if on_alert {
+        if on_alert || self.on_banner(location) {
             return true;
         }
         let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
@@ -245,6 +244,9 @@ impl State {
     pub fn shell_press(&mut self, location: Point<f64, Logical>) -> bool {
         // The alert is above everything else.
         if self.alert.is_some() && self.alert_press(location) {
+            return true;
+        }
+        if self.banner_press(location) {
             return true;
         }
         let item = self.backend.as_ref().and_then(|b| b.menu_bar.hit(location));
@@ -275,13 +277,7 @@ impl State {
 
     fn popup_press(&mut self, popup: Popup, location: Point<f64, Logical>) {
         match popup {
-            Popup::Calendar { year, month } => {
-                let width = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.w);
-                let layout = calendar_layout(width, grid(year, month, self.config.clock.week_start.into()).len());
-                if let Some((year, month)) = calendar_click(&layout, location, (year, month)) {
-                    self.popup = Some(Popup::Calendar { year, month });
-                }
-            }
+            Popup::Notifications { .. } => self.center_press(location),
             Popup::Menu(menu) => {
                 let index = self.backend.as_ref().and_then(|b| b.menu.row_at(location));
                 // Separators and disabled rows keep the menu open, as on macOS.
@@ -300,6 +296,7 @@ impl State {
         if self.shell_drag.is_some() {
             return self.control_drag(to);
         }
+        self.notify_motion(to);
         let Some(open) = self.popup else { return };
         let Some(backend) = self.backend.as_ref() else { return };
         if let Some(next) = backend.menu_bar.hit(to).filter(|item| *item != open.item()).and_then(popup_for) {
@@ -363,8 +360,8 @@ mod tests {
     }
 
     #[test]
-    fn layout_fits_under_the_bar_at_the_right() {
-        let layout = calendar_layout(1280, 5);
+    fn calendar_layout_holds_its_cells() {
+        let layout = calendar_layout(992, 28, 5);
         assert_eq!(layout.rect, Rectangle::new((992, 28).into(), (280, 228).into()));
         // Every cell and both arrows sit inside the popover.
         assert!(layout.cells.iter().chain([&layout.prev, &layout.next, &layout.title]).all(|c| layout.rect.contains_rect(*c)));
@@ -388,7 +385,7 @@ mod tests {
 
     #[test]
     fn clicks_step_months() {
-        let layout = calendar_layout(1280, 5);
+        let layout = calendar_layout(992, 28, 5);
         let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
         assert_eq!(calendar_click(&layout, centre(layout.next), (2026, 12)), Some((2027, 1)));
         assert_eq!(calendar_click(&layout, centre(layout.prev), (2026, 1)), Some((2025, 12)));

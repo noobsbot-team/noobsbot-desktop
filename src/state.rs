@@ -148,6 +148,8 @@ pub struct State {
     pub shell_drag: Option<crate::shell::control::Control>,
     /// Hides the OSD; replaced on every key press.
     pub osd_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// Notifications, their banners and Notification Center's state (E4.1, E4.2).
+    pub notifications: crate::shell::notify::Store,
 }
 
 impl State {
@@ -215,6 +217,9 @@ impl State {
                     crate::services::Update::Brightness(brightness) => state.brightness = brightness,
                     crate::services::Update::Sound(sound) => state.sound = sound,
                     crate::services::Update::Media(media) => state.media = media,
+                    crate::services::Update::Notify(n) => state.notify(*n),
+                    crate::services::Update::CloseNotification(id) => state.close_notification(id, crate::shell::notify::Reason::Closed),
+                    crate::services::Update::History(list) => state.restore_notifications(list),
                 }
                 state.schedule_redraw();
             }
@@ -278,6 +283,7 @@ impl State {
             expanded: None,
             shell_drag: None,
             osd_timer: None,
+            notifications: Default::default(),
             display_handle: dh,
         })
     }

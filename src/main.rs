@@ -29,7 +29,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert] [-- command [args...]]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -110,9 +110,17 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         winit.gallery = Some(Default::default());
     }
     match show {
-        Some("calendar") => {
+        // Sample notifications: one banner (hovered, so its buttons show), or Notification Center with DND on.
+        Some("notification") => {
+            state.restore_notifications(shell::notify::samples());
+            state.notifications.banners = vec![4, 1];
+            state.notifications.hovered = Some(4);
+        }
+        Some("notification-center") => {
+            state.restore_notifications(shell::notify::samples());
+            state.dnd = true;
             let (year, month) = shell::this_month();
-            state.popup = Some(shell::Popup::Calendar { year, month });
+            state.popup = Some(shell::Popup::Notifications { year, month });
         }
         Some("logo-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::Logo)),
         Some("app-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::App)),
@@ -136,7 +144,7 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         }
         // Stays up: no hide timer.
         Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),
-        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert)"),
+        Some(other) => tracing::warn!("--show {other}: unknown popup (notification, notification-center, logo-menu, app-menu, control, control-sound, control-wifi, control-bluetooth, osd, alert)"),
         None => {}
     }
 

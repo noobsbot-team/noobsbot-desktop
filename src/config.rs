@@ -239,6 +239,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+H", "hide"),
         ("Super+Alt+H", "hide-others"),
         ("Super+Tab", "cycle"),
+        ("Super+N", "notification-center"),
         ("F12", "exec noobsbot --quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),

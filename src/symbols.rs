@@ -89,6 +89,7 @@ symbols! {
     Network = "network",
     Bell = "bell",
     BellSlash = "bell-slash",
+    X = "x",
 }
 
 type Key = (Symbol, Weight, u16, u64, [u8; 4]);

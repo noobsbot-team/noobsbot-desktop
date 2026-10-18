@@ -154,6 +154,11 @@ impl State {
             InputEvent::PointerAxis { event } => {
                 let Some(pointer) = self.seat.get_pointer() else { return };
                 let source = event.source();
+                // Notification Center scrolls; a banner swipes away.
+                let amount = |axis| event.amount(axis).unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0);
+                if self.notify_scroll(self.to_output(pointer.current_location()), amount(Axis::Horizontal), amount(Axis::Vertical)) {
+                    return;
+                }
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);
                 for axis in [Axis::Horizontal, Axis::Vertical] {
                     let v120 = event.amount_v120(axis);

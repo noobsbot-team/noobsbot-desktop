@@ -6,6 +6,7 @@ pub mod bluetooth;
 pub mod brightness;
 pub mod media;
 pub mod network;
+pub mod notifications;
 pub mod power;
 pub mod profiles;
 pub mod sound;
@@ -36,6 +37,12 @@ pub enum Update {
     Sound(Option<sound::Sound>),
     /// `None`: nothing playing or paused.
     Media(Option<media::Media>),
+    /// A new notification, or one replacing the notification with its id.
+    Notify(Box<notifications::Notification>),
+    /// An app's `CloseNotification`.
+    CloseNotification(u32),
+    /// The saved history, once at start (oldest first).
+    History(Vec<notifications::Notification>),
 }
 
 /// Requests from the frame loop.
@@ -67,6 +74,12 @@ pub enum Command {
     Reboot,
     /// After the Shut Down alert.
     PowerOff,
+    /// A notification went; tells its app.
+    NotificationClosed { id: u32, reason: notifications::Reason },
+    /// A notification's button (or the click on it, key "default").
+    NotificationAction { id: u32, key: String },
+    /// The history file's new text.
+    SaveNotifications(String),
 }
 
 pub struct Services {
@@ -113,7 +126,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     };
     let session_clients = async {
         if let Some(bus) = &session {
-            media::watch(bus, &updates).await;
+            future::zip(media::watch(bus, &updates), notifications::serve(bus, &updates)).await;
         }
     };
     let clients = future::zip(system_clients, session_clients);
@@ -202,6 +215,9 @@ async fn handle(system: Option<&Connection>, session: Option<&Connection>, comma
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
             (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),
             (Command::Output(id), ..) => sound::set_output(id),
+            (Command::NotificationClosed { id, reason }, _, Some(bus)) => notifications::closed(bus, id, reason).await,
+            (Command::NotificationAction { id, key }, _, Some(bus)) => notifications::invoked(bus, id, &key).await,
+            (Command::SaveNotifications(text), ..) => notifications::save_history(&text),
             // Its bus is down, which `run` has logged.
             _ => {}
         }

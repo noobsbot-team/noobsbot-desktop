@@ -8,6 +8,7 @@ mod control;
 mod gallery;
 mod menu;
 pub mod menubar;
+mod notify;
 mod osd;
 mod titlebar;
 mod wallpaper;
@@ -37,10 +38,10 @@ use smithay::{
 };
 pub use gallery::Gallery;
 pub use alert::AlertSheet;
-pub use calendar::CalendarPopover;
 pub use control::ControlCenter;
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
+pub use notify::{NotificationViews, View};
 pub use osd::OsdPopover;
 pub use wallpaper::Wallpaper;
 
