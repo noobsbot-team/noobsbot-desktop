@@ -295,6 +295,7 @@ impl State {
             Hit::App(app) => {
                 tracing::info!(app = app.id, "spotlight: launch");
                 self.spawn(&app.command());
+                self.remember_launch(&app.id);
             }
             Hit::Answer(answer) => {
                 let seat = self.seat.clone();
