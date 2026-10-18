@@ -20,7 +20,7 @@ jobs:
     container: archlinux:latest
     steps:
       - name: System packages
-        run: pacman -Syu --noconfirm --needed rust gcc pkgconf libxkbcommon inter-font git
+        run: pacman -Syu --noconfirm --needed rust gcc pkgconf libxkbcommon seatd libinput systemd-libs libdrm mesa libdisplay-info inter-font git
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
         with:

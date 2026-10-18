@@ -31,7 +31,7 @@ jobs:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - name: System packages
-        run: pacman -Syu --noconfirm --needed rust gcc pkgconf libxkbcommon git zstd minisign github-cli
+        run: pacman -Syu --noconfirm --needed rust gcc pkgconf libxkbcommon seatd libinput systemd-libs libdrm mesa libdisplay-info git zstd minisign github-cli
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
