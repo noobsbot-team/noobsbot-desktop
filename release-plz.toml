@@ -13,3 +13,8 @@ features_always_increment_minor = true
 semver_check = false
 # Tag and release only when the merged commit comes from a release PR, never on an ordinary push.
 release_always = false
+
+# System Settings ships inside the desktop's tarball and shows its version; it is never released on its own.
+[[package]]
+name = "noobsbot-desktop-settings"
+release = false

@@ -6,6 +6,10 @@ license = "MIT"
 description = "Noobsbot Desktop: a macOS-style Wayland desktop environment"
 repository = "https://github.com/anil0403/noobsbot-desktop"
 
+[workspace]
+# System Settings (E7.1) is the one separate program.
+members = ["settings"]
+
 [dependencies]
 smithay = { version = "=0.7.0", default-features = false, features = ["backend_drm", "backend_winit", "desktop", "renderer_gl", "wayland_frontend"] }
 notify = "8.2.0"

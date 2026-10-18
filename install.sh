@@ -142,6 +142,7 @@ install_aur() {
 # use_version <ver>: points /usr/bin/noobsbot-desktop at versions/<ver>, keeping the previous ones for rollback (E6.13).
 use_version() {
     as_root ln -sfn "$LIB/versions/$1/noobsbot-desktop" /usr/bin/noobsbot-desktop
+    as_root ln -sfn "$LIB/versions/$1/noobsbot-desktop-settings" /usr/bin/noobsbot-desktop-settings
 }
 
 install_desktop_release() {
@@ -184,8 +185,9 @@ install_desktop_source() {
     else
         run git clone --depth 1 --branch "$DESKTOP_TAG" "https://github.com/$DESKTOP_REPO" "$src"
     fi
-    run cargo build --release --locked --manifest-path "$src/Cargo.toml"
+    run cargo build --workspace --release --locked --manifest-path "$src/Cargo.toml"
     as_root install -Dm755 "$src/target/release/noobsbot-desktop" "$LIB/versions/$ver/noobsbot-desktop"
+    as_root install -Dm755 "$src/target/release/noobsbot-desktop-settings" "$LIB/versions/$ver/noobsbot-desktop-settings"
     use_version "$ver"
 }
 

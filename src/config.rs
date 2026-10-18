@@ -480,6 +480,45 @@ pub fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
     Ok(())
 }
 
+/// `text` with `[table] key = value` (`value` already TOML, one line); every other line and comment is kept.
+// ponytail: single-line values only; a multi-line array needs dock.rs's `set_items` scan.
+pub fn set_key(text: &str, table: &str, key: &str, value: &str) -> String {
+    let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
+    if let Some(last) = lines.last_mut().filter(|l| !l.ends_with('\n')) {
+        last.push('\n');
+    }
+    let entry = format!("{key} = {value}\n");
+    let Some(start) = lines.iter().position(|l| l.trim() == format!("[{table}]")) else {
+        let gap = if lines.is_empty() { "" } else { "\n" };
+        return format!("{}{gap}[{table}]\n{entry}", lines.concat());
+    };
+    let end = lines[start + 1..].iter().position(|l| l.trim_start().starts_with('[')).map_or(lines.len(), |i| start + 1 + i);
+    let is_key = |l: &str| l.trim_start().strip_prefix(key).is_some_and(|r| r.trim_start().starts_with('='));
+    match (start + 1..end).find(|&i| is_key(&lines[i])) {
+        Some(i) => {
+            // A trailing comment stays.
+            let comment = lines[i].find(" #").map(|at| lines[i][at..].to_owned()).unwrap_or_else(|| "\n".into());
+            lines[i] = format!("{key} = {value}{comment}");
+        }
+        // After the table's last setting, before the blank lines and comments that lead into the next table.
+        None => {
+            let at = (start + 1..end).rev().find(|&i| !lines[i].trim().is_empty() && !lines[i].trim_start().starts_with('#')).map_or(start + 1, |i| i + 1);
+            lines.insert(at, entry);
+        }
+    }
+    lines.concat()
+}
+
+/// Sets one key in the user's file (through a dotfiles symlink, so the live reload agrees) and logs a failure.
+pub fn save_key(table: &str, key: &str, value: &str) {
+    let path = self::path();
+    let path = fs::canonicalize(&path).unwrap_or(path);
+    let text = fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_TOML.to_owned());
+    if let Err(err) = save_atomic(&path, &set_key(&text, table, key, value)) {
+        tracing::warn!("{}: {err}", path.display());
+    }
+}
+
 /// Live reload on a worker thread. Watches the file's directory (editors replace the file by renaming), waits for
 /// 300 ms of quiet, and calls `send` with each newly parsed config that differs from the last one sent. A file that
 /// doesn't parse sends nothing, so the last good config stays. The thread ends when `send` returns false.
@@ -598,6 +637,19 @@ mod tests {
         assert_eq!(load(&path), Config::default());
         assert_eq!(load(&dir.join("missing.toml")), Config::default());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn set_one_key() {
+        let text = "[appearance]\n# the mode\nmode = \"light\" # or dark\naccent = \"blue\"\n\n# next\n[dock]\nzoom = true";
+        assert_eq!(set_key(text, "appearance", "mode", "\"dark\""), text.replace("\"light\"", "\"dark\"") + "\n");
+        assert_eq!(
+            set_key("[appearance]\naccent = \"red\"\n\n# next\n[dock]\n", "appearance", "mode", "\"dark\""),
+            "[appearance]\naccent = \"red\"\nmode = \"dark\"\n\n# next\n[dock]\n"
+        );
+        assert_eq!(set_key("version = 1\n", "appearance", "mode", "\"dark\""), "version = 1\n\n[appearance]\nmode = \"dark\"\n");
+        let config = parse(&set_key(DEFAULT_TOML, "appearance", "mode", "\"dark\"")).unwrap();
+        assert_eq!(config.appearance.mode, Mode::Dark);
     }
 
     #[test]
