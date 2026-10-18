@@ -4,6 +4,7 @@
 
 pub mod bluetooth;
 pub mod brightness;
+pub mod disks;
 pub mod media;
 pub mod network;
 pub mod notifications;
@@ -51,6 +52,10 @@ pub enum Update {
     CloseNotification(u32),
     /// The saved history, once at start (oldest first).
     History(Vec<notifications::Notification>),
+    /// Plug-in filesystems (E4.6); empty without UDisks2.
+    Disks(Vec<disks::Volume>),
+    /// Mounting or ejecting `name` failed.
+    DiskFailed { name: String, error: String },
 }
 
 /// Requests from the frame loop.
@@ -96,6 +101,10 @@ pub enum Command {
     NotificationAction { id: u32, key: String },
     /// The history file's new text.
     SaveNotifications(String),
+    /// Mount a `disks::Volume` (by its block path); `name` for the error notification.
+    Mount { block: String, name: String },
+    /// Unmount `blocks`, then power `drive` off.
+    Eject { drive: String, blocks: Vec<String>, name: String },
 }
 
 pub struct Services {
@@ -140,7 +149,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         if let Some(bus) = &system {
             future::zip(
                 future::zip(power::watch(bus, &updates), profiles::watch(bus, &updates)),
-                future::zip(network::watch(bus, &updates), bluetooth::watch(bus, &updates)),
+                future::zip(future::zip(network::watch(bus, &updates), bluetooth::watch(bus, &updates)), disks::watch(bus, &updates)),
             )
             .await;
         }
@@ -249,6 +258,8 @@ async fn handle(
             (Command::NotificationClosed { id, reason }, _, Some(bus)) => notifications::closed(bus, id, reason).await,
             (Command::NotificationAction { id, key }, _, Some(bus)) => notifications::invoked(bus, id, &key).await,
             (Command::SaveNotifications(text), ..) => notifications::save_history(&text),
+            (Command::Mount { block, name }, Some(bus), _) => disks::mount(bus, &block, name, updates).await,
+            (Command::Eject { drive, blocks, name }, Some(bus), _) => disks::eject(bus, &drive, &blocks, name, updates).await,
             // Its bus is down, which `run` has logged.
             _ => {}
         }
