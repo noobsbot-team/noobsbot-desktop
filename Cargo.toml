@@ -20,6 +20,7 @@ smithay = { version = "=0.7.0", default-features = false, features = ["backend_d
 notify = "8.2.0"
 regex-lite = "0.1.9"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.140"
 toml = { version = "1.1.8", default-features = false, features = ["std", "serde", "parse"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

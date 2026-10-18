@@ -9,6 +9,8 @@ mod clipboard;
 mod clock;
 mod config;
 mod decorations;
+mod display_info;
+mod displays;
 mod events;
 mod frame;
 mod gestures;
@@ -152,10 +154,10 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             }
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
-            let rescale = config.display.scale != state.config.display.scale;
+            let displays = config.display != state.config.display;
             state.config = config;
-            if rescale {
-                state.rescale();
+            if displays {
+                state.apply_displays();
             }
             state.calendar_watch();
             state.desktop_start();
@@ -167,7 +169,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     } else {
         backend::udev::init(&mut event_loop, &mut state)?;
     }
-    state.rescale();
+    state.apply_displays();
     state.idle_arm();
     if greeter {
         state.start_greeter(shell::greeter::Greeter::load());

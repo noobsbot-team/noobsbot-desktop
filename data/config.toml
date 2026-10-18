@@ -58,8 +58,22 @@ bottom_right = "none"
 # The GPU that draws the desktop, e.g. "/dev/dri/card1"; empty = the one the computer booted with. Applies at next login.
 gpu = ""
 # How big everything is drawn: 1.0 = 100%, 1.25, 1.5, 2.0 …, or 0 = picked from the display's pixel density
-# (about 110 px per inch per 100%). Applies at once to every display.
+# (about 128 px per inch per 100% on a laptop's own panel, 110 on a monitor). Applies at once to every display.
 scale = 0.0
+
+# One display's own settings, by connector name (System Settings ▸ Displays writes these; they apply at once).
+# A display without an entry lights at its preferred resolution and highest refresh rate, at the scale above,
+# right of the others. Every key but `name` may be left out.
+#
+# [[display.outputs]]
+# name = "eDP-1"          # the connector: eDP-1 (a laptop's panel), HDMI-A-1, DP-2 …; "winit" when nested
+# enabled = true          # false turns the display off (the last one on stays on)
+# mode = "1920x1200"      # resolution; "" = the display's preferred one
+# refresh = 60.0          # Hz; 0 = the highest that resolution offers
+# scale = 1.25            # overrides [display] scale above; 0 = that one
+# rotation = 0            # degrees clockwise: 0, 90, 180 or 270
+# position = [0, 0]       # top-left corner in logical px; left out = right of the others
+# primary = true          # the menu bar and dock go on this one (else the first display)
 
 [windows]
 # Hold this key and drag anywhere in a window to move it: "super" or "alt".

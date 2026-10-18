@@ -36,33 +36,35 @@ use smithay::{
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
         udev::{UdevBackend, UdevEvent, all_gpus, primary_gpu},
     },
-    desktop::layer_map_for_output,
     input::{
         keyboard::Keysym,
         pointer::{CursorIcon, CursorImageStatus, CursorImageSurfaceData},
     },
-    output::{Mode, Output, PhysicalProperties, Scale as OutputScale, Subpixel},
+    output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{
             EventLoop, LoopHandle, RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
-        drm::control::{Device as _, ModeTypeFlags, ResourceHandles, connector, crtc},
+        drm::control::{self as drm_control, Device as _, ModeTypeFlags, ResourceHandles, connector, crtc},
         input::{Device as InputDevice, Libinput},
         rustix::fs::OFlags,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
-        wayland_server::{DisplayHandle, backend::GlobalId, protocol::wl_surface::WlSurface},
+        wayland_server::{DisplayHandle, backend::GlobalId},
     },
     utils::{Buffer, DeviceFd, Logical, Monotonic, Physical, Point, Rectangle, Scale, Size, Time, Transform},
-    wayland::{
-        compositor::{SurfaceData, send_surface_state, with_states},
-        fractional_scale::with_fractional_scale,
-        presentation::Refresh,
-    },
+    wayland::{compositor::with_states, presentation::Refresh},
 };
 
 use super::{CLEAR, Device, Views, cursor};
-use crate::{config::Touchpad, frame::FrameClock, render::SceneElement, state::State};
+use crate::{
+    config::Touchpad,
+    display_info::{self, Display},
+    displays,
+    frame::FrameClock,
+    render::SceneElement,
+    state::State,
+};
 
 type Api = GbmGlesBackend<GlesRenderer, DrmDeviceFd>;
 type Multi<'a> = MultiRenderer<'a, 'a, Api, Api>;
@@ -92,6 +94,8 @@ struct Card {
     render: DrmNode,
     token: RegistrationToken,
     screens: HashMap<crtc::Handle, Screen>,
+    /// Every connected display, lit or off (`[[display.outputs]] enabled = false`), as of the last scan.
+    connected: Vec<(connector::Info, Display)>,
 }
 
 /// One lit display.
@@ -239,7 +243,7 @@ impl State {
                 DrmEvent::Error(err) => tracing::warn!("{node}: {err}"),
             })
             .map_err(|e| e.error)?;
-        udev.cards.insert(node, Card { drm, gbm, render, token, screens: HashMap::new() });
+        udev.cards.insert(node, Card { drm, gbm, render, token, screens: HashMap::new(), connected: Vec::new() });
         Ok(node)
     }
 
@@ -253,10 +257,10 @@ impl State {
             self.space.unmap_output(&screen.output);
             self.display_handle.remove_global::<State>(screen.global);
         }
-        self.schedule_redraw();
+        self.apply_displays();
     }
 
-    /// Lights newly connected displays and drops unplugged ones (E6.2 hotplug). New ones go right of the others.
+    /// Reads which displays are connected and drops unplugged ones (E6.2 hotplug); `apply_displays` lights the new.
     // ponytail: no remembered layouts per monitor set, no 500 ms settle for docks, no clamshell; windows of an
     // unplugged display stay at their place (clamp them onto a remaining output when that matters).
     fn scan_connectors(&mut self, node: DrmNode) {
@@ -273,56 +277,69 @@ impl State {
             self.space.unmap_output(&screen.output);
             self.display_handle.remove_global::<State>(screen.global);
         }
-        let new: Vec<&connector::Info> = connected.iter().filter(|i| !card.screens.values().any(|s| s.connector == i.handle())).collect();
-        for info in new {
-            let others: Vec<_> = self.space.outputs().filter_map(|o| self.space.output_geometry(o)).collect();
-            match light(card, &mut udev.gpus, info, &res, place_right(&others), &self.display_handle) {
-                Ok((crtc, screen)) => {
-                    let geo = screen.output.current_mode().map(|m| m.size);
-                    tracing::info!(?geo, scale = screen.output.current_scale().fractional_scale(), "display {} lit", screen.output.name());
-                    self.space.map_output(&screen.output, place_right(&others));
-                    layer_map_for_output(&screen.output).arrange();
-                    card.screens.insert(crtc, screen);
-                }
-                Err(err) => tracing::warn!("display {}-{}: {err}", info.interface().as_str(), info.interface_id()),
-            }
-        }
-        self.rescale();
+        card.connected = connected.into_iter().map(|info| (info.clone(), describe(&card.drm, &info))).collect();
+        self.apply_displays();
     }
 
-    /// Applies `[display] scale` (0 = from each display's pixel density) to every display, lines them up left to
-    /// right again, and tells every window and panel its new scale (E6.2, D13). At start, on hotplug and on reload.
-    // ponytail: windows keep their logical size (maximised ones aren't refitted), and every surface gets the first
-    // display's scale; per-window scale when displays with different scales are both in use.
-    pub fn rescale(&mut self) {
-        let configured = self.config.display.scale;
-        let mut outputs: Vec<Output> = self.space.outputs().cloned().collect();
-        outputs.sort_by_key(|o| self.space.output_geometry(o).map_or(0, |g| g.loc.x));
-        let mut x = 0;
-        for output in &outputs {
-            let Some(mode) = output.current_mode() else { continue };
-            let mm = output.physical_properties().size;
-            let scale =
-                if configured > 0.0 { configured.clamp(1.0, 3.0) } else { pick_scale((mode.size.w, mode.size.h), (mm.w.max(0) as u32, mm.h.max(0) as u32)) };
-            output.change_current_state(None, None, Some(OutputScale::Fractional(scale)), Some((x, 0).into()));
-            self.space.map_output(output, (x, 0));
-            layer_map_for_output(output).arrange();
-            x += self.space.output_geometry(output).map_or(0, |g| g.size.w);
+    /// The real-screen half of `apply_displays`: plans every connected display, darkens the ones turned off, lights
+    /// the ones turned on and modesets the ones whose mode changed; returns them all, with the lit ones' outputs.
+    pub(crate) fn udev_displays(&mut self) -> Vec<(Display, Option<Output>)> {
+        let Some(Device::Udev(udev)) = self.device.as_mut() else { return Vec::new() };
+        let mut nodes: Vec<DrmNode> = udev.cards.keys().copied().collect();
+        nodes.sort_by_key(|n| n.dev_id());
+        let all: Vec<(DrmNode, usize)> = nodes.iter().flat_map(|n| (0..udev.cards[n].connected.len()).map(|i| (*n, i))).collect();
+        let planned = displays::plan(all.iter().map(|(n, i)| udev.cards[n].connected[*i].1.clone()).collect(), &self.config.display);
+        let mut shown = Vec::new();
+        for ((node, i), d) in all.into_iter().zip(planned) {
+            let Some(card) = udev.cards.get_mut(&node) else { continue };
+            let info = card.connected[i].0.clone();
+            let lit = card.screens.iter().find(|(_, s)| s.connector == info.handle()).map(|(crtc, _)| *crtc);
+            let drm_mode = d.modes.iter().position(|m| *m == d.mode).and_then(|i| info.modes().get(i).copied());
+            let output = match (d.enabled, lit, drm_mode) {
+                (false, Some(crtc), _) => {
+                    if let Some(screen) = card.screens.remove(&crtc) {
+                        tracing::info!("display {} turned off", d.name);
+                        self.space.unmap_output(&screen.output);
+                        self.display_handle.remove_global::<State>(screen.global);
+                    }
+                    None
+                }
+                (true, None, Some(drm_mode)) => match card
+                    .drm
+                    .resource_handles()
+                    .map_err(Error::from)
+                    .and_then(|res| light(card, &mut udev.gpus, &info, &res, drm_mode, &self.display_handle))
+                {
+                    Ok((crtc, screen)) => {
+                        tracing::info!(mode = ?(d.mode.width, d.mode.height, d.mode.refresh), "display {} lit", d.name);
+                        let output = screen.output.clone();
+                        card.screens.insert(crtc, screen);
+                        Some(output)
+                    }
+                    Err(err) => {
+                        tracing::warn!("display {}: {err}", d.name);
+                        None
+                    }
+                },
+                (true, Some(crtc), Some(drm_mode)) => card.screens.get_mut(&crtc).map(|screen| {
+                    let mode = Mode::from(drm_mode);
+                    if screen.output.current_mode() != Some(mode) {
+                        match screen.compositor.use_mode(drm_mode) {
+                            Ok(()) => {
+                                tracing::info!(mode = ?(d.mode.width, d.mode.height, d.mode.refresh), "display {} mode changed", d.name);
+                                screen.output.change_current_state(Some(mode), None, None, None);
+                                screen.clock = FrameClock::new(refresh(&screen.output));
+                            }
+                            Err(err) => tracing::warn!("display {}: mode {}x{}: {err}", d.name, d.mode.width, d.mode.height),
+                        }
+                    }
+                    screen.output.clone()
+                }),
+                _ => None,
+            };
+            shown.push((d, output));
         }
-        let scale = outputs.first().map_or(1.0, |o| o.current_scale().fractional_scale());
-        let tell = |surface: &WlSurface, states: &SurfaceData| {
-            with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale));
-            send_surface_state(surface, states, scale.ceil() as i32, Transform::Normal);
-        };
-        for window in self.space.elements() {
-            window.with_surfaces(tell);
-        }
-        for output in &outputs {
-            for layer in layer_map_for_output(output).layers() {
-                layer.with_surfaces(tell);
-            }
-        }
-        self.schedule_redraw();
+        shown
     }
 
     /// Draws one display's frame and queues it for its vblank.
@@ -437,7 +454,8 @@ impl State {
                 let Some((buffer, hotspot, size)) = entry else { return Vec::new() };
                 // Drawn 1:1 in physical px: the theme's picture nearest the scaled size, never resampled.
                 let logical = size.to_f64().to_logical(scale).to_i32_round();
-                MemoryRenderBufferRenderElement::from_buffer(renderer, at - hotspot.to_f64(), buffer, None, None, Some(logical), Kind::Cursor)
+                let src = Rectangle::from_size(size.to_f64().to_logical(1.0));
+                MemoryRenderBufferRenderElement::from_buffer(renderer, at - hotspot.to_f64(), buffer, None, Some(src), Some(logical), Kind::Cursor)
                     .ok()
                     .map(SceneElement::Memory)
                     .into_iter()
@@ -551,13 +569,37 @@ impl State {
     }
 }
 
-/// Picks a CRTC and mode, and makes the output, its global and its DRM compositor.
+/// The connector's name (`eDP-1`), make, model, size and modes, as `displays::plan` and `displays.json` want them.
+fn describe(drm: &DrmDevice, info: &connector::Info) -> Display {
+    let name = format!("{}-{}", info.interface().as_str(), info.interface_id());
+    let (width_mm, height_mm) = info.size().unwrap_or((0, 0));
+    let (make, model) = edid(drm, info.handle()).map(|e| displays::edid_names(&e)).unwrap_or_default();
+    let modes = info
+        .modes()
+        .iter()
+        .map(|m| {
+            let mode = Mode::from(*m);
+            display_info::Mode { width: mode.size.w, height: mode.size.h, refresh: mode.refresh, preferred: m.mode_type().contains(ModeTypeFlags::PREFERRED) }
+        })
+        .collect();
+    Display { built_in: display_info::built_in(&name), name, make, model, width_mm, height_mm, modes, ..Default::default() }
+}
+
+/// The connector's EDID blob.
+fn edid(drm: &DrmDevice, connector: connector::Handle) -> Option<Vec<u8>> {
+    let props = drm.get_properties(connector).ok()?;
+    let blob = props.iter().find_map(|(id, value)| (drm.get_property(*id).ok()?.name().to_bytes() == b"EDID").then_some(*value))?;
+    drm.get_property_blob(blob).ok().filter(|b| !b.is_empty())
+}
+
+/// Picks a CRTC, and makes the output (in `drm_mode`), its global and its DRM compositor; `apply_displays` sets its
+/// scale, rotation and place.
 fn light(
     card: &mut Card,
     gpus: &mut GpuManager<Api>,
     info: &connector::Info,
     res: &ResourceHandles,
-    at: Point<i32, Logical>,
+    drm_mode: drm_control::Mode,
     dh: &DisplayHandle,
 ) -> Result<(crtc::Handle, Screen), Error> {
     let crtc = info
@@ -567,29 +609,22 @@ fn light(
         .flat_map(|e| res.filter_crtcs(e.possible_crtcs()))
         .find(|c| !card.screens.contains_key(c))
         .ok_or("no free CRTC")?;
-    let modes = info.modes();
-    let list: Vec<_> = modes
-        .iter()
-        .map(|m| {
-            let mode = Mode::from(*m);
-            (mode.size.w, mode.size.h, mode.refresh, m.mode_type().contains(ModeTypeFlags::PREFERRED))
-        })
-        .collect();
-    let drm_mode = modes[pick_mode(&list).ok_or("no modes")?];
     let surface = card.drm.create_surface(crtc, drm_mode, &[info.handle()])?;
 
     let (mm_w, mm_h) = info.size().unwrap_or((0, 0));
-    // ponytail: make and model need the EDID (libdisplay-info); the connector name tells displays apart meanwhile.
+    let (make, model) = edid(&card.drm, info.handle()).map(|e| displays::edid_names(&e)).unwrap_or_default();
+    let unknown = |s: String| if s.is_empty() { "Unknown".into() } else { s };
     let properties =
-        PhysicalProperties { size: (mm_w as i32, mm_h as i32).into(), subpixel: subpixel(info.subpixel()), make: "Unknown".into(), model: "Unknown".into() };
+        PhysicalProperties { size: (mm_w as i32, mm_h as i32).into(), subpixel: subpixel(info.subpixel()), make: unknown(make), model: unknown(model) };
     let output = Output::new(format!("{}-{}", info.interface().as_str(), info.interface_id()), properties);
     let mode = Mode::from(drm_mode);
-    for m in modes {
+    for m in info.modes() {
         output.add_mode(Mode::from(*m));
     }
-    output.set_preferred(mode);
-    let scale = pick_scale((mode.size.w, mode.size.h), (mm_w, mm_h));
-    output.change_current_state(Some(mode), Some(Transform::Normal), Some(OutputScale::Fractional(scale)), Some(at));
+    if let Some(preferred) = info.modes().iter().find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED)) {
+        output.set_preferred(Mode::from(*preferred));
+    }
+    output.change_current_state(Some(mode), Some(Transform::Normal), None, None);
     let global = output.create_global::<State>(dh);
 
     let formats = gpus.single_renderer(&card.render)?.as_mut().egl_context().dmabuf_render_formats().clone();
@@ -630,32 +665,6 @@ fn subpixel(subpixel: connector::SubPixel) -> Subpixel {
 /// The GPU that draws (E6.1): the configured one if it exists, else the boot VGA device, else the first.
 fn pick_gpu(configured: &str, boot_vga: Option<PathBuf>, all: &[PathBuf]) -> Option<PathBuf> {
     all.iter().find(|p| !configured.is_empty() && p.as_path() == Path::new(configured)).cloned().or(boot_vga).or_else(|| all.first().cloned())
-}
-
-/// The mode to light a display with (E6.2): its preferred resolution (else the largest) at the highest refresh rate.
-/// `modes`: (width, height, refresh in mHz, preferred).
-fn pick_mode(modes: &[(i32, i32, i32, bool)]) -> Option<usize> {
-    let &(w, h, ..) = modes.iter().find(|m| m.3).or_else(|| modes.iter().max_by_key(|m| m.0 * m.1))?;
-    modes.iter().enumerate().filter(|(_, m)| (m.0, m.1) == (w, h)).max_by_key(|(_, m)| m.2).map(|(i, _)| i)
-}
-
-/// The scale a display starts at (E6.2, D13): about 110 px per inch per 100%, in 25% steps from 100 to 200%, never
-/// leaving less than 1280 × 720 logical px. Without a believable physical size (projectors, TVs): 100%.
-fn pick_scale((w, h): (i32, i32), (mm_w, _): (u32, u32)) -> f64 {
-    if mm_w < 100 || w <= 0 {
-        return 1.0;
-    }
-    let dpi = f64::from(w) * 25.4 / f64::from(mm_w);
-    let mut scale = ((dpi / 110.0) * 4.0).round().clamp(4.0, 8.0) / 4.0;
-    while scale > 1.0 && (f64::from(w) / scale < 1280.0 || f64::from(h) / scale < 720.0) {
-        scale -= 0.25;
-    }
-    scale
-}
-
-/// Where a new display goes: right of the rightmost one, tops aligned.
-fn place_right(others: &[Rectangle<i32, Logical>]) -> Point<i32, Logical> {
-    (others.iter().map(|g| g.loc.x + g.size.w).max().unwrap_or(0), 0).into()
 }
 
 /// `to`, if it is on a display; else `to` held inside the display the pointer is on (or the first).
@@ -730,36 +739,6 @@ impl<'a> RenderElement<Multi<'a>> for OnGpu {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn mode_is_preferred_size_at_highest_refresh() {
-        let modes = [(1920, 1080, 60_000, false), (2560, 1440, 59_951, true), (2560, 1440, 143_912, false), (3840, 2160, 30_000, false)];
-        assert_eq!(pick_mode(&modes), Some(2));
-        // No preferred mode: the largest.
-        assert_eq!(pick_mode(&modes.map(|m| (m.0, m.1, m.2, false))), Some(3));
-        assert_eq!(pick_mode(&[]), None);
-    }
-
-    #[test]
-    fn scale_follows_pixel_density() {
-        assert_eq!(pick_scale((1920, 1080), (531, 299)), 1.0, "24-inch 1080p");
-        assert_eq!(pick_scale((2560, 1440), (597, 336)), 1.0, "27-inch 1440p");
-        assert_eq!(pick_scale((3840, 2160), (597, 336)), 1.5, "27-inch 4K");
-        assert_eq!(pick_scale((1920, 1080), (344, 194)), 1.25, "15.6-inch 1080p laptop");
-        assert_eq!(pick_scale((1920, 1080), (294, 165)), 1.5, "13.3-inch 1080p: 1280 × 720 logical");
-        assert_eq!(pick_scale((2560, 1600), (286, 179)), 2.0, "13.3-inch 2560 × 1600");
-        assert_eq!(pick_scale((3840, 2160), (344, 194)), 2.0, "15.6-inch 4K, capped at 200%");
-        assert_eq!(pick_scale((1366, 768), (160, 90)), 1.0, "never under 1280 × 720 logical");
-        assert_eq!(pick_scale((1920, 1080), (16, 9)), 1.0, "an aspect ratio, not a size");
-        assert_eq!(pick_scale((1920, 1080), (0, 0)), 1.0);
-    }
-
-    #[test]
-    fn new_display_goes_right() {
-        assert_eq!(place_right(&[]), Point::from((0, 0)));
-        let screens = [Rectangle::new((0, 0).into(), (1280, 800).into()), Rectangle::new((1280, 0).into(), (2560, 1440).into())];
-        assert_eq!(place_right(&screens), Point::from((3840, 0)));
-    }
 
     #[test]
     fn primary_gpu_choice() {
