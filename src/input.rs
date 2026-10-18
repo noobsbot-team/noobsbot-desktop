@@ -106,6 +106,7 @@ impl State {
                         || state.force_quit_key(key.modified_sym())
                         || state.mission_key(key.modified_sym())
                         || state.spotlight_key(key.modified_sym(), raw, mods)
+                        || state.emoji_key(key.modified_sym(), raw, mods)
                     {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
@@ -226,6 +227,9 @@ impl State {
                 let lifted = source == AxisSource::Finger && event.amount(Axis::Horizontal) == Some(0.0);
                 let swipe = if page_wheel == 0.0 { amount(Axis::Horizontal) } else { 0.0 };
                 if self.launchpad_scroll(swipe, amount(Axis::Vertical), page_wheel, lifted) {
+                    return;
+                }
+                if self.emoji_scroll(pos, amount(Axis::Vertical)) {
                     return;
                 }
                 if self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, wheel != 0.0) {

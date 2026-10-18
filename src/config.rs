@@ -399,6 +399,8 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+N", "notification-center"),
         ("Super+Space", "spotlight"),
         ("Super+Ctrl+Space", "input-source"),
+        ("Super+Ctrl+E", "emoji"),
+        ("Super+period", "emoji"),
         ("Super+Left", "space left"),
         ("Super+Right", "space right"),
         ("Super+1", "space 1"),

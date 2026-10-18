@@ -82,6 +82,8 @@ pub struct State {
     pub popups: PopupManager,
     /// The keyboard layouts and the active one (E6.12).
     pub layouts: crate::ime::Layouts,
+    /// Every client's text-input-v3 objects, as far as the emoji picker needs them (E7.2).
+    pub text_inputs: crate::ime::TextInputs,
     pub seat: Seat<Self>,
     pub clipboard: Clipboard,
     /// Set by the backend once the renderer exists.
@@ -186,6 +188,8 @@ pub struct State {
     pub force_quit: Option<crate::shell::force_quit::ForceQuit>,
     /// Spotlight (E4.3), when open.
     pub spotlight: Option<crate::shell::spotlight::Spotlight>,
+    /// The emoji picker (E7.2), when open.
+    pub emoji: Option<crate::shell::emoji::Picker>,
     /// Launchpad (E4.4), while open or fading out.
     pub launchpad: Option<crate::shell::launchpad::Launchpad>,
     /// Spaces (E5.1).
@@ -334,6 +338,7 @@ impl State {
             space: Space::default(),
             popups: PopupManager::default(),
             layouts: Default::default(),
+            text_inputs: Default::default(),
             seat,
             clipboard: Clipboard::new(clipboard_tx),
             backend: None,
@@ -398,6 +403,7 @@ impl State {
             switcher: Default::default(),
             force_quit: None,
             spotlight: None,
+            emoji: None,
             launchpad: None,
             spaces: Default::default(),
             mission: None,
@@ -957,6 +963,7 @@ impl SeatHandler for State {
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, client.clone());
         set_primary_focus(dh, seat, client);
+        self.text_input_focus(focused);
     }
 }
 

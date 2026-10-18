@@ -6,6 +6,7 @@ pub mod control;
 pub mod disks;
 pub mod dock;
 pub mod dock_fx;
+pub mod emoji;
 pub mod force_quit;
 pub mod launchpad;
 pub mod lock;
@@ -280,6 +281,9 @@ impl State {
         if self.spotlight.is_some() && self.spotlight_layout(self.spotlight_results().len()).is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
+        if self.emoji.as_ref().is_some_and(|e| e.layout().rect.to_f64().contains(location)) {
+            return true;
+        }
         if self.force_quit.is_some() && self.force_quit_layout(0).is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
@@ -297,7 +301,12 @@ impl State {
         if self.alert.is_some() && self.alert_press(location) {
             return true;
         }
-        if self.banner_press(location) || self.force_quit_press(location) || self.spotlight_press(location) || self.launchpad_press(location, secondary) {
+        if self.banner_press(location)
+            || self.force_quit_press(location)
+            || self.spotlight_press(location)
+            || self.emoji_press(location)
+            || self.launchpad_press(location, secondary)
+        {
             return true;
         }
         let item = self.backend.as_ref().and_then(|b| b.menu_bar.hit(location));

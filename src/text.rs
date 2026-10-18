@@ -37,8 +37,11 @@ pub struct Rendered {
     pub truncated: bool,
 }
 
-/// Text, style, width, scale, wrapping (see `cached`).
-type Key = (String, Style, u32, u64, Option<u8>);
+/// Text, style, width, scale, wrapping (see `cached`), in the emoji font.
+type Key = (String, Style, u32, u64, Option<u8>, bool);
+
+/// Colour emoji fonts, best first (E7.2).
+const EMOJI_FONTS: [&str; 3] = ["Noto Color Emoji", "Twemoji", "JoyPixels"];
 
 /// Owns the font database and glyph rasteriser.
 ///
@@ -55,31 +58,37 @@ pub struct Text {
 impl Text {
     /// One line of `text`, ellipsised to `max_width` logical px. Unchanged labels come from the cache.
     pub fn label(&mut self, text: &str, style: Style, max_width: u32, scale: f64) -> Arc<Rendered> {
-        self.cached(text, style, max_width, scale, None)
+        self.cached(text, style, max_width, scale, None, false)
+    }
+
+    /// One emoji in the colour emoji font, so text-style ones (❤️, ⚽) and ones the text font happens to have
+    /// come out in colour too; `style`'s colour only shows where no emoji font has the glyph.
+    pub fn emoji(&mut self, emoji: &str, style: Style, scale: f64) -> Arc<Rendered> {
+        self.cached(emoji, style, 1000, scale, None, true)
     }
 
     /// `text` word-wrapped to `width` logical px, every line centred in it (alerts); as wide as `width`.
     pub fn paragraph(&mut self, text: &str, style: Style, width: u32, scale: f64) -> Arc<Rendered> {
-        self.cached(text, style, width, scale, Some(0))
+        self.cached(text, style, width, scale, Some(0), false)
     }
 
     /// `text` word-wrapped to `width` logical px, left-aligned, at most `lines` lines (the last ends in "…" when
     /// cut); as wide as `width`. Its height tells how many lines it took.
     pub fn wrapped(&mut self, text: &str, style: Style, width: u32, lines: u8, scale: f64) -> Arc<Rendered> {
-        self.cached(text, style, width, scale, Some(lines.max(1)))
+        self.cached(text, style, width, scale, Some(lines.max(1)), false)
     }
 
     /// `wrap`: `None` one line, `Some(0)` centred lines, `Some(n)` at most `n` left-aligned lines.
-    fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<u8>) -> Arc<Rendered> {
+    fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<u8>, emoji: bool) -> Arc<Rendered> {
         self.tick += 1;
-        let key = (text.to_owned(), style, max_width, scale.to_bits(), wrap);
+        let key = (text.to_owned(), style, max_width, scale.to_bits(), wrap, emoji);
         if let Some((rendered, used)) = self.cache.get_mut(&key) {
             *used = self.tick;
             return rendered.clone();
         }
         let rendered = Arc::new(match wrap {
             Some(lines) => self.rasterise_wrapped(text, style, max_width, lines, scale),
-            None => self.rasterise(text, style, max_width, scale),
+            None => self.rasterise(text, style, max_width, scale, emoji),
         });
         // ponytail: O(n) scan for the oldest entry, fine at 256 entries; a linked LRU if the cap grows.
         while !self.cache.is_empty() && (self.cache.len() >= MAX_ENTRIES || self.bytes + rendered.pixels.len() > MAX_BYTES) {
@@ -97,7 +106,7 @@ impl Text {
     /// weights: the first shaping of a face parses it, another ~20 ms.
     pub fn preload(&mut self) {
         for weight in [600, 700] {
-            self.rasterise("Aa×–⤢", Style { size: 13, line_height: 16, weight, color: [0, 0, 0, 255], tabular: false }, 100, 1.0);
+            self.rasterise("Aa×–⤢", Style { size: 13, line_height: 16, weight, color: [0, 0, 0, 255], tabular: false }, 100, 1.0, false);
         }
     }
 
@@ -162,11 +171,17 @@ impl Text {
         Rendered { pixels, width, height, baseline: baseline.round() as u32, truncated: false }
     }
 
-    fn rasterise(&mut self, text: &str, style: Style, max_width: u32, scale: f64) -> Rendered {
+    fn rasterise(&mut self, text: &str, style: Style, max_width: u32, scale: f64, emoji: bool) -> Rendered {
         let (fonts, swash, family) = self.fonts();
         let scale = scale as f32;
         let metrics = Metrics::new(f32::from(style.size.max(1)) * scale, f32::from(style.line_height.max(1)) * scale);
-        let family = if family.is_empty() { Family::SansSerif } else { Family::Name(family) };
+        let installed = |name: &str| fonts.db().faces().any(|f| f.families.iter().any(|(n, _)| n == name));
+        let emoji_font = EMOJI_FONTS.into_iter().filter(|_| emoji).find(|name| installed(name));
+        let family = match emoji_font {
+            Some(name) => Family::Name(name),
+            None if family.is_empty() => Family::SansSerif,
+            None => Family::Name(family),
+        };
         let [r, g, b, a] = style.color;
         let mut features = FontFeatures::new();
         if style.tabular {
@@ -337,6 +352,19 @@ mod tests {
         let r = text.label("", HEADLINE, 300, 1.0);
         assert_eq!((r.width, r.pixels.len()), (0, 0));
         assert!(to_buffer(&r).is_none());
+    }
+
+    #[test]
+    fn emoji_render_in_colour() {
+        let Some(mut text) = text() else { return };
+        // Noto Color Emoji, Twemoji: cosmic-text's fallback finds either.
+        if !text.fonts().0.db().faces().any(|f| f.families.iter().any(|(name, _)| name.to_lowercase().contains("emoji"))) {
+            return eprintln!("no colour emoji font installed, skipping");
+        }
+        let r = text.emoji("❤️", Style { size: 24, line_height: 30, ..HEADLINE }, 1.0);
+        let coloured = r.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] > 128 && p[0].abs_diff(p[2]) > 60).count();
+        eprintln!("emoji {}x{}, coloured px {coloured}", r.width, r.height);
+        assert!(coloured > 20, "no colour emoji font: install noto-fonts-emoji");
     }
 
     #[test]

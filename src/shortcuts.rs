@@ -60,6 +60,8 @@ pub enum Action {
     NotificationCenter,
     /// Opens or closes Spotlight (Super+Space, E4.3).
     Spotlight,
+    /// Opens or closes the emoji picker (Super+Ctrl+E, E7.2).
+    Emoji,
     /// A row of a dock icon's right-click menu (E3.1).
     Dock(crate::shell::dock::Command),
     /// Opens or closes Launchpad (E4.4; F4, off by default).
@@ -156,6 +158,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
         ("notification-center", "") => Some(Action::NotificationCenter),
         ("spotlight", "") => Some(Action::Spotlight),
+        ("emoji", "") => Some(Action::Emoji),
         ("launchpad", "") => Some(Action::Launchpad),
         ("space", "left") => Some(Action::SwitchSpace(-1)),
         ("space", "right") => Some(Action::SwitchSpace(1)),
@@ -247,6 +250,7 @@ impl State {
             Action::Switcher { back, held } => self.switcher_start(back, held),
             Action::ForceQuit => self.open_force_quit(),
             Action::Spotlight => self.toggle_spotlight(),
+            Action::Emoji => self.toggle_emoji(),
             Action::Layout(index) => self.switch_layout(index),
             Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
             // ponytail: one step per press, no repeat while held.
