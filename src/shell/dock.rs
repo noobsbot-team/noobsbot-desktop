@@ -1,6 +1,7 @@
-//! The dock (E3.1): the owner's Plank dock (Transparent-Tight theme) rebuilt in the shell. Pinned apps from
-//! `[dock] items`, then running apps; a dot under each running one; click to launch, focus or minimise; Plank's
-//! parabolic zoom under the pointer; intelligent hide. Layout is a pure function so drawing and clicks share it.
+//! The dock (E3.1): the owner's Plank dock rebuilt in the shell, behaving as Plank does. Pinned items from
+//! `[dock] items`, then running apps; dots under running ones; click to launch, focus or minimise; scroll to cycle
+//! windows; drag to reorder, pin or remove; Plank's zoom under the pointer and its hide modes. Layout is a pure
+//! function (Plank's geometry) so drawing and clicks share it.
 
 use std::{
     io::Read,
@@ -9,22 +10,20 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use smithay::{
     desktop::Window,
-    reexports::{
-        wayland_protocols::xdg::shell::server::xdg_toplevel,
-        wayland_server::{Resource, protocol::wl_data_source::WlDataSource},
-    },
+    reexports::wayland_server::{Resource, protocol::wl_data_source::WlDataSource},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::{compositor::with_states, selection::data_device::with_source_metadata, shell::xdg::XdgToplevelSurfaceData},
 };
 
 use crate::{
     apps::App,
-    config::{self, Dock, DockHide},
-    shell::{Row, launchpad},
+    config::{self, Dock},
+    shell::{Row, dock_fx::CLICK_TIME, launchpad},
     shortcuts::Action,
     state::State,
     wm::Rect,
@@ -32,24 +31,31 @@ use crate::{
 
 /// Icons never shrink below this to fit the screen (D13).
 pub const MIN_ICON: i32 = 32;
-/// Plank's theme units are tenths of the icon size: ItemPadding 0.5 → gap 0.05 × icon, BottomPadding 2 → 0.2 × icon.
-const ITEM_PAD: f64 = 0.05;
-const BOTTOM: f64 = 0.2;
-/// TopPadding -12: the bar stands behind the lower half of the icons only; the top half rises above it (E3.1 design).
+/// Plank's largest icon size (Ctrl+scroll stops there).
+const MAX_ICON: i32 = 128;
+/// The bar stands behind the lower half of the icons only; the top half rises above it (our look).
 const BAR_COVER: f64 = 0.5;
-/// How far the zoom reaches either side of the pointer, in icon steps (Plank-style parabola).
-const ZOOM_REACH: f64 = 2.5;
+
+/// Plank's theme paddings are tenths of the icon size, truncated to whole px as Plank does. ItemPadding 0.5.
+pub fn item_pad(icon: f64) -> f64 {
+    (0.5 * icon / 10.0).trunc()
+}
+
+/// BottomPadding 2 (Transparent-Tight).
+pub fn bottom_pad(icon: f64) -> f64 {
+    (2.0 * icon / 10.0).trunc()
+}
 
 /// Where everything is, output-relative.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
     /// One icon square per item, zoomed.
     pub icons: Vec<Rectangle<f64, Logical>>,
-    /// Each item's click column: its icon plus the gaps beside it.
+    /// Each item's hover column: its icon plus the item padding, centred on it (Plank's hover region).
     pub columns: Vec<(f64, f64)>,
-    /// The Transparent-Tight background bar.
+    /// The background bar.
     pub bar: Rect,
-    /// The unzoomed dock: where the pointer zooms and clicks.
+    /// The unzoomed dock (Plank's static dock region): where the pointer zooms and clicks.
     pub zone: Rect,
     /// The unzoomed icon size after fitting.
     pub icon: f64,
@@ -57,65 +63,133 @@ pub struct Layout {
 
 /// The icon size for `n` items on a `width`-wide screen: `icon`, shrunk until they fit (D13), never below MIN_ICON.
 pub fn fit(n: usize, width: i32, icon: i32) -> f64 {
-    let fits = f64::from(width) / (n.max(1) as f64 * (1.0 + ITEM_PAD));
+    let fits = f64::from(width) / (n.max(1) as f64 * 1.05);
     f64::from(icon).min(fits.floor()).max(f64::from(MIN_ICON))
 }
 
-/// What windows keep clear of at the bottom of the screen: the dock at its configured size.
+/// The dock's height at its configured size: what windows keep clear of when it never hides (Plank's struts).
 pub fn reserve(dock: &Dock) -> i32 {
-    (f64::from(dock.icon_size) * (1.0 + BOTTOM)).round() as i32
+    let icon = f64::from(dock.icon_size);
+    (icon + bottom_pad(icon)) as i32
 }
 
-/// The dock of `n` items on an `output`-sized screen, zoomed to `zoom` (1.5 = 150%) around `pointer` when the pointer is
-/// over it. The item under the pointer stays under it while the others grow, so the dock widens away from it.
-pub fn layout(n: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, pointer: Option<Point<f64, Logical>>) -> Layout {
+/// The dock of `n` items on an `output`-sized screen, with Plank's zoom: icons within the zoomed icon size of the
+/// `pointer` grow up to `zoom` (1.5 = 150%) along a parabola and the others move aside, all scaled by `progress`
+/// (0..1, the zoom easing in and out).
+pub fn layout(n: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, progress: f64, pointer: Option<Point<f64, Logical>>) -> Layout {
     let s = fit(n, output.w, icon);
-    let step = s * (1.0 + ITEM_PAD);
-    let bottom = (s * BOTTOM).round();
+    let (pad, bottom) = (item_pad(s), bottom_pad(s));
+    let step = s + pad;
     let (w, h) = (f64::from(output.w), f64::from(output.h));
-    let left = ((w - step * n as f64) / 2.0).round();
-    let zone = Rectangle::new((left as i32, (h - s - bottom) as i32).into(), ((step * n as f64).round() as i32, (s + bottom) as i32).into());
-    let pointer = pointer.filter(|p| n > 0 && zoom > 1.0 && zone.to_f64().contains(*p));
-    let scale = |i: usize| {
-        let Some(p) = pointer else { return 1.0 };
-        let d = (p.x - (left + step * (i as f64 + 0.5))).abs() / (ZOOM_REACH * step);
-        1.0 + (zoom - 1.0) * (1.0 - d * d).max(0.0)
-    };
-    let widths: Vec<f64> = (0..n).map(|i| step * scale(i)).collect();
-    // The first column's left edge: the pointer keeps its fraction of the item it is over.
-    let start = match pointer {
-        Some(p) => {
-            let k = (((p.x - left) / step).floor() as usize).min(n - 1);
-            let fraction = (p.x - left - step * k as f64) / step;
-            p.x - fraction * widths[k] - widths[..k].iter().sum::<f64>()
-        }
-        None => left,
-    };
-    let mut x = start;
+    let left = ((w - step * n as f64) / 2.0).floor();
+    let zone = Rectangle::new((left as i32, (h - s - bottom) as i32).into(), ((step * n as f64) as i32, (s + bottom) as i32).into());
+    // Plank's ZoomIconSize: how far the zoom reaches, and the zoom at this point of the easing.
+    let reach = (s * zoom).round();
+    let now = 1.0 + (zoom - 1.0) * progress;
     let (mut icons, mut columns) = (Vec::with_capacity(n), Vec::with_capacity(n));
-    for (i, width) in widths.iter().enumerate() {
-        let size = s * scale(i);
-        icons.push(Rectangle::new((x + (width - size) / 2.0, h - bottom - size).into(), (size, size).into()));
-        columns.push((x, x + width));
-        x += width;
+    for i in 0..n {
+        let rest = (left + step / 2.0).floor() + step * i as f64;
+        let (mut centre, mut scale) = (rest, 1.0);
+        if let Some(p) = pointer.filter(|_| now > 1.0) {
+            let distance = (p.x - rest).abs().min(reach);
+            let fraction = if distance / reach > 0.99 { 1.0 } else { distance / reach };
+            let shift = distance * (now - 1.0) * (1.0 - fraction / 3.0);
+            centre += if p.x > rest { -shift } else { shift };
+            scale = 1.0 + (1.0 - fraction * fraction) * (now - 1.0);
+            if scale == 1.0 {
+                centre = centre.round();
+            }
+        }
+        let size = (scale * s).round();
+        icons.push(Rectangle::new((centre - size / 2.0, h - bottom - size).into(), (size, size).into()));
+        columns.push((centre - (size + pad) / 2.0, centre + (size + pad) / 2.0));
     }
+    let (start, end) = (columns.first().map_or(left, |c| c.0), columns.last().map_or(left, |c| c.1));
     let bar_top = (h - bottom - s * BAR_COVER).round() as i32;
-    let bar = Rectangle::new((start.round() as i32, bar_top).into(), ((x - start).round() as i32, output.h - bar_top).into());
+    let bar = Rectangle::new((start.round() as i32, bar_top).into(), ((end - start).round() as i32, output.h - bar_top).into());
     Layout { icons, columns, bar, zone, icon: s }
 }
 
-/// The item a press at `p` hits: inside the unzoomed dock, by column.
+/// The item whose hover region (its column, from its icon's top to the screen edge) holds `p`; the first wins.
 pub fn hit(layout: &Layout, p: Point<f64, Logical>) -> Option<usize> {
-    if !layout.zone.to_f64().contains(p) {
-        return None;
+    let bottom = f64::from(layout.zone.loc.y + layout.zone.size.h);
+    layout.columns.iter().zip(&layout.icons).position(|((l, r), icon)| p.x >= *l && p.x < *r && p.y >= icon.loc.y && p.y < bottom)
+}
+
+/// The window after (`forward`) or before the active one of `n`, round; the first without an active one (Plank's
+/// focus_next / focus_previous).
+pub fn cycle(n: usize, active: Option<usize>, forward: bool) -> usize {
+    match active {
+        Some(i) if forward => (i + 1) % n,
+        Some(i) => (i + n - 1) % n,
+        None => 0,
     }
-    layout.columns.iter().position(|(l, r)| p.x >= *l && p.x < *r)
+}
+
+/// Plank's window names in the menu: the app's name (or a word of it) cut off "App - title", "title - App",
+/// "App: title".
+pub fn short_title(title: &str, app: &str) -> String {
+    let lower = title.to_lowercase();
+    let mut names: Vec<String> = vec![app.to_lowercase()];
+    names.extend(app.split([' ', '-', '–']).filter(|w| w.chars().count() >= 3).map(str::to_lowercase));
+    for name in &names {
+        for sep in [" - ", " – "] {
+            if let Some(rest) = lower.strip_prefix(&format!("{name}{sep}")).filter(|r| !r.is_empty()) {
+                return title[title.len() - rest.len()..].to_owned();
+            }
+            if let Some(rest) = lower.strip_suffix(&format!("{sep}{name}")).filter(|r| !r.is_empty()) {
+                return title[..rest.len()].to_owned();
+            }
+        }
+        if let Some(rest) = lower.strip_prefix(&format!("{name}: ")).filter(|r| !r.is_empty()) {
+            return title[title.len() - rest.len()..].to_owned();
+        }
+    }
+    title.to_owned()
+}
+
+/// Dock items that are the shell's own rather than apps. `[dock] items` names them; add a kind here and in
+/// `State::dock_builtin`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Builtin {
+    Launchpad,
+    /// The screenshot toolbar. Spectacle's entry runs it too: Spectacle refuses to start outside KWin.
+    Screenshot,
+}
+
+pub const SCREENSHOT_KEY: &str = "screenshot";
+/// Screenshot apps that can't work here, by desktop-file id.
+const SCREENSHOT_APPS: [&str; 2] = ["org.kde.spectacle", "spectacle"];
+
+impl Builtin {
+    pub fn of(key: &str) -> Option<Self> {
+        match key {
+            launchpad::DOCK_KEY => Some(Self::Launchpad),
+            SCREENSHOT_KEY => Some(Self::Screenshot),
+            _ if SCREENSHOT_APPS.contains(&key) => Some(Self::Screenshot),
+            _ => None,
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            Self::Launchpad => launchpad::ICON,
+            Self::Screenshot => "spectacle",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Launchpad => "Launchpad",
+            Self::Screenshot => "Screenshot",
+        }
+    }
 }
 
 /// One dock icon.
 #[derive(Debug, Clone)]
 pub struct Item {
-    /// The desktop-file id, or the window's app id when no entry matches.
+    /// The desktop-file id, a builtin's name, or the window's app id when no entry matches.
     pub key: String,
     pub app: Option<App>,
     /// Shown and minimised, topmost shown first.
@@ -124,8 +198,20 @@ pub struct Item {
 
 impl Item {
     pub fn icon(&self) -> &str {
-        let key = if self.key == launchpad::DOCK_KEY { launchpad::ICON } else { &self.key };
-        self.app.as_ref().map_or(key, |a| &a.icon)
+        match (&self.app, Builtin::of(&self.key)) {
+            (Some(app), _) => &app.icon,
+            (None, Some(b)) => b.icon(),
+            (None, None) => &self.key,
+        }
+    }
+
+    /// The tooltip.
+    pub fn title(&self) -> &str {
+        match (&self.app, Builtin::of(&self.key)) {
+            (Some(app), _) => &app.name,
+            (None, Some(b)) => b.title(),
+            (None, None) => &self.key,
+        }
     }
 }
 
@@ -141,6 +227,8 @@ fn seen(window: &Window) -> u64 {
 const BTN_LEFT: u32 = 0x110;
 const BTN_MIDDLE: u32 = 0x112;
 const BTN_RIGHT: u32 = 0x111;
+/// Plank's LONG_PRESS_TIME: a press held this long without moving clicks nothing.
+const LONG_PRESS: Duration = Duration::from_millis(750);
 
 impl State {
     /// The app a window belongs to: its app id, else (noobsbot and others set none) its process name.
@@ -153,18 +241,26 @@ impl State {
         })
     }
 
-    /// Pinned apps that are installed, in config order, then running apps in the order they started.
+    /// Whether `window` is on the current Space (shown, or minimised from it).
+    fn on_current_space(&self, window: &Window) -> bool {
+        let top = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.loc.y);
+        let loc = self.space.element_location(window).or_else(|| self.hidden.iter().find(|(w, _)| w == window).map(|(_, l)| *l));
+        loc.is_none_or(|l| crate::spaces::row_at(l.y, top) == 0)
+    }
+
+    /// Pinned items that are installed, in config order, then running apps in the order they started.
     pub fn dock_items(&self) -> Vec<Item> {
+        let dock = &self.config.dock;
         let mut items: Vec<Item> = Vec::new();
-        for name in &self.config.dock.items {
-            if name == launchpad::DOCK_KEY && !items.iter().any(|i| i.key == *name) {
-                items.push(Item { key: name.clone(), app: None, windows: Vec::new() });
-            }
-            if let Some(app) = self.apps.find(name).filter(|a| !items.iter().any(|i| i.key == a.id)) {
+        for name in &dock.items {
+            if Builtin::of(name).is_some() && !items.iter().any(|i| i.key == *name) {
+                items.push(Item { key: name.clone(), app: self.apps.find(name).cloned(), windows: Vec::new() });
+            } else if let Some(app) = self.apps.find(name).filter(|a| !items.iter().any(|i| i.key == a.id)) {
                 items.push(Item { key: app.id.clone(), app: Some(app.clone()), windows: Vec::new() });
             }
         }
         let mut windows: Vec<Window> = self.space.elements().rev().chain(self.hidden.iter().map(|(w, _)| w)).cloned().collect();
+        windows.retain(|w| !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w)));
         windows.sort_by_key(seen);
         for window in windows {
             let Some(raw) = self.app_key(&window) else { continue };
@@ -172,7 +268,8 @@ impl State {
             let key = app.map_or(raw, |a| a.id.clone());
             match items.iter_mut().find(|i| i.key == key) {
                 Some(item) => item.windows.push(window),
-                None => items.push(Item { key, app: app.cloned(), windows: vec![window] }),
+                None if !dock.pinned_only => items.push(Item { key, app: app.cloned(), windows: vec![window] }),
+                None => {}
             }
         }
         // Topmost shown window first within each app.
@@ -180,43 +277,38 @@ impl State {
         for item in &mut items {
             item.windows.sort_by_key(|w| stack.iter().position(|s| *s == w).unwrap_or(usize::MAX));
         }
-        let mut items = self.dock_ui.preview(items);
-        items.extend(self.minimised_items());
-        items
+        self.dock_ui.preview(items)
     }
 
     /// The dock's layout for `n` items, zoomed around the pointer (or `--show dock-zoom`'s fake one).
     pub fn dock_layout(&self, n: usize) -> Option<Layout> {
         let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
         let dock = &self.config.dock;
-        // The zoom eases in and out (dock_fx), around the last position over the dock once the pointer has left.
-        let eased = if self.dock_pointer.is_some() { 1.0 } else { self.dock_fx.zoom.value(std::time::Instant::now()) };
-        let zoom = if dock.zoom { 1.0 + (f64::from(dock.zoom_percent) / 100.0 - 1.0) * eased } else { 1.0 };
+        let now = Instant::now();
+        // The zoom eases in and out around the last position over the dock, and goes as the dock hides (Plank).
+        let eased = if self.dock_pointer.is_some() { 1.0 } else { self.dock_fx.zoom.value(now) * (1.0 - self.dock_fx.hide.value(now)) };
+        let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
         let pointer = self.dock_pointer.or(self.dock_fx.zoom_at);
-        Some(layout(n, size, i32::from(dock.icon_size), zoom, pointer))
+        Some(layout(n, size, i32::from(dock.icon_size), zoom, eased, pointer))
     }
 
-    /// Shown, unless a fullscreen window has focus, or (intelligent hide) the focused window overlaps it and the pointer
-    /// hasn't called it up from the bottom edge.
-    pub fn dock_visible(&self, layout: &Layout) -> bool {
-        let focused = self.focused_window();
-        let state = |s| focused.as_ref().and_then(|w| w.toplevel()).is_some_and(|t| t.current_state().states.contains(s));
-        if self.launchpad.is_some() {
-            return true;
-        }
-        if state(xdg_toplevel::State::Fullscreen) {
-            return false;
-        }
-        let origin = self.to_output((0.0, 0.0).into()).to_i32_round::<i32>();
-        let overlaps = focused.and_then(|w| self.frame(&w)).is_some_and(|f| Rectangle::new(f.loc + origin, f.size).overlaps(layout.zone));
-        let menu = self.popup == Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock));
-        self.config.dock.hide == DockHide::Never || self.dock_reveal || menu || self.dock_ui.drag.is_some() || !overlaps
+    /// Shown (or showing): the hide modes' state as of the last update.
+    pub fn dock_shown(&self) -> bool {
+        !self.dock_fx.hider.hidden
     }
 
-    /// A cheap first check for every pointer motion: is `location` low enough to be on the dock at all?
+    /// A cheap first check for every pointer motion: is `location` low enough to be on the dock, zoomed, at all?
     fn near_dock(&self, location: Point<f64, Logical>) -> bool {
         let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.h);
-        location.y >= f64::from(height - reserve(&self.config.dock))
+        let dock = &self.config.dock;
+        let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
+        let icon = f64::from(dock.icon_size);
+        location.y >= f64::from(height) - (icon * zoom + bottom_pad(icon))
+    }
+
+    /// Whether `p` is on the shown dock: its resting area, or (while the pointer is on it) a zoomed icon.
+    fn dock_on(&self, layout: &Layout, p: Point<f64, Logical>) -> bool {
+        self.dock_shown() && (layout.zone.to_f64().contains(p) || (self.dock_reveal && hit(layout, p).is_some()))
     }
 
     /// Whether the dock takes the pointer at `location` (output-relative).
@@ -225,57 +317,88 @@ impl State {
             return false;
         }
         let items = self.dock_items();
-        self.dock_layout(items.len()).is_some_and(|l| !items.is_empty() && self.dock_visible(&l) && l.zone.to_f64().contains(location))
+        self.dock_layout(items.len()).is_some_and(|l| !items.is_empty() && self.dock_on(&l, location))
     }
 
     /// A press at `location`; `true` if the dock took it. With a popup open the shell closes it first.
     pub fn dock_press(&mut self, location: Point<f64, Logical>, button: u32) -> bool {
-        if self.popup.is_some() || self.alert.is_some() {
+        if self.popup.is_some() || self.alert.is_some() || !self.near_dock(location) {
             return false;
         }
         let items = self.dock_items();
-        let Some(layout) = self.dock_layout(items.len()).filter(|l| self.dock_visible(l)) else { return false };
-        if !layout.zone.to_f64().contains(location) {
-            return false;
-        }
-        let Some((i, item)) = hit(&layout, location).and_then(|i| Some((i, items.into_iter().nth(i)?))) else { return true };
-        if item.key == launchpad::DOCK_KEY {
-            self.toggle_launchpad();
+        let Some(layout) = self.dock_layout(items.len()).filter(|l| !items.is_empty() && self.dock_on(l, location)) else { return false };
+        let ctrl = self.modifiers().ctrl;
+        let Some((i, item)) = hit(&layout, location).and_then(|i| Some((i, items.into_iter().nth(i)?))) else {
+            // Plank: a right click on the dock but not an icon opens its preferences.
+            if button == BTN_RIGHT {
+                self.dock_settings();
+            }
             return true;
+        };
+        if item.key != launchpad::DOCK_KEY {
+            self.close_launchpad();
         }
-        self.close_launchpad();
         match button {
-            // A click acts on release, unless it became a drag (`dock_release`).
-            BTN_LEFT => self.dock_ui.drag = Some(Drag { key: item.key, start: location, moved: false, slot: None }),
-            BTN_MIDDLE => self.launch(item.app.as_ref()),
-            BTN_RIGHT if self.modifiers().ctrl => self.dock_settings(),
+            // A click acts on release, unless it became a drag or a long press (`dock_release`).
+            BTN_LEFT => self.dock_ui.drag = Some(Drag { key: item.key, start: location, since: Instant::now(), moved: false, slot: None }),
+            BTN_MIDDLE => self.dock_click(item, true),
+            BTN_RIGHT if ctrl => self.dock_settings(),
             BTN_RIGHT => self.dock_open_menu(item.key, &layout, i),
             _ => {}
         }
         true
     }
 
-    /// Left click: launches a closed app, minimises the focused one (Plank), else brings the app's windows forward
-    /// (minimised ones too) and focuses its topmost.
-    fn dock_activate(&mut self, item: Item) {
-        if item.windows.is_empty() {
+    /// A click on `item`: a builtin's action, else (Plank) a new instance with Ctrl, the middle button or no
+    /// windows, else its windows come forward (`dock_activate`).
+    fn dock_click(&mut self, item: Item, new: bool) {
+        if let Some(builtin) = Builtin::of(&item.key) {
+            self.dock_fx.clicked(item.key);
+            return self.dock_builtin(builtin);
+        }
+        if new || item.windows.is_empty() {
             return self.launch(item.app.as_ref());
         }
-        let shown: Vec<Window> = item.windows.iter().filter(|w| self.space.elements().any(|s| s == *w)).cloned().collect();
+        self.dock_fx.clicked(item.key.clone());
+        self.dock_activate(item);
+    }
+
+    fn dock_builtin(&mut self, builtin: Builtin) {
+        match builtin {
+            Builtin::Launchpad => self.toggle_launchpad(),
+            Builtin::Screenshot => self.screenshot(crate::shell::screenshot::Start::Toolbar),
+        }
+    }
+
+    /// Plank's smart focus: an urgent window first; else minimised windows come back; else the focused app
+    /// minimises; else all its windows come forward and the topmost gets focus.
+    fn dock_activate(&mut self, item: Item) {
+        let restore = |state: &mut Self, windows: &[Window]| {
+            let back: Vec<(Window, Point<i32, Logical>)> = state.hidden.iter().filter(|(w, _)| windows.contains(w)).cloned().collect();
+            state.hidden.retain(|(w, _)| !windows.contains(w));
+            for (window, loc) in &back {
+                state.set_visible_loc(window, *loc);
+            }
+            back.into_iter().map(|(w, _)| w).last()
+        };
+        if let Some(window) = self.dock_fx.urgent_of(&item.windows).into_iter().next() {
+            restore(self, std::slice::from_ref(&window));
+            self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
+            return self.schedule_redraw();
+        }
+        if let Some(last) = restore(self, &item.windows) {
+            self.focus_window(Some(last), SERIAL_COUNTER.next_serial());
+            return self.schedule_redraw();
+        }
+        let shown = item.windows;
         if self.focused_window().is_some_and(|f| shown.contains(&f)) {
             return self.minimise(shown);
-        }
-        let restored: Vec<(Window, Point<i32, Logical>)> = self.hidden.iter().filter(|(w, _)| item.windows.contains(w)).cloned().collect();
-        self.hidden.retain(|(w, _)| !item.windows.contains(w));
-        for (window, loc) in &restored {
-            self.set_visible_loc(window, *loc);
         }
         // Bottom first, so their order is kept and the topmost ends on top with focus.
         for window in shown.iter().rev().skip(1) {
             self.space.raise_element(window, false);
         }
-        let top = shown.first().or(restored.last().map(|(w, _)| w)).cloned();
-        self.focus_window(top, SERIAL_COUNTER.next_serial());
+        self.focus_window(shown.first().cloned(), SERIAL_COUNTER.next_serial());
         self.schedule_redraw();
     }
 
@@ -285,46 +408,85 @@ impl State {
         let Some(app) = app else { return };
         tracing::info!(app = app.id, "dock: launch");
         self.dock_fx.launched(app.id.clone());
+        self.dock_fx.tip_hidden = true;
         self.schedule_redraw();
         self.spawn(&app.command());
     }
 
-    /// A wheel step over an icon cycles through that app's windows. `true`: over the dock, so apps don't get it.
-    pub fn dock_scroll(&mut self, location: Point<f64, Logical>, step: bool) -> bool {
+    /// A wheel step over the dock (`dir` > 0: down or right, < 0: up or left, 0: touchpad scrolling, swallowed):
+    /// cycles the hovered app's windows, at most one per ClickTime; with Ctrl, resizes the icons by 2 px.
+    /// `true`: over the dock, so apps don't get it.
+    pub fn dock_scroll(&mut self, location: Point<f64, Logical>, dir: f64) -> bool {
         if !self.dock_covers(location) {
             return false;
         }
+        if dir == 0.0 || self.dock_ui.dragging() {
+            return true;
+        }
+        if self.modifiers().ctrl {
+            let size = (i32::from(self.config.dock.icon_size) + if dir < 0.0 { 2 } else { -2 }).clamp(MIN_ICON, MAX_ICON);
+            self.dock_save(|text| config::set_key(text, "dock", "icon_size", &size.to_string()));
+            self.config.dock.icon_size = size as u16;
+            self.schedule_redraw();
+            return true;
+        }
         let items = self.dock_items();
         let Some(item) = self.dock_layout(items.len()).and_then(|l| hit(&l, location)).and_then(|i| items.into_iter().nth(i)) else { return true };
-        let shown: Vec<Window> = item.windows.iter().filter(|w| self.space.elements().any(|s| s == *w)).cloned().collect();
-        // The app's bottom window comes to the top: repeated steps go round all of them.
-        if let Some(next) = shown.last().filter(|_| step).cloned() {
-            self.focus_window(Some(next), SERIAL_COUNTER.next_serial());
-            self.schedule_redraw();
+        if item.windows.is_empty() {
+            return true;
         }
+        self.dock_fx.clicked(item.key.clone());
+        self.schedule_redraw();
+        let now = Instant::now();
+        if self.dock_fx.scrolled.get(&item.key).is_some_and(|at| now - *at < CLICK_TIME) {
+            return true;
+        }
+        self.dock_fx.scrolled.insert(item.key.clone(), now);
+        let mut windows = item.windows;
+        windows.sort_by_key(seen);
+        let focused = self.focused_window();
+        let next = windows[cycle(windows.len(), windows.iter().position(|w| Some(w) == focused.as_ref()), dir > 0.0)].clone();
+        if let Some(at) = self.hidden.iter().position(|(w, _)| *w == next) {
+            let (_, loc) = self.hidden.remove(at);
+            self.set_visible_loc(&next, loc);
+        }
+        self.focus_window(Some(next), SERIAL_COUNTER.next_serial());
         true
     }
 
-    /// The pointer moved: redraw while it zooms the dock; touching the bottom edge calls up a hidden dock, leaving it
-    /// lets it hide again.
+    /// The pointer moved. Plank's cursor region: the dock's resting area, shrinking to a 1 px strip at the screen
+    /// edge as it hides, plus the hovered icon while zoomed. Being in it is "hovered": it shows the dock, zooms it
+    /// and lightens the icon under the pointer.
     pub fn dock_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         self.dock_drag_motion(to);
         if !self.dock_reveal && !self.near_dock(from) && !self.near_dock(to) {
             return;
         }
-        let n = self.dock_items().len();
-        let (Some(layout), Some(size)) = (self.dock_layout(n), self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size)) else {
+        let items = self.dock_items();
+        let (Some(layout), Some(size)) =
+            (self.dock_layout(items.len()), self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size))
+        else {
             return;
         };
+        let now = Instant::now();
         let zone = layout.zone.to_f64();
-        let edge = to.y >= f64::from(size.h) - 1.0;
-        let reveal = if edge { true } else { self.dock_reveal && zone.contains(to) };
-        self.dock_fx.zoom.set(zone.contains(to), std::time::Instant::now());
-        if zone.contains(to) {
+        let strip = (zone.size.h * (1.0 - self.dock_fx.hide.value(now))).max(1.0);
+        let h = f64::from(size.h);
+        let in_region = !items.is_empty() && to.x >= zone.loc.x && to.x < zone.loc.x + zone.size.w && to.y >= h - strip && to.y < h;
+        let over = hit(&layout, to).filter(|_| self.dock_shown() && (in_region || self.dock_reveal));
+        let hovered = in_region || over.is_some();
+        let before = self.dock_fx.hovered_key().map(str::to_owned);
+        self.dock_fx.hovered(over.map(|i| items[i].key.as_str()));
+        self.dock_fx.zoom.set(hovered, now);
+        if hovered {
             self.dock_fx.zoom_at = Some(to);
         }
-        if reveal != self.dock_reveal || (self.config.dock.zoom && (zone.contains(from) || zone.contains(to))) {
-            self.dock_reveal = reveal;
+        let changed = hovered != self.dock_reveal;
+        self.dock_reveal = hovered;
+        if changed {
+            self.dock_update_hide(&layout);
+        }
+        if changed || (hovered && self.config.dock.zoom) || before.as_deref() != self.dock_fx.hovered_key() {
             self.schedule_redraw();
         }
     }
@@ -344,6 +506,7 @@ pub struct Ui {
 struct Drag {
     key: String,
     start: Point<f64, Logical>,
+    since: Instant,
     /// Past the threshold: a drag, not a click.
     moved: bool,
     /// Where it would land; `None`: off the dock (released there, a pinned icon is removed).
@@ -363,6 +526,16 @@ impl Ui {
         }
         items
     }
+
+    /// An icon is being dragged (past the threshold).
+    pub fn dragging(&self) -> bool {
+        self.dragged().is_some()
+    }
+
+    /// The dragged icon's item key: not drawn in the dock, but under the pointer.
+    pub fn dragged(&self) -> Option<&str> {
+        self.drag.as_ref().filter(|d| d.moved).map(|d| d.key.as_str())
+    }
 }
 
 /// A row of a dock icon's menu.
@@ -370,28 +543,33 @@ impl Ui {
 pub enum Command {
     /// Brings the app's n-th window forward.
     Window(usize),
-    /// Keep in Dock / Remove from Dock.
+    /// Keep in Dock, ticked while pinned.
     Pin,
-    /// New Window / Open.
-    Open,
-    /// Close All / Quit.
+    /// Close / Close All.
     Close,
+    /// The app's n-th desktop action.
+    Action(usize),
 }
 
-/// Plank's menu: the app's windows, then Keep in Dock (or Remove from Dock) and New Window (or Open) for apps with a
-/// desktop entry, then Close All (Quit with one window) while it runs.
-pub fn menu_rows(titles: &[String], pinned: bool, launchable: bool) -> Vec<Option<Row>> {
-    let row = |label: &str, command| Some(Row { label: label.to_owned(), shortcut: "", action: Some(Action::Dock(command)) });
-    let mut groups: Vec<Vec<Option<Row>>> = vec![titles.iter().enumerate().map(|(i, t)| row(t, Command::Window(i))).collect()];
-    if launchable {
-        let open = if titles.is_empty() { "Open" } else { "New Window" };
-        groups.push(vec![row(if pinned { "Remove from Dock" } else { "Keep in Dock" }, Command::Pin), row(open, Command::Open)]);
+/// Plank's menu: Keep in Dock (`pinned`: `None` when it can't be pinned) and Close (Close All with several windows),
+/// then the app's desktop actions, then its windows when there are several, the `active` one greyed.
+pub fn menu_rows(titles: &[String], active: Option<usize>, pinned: Option<bool>, actions: &[String]) -> Vec<Option<Row>> {
+    let row = |label: &str, shortcut, command: Option<Command>| Some(Row { label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
+    let mut first = Vec::new();
+    if let Some(pinned) = pinned {
+        first.push(row("Keep in Dock", if pinned { "✓" } else { "" }, Some(Command::Pin)));
     }
     if !titles.is_empty() {
-        groups.push(vec![row(if titles.len() == 1 { "Quit" } else { "Close All" }, Command::Close)]);
+        first.push(row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close)));
     }
+    let actions: Vec<Option<Row>> = actions.iter().enumerate().map(|(i, a)| row(a, "", Some(Command::Action(i)))).collect();
+    let windows: Vec<Option<Row>> = if titles.len() > 1 {
+        titles.iter().enumerate().map(|(i, t)| row(t, "", (active != Some(i)).then_some(Command::Window(i)))).collect()
+    } else {
+        Vec::new()
+    };
     let mut rows = Vec::new();
-    for group in groups.into_iter().filter(|g| !g.is_empty()) {
+    for group in [first, actions, windows].into_iter().filter(|g| !g.is_empty()) {
         if !rows.is_empty() {
             rows.push(None);
         }
@@ -432,12 +610,13 @@ pub fn uri_list(text: &str) -> Vec<String> {
 }
 
 impl State {
-    /// The pinned icons on the dock: (index in `[dock] items`, app id), left to right.
+    /// The pinned icons on the dock: (index in `[dock] items`, item key), left to right.
     fn dock_pinned(&self) -> Vec<(usize, String)> {
         let mut pinned: Vec<(usize, String)> = Vec::new();
         for (i, name) in self.config.dock.items.iter().enumerate() {
-            if let Some(app) = self.apps.find(name).filter(|a| !pinned.iter().any(|(_, id)| *id == a.id)) {
-                pinned.push((i, app.id.clone()));
+            let key = if Builtin::of(name).is_some() { Some(name.clone()) } else { self.apps.find(name).map(|a| a.id.clone()) };
+            if let Some(key) = key.filter(|k| !pinned.iter().any(|(_, p)| p == k)) {
+                pinned.push((i, key));
             }
         }
         pinned
@@ -450,7 +629,7 @@ impl State {
     /// The open dock menu's rows (empty without one).
     pub fn dock_menu_rows(&self) -> Vec<Option<Row>> {
         let Some(item) = self.dock_ui.menu.as_ref().and_then(|(key, _)| self.dock_item(key)) else { return Vec::new() };
-        let name = item.app.as_ref().map_or(item.key.as_str(), |a| a.name.as_str());
+        let name = item.title().to_owned();
         let titles: Vec<String> = item
             .windows
             .iter()
@@ -458,11 +637,15 @@ impl State {
                 let title = w
                     .toplevel()
                     .and_then(|t| with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.title.clone())));
-                title.filter(|t| !t.is_empty()).unwrap_or_else(|| name.to_owned())
+                title.filter(|t| !t.is_empty()).map_or_else(|| name.clone(), |t| short_title(&t, &name))
             })
             .collect();
-        let pinned = self.dock_pinned().iter().any(|(_, id)| *id == item.key);
-        menu_rows(&titles, pinned, item.app.is_some())
+        let focused = self.focused_window();
+        let active = item.windows.iter().position(|w| Some(w) == focused.as_ref());
+        let pinnable = !self.config.dock.lock_items && (item.app.is_some() || Builtin::of(&item.key).is_some());
+        let pinned = pinnable.then(|| self.dock_pinned().iter().any(|(_, id)| *id == item.key));
+        let actions: Vec<String> = item.app.as_ref().map(|a| crate::apps::actions(&a.id).into_iter().map(|(n, _)| n).collect()).unwrap_or_default();
+        menu_rows(&titles, active, pinned, &actions)
     }
 
     /// Right click: icon `i`'s menu, centred over it.
@@ -470,6 +653,7 @@ impl State {
         let (left, right) = layout.columns[i];
         let at = Point::from((((left + right) / 2.0).round() as i32, layout.icons[i].loc.y.round() as i32));
         self.dock_ui.menu = Some((key, at));
+        self.dock_fx.tip_hidden = true;
         self.popup = Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock));
         self.schedule_redraw();
     }
@@ -509,10 +693,25 @@ impl State {
                 let to = (!pinned.iter().any(|(_, id)| *id == item.key)).then_some(pinned.len());
                 self.dock_repin(&item.key, to);
             }
-            Command::Open => self.launch(item.app.as_ref()),
             Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
+            Command::Action(i) => {
+                let Some(app) = item.app else { return };
+                let Some((_, exec)) = crate::apps::actions(&app.id).into_iter().nth(i) else { return };
+                self.spawn(&App { exec, ..app }.command());
+            }
         }
         self.schedule_redraw();
+    }
+
+    /// Rewrites config.toml with `edit`, in the file the user edits (through a dotfiles symlink), so the live
+    /// reload agrees.
+    fn dock_save(&mut self, edit: impl FnOnce(&str) -> String) {
+        let path = config::path();
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|_| config::DEFAULT_TOML.to_owned());
+        if let Err(err) = config::save_atomic(&path, &edit(&text)) {
+            tracing::warn!("{}: {err}", path.display());
+        }
     }
 
     /// Moves `key` to pinned slot `to`, or unpins it, and saves `[dock] items`.
@@ -524,22 +723,17 @@ impl State {
         if items == self.config.dock.items {
             return;
         }
-        // Into the file the user edits (through a dotfiles symlink), so the live reload agrees.
-        let path = config::path();
-        let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        if let Err(err) = config::save_atomic(&path, &set_items(&text, &items)) {
-            tracing::warn!("{}: {err}", path.display());
-        }
+        self.dock_save(|text| set_items(text, &items));
         self.config.dock.items = items;
         self.schedule_redraw();
     }
 
-    /// The pointer moved to `to` with an icon held: past the threshold it drags, and the icons make room.
+    /// The pointer moved to `to` with an icon held: past the threshold it drags (unless items are locked), the icon
+    /// follows the pointer and the others make room.
     fn dock_drag_motion(&mut self, to: Point<f64, Logical>) {
         let Some(drag) = self.dock_ui.drag.as_ref() else { return };
         let (start, key) = (drag.start, drag.key.clone());
-        if !drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START {
+        if self.config.dock.lock_items || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
             return;
         }
         let n = self.dock_items().len();
@@ -551,26 +745,34 @@ impl State {
         let max = if is_pinned { pinned.len().saturating_sub(1) } else { pinned.len() };
         let slot = on.then(|| slot(&layout, to.x, max));
         if let Some(drag) = self.dock_ui.drag.as_mut() {
-            drag.moved = true;
-            if drag.slot != slot {
-                drag.slot = slot;
-                self.schedule_redraw();
-            }
+            (drag.moved, drag.slot) = (true, slot);
         }
+        self.dock_fx.tip_hidden = true;
+        self.schedule_redraw();
     }
 
-    /// The left button came up: a click on the held icon, or the end of its drag (reorder, pin, or remove).
-    pub fn dock_release(&mut self, _location: Point<f64, Logical>) {
+    /// The left button came up: a click on the held icon (not after a long press, and only on the same icon), or
+    /// the end of its drag: reordered (which pins it, Plank's auto-pinning), or off the dock and pinned: removed in
+    /// a poof.
+    pub fn dock_release(&mut self, location: Point<f64, Logical>) {
         let Some(drag) = self.dock_ui.drag.take() else { return };
         let Some(item) = self.dock_item(&drag.key) else { return };
         if !drag.moved {
-            return self.dock_activate(item);
+            let items = self.dock_items();
+            let same = self.dock_layout(items.len()).and_then(|l| hit(&l, location)).is_some_and(|i| items[i].key == item.key);
+            if same && drag.since.elapsed() < LONG_PRESS {
+                let ctrl = self.modifiers().ctrl;
+                self.dock_click(item, ctrl);
+            }
+            return self.schedule_redraw();
         }
         let pinned = self.dock_pinned().iter().any(|(_, id)| *id == item.key);
         match drag.slot {
-            Some(to) if item.app.is_some() => self.dock_repin(&item.key, Some(to)),
-            // ponytail: removed at once, without Plank's poof animation or the icon following the pointer.
-            None if pinned => self.dock_repin(&item.key, None),
+            Some(to) if item.app.is_some() || Builtin::of(&item.key).is_some() => self.dock_repin(&item.key, Some(to)),
+            None if pinned => {
+                self.dock_repin(&item.key, None);
+                self.dock_fx.poof(location);
+            }
             _ => {}
         }
         self.schedule_redraw();
@@ -595,8 +797,8 @@ impl State {
         });
     }
 
-    /// An app's drag ended over no window: on the dock, `.desktop` files are pinned where they land, other files open
-    /// with the app they land on.
+    /// An app's drag ended over no window: on the dock, `.desktop` files are pinned where they land (not while items
+    /// are locked), other files open with the app they land on.
     // ponytail: only `.desktop` files of installed apps (in an `applications/` dir) pin; others are ignored.
     pub fn dock_drop(&mut self) {
         let Some(location) = self.seat.get_pointer().map(|p| self.to_output(p.current_location())) else { return };
@@ -608,6 +810,9 @@ impl State {
         let items = self.dock_items();
         let Some(layout) = self.dock_layout(items.len()) else { return };
         if uris.iter().all(|u| u.ends_with(".desktop")) {
+            if self.config.dock.lock_items {
+                return;
+            }
             let mut at = slot(&layout, location.x, self.dock_pinned().len());
             for uri in &uris {
                 let stem = crate::apps::file_path(uri).and_then(|p| Some(std::path::Path::new(&p).file_stem()?.to_string_lossy().into_owned()));
@@ -641,68 +846,116 @@ mod tests {
     }
 
     #[test]
-    fn unzoomed_dock_is_centred_and_tight() {
-        let l = layout(8, SCREEN.into(), 84, 1.5, None);
-        // 8 steps of 84 × 1.05 = 705.6 px, centred; 84 px icons on a 17 px bottom band.
-        assert_eq!(l.zone, Rectangle::new((607, 1099).into(), (706, 101).into()));
-        assert_eq!(l.icons[0].size.w, 84.0);
-        assert_eq!(l.icons[0].loc.y, 1200.0 - 17.0 - 84.0);
-        assert!((l.icons[1].loc.x - l.icons[0].loc.x - 88.2).abs() < 1e-9, "4.2 px gaps");
+    fn unzoomed_dock_has_planks_numbers() {
+        let l = layout(8, SCREEN.into(), 84, 1.5, 0.0, None);
+        // Transparent-Tight at 84 px: ItemPadding 4 px, BottomPadding 16 px; 8 × 88 = 704 px, centred.
+        assert_eq!(l.zone, Rectangle::new((608, 1100).into(), (704, 100).into()));
+        assert_eq!(l.icons[0], Rectangle::new((610.0, 1100.0).into(), (84.0, 84.0).into()));
+        assert_eq!(l.icons[1].loc.x - l.icons[0].loc.x, 88.0);
+        assert_eq!(l.columns[0], (608.0, 696.0));
         // The bar covers the icons' lower half and reaches the screen bottom, end to end.
-        assert_eq!((l.bar.loc.y, l.bar.loc.y + l.bar.size.h), (1141, 1200));
-        assert_eq!((l.bar.loc.x, l.bar.size.w), (607, 706));
+        assert_eq!((l.bar.loc.y, l.bar.loc.y + l.bar.size.h), (1142, 1200));
+        assert_eq!((l.bar.loc.x, l.bar.size.w), (608, 704));
     }
 
     #[test]
-    fn zoom_peaks_under_the_pointer_and_keeps_it_there() {
-        let flat = layout(8, SCREEN.into(), 84, 1.5, None);
-        let centre = flat.icons[3].loc + Point::from((42.0, 42.0));
-        let l = layout(8, SCREEN.into(), 84, 1.5, Some(centre));
-        assert!((l.icons[3].size.w - 126.0).abs() < 1e-9, "150% under the pointer");
-        assert!(l.icons[2].size.w < 126.0 && l.icons[2].size.w > l.icons[1].size.w && l.icons[1].size.w > l.icons[0].size.w);
-        assert_eq!(l.icons[7].size.w, 84.0, "out of reach: unzoomed");
-        // The hovered icon is still centred under the pointer, and the zoomed icon stands on the same baseline.
-        assert!((l.icons[3].loc.x + 63.0 - centre.x).abs() < 1e-9);
-        assert_eq!(l.icons[3].loc.y + 126.0, flat.icons[3].loc.y + 84.0);
-        assert!(l.bar.size.w > flat.bar.size.w);
+    fn zoom_is_planks() {
+        let flat = layout(8, SCREEN.into(), 84, 1.5, 0.0, None);
+        let centre: Point<f64, Logical> = (916.0, 1142.0).into();
+        assert_eq!(flat.icons[3].loc.x + 42.0, centre.x);
+        let l = layout(8, SCREEN.into(), 84, 1.5, 1.0, Some(centre));
+        assert_eq!(l.icons[3], Rectangle::new((853.0, 1058.0).into(), (126.0, 126.0).into()), "150% under the pointer, same baseline");
+        // A neighbour 88 px away: zoom 1 + (1 − (88/126)²) × 0.5, moved out by 88 × 0.5 × (1 − 88/378).
+        let f: f64 = 88.0 / 126.0;
+        assert_eq!(l.icons[4].size.w, (84.0 * (1.0 + (1.0 - f * f) * 0.5)).round());
+        let shift = 88.0 * 0.5 * (1.0 - f / 3.0);
+        assert!((l.icons[4].loc.x + l.icons[4].size.w / 2.0 - (1004.0 + shift)).abs() < 1e-9);
+        // Out of reach (126 px): unzoomed, pushed aside by 126 × 0.5 × 2/3 = 42 px.
+        assert_eq!(l.icons[7].size.w, 84.0);
+        assert_eq!(l.icons[7].loc.x, flat.icons[7].loc.x + 42.0);
+        assert_eq!(l.icons[0].loc.x, flat.icons[0].loc.x - 42.0);
+        assert_eq!((l.bar.loc.x, l.bar.size.w), (608 - 42, 704 + 84), "the background follows the end icons");
         assert_eq!(hit(&l, centre), Some(3));
-        // Off the dock or with zoom off: flat.
-        assert_eq!(layout(8, SCREEN.into(), 84, 1.5, Some((100.0, 100.0).into())), flat);
-        assert_eq!(layout(8, SCREEN.into(), 84, 1.0, Some(centre)), flat);
+        assert_eq!(hit(&l, (916.0, 1060.0).into()), Some(3), "the zoomed top of the icon counts");
+        // Half-way through the easing: 125%.
+        assert_eq!(layout(8, SCREEN.into(), 84, 1.5, 0.5, Some(centre)).icons[3].size.w, 105.0);
+        // No easing or zoom off: flat, wherever the pointer is.
+        assert_eq!(layout(8, SCREEN.into(), 84, 1.5, 0.0, Some(centre)), flat);
+        assert_eq!(layout(8, SCREEN.into(), 84, 1.0, 1.0, Some(centre)), flat);
     }
 
     #[test]
     fn hits_follow_columns_inside_the_zone() {
-        let l = layout(3, SCREEN.into(), 84, 1.0, None);
+        let l = layout(3, SCREEN.into(), 84, 1.0, 0.0, None);
         let x = |i: usize| (l.columns[i].0 + l.columns[i].1) / 2.0;
         assert_eq!(hit(&l, (x(0), 1150.0).into()), Some(0));
         assert_eq!(hit(&l, (x(2), 1199.0).into()), Some(2));
         assert_eq!(hit(&l, (x(1), 1000.0).into()), None, "above the dock");
         assert_eq!(hit(&l, (10.0, 1150.0).into()), None, "beside it");
-        // Every pointer position along a zoomed dock hits the item it zooms.
-        for px in (l.zone.loc.x..l.zone.loc.x + l.zone.size.w).step_by(7) {
-            let p = (f64::from(px), 1150.0).into();
-            let z = layout(3, SCREEN.into(), 84, 1.5, Some(p));
-            let i = hit(&z, p).expect("inside");
-            assert!(z.icons.iter().all(|r| r.size.w <= z.icons[i].size.w + 1e-9), "at {px}");
+        // The pointer over an icon's centre hits it, zoomed.
+        for i in 0..3 {
+            let p = (x(i), 1150.0).into();
+            let z = layout(3, SCREEN.into(), 84, 1.5, 1.0, Some(p));
+            assert_eq!(hit(&z, p), Some(i));
+            assert!(z.icons.iter().all(|r| r.size.w <= z.icons[i].size.w));
         }
     }
 
     #[test]
-    fn menu_lists_windows_then_pin_and_open_then_close() {
-        let labels = |rows: Vec<Option<Row>>| rows.into_iter().map(|r| r.map(|r| r.label)).collect::<Vec<_>>();
-        let s = |l: &str| Some(l.to_owned());
+    fn scrolling_cycles_round() {
+        assert_eq!(cycle(3, Some(0), true), 1);
+        assert_eq!(cycle(3, Some(2), true), 0);
+        assert_eq!(cycle(3, Some(0), false), 2);
+        assert_eq!(cycle(3, None, false), 0, "none active: the first");
+        assert_eq!(cycle(1, Some(0), true), 0);
+    }
+
+    #[test]
+    fn window_names_are_shortened_like_plank() {
+        assert_eq!(short_title("notes.txt - Kate", "Kate"), "notes.txt");
+        assert_eq!(short_title("Dolphin – Home", "Dolphin"), "Home");
+        assert_eq!(short_title("New Tab - Google Chrome", "Google Chrome"), "New Tab");
+        assert_eq!(short_title("Inbox - Chrome", "Google Chrome"), "Inbox", "a word of the name");
+        assert_eq!(short_title("VS Code: main.rs", "VS Code"), "main.rs");
+        assert_eq!(short_title("Kate", "Kate"), "Kate");
+        assert_eq!(short_title("~/src", "noobsbot"), "~/src");
+    }
+
+    #[test]
+    fn menu_is_planks() {
+        let labels = |rows: Vec<Option<Row>>| rows.into_iter().map(|r| r.map(|r| (r.label, r.shortcut, r.action.is_some()))).collect::<Vec<_>>();
+        let s = |l: &str, tick: &'static str, on: bool| Some((l.to_owned(), tick, on));
         let two = ["a.txt".to_owned(), "b.txt".to_owned()];
-        assert_eq!(labels(menu_rows(&two, true, true)), [s("a.txt"), s("b.txt"), None, s("Remove from Dock"), s("New Window"), None, s("Close All")]);
-        assert_eq!(labels(menu_rows(&[], false, true)), [s("Keep in Dock"), s("Open")]);
-        // No desktop entry: nothing to pin or launch.
-        assert_eq!(labels(menu_rows(&two[..1], false, false)), [s("a.txt"), None, s("Quit")]);
-        assert_eq!(menu_rows(&two, false, true)[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
+        let actions = ["New Window".to_owned()];
+        assert_eq!(
+            labels(menu_rows(&two, Some(1), Some(true), &actions)),
+            [s("Keep in Dock", "✓", true), s("Close All", "", true), None, s("New Window", "", true), None, s("a.txt", "", true), s("b.txt", "", false)]
+        );
+        // One window: Close, and no window list.
+        assert_eq!(labels(menu_rows(&two[..1], Some(0), Some(false), &[])), [s("Keep in Dock", "", true), s("Close", "", true)]);
+        // Not running; locked items (or no desktop entry): nothing to pin.
+        assert_eq!(labels(menu_rows(&[], None, Some(true), &[])), [s("Keep in Dock", "✓", true)]);
+        assert_eq!(labels(menu_rows(&two[..1], None, None, &[])), [s("Close", "", true)]);
+        let rows = menu_rows(&two, None, None, &actions);
+        assert_eq!(rows[2].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Action(0))));
+        assert_eq!(rows[5].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
+    }
+
+    #[test]
+    fn builtins_and_the_screenshot_app() {
+        assert_eq!(Builtin::of("launchpad"), Some(Builtin::Launchpad));
+        assert_eq!(Builtin::of("screenshot"), Some(Builtin::Screenshot));
+        assert_eq!(Builtin::of("org.kde.spectacle"), Some(Builtin::Screenshot), "Spectacle needs KWin: it opens our toolbar");
+        assert_eq!(Builtin::of("org.kde.kate"), None);
+        let item = |key: &str| Item { key: key.into(), app: None, windows: Vec::new() };
+        assert_eq!((item("screenshot").icon(), item("screenshot").title()), ("spectacle", "Screenshot"));
+        assert_eq!(item("launchpad").icon(), launchpad::ICON);
+        assert_eq!(item("some-app").title(), "some-app");
     }
 
     #[test]
     fn drag_slots_follow_columns() {
-        let l = layout(4, SCREEN.into(), 84, 1.0, None);
+        let l = layout(4, SCREEN.into(), 84, 1.0, 0.0, None);
         let mid = |i: usize| (l.columns[i].0 + l.columns[i].1) / 2.0;
         assert_eq!(slot(&l, mid(0), 3), 0);
         assert_eq!(slot(&l, mid(2), 3), 2);
@@ -729,11 +982,15 @@ mod tests {
     #[test]
     fn preview_moves_the_dragged_icon() {
         let item = |k: &str| Item { key: k.into(), app: None, windows: Vec::new() };
-        let mut ui = Ui { drag: Some(Drag { key: "a".into(), start: (0.0, 0.0).into(), moved: true, slot: Some(2) }), ..Default::default() };
+        let drag = Drag { key: "a".into(), start: (0.0, 0.0).into(), since: Instant::now(), moved: true, slot: Some(2) };
+        let mut ui = Ui { drag: Some(drag), ..Default::default() };
         let keys: Vec<String> = ui.preview(vec![item("a"), item("b"), item("c")]).into_iter().map(|i| i.key).collect();
         assert_eq!(keys, ["b", "c", "a"]);
+        assert_eq!(ui.dragged(), Some("a"));
         ui.drag.as_mut().unwrap().slot = None;
         assert_eq!(ui.preview(vec![item("a"), item("b")]).len(), 2, "off the dock it stays in place until released");
+        ui.drag.as_mut().unwrap().moved = false;
+        assert!(!ui.dragging(), "a press is not a drag yet");
     }
 
     #[test]
@@ -751,6 +1008,6 @@ mod tests {
 
     #[test]
     fn reserve_matches_the_zone() {
-        assert_eq!(reserve(&Dock::default()), layout(8, SCREEN.into(), 84, 1.0, None).zone.size.h);
+        assert_eq!(reserve(&Dock::default()), layout(8, SCREEN.into(), 84, 1.0, 0.0, None).zone.size.h);
     }
 }

@@ -310,6 +310,17 @@ pub struct Dock {
     pub zoom: bool,
     pub zoom_percent: u16,
     pub hide: DockHide,
+    /// Plank's hide-delay / unhide-delay, in ms.
+    pub hide_delay: u32,
+    pub unhide_delay: u32,
+    /// No dragging icons in, out or around, and no Keep in Dock.
+    pub lock_items: bool,
+    /// Only pinned apps, no other running ones.
+    pub pinned_only: bool,
+    /// Running apps and their windows from the current Space only.
+    pub current_workspace_only: bool,
+    /// The app's name over the hovered icon.
+    pub tooltips: bool,
 }
 
 /// Desktop icons (E7.2): the files in `~/Desktop` on the wallpaper.
@@ -353,27 +364,42 @@ pub struct Update {
     pub channel: crate::services::update::Channel,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Plank's hide modes, by Plank's names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum DockHide {
+    /// Hides while a window of the focused app overlaps it.
     Intelligent,
+    /// Hides unless the pointer is on it.
+    Auto,
+    /// Hides while the focused window is maximised over it (or the focused app's dialog overlaps it).
+    DodgeMaximized,
+    /// Hides while any window overlaps it.
+    WindowDodge,
+    /// Hides while the focused window overlaps it.
+    DodgeActive,
+    /// Never hides, and windows keep clear of it (Plank's "none").
+    #[serde(alias = "none")]
     Never,
 }
 
 impl Default for Dock {
     fn default() -> Self {
-        let items = [
-            "launchpad",
-            "google-chrome",
-            "com.microsoft.VSCode",
-            "helium-browser",
-            "org.kde.dolphin",
-            "org.kde.kate",
-            "org.kde.spectacle",
-            "kitty",
-            "noobsbot",
-        ];
-        Self { items: items.map(String::from).to_vec(), icon_size: 84, zoom: true, zoom_percent: 150, hide: DockHide::Intelligent }
+        let items =
+            ["launchpad", "google-chrome", "com.microsoft.VSCode", "helium-browser", "org.kde.dolphin", "org.kde.kate", "screenshot", "kitty", "noobsbot"];
+        Self {
+            items: items.map(String::from).to_vec(),
+            icon_size: 84,
+            zoom: true,
+            zoom_percent: 150,
+            hide: DockHide::Intelligent,
+            hide_delay: 0,
+            unhide_delay: 0,
+            lock_items: false,
+            pinned_only: false,
+            current_workspace_only: false,
+            tooltips: true,
+        }
     }
 }
 

@@ -513,8 +513,10 @@ impl State {
     pub fn work_area(&self) -> Option<Rect> {
         let output = self.space.outputs().next()?;
         let mut zone = crate::render::menubar::below(layer_map_for_output(output).non_exclusive_zone());
-        // Above the dock (E1.2: zoom fills the screen between the menu bar and the dock).
-        let bottom = self.space.output_geometry(output)?.size.h - crate::shell::dock::reserve(&self.config.dock);
+        // Above the dock (E1.2: zoom fills the screen between the menu bar and the dock), when it never hides: Plank
+        // sets struts in that mode alone, and a hiding dock gets overlapped.
+        let never = self.config.dock.hide == crate::config::DockHide::Never;
+        let bottom = self.space.output_geometry(output)?.size.h - if never { crate::shell::dock::reserve(&self.config.dock) } else { 0 };
         zone.size.h = zone.size.h.min(bottom - zone.loc.y).max(0);
         zone.loc += self.space.output_geometry(output)?.loc;
         Some(zone)
