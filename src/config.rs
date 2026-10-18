@@ -328,7 +328,6 @@ pub fn load(path: &Path) -> Config {
 
 /// Writes `contents` to a temp file next to `path`, syncs it and renames it over `path`, so a reader (or a crash)
 /// only ever sees the old file or the new one.
-#[cfg_attr(not(test), expect(dead_code, reason = "the Settings app (M5) writes the file"))]
 pub fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "config path has no file name"))?;
