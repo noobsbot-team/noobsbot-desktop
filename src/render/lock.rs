@@ -133,7 +133,7 @@ impl LockView {
             let picked = lock.greeter.as_ref().map_or(0, |g| g.user);
             for (i, ((name, picture), (rect, name_rect))) in users.iter().zip(row.avatars.into_iter().zip(row.names)).enumerate() {
                 if users.len() > 1 && i == picked {
-                    ui.glass.push(shaders.ring(rect, f64::from(AVATAR) / 2.0 + 3.0, 2, [1.0, 1.0, 1.0, 0.85], scale));
+                    ui.glass.push(shaders.ring(Rectangle::new((rect.loc.x - 3, rect.loc.y - 3).into(), (AVATAR + 6, AVATAR + 6).into()), f64::from(AVATAR) / 2.0 + 3.0, 2, [1.0, 1.0, 1.0, 0.85], scale));
                 }
                 match picture {
                     Some(picture) => ui.pieces.push((picture.clone(), rect)),
