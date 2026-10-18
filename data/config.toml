@@ -59,6 +59,18 @@ seconds = false
 # The calendar's first day: "sunday", "monday" or "saturday".
 week_start = "sunday"
 
+[dock]
+# Pinned apps, left to right: desktop-file names (org.kde.kate), app ids or commands. Apps that aren't installed are
+# skipped, so they appear in their place once installed.
+items = ["google-chrome", "com.microsoft.VSCode", "helium-browser", "org.kde.dolphin", "org.kde.kate", "org.kde.spectacle", "kitty", "noobsbot"]
+# Icon size in px; icons shrink (down to 32) when they don't fit the screen.
+icon_size = 84
+# Icons grow under the pointer, to this percentage of icon_size.
+zoom = true
+zoom_percent = 150
+# "intelligent": hide while the focused window overlaps the dock (touch the bottom edge to show it); "never".
+hide = "intelligent"
+
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, hide, hide-others, show-all, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous".
