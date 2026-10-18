@@ -1,15 +1,21 @@
 //! `noobsbot-desktop dock --import-plank` (E3.1): a one-time move from Plank. Reads Plank's dconf settings
 //! (`dconf dump /net/launchpad/plank/`) and its `.dockitem` launchers, and writes the first enabled dock's pins, icon
-//! size, zoom and hide mode into the `[dock]` table of config.toml, keeping the rest of the file and its comments.
+//! size, zoom and hide settings into the `[dock]` table of config.toml, keeping the rest of the file and its comments.
+//! The first start without a config.toml does the same (`first_run`). Plank's settings are only ever read.
 
 use std::{collections::HashMap, fs, path::Path, process::Command};
 
-use crate::config;
+use crate::{
+    config,
+    shell::dock::{self, Builtin},
+};
 
 const USAGE: &str = "usage: noobsbot-desktop dock --import-plank";
 
 /// dconf's text dump: section → key → the value as GVariant text.
 type Dump = HashMap<String, HashMap<String, String>>;
+/// `[dock]` keys and their TOML values.
+type Keys = Vec<(&'static str, String)>;
 
 fn parse_dump(text: &str) -> Dump {
     let mut dump = Dump::new();
@@ -75,8 +81,9 @@ fn first_dock(dump: &Dump) -> String {
     dump.get("/").and_then(|s| s.get("enabled-docks")).and_then(|v| strings(v).into_iter().next()).unwrap_or_else(|| "dock1".into())
 }
 
-/// The `[dock]` keys for Plank's settings: `(key, TOML value)`. `launchers` maps a `.dockitem` file name to its text.
-fn dock_keys(dump: &Dump, launchers: &HashMap<String, String>) -> Vec<(&'static str, String)> {
+/// The `[dock]` keys for Plank's settings: `(key, TOML value)`. `launchers` maps a `.dockitem` file name to its text;
+/// `kept` is the current `[dock] items`, whose shell items Plank has no launcher for (Launchpad) stay in front.
+fn dock_keys(dump: &Dump, launchers: &HashMap<String, String>, kept: &[String]) -> Keys {
     let settings = dump.get(&format!("docks/{}", first_dock(dump)));
     let get = |key: &str| settings.and_then(|s| s.get(key)).map(String::as_str);
     // Plank's order; without dconf, the launcher files by name.
@@ -85,21 +92,36 @@ fn dock_keys(dump: &Dump, launchers: &HashMap<String, String>) -> Vec<(&'static 
         names.sort();
         names
     });
-    let items: Vec<String> = order.iter().filter_map(|n| launchers.get(n)).filter_map(|t| launcher_id(t)).map(|id| format!("{id:?}")).collect();
+    // Spectacle needs KWin, so its launcher becomes the screenshot toolbar.
+    let plank = order.iter().filter_map(|n| launchers.get(n)).filter_map(|t| launcher_id(t)).map(|id| match Builtin::of(&id) {
+        Some(Builtin::Screenshot) => dock::SCREENSHOT_KEY.to_owned(),
+        _ => id,
+    });
+    let shell = kept.iter().filter(|k| Builtin::of(k).is_some_and(|b| b != Builtin::Screenshot)).cloned();
+    let mut items: Vec<String> = Vec::new();
+    for id in shell.chain(plank) {
+        if !items.contains(&id) {
+            items.push(id);
+        }
+    }
+    let items: Vec<String> = items.iter().map(|id| format!("{id:?}")).collect();
     let mut keys = vec![("items", format!("[{}]", items.join(", ")))];
-    if let Some(size) = get("icon-size").and_then(|v| v.parse::<u16>().ok()) {
-        keys.push(("icon_size", size.to_string()));
-    }
-    if let Some(zoom) = get("zoom-enabled").filter(|v| matches!(*v, "true" | "false")) {
-        keys.push(("zoom", zoom.to_owned()));
-    }
-    if let Some(percent) = get("zoom-percent").and_then(|v| v.parse::<u16>().ok()) {
-        keys.push(("zoom_percent", percent.to_string()));
-    }
-    // ponytail: Plank's autohide and dodge modes all become intelligent hide, the only hiding mode here yet.
+    let number = |plank: &str, ours: &'static str| get(plank).and_then(|v| v.parse::<u32>().ok()).map(|n| (ours, n.to_string()));
+    let flag = |plank: &str, ours: &'static str| get(plank).filter(|v| matches!(*v, "true" | "false")).map(|v| (ours, v.to_owned()));
+    keys.extend(number("icon-size", "icon_size"));
+    keys.extend(flag("zoom-enabled", "zoom"));
+    keys.extend(number("zoom-percent", "zoom_percent"));
+    // Plank's mode names are ours, but for "none".
     if let Some(mode) = get("hide-mode").and_then(|v| strings(v).into_iter().next()) {
-        keys.push(("hide", if mode == "none" { "\"never\"".into() } else { "\"intelligent\"".into() }));
+        let mode = if mode == "none" { "never".to_owned() } else { mode };
+        keys.push(("hide", format!("{mode:?}")));
     }
+    keys.extend(number("hide-delay", "hide_delay"));
+    keys.extend(number("unhide-delay", "unhide_delay"));
+    keys.extend(flag("lock-items", "lock_items"));
+    keys.extend(flag("pinned-only", "pinned_only"));
+    keys.extend(flag("current-workspace-only", "current_workspace_only"));
+    keys.extend(flag("tooltips-enabled", "tooltips"));
     keys
 }
 
@@ -157,6 +179,38 @@ fn read_launchers(dir: &Path) -> HashMap<String, String> {
         .collect()
 }
 
+/// `text` (a config.toml) with Plank's dock settings, read only, from dconf and `config_home/plank`: the dock name and
+/// the keys set and the new text, or why not.
+fn import_into(text: &str, config_home: &Path) -> Result<(String, Keys, String), String> {
+    // A missing dconf or an empty dump leaves only the launcher files.
+    let dump =
+        Command::new("dconf").args(["dump", "/net/launchpad/plank/"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let dump = parse_dump(&dump);
+    let dock = first_dock(&dump);
+    let launchers = read_launchers(&config_home.join("plank").join(&dock).join("launchers"));
+    if launchers.is_empty() && !dump.contains_key(&format!("docks/{dock}")) {
+        return Err(format!("no Plank settings found (dconf /net/launchpad/plank/, ~/.config/plank/{dock}/launchers)"));
+    }
+    let kept = config::parse(text).map(|c| c.dock.items).unwrap_or_default();
+    let keys = dock_keys(&dump, &launchers, &kept);
+    let new = set_keys(text, "dock", &keys);
+    config::parse(&new).map_err(|err| format!("the imported settings don't parse, nothing written: {err}"))?;
+    Ok((dock, keys, new))
+}
+
+/// On first start (no config.toml yet), the owner's Plank dock becomes ours: its items (Launchpad kept in front), size,
+/// zoom and hide settings, written into the default config. Nothing happens without Plank.
+pub fn first_run(path: &Path) {
+    if path.exists() {
+        return;
+    }
+    let Ok((dock, _, text)) = import_into(config::DEFAULT_TOML, &config::xdg_dir("XDG_CONFIG_HOME", ".config")) else { return };
+    match config::save_atomic(path, &text) {
+        Ok(()) => tracing::info!("dock: imported Plank's {dock} into {}", path.display()),
+        Err(err) => tracing::warn!("{}: {err}", path.display()),
+    }
+}
+
 /// `noobsbot-desktop dock …`: the exit code.
 pub fn cli(args: impl Iterator<Item = String>) -> i32 {
     let args: Vec<String> = args.collect();
@@ -164,24 +218,15 @@ pub fn cli(args: impl Iterator<Item = String>) -> i32 {
         eprintln!("{USAGE}");
         return if args.iter().any(|a| a == "-h" || a == "--help") { 0 } else { 2 };
     }
-    // A missing dconf or an empty dump leaves only the launcher files.
-    let dump =
-        Command::new("dconf").args(["dump", "/net/launchpad/plank/"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-    let dump = parse_dump(&dump);
-    let dock = first_dock(&dump);
-    let launchers = read_launchers(&config::xdg_dir("XDG_CONFIG_HOME", ".config").join("plank").join(&dock).join("launchers"));
-    if launchers.is_empty() && !dump.contains_key(&format!("docks/{dock}")) {
-        eprintln!("dock: no Plank settings found (dconf /net/launchpad/plank/, ~/.config/plank/{dock}/launchers)");
-        return 1;
-    }
     let path = config::path();
     let text = fs::read_to_string(&path).unwrap_or_else(|_| config::DEFAULT_TOML.to_owned());
-    let keys = dock_keys(&dump, &launchers);
-    let new = set_keys(&text, "dock", &keys);
-    if let Err(err) = config::parse(&new) {
-        eprintln!("dock: the imported settings don't parse, nothing written: {err}");
-        return 1;
-    }
+    let (dock, keys, new) = match import_into(&text, &config::xdg_dir("XDG_CONFIG_HOME", ".config")) {
+        Ok(imported) => imported,
+        Err(err) => {
+            eprintln!("dock: {err}");
+            return 1;
+        }
+    };
     match config::save_atomic(&path, &new) {
         Ok(()) => {
             keys.iter().for_each(|(k, v)| println!("{k} = {v}"));
@@ -232,7 +277,7 @@ mod tests {
 
     #[test]
     fn plank_settings_become_dock_keys() {
-        let keys = dock_keys(&parse_dump(DUMP), &launchers());
+        let keys = dock_keys(&parse_dump(DUMP), &launchers(), &[]);
         let expected: Vec<(&str, String)> = vec![
             ("items", r#"["kitty", "org.kde.kate"]"#.into()),
             ("icon_size", "84".into()),
@@ -244,8 +289,70 @@ mod tests {
         // Without dconf: the launcher files by name, nothing else.
         let mut more = launchers();
         more.insert("brave-browser.dockitem".into(), "Launcher=file:///usr/share/applications/brave-browser.desktop".into());
-        let keys = dock_keys(&Dump::new(), &more);
+        let keys = dock_keys(&Dump::new(), &more, &[]);
         assert_eq!(keys, [("items", r#"["brave-browser", "kitty", "org.kde.kate"]"#.to_owned())]);
+    }
+
+    #[test]
+    fn every_hide_mode_and_behaviour_key_carries_over() {
+        let dump = "[docks/dock1]\nhide-mode='none'\nhide-delay=300\nunhide-delay=100\nlock-items=true\npinned-only=true\ncurrent-workspace-only=true\ntooltips-enabled=false\n";
+        let keys = dock_keys(&parse_dump(dump), &HashMap::new(), &[]);
+        let get = |k: &str| keys.iter().find(|(key, _)| *key == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("hide"), Some(r#""never""#));
+        assert_eq!((get("hide_delay"), get("unhide_delay")), (Some("300"), Some("100")));
+        for key in ["lock_items", "pinned_only", "current_workspace_only"] {
+            assert_eq!(get(key), Some("true"), "{key}");
+        }
+        assert_eq!(get("tooltips"), Some("false"));
+        let config = config::parse(&set_keys(config::DEFAULT_TOML, "dock", &keys)).expect("parses");
+        assert_eq!((config.dock.hide, config.dock.hide_delay, config.dock.lock_items), (config::DockHide::Never, 300, true));
+        for (plank, ours) in [
+            ("intelligent", config::DockHide::Intelligent),
+            ("auto", config::DockHide::Auto),
+            ("dodge-maximized", config::DockHide::DodgeMaximized),
+            ("window-dodge", config::DockHide::WindowDodge),
+            ("dodge-active", config::DockHide::DodgeActive),
+        ] {
+            let keys = dock_keys(&parse_dump(&format!("[docks/dock1]\nhide-mode='{plank}'\n")), &HashMap::new(), &[]);
+            assert_eq!(config::parse(&set_keys(config::DEFAULT_TOML, "dock", &keys)).expect("parses").dock.hide, ours, "{plank}");
+        }
+    }
+
+    /// The owner's dock: Plank's eight launchers, as files in a launchers folder.
+    #[test]
+    fn the_owners_plank_dock_imports_from_its_dockitem_files() {
+        let dir = std::env::temp_dir().join(format!("noobsbot-plank-test-{}", std::process::id()));
+        let launchers = dir.join("plank/dock1/launchers");
+        fs::create_dir_all(&launchers).expect("temp dir");
+        let files = [
+            ("google-chrome", "/usr/share/applications/google-chrome.desktop"),
+            ("com.microsoft.VSCode", "/usr/share/applications/com.microsoft.VSCode.desktop"),
+            ("brave-browser", "/usr/share/applications/brave-browser.desktop"),
+            ("org.kde.dolphin", "/home/devil/Desktop/org.kde.dolphin.desktop"),
+            ("org.kde.kate", "/usr/share/applications/org.kde.kate.desktop"),
+            ("org.kde.spectacle", "/usr/share/applications/org.kde.spectacle.desktop"),
+            ("kitty", "/home/devil/Desktop/kitty.desktop"),
+            ("noobsbot", "/home/devil/.local/share/applications/noobsbot.desktop"),
+        ];
+        for (name, target) in files {
+            fs::write(launchers.join(format!("{name}.dockitem")), format!("[PlankDockItemPreferences]\nLauncher=file://{target}\n")).expect("write");
+        }
+        let order: Vec<String> = files.iter().map(|(n, _)| format!("'{n}.dockitem'")).collect();
+        let dump = format!(
+            "[/]\nenabled-docks=['dock1']\n\n[docks/dock1]\ndock-items=[{}]\nhide-mode='intelligent'\nicon-size=84\nzoom-enabled=true\nzoom-percent=150\n",
+            order.join(", ")
+        );
+        let found = read_launchers(&launchers);
+        fs::remove_dir_all(&dir).expect("clean up");
+        assert_eq!(found.len(), 8);
+        let defaults = config::Config::default().dock.items;
+        let config = config::parse(&set_keys(config::DEFAULT_TOML, "dock", &dock_keys(&parse_dump(&dump), &found, &defaults))).expect("parses");
+        // Launchpad stays in front; Spectacle (KWin only) becomes the screenshot toolbar in its place.
+        let expected =
+            ["launchpad", "google-chrome", "com.microsoft.VSCode", "brave-browser", "org.kde.dolphin", "org.kde.kate", "screenshot", "kitty", "noobsbot"];
+        assert_eq!(config.dock.items, expected);
+        assert_eq!((config.dock.icon_size, config.dock.zoom, config.dock.zoom_percent), (84, true, 150));
+        assert_eq!(config.dock.hide, config::DockHide::Intelligent);
     }
 
     #[test]
@@ -257,7 +364,7 @@ mod tests {
         // No [dock] table: added at the end.
         assert_eq!(set_keys("version = 1\n", "dock", &keys[1..2]), "version = 1\n\n[dock]\nicon_size = 84\n");
         // The shipped defaults take it and still parse to the imported values.
-        let out = set_keys(config::DEFAULT_TOML, "dock", &dock_keys(&parse_dump(DUMP), &launchers()));
+        let out = set_keys(config::DEFAULT_TOML, "dock", &dock_keys(&parse_dump(DUMP), &launchers(), &[]));
         let parsed = config::parse(&out).expect("parses");
         assert_eq!(parsed.dock.items, ["kitty", "org.kde.kate"]);
         assert_eq!(out.matches("[dock]").count(), 1);
