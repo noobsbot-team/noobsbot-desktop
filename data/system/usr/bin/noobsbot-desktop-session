@@ -1,0 +1,31 @@
+#!/bin/sh
+# Noobsbot Desktop login session (plan.md E6.7), started by greetd/tuigreet and the wayland-sessions entry.
+# ponytail: plain shell; the Rust wrapper (src/bin/session.rs, E6.13) replaces it to add the heartbeat watchdog
+# and the update rollback, keeping this environment and the session target.
+
+export XDG_CURRENT_DESKTOP=noobsbot-desktop XDG_SESSION_DESKTOP=noobsbot-desktop XDG_SESSION_TYPE=wayland \
+    XDG_MENU_PREFIX=arch- QT_QPA_PLATFORMTHEME=qt6ct QT_STYLE_OVERRIDE=kvantum TERMINAL=noobsbot \
+    XCURSOR_THEME=WhiteSur-cursors XCURSOR_SIZE=24 MOZ_ENABLE_WAYLAND=1 _JAVA_AWT_WM_NONREPARENTING=1
+vars="XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE XDG_MENU_PREFIX QT_QPA_PLATFORMTHEME QT_STYLE_OVERRIDE
+    TERMINAL XCURSOR_THEME XCURSOR_SIZE MOZ_ENABLE_WAYLAND _JAVA_AWT_WM_NONREPARENTING"
+# For XWayland apps only; native Wayland apps use text-input-v3 (E6.12).
+if command -v fcitx5 >/dev/null; then
+    export XMODIFIERS=@im=fcitx
+    vars="$vars XMODIFIERS"
+fi
+
+# The systemd user session and D-Bus-activated services (portals, keyring) need the same environment,
+# or screen sharing and file pickers break.
+# shellcheck disable=SC2086 # word splitting of $vars is intended
+dbus-update-activation-environment --systemd $vars
+
+# Once the compositor listens, hand WAYLAND_DISPLAY over too and start the session target
+# (graphical-session.target, polkit agent, keyring, XDG autostart).
+noobsbot-desktop -- sh -c 'dbus-update-activation-environment --systemd WAYLAND_DISPLAY &&
+    exec systemctl --user start noobsbot-desktop-session.target'
+status=$?
+
+# Logged out (or crashed): stop the session's helpers and forget the dead display.
+systemctl --user stop noobsbot-desktop-session.target graphical-session.target
+systemctl --user unset-environment WAYLAND_DISPLAY DISPLAY
+exit "$status"

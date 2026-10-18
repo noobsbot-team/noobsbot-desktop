@@ -1,0 +1,12 @@
+# Login screen (plan.md E6.6), written by install.sh.
+[terminal]
+vt = 1
+
+[default_session]
+command = "tuigreet --time --remember --cmd noobsbot-desktop-session"
+user = "greeter"
+
+# Auto-login skips the password: only for a computer nobody else touches.
+# [initial_session]
+# user = "<you>"
+# command = "noobsbot-desktop-session"

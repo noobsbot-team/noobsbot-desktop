@@ -1,0 +1,8 @@
+# Started by noobsbot-desktop-session once the compositor listens (plan.md E6.7):
+# brings up graphical-session.target, the polkit agent, the keyring and the XDG autostart apps.
+[Unit]
+Description=Noobsbot Desktop session
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target xdg-desktop-autostart.target plasma-polkit-agent.service gnome-keyring-daemon.socket
+After=graphical-session-pre.target
+Before=graphical-session.target xdg-desktop-autostart.target

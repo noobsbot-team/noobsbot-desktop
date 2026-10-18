@@ -1,0 +1,4 @@
+# Screen sharing picker (plan.md E6.8): without a chooser portal-wlr cannot pick a screen.
+[screencast]
+chooser_type=simple
+chooser_cmd=slurp -f %o -or
