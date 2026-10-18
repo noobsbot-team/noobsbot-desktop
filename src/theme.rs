@@ -242,10 +242,14 @@ fn recolour(svg: &str, theirs: &str, ours: &Groups) -> String {
 }
 
 /// WhiteSur's installed Kvantum theme (kvconfig, svg), if any.
-fn whitesur(dark: bool) -> Option<(String, String)> {
+/// WhiteSur's kvconfig and SVG: the user's copy (Kvantum Manager installs to `config_home/Kvantum`) or the package's.
+fn whitesur(dark: bool, config_home: &Path) -> Option<(String, String)> {
     let name = if dark { "WhiteSurDark" } else { "WhiteSur" };
-    let dir = Path::new("/usr/share/Kvantum").join(name);
-    Some((fs::read_to_string(dir.join(format!("{name}.kvconfig"))).ok()?, fs::read_to_string(dir.join(format!("{name}.svg"))).ok()?))
+    [config_home.join("Kvantum"), PathBuf::from("/usr/share/Kvantum")].into_iter().find_map(|root| {
+        // Both variants live in the one folder.
+        let dir = root.join("WhiteSur");
+        Some((fs::read_to_string(dir.join(format!("{name}.kvconfig"))).ok()?, fs::read_to_string(dir.join(format!("{name}.svg"))).ok()?))
+    })
 }
 
 /// The file's text, empty if it doesn't exist yet. Follows a symlink so a dotfiles link stays a link.
@@ -267,12 +271,15 @@ pub fn write(appearance: &Appearance, config_home: &Path, data_home: &Path) -> i
         let dir = config_home.join("Kvantum").join(name);
         let ours = kvantum(appearance, dark);
         // Without WhiteSur the kvconfig alone is a full theme on Kvantum's built-in SVG.
-        let kvconfig = match whitesur(dark) {
+        let kvconfig = match whitesur(dark, config_home) {
             Some((theirs, svg)) => {
                 save(dir.join(format!("{name}.svg")), recolour(&svg, &theirs, &ours))?;
                 merge(&theirs, &ours, |_| false)
             }
-            None => ini(&ours),
+            // The built-in SVG draws a dark toolbar: without its interior, Kvantum paints it in our window colour.
+            // ponytail: selections stay the SVG's grey (only an SVG colours them); WhiteSur, installed by install.sh,
+            // takes the branch above.
+            None => ini(&[ours, vec![("Toolbar", vec![("interior", "false".into()), ("frame", "false".into())])]].concat()),
         };
         save(dir.join(format!("{name}.kvconfig")), kvconfig)?;
         save(data_home.join("color-schemes").join(format!("{name}.colors")), ini(&scheme(dark, appearance.accent)))?;
