@@ -1,6 +1,5 @@
 //! Bluetooth state from BlueZ (E2.3): whether it is on, and the paired devices with their battery level.
 
-use std::sync::{Arc, Mutex};
 
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
@@ -81,16 +80,7 @@ pub struct Pairing {
 }
 
 /// Where the pairing alert's answer goes: the D-Bus call BlueZ is waiting on.
-#[derive(Clone, Default)]
-pub struct Answer(Arc<Mutex<Option<async_channel::Sender<bool>>>>);
-
-impl Answer {
-    pub fn give(&self, yes: bool) {
-        if let Some(waiting) = self.0.lock().ok().and_then(|mut w| w.take()) {
-            let _ = waiting.try_send(yes);
-        }
-    }
-}
+pub type Answer = super::Answer<bool>;
 
 #[derive(Debug, zbus::DBusError)]
 #[zbus(prefix = "org.bluez.Error")]
@@ -119,10 +109,7 @@ impl Agent {
 
     /// Shows the alert and waits for Pair / Cancel (or BlueZ's own timeout, which calls `Cancel`).
     async fn ask(&self, device: &OwnedObjectPath, code: Option<String>) -> Result<(), AgentError> {
-        let (tx, rx) = async_channel::bounded(1);
-        if let Ok(mut waiting) = self.answer.0.lock() {
-            *waiting = Some(tx);
-        }
+        let rx = self.answer.wait();
         self.show(Some(Pairing { device: self.name(device).await, code, answer: true }));
         match rx.recv().await {
             Ok(true) => Ok(()),
@@ -171,9 +158,7 @@ impl Agent {
     }
 
     fn cancel(&self) {
-        if let Ok(mut waiting) = self.answer.0.lock() {
-            waiting.take();
-        }
+        self.answer.cancel();
         self.show(None);
     }
 }

@@ -35,8 +35,9 @@ pub enum Kind {
     Pair(Pairing),
     /// A frozen app's window was closed (E4.7): Wait / Force Quit.
     NotResponding { app: String, pid: i32, client: ClientId },
-    /// A secured network we have no password for (E2.3): its NetworkManager paths, and the password typed so far.
-    Wifi { ssid: String, ap: String, device: String, field: TextField },
+    /// A Wi-Fi password (E2.3): `join` has the access point and device paths when we join, `None` when
+    /// NetworkManager asked (its secret agent); `field` is the password typed so far.
+    Wifi { ssid: String, join: Option<(String, String)>, field: TextField },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -171,6 +172,15 @@ impl State {
         true
     }
 
+    /// NetworkManager asks for `ssid`'s password (`Some`) or gives up (`None`, which closes only its alert).
+    pub fn show_wifi_secret(&mut self, ssid: Option<String>) {
+        match ssid {
+            Some(ssid) => self.open_ask(Kind::Wifi { ssid, join: None, field: TextField::secure() }),
+            None if matches!(&self.alert, Some(Alert { kind: Kind::Wifi { join: None, .. }, .. })) => self.close_alert(),
+            None => {}
+        }
+    }
+
     /// BlueZ asks (`Some`) or gives up (`None`, which closes only a pairing alert).
     pub fn show_pairing(&mut self, pairing: Option<Pairing>) {
         match pairing {
@@ -213,8 +223,9 @@ impl State {
             Kind::Power(power) => power,
             Kind::NotResponding { .. } if button == Button::Cancel => return,
             Kind::NotResponding { pid, client, .. } => return self.kill(pid, client),
+            Kind::Wifi { join: None, field, .. } => return self.services.send(Command::WifiSecret((button == Button::Confirm).then_some(field.text))),
             Kind::Wifi { .. } if button == Button::Cancel => return,
-            Kind::Wifi { ssid, ap, device, field } => return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) }),
+            Kind::Wifi { ssid, join: Some((ap, device)), field } => return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) }),
         };
         match (power, self.nested) {
             (Power::LogOut, _) => self.loop_signal.stop(),
@@ -267,7 +278,7 @@ mod tests {
 
     #[test]
     fn wifi_text() {
-        let alert = Alert { kind: Kind::Wifi { ssid: "Home".into(), ap: String::new(), device: String::new(), field: TextField::secure() }, deadline: None };
+        let alert = Alert { kind: Kind::Wifi { ssid: "Home".into(), join: None, field: TextField::secure() }, deadline: None };
         assert_eq!((alert.title().as_str(), alert.confirm(), alert.cancel()), ("Join “Home”?", "Join", "Cancel"));
         assert!(alert.field().is_some_and(|f| f.secure) && alert.cancellable());
     }

@@ -239,6 +239,7 @@ impl State {
                     crate::services::Update::Sound(sound) => state.sound = sound,
                     crate::services::Update::Media(media) => state.media = media,
                     crate::services::Update::Pairing(pairing) => state.show_pairing(pairing),
+                    crate::services::Update::WifiSecret(ssid) => state.show_wifi_secret(ssid),
                     crate::services::Update::Tray(tray) => state.tray = tray,
                     crate::services::Update::TrayMenu { service, menu, rows } => state.show_tray_menu(service, menu, rows),
                     crate::services::Update::Notify(n) => state.notify(*n),

@@ -161,7 +161,7 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         }
         Some("alert-wifi") => {
             let field = ui::field::TextField { text: "hunter22".into(), caret: 8, secure: true, all: false };
-            state.alert = Some(shell::alert::Alert { kind: shell::alert::Kind::Wifi { ssid: "Home Network".into(), ap: String::new(), device: String::new(), field }, deadline: None });
+            state.alert = Some(shell::alert::Alert { kind: shell::alert::Kind::Wifi { ssid: "Home Network".into(), join: None, field }, deadline: None });
         }
         Some("alert-code") => {
             let pairing = services::bluetooth::Pairing { device: "Magic Keyboard".into(), code: Some("012345".into()), answer: false };

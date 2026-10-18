@@ -13,7 +13,13 @@ pub mod sound;
 pub mod tray;
 pub mod update;
 
-use std::{fmt::Debug, future::Future, os::unix::net::UnixStream, time::Duration};
+use std::{
+    fmt::Debug,
+    future::Future,
+    os::unix::net::UnixStream,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use futures_lite::{StreamExt, future};
 use smithay::reexports::calloop::channel::Sender;
@@ -41,6 +47,8 @@ pub enum Update {
     Media(Option<media::Media>),
     /// A device asks to pair; `None`: BlueZ gave up.
     Pairing(Option<bluetooth::Pairing>),
+    /// NetworkManager asks for this network's password; `None`: it gave up.
+    WifiSecret(Option<String>),
     /// Shown tray items, left to right.
     Tray(Vec<tray::TrayItem>),
     /// The rows of a tray item's menu, after `Command::TrayMenu`.
@@ -78,6 +86,8 @@ pub enum Command {
     Media { player: String, action: media::Action },
     /// The pairing alert's answer.
     PairingAnswer(bool),
+    /// The password NetworkManager asked for, or `None`: cancelled.
+    WifiSecret(Option<String>),
     /// A click on a tray item without a menu, at screen `x`, `y`.
     TrayActivate { service: String, path: String, x: i32, y: i32 },
     /// Fetch a tray item's dbusmenu.
@@ -132,9 +142,10 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing and tray hidden: {err}"))
         .ok();
     brightness::send_current(&updates);
-    let pairing = bluetooth::Answer::default();
+    let (pairing, secret) = (Answer::default(), Answer::default());
     if let (true, Some(bus)) = (agents, &system) {
         bluetooth::serve_agent(bus, &updates, &pairing).await;
+        network::serve_agent(bus, &updates, &secret).await;
     }
     let system_clients = async {
         if let Some(bus) = &system {
@@ -151,7 +162,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         }
     };
     let clients = future::zip(system_clients, session_clients);
-    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing)).await;
+    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing, &secret)).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
@@ -223,7 +234,8 @@ async fn handle(
     session: Option<&Connection>,
     commands: async_channel::Receiver<Command>,
     updates: &Sender<Update>,
-    pairing: &bluetooth::Answer,
+    pairing: &Answer<bool>,
+    secret: &Answer<Option<String>>,
 ) {
     while let Ok(command) = commands.recv().await {
         let name = command_name(&command);
@@ -241,6 +253,7 @@ async fn handle(
             (Command::BluetoothDevice { path, connect }, Some(bus), _) => bluetooth::connect(bus, &path, connect).await,
             (Command::WifiScan, Some(bus), _) => network::scan(bus).await,
             (Command::PairingAnswer(yes), ..) => pairing.give(yes),
+            (Command::WifiSecret(psk), ..) => secret.give(psk),
             (Command::WifiJoin { ssid, ap, device, password }, Some(bus), _) => network::join(bus, &ssid, &ap, &device, password.as_deref()).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
@@ -306,5 +319,44 @@ async fn set_timezone(bus: &Connection, zone: &str) {
         Ok(()) => tracing::info!("time zone set to {zone}"),
         // An authentication prompt outlives the timeout; timedated still applies the zone once it is answered.
         Err(err) => tracing::warn!("setting the time zone to {zone}: {err}"),
+    }
+}
+
+/// Where an alert's answer goes: the agent call (BlueZ's, NetworkManager's) waiting on it.
+pub struct Answer<T>(Arc<Mutex<Option<async_channel::Sender<T>>>>);
+
+impl<T> Default for Answer<T> {
+    fn default() -> Self {
+        Self(Arc::default())
+    }
+}
+
+impl<T> Clone for Answer<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+impl<T> Answer<T> {
+    pub fn give(&self, value: T) {
+        if let Some(waiting) = self.0.lock().ok().and_then(|mut w| w.take()) {
+            let _ = waiting.try_send(value);
+        }
+    }
+
+    /// A new question: the next `give` answers it. One still waiting gets an error (its sender is dropped).
+    pub fn wait(&self) -> async_channel::Receiver<T> {
+        let (tx, rx) = async_channel::bounded(1);
+        if let Ok(mut waiting) = self.0.lock() {
+            *waiting = Some(tx);
+        }
+        rx
+    }
+
+    /// The caller gave up: drop the question.
+    pub fn cancel(&self) {
+        if let Ok(mut waiting) = self.0.lock() {
+            waiting.take();
+        }
     }
 }

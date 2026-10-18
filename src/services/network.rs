@@ -245,6 +245,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn secret_only_for_wifi_with_interaction() {
+        let ssid = OwnedValue::try_from(Value::from(b"Home".to_vec())).unwrap();
+        let connection: Settings = HashMap::from([("802-11-wireless".to_string(), HashMap::from([("ssid".to_string(), ssid)]))]);
+        assert_eq!(secret_ssid(&connection, "802-11-wireless-security", ALLOW_INTERACTION).as_deref(), Some("Home"));
+        assert_eq!(secret_ssid(&connection, "802-11-wireless-security", 0), None);
+        assert_eq!(secret_ssid(&connection, "802-1x", ALLOW_INTERACTION), None);
+        assert_eq!(secret_ssid(&Settings::new(), "802-11-wireless-security", ALLOW_INTERACTION), None);
+    }
+
+    #[test]
     fn networks_dedupe_and_sort() {
         use zbus::{names::OwnedInterfaceName, zvariant::Value};
         let path = |p: &str| OwnedObjectPath::try_from(p).unwrap();
@@ -273,5 +283,76 @@ mod tests {
     #[test]
     fn strength_to_bars() {
         assert_eq!([0, 33, 34, 66, 67, 100].map(bars), [1, 1, 2, 2, 3, 3]);
+    }
+}
+
+type Settings = HashMap<String, HashMap<String, OwnedValue>>;
+
+#[derive(Debug, zbus::DBusError)]
+#[zbus(prefix = "org.freedesktop.NetworkManager.SecretAgent")]
+enum SecretError {
+    #[zbus(error)]
+    ZBus(zbus::Error),
+    NoSecrets(String),
+    UserCanceled(String),
+}
+
+/// Our `org.freedesktop.NetworkManager.SecretAgent` (plan.md E2.3): NetworkManager asks it for a Wi-Fi password it
+/// doesn't have, e.g. a saved network whose password changed; the password alert answers.
+struct SecretAgent {
+    updates: Sender<Update>,
+    answer: super::Answer<Option<String>>,
+}
+
+/// NetworkManager's `NM_SECRET_AGENT_GET_SECRETS_FLAG_ALLOW_INTERACTION`.
+const ALLOW_INTERACTION: u32 = 0x1;
+
+/// The network a `GetSecrets` call may ask the user about: a Wi-Fi security setting, with interaction allowed.
+fn secret_ssid(connection: &Settings, setting: &str, flags: u32) -> Option<String> {
+    let ssid = connection.get("802-11-wireless").and_then(|w| w.get("ssid")).and_then(bytes)?;
+    (setting == "802-11-wireless-security" && flags & ALLOW_INTERACTION != 0).then(|| String::from_utf8_lossy(&ssid).into())
+}
+
+#[zbus::interface(name = "org.freedesktop.NetworkManager.SecretAgent")]
+impl SecretAgent {
+    // ponytail: WPA/WPA3 personal (`psk`) only; WEP keys and enterprise (802.1X) logins get NoSecrets.
+    async fn get_secrets(&self, connection: Settings, _path: OwnedObjectPath, setting: String, _hints: Vec<String>, flags: u32) -> Result<Settings, SecretError> {
+        let Some(ssid) = secret_ssid(&connection, &setting, flags) else { return Err(SecretError::NoSecrets("not a Wi-Fi password".into())) };
+        let rx = self.answer.wait();
+        let _ = self.updates.send(Update::WifiSecret(Some(ssid)));
+        match rx.recv().await {
+            Ok(Some(psk)) => {
+                let psk = OwnedValue::try_from(Value::from(psk)).map_err(|err| SecretError::ZBus(err.into()))?;
+                Ok(HashMap::from([(setting, HashMap::from([("psk".to_string(), psk)]))]))
+            }
+            _ => Err(SecretError::UserCanceled("cancelled".into())),
+        }
+    }
+
+    fn cancel_get_secrets(&self, _path: OwnedObjectPath, _setting: String) {
+        self.answer.cancel();
+        let _ = self.updates.send(Update::WifiSecret(None));
+    }
+
+    // ponytail: no keyring yet; NetworkManager keeps system-owned secrets itself, agent-owned ones aren't kept.
+    fn save_secrets(&self, _connection: Settings, _path: OwnedObjectPath) {}
+
+    fn delete_secrets(&self, _connection: Settings, _path: OwnedObjectPath) {}
+}
+
+#[zbus::proxy(interface = "org.freedesktop.NetworkManager.AgentManager", default_service = "org.freedesktop.NetworkManager", default_path = "/org/freedesktop/NetworkManager/AgentManager")]
+trait AgentManager {
+    fn register(&self, identifier: &str) -> zbus::Result<()>;
+}
+
+/// Serves the secret agent at the path NetworkManager calls and registers it.
+// ponytail: registered once; if NetworkManager restarts, password prompts need a desktop restart.
+pub async fn serve_agent(bus: &Connection, updates: &Sender<Update>, answer: &super::Answer<Option<String>>) {
+    let result = async {
+        bus.object_server().at("/org/freedesktop/NetworkManager/SecretAgent", SecretAgent { updates: updates.clone(), answer: answer.clone() }).await?;
+        AgentManagerProxy::new(bus).await?.register("org.noobsbot.desktop").await
+    };
+    if let Err(err) = result.await {
+        tracing::warn!("Wi-Fi password agent off: {err}");
     }
 }
