@@ -76,15 +76,8 @@ impl State {
                             None => FilterResult::Forward,
                         };
                     }
-                    // An alert answers Esc and Return first; then Esc closes an open menu-bar popup.
-                    let answer = match key.modified_sym() {
-                        _ if state.alert.is_none() => None,
-                        Keysym::Escape => Some(crate::shell::alert::Button::Cancel),
-                        Keysym::Return | Keysym::KP_Enter => Some(crate::shell::alert::Button::Confirm),
-                        _ => None,
-                    };
-                    if let Some(answer) = answer {
-                        state.alert_answer(answer);
+                    // An alert answers first (its field takes every key); then Esc closes an open menu-bar popup.
+                    if state.alert_key(key.modified_sym(), mods.ctrl) {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }

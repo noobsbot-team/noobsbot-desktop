@@ -406,8 +406,13 @@ impl State {
                 Some(Module::Wifi) => {
                     if let Some(network) = self.network.as_ref().and_then(|n| n.networks.get(i)) {
                         let joined = matches!(&self.network.as_ref().map(|n| &n.link), Some(Link::Wifi { ssid, .. }) if *ssid == network.ssid);
-                        if !joined {
-                            self.services.send(Command::WifiJoin { ssid: network.ssid.clone(), ap: network.ap.clone(), device: network.device.clone(), password: None });
+                        let (ssid, ap, device) = (network.ssid.clone(), network.ap.clone(), network.device.clone());
+                        if joined {
+                        } else if network.secure && !network.known {
+                            let field = crate::ui::field::TextField::secure();
+                            self.open_ask(crate::shell::alert::Kind::Wifi { ssid, ap, device, field });
+                        } else {
+                            self.services.send(Command::WifiJoin { ssid, ap, device, password: None });
                         }
                     }
                 }

@@ -1,7 +1,8 @@
 //! Alerts (D8): `sheet` glass, 260 px wide, radius 12, centred on the output; the system icon at 64 px, Title 2 and
-//! Body centred, then Cancel and the default (accent) button side by side.
+//! Body centred, a text field when it asks for one (Wi-Fi password), then Cancel and the default (accent) button
+//! side by side.
 
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
@@ -11,11 +12,13 @@ use smithay::{
 use super::{
     Material, SceneElement, Shaders,
     titlebar::{Label, keep_buffers, label_element},
+    ui::{State, Ui},
 };
 use crate::{
     shell::alert::{Alert, Button, Kind},
     symbols::{Symbol, Symbols, Weight},
-    text::{Style, Text},
+    text::{Rendered, Style, Text},
+    ui::field::TextField,
     wm::Rect,
 };
 
@@ -26,14 +29,19 @@ const ICON: i32 = 64;
 const BUTTON_H: i32 = 28;
 const BUTTON_GAP: i32 = 8;
 const RADIUS: f64 = 12.0;
+const FIELD_H: i32 = 22;
 
 /// What the glass depends on: sheet and confirm-button rects, dark, accent, opacity, scale.
 type Key = (Rect, Rect, bool, [u8; 3], u32, u64);
+/// The field drawn (its state, rect, dark, accent, scale): glass front to back, and its text pieces.
+type FieldDrawn = ((TextField, Rect, bool, [u8; 3], u64), Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>);
 
 #[derive(Default)]
 pub struct AlertSheet {
     glass: Option<(Key, Vec<PixelShaderElement>)>,
     labels: Vec<Label>,
+    field: Option<FieldDrawn>,
+    field_labels: Vec<Label>,
     /// The sheet and its (cancel, confirm) buttons as last drawn, output-relative.
     layout: Option<(Rect, [Rect; 2])>,
 }
@@ -76,7 +84,8 @@ impl AlertSheet {
         let logical = |px: u32| (f64::from(px) / scale).round() as i32;
         let (title_h, body_h) = (logical(title.height), logical(words.height));
 
-        let height = PAD + ICON + 12 + title_h + 8 + body_h + PAD + BUTTON_H + PAD;
+        let field_h = if alert.field().is_some() { 12 + FIELD_H } else { 0 };
+        let height = PAD + ICON + 12 + title_h + 8 + body_h + field_h + PAD + BUTTON_H + PAD;
         let x = (output.w - WIDTH) / 2;
         let y = ((output.h - height) / 2).max(0);
         let rect = Rectangle::new((x, y).into(), (WIDTH, height).into());
@@ -84,7 +93,8 @@ impl AlertSheet {
         let title_rect = Rectangle::new((x + PAD, icon.loc.y + ICON + 12).into(), (INNER, title_h).into());
         let body_rect = Rectangle::new((x + PAD, title_rect.loc.y + title_h + 8).into(), (INNER, body_h).into());
         let button_w = if alert.cancellable() { (INNER - BUTTON_GAP) / 2 } else { INNER };
-        let button_y = body_rect.loc.y + body_h + PAD;
+        let field_rect = Rectangle::new((x + PAD, body_rect.loc.y + body_h + 12).into(), (INNER, FIELD_H).into());
+        let button_y = body_rect.loc.y + body_h + field_h + PAD;
         let cancel = Rectangle::new((x + PAD, button_y).into(), (button_w, BUTTON_H).into());
         let confirm = Rectangle::new((x + PAD + INNER - button_w, button_y).into(), (button_w, BUTTON_H).into());
 
@@ -107,6 +117,7 @@ impl AlertSheet {
         let pieces = [
             match alert.kind {
                 Kind::Pair(_) => symbols.get(Symbol::Bluetooth, Weight::Regular, ICON as u16, scale, label),
+                Kind::Wifi { .. } => symbols.get(Symbol::WifiHigh, Weight::Regular, ICON as u16, scale, label),
                 Kind::Power(_) | Kind::NotResponding { .. } => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
             },
             title,
@@ -117,6 +128,24 @@ impl AlertSheet {
         self.labels = keep_buffers(&self.labels, pieces);
         let rects = [icon, title_rect, body_rect, cancel, confirm];
         let mut out: Vec<SceneElement> = self.labels.iter().zip(rects).filter_map(|(label, rect)| label_element(renderer, label, rect, scale)).collect();
+        match alert.field() {
+            Some(field) => {
+                let key = (field.clone(), field_rect, dark, accent, scale.to_bits());
+                if self.field.as_ref().is_none_or(|(k, _, _)| *k != key) {
+                    let mut ui = Ui { shaders, text, symbols, dark, accent, glass_opacity, scale, glass: Vec::new(), pieces: Vec::new() };
+                    ui.field(field_rect, field, "Password", State::Focused);
+                    let (mut glass, pieces) = (ui.glass, ui.pieces);
+                    glass.reverse();
+                    self.field = Some((key, glass, pieces));
+                }
+                if let Some((_, glass, pieces)) = &self.field {
+                    self.field_labels = keep_buffers(&self.field_labels, pieces.iter().map(|(p, _)| p.clone()));
+                    out.extend(self.field_labels.iter().zip(pieces).filter_map(|(label, (_, r))| label_element(renderer, label, *r, scale)));
+                    out.extend(glass.iter().cloned().map(SceneElement::Shader));
+                }
+            }
+            None => self.field = None,
+        }
         if let Some((_, glass)) = &self.glass {
             out.extend(glass.iter().cloned().map(SceneElement::Shader));
         }

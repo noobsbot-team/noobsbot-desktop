@@ -6,6 +6,7 @@
 use std::time::{Duration, Instant};
 
 use smithay::{
+    input::keyboard::Keysym,
     reexports::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::backend::ClientId,
@@ -14,6 +15,7 @@ use smithay::{
 };
 
 use crate::{
+    ui::field::{Edit, TextField},
     services::{Command, bluetooth::Pairing},
     state::State,
 };
@@ -33,6 +35,8 @@ pub enum Kind {
     Pair(Pairing),
     /// A frozen app's window was closed (E4.7): Wait / Force Quit.
     NotResponding { app: String, pid: i32, client: ClientId },
+    /// A secured network we have no password for (E2.3): its NetworkManager paths, and the password typed so far.
+    Wifi { ssid: String, ap: String, device: String, field: TextField },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +64,7 @@ impl Alert {
             Kind::Pair(p) if p.answer => format!("Pair with “{}”?", p.device),
             Kind::Pair(p) => format!("Pair with “{}”", p.device),
             Kind::NotResponding { app, .. } => format!("{app} is not responding."),
+            Kind::Wifi { ssid, .. } => format!("Join “{ssid}”?"),
         }
     }
 
@@ -72,6 +77,7 @@ impl Alert {
             Kind::Pair(Pairing { device, code: Some(code), answer: true }) => format!("Make sure “{device}” shows the code {code}."),
             Kind::Pair(Pairing { device, code: None, .. }) => format!("“{device}” wants to pair with this computer."),
             Kind::Pair(Pairing { device, code: Some(code), answer: false }) => format!("Type {code} on “{device}”, then press Return."),
+            Kind::Wifi { .. } => "Enter the password for this Wi-Fi network.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
         }
     }
@@ -91,6 +97,15 @@ impl Alert {
             Kind::Pair(p) if p.answer => "Pair",
             Kind::Pair(_) => "OK",
             Kind::NotResponding { .. } => "Force Quit",
+            Kind::Wifi { .. } => "Join",
+        }
+    }
+
+    /// The text field the alert types into, if it has one.
+    pub fn field(&self) -> Option<&TextField> {
+        match &self.kind {
+            Kind::Wifi { field, .. } => Some(field),
+            _ => None,
         }
     }
 
@@ -135,6 +150,27 @@ impl State {
         self.alert_timer = tick.inspect_err(|err| tracing::warn!("alert timer: {err}")).ok();
     }
 
+    /// A key while the alert is up: `true` if it took it. An alert with a field takes every key, so a password
+    /// never reaches the focused app; without one, only Esc and Return.
+    pub fn alert_key(&mut self, keysym: Keysym, ctrl: bool) -> bool {
+        let Some(alert) = self.alert.as_mut() else { return false };
+        let edit = match &mut alert.kind {
+            Kind::Wifi { field, .. } => field.key(keysym, keysym.key_char().map(String::from).as_deref(), ctrl),
+            _ => match keysym {
+                Keysym::Escape => Edit::Cancel,
+                Keysym::Return | Keysym::KP_Enter => Edit::Submit,
+                _ => return false,
+            },
+        };
+        match edit {
+            Edit::Submit => self.alert_answer(Button::Confirm),
+            Edit::Cancel => self.alert_answer(Button::Cancel),
+            Edit::Changed | Edit::Moved => self.schedule_redraw(),
+            Edit::Ignored => {}
+        }
+        true
+    }
+
     /// BlueZ asks (`Some`) or gives up (`None`, which closes only a pairing alert).
     pub fn show_pairing(&mut self, pairing: Option<Pairing>) {
         match pairing {
@@ -161,6 +197,10 @@ impl State {
     /// Cancel (Esc) or the default button (Return, or the countdown running out).
     pub fn alert_answer(&mut self, button: Button) {
         let Some(alert) = self.alert.clone() else { return };
+        // ponytail: WPA's 8-character minimum for every secured network; WEP keys (5/13) can't be typed yet.
+        if button == Button::Confirm && alert.field().is_some_and(|f| f.text.chars().count() < 8) {
+            return;
+        }
         self.close_alert();
         let power = match alert.kind {
             Kind::Pair(pairing) => {
@@ -173,6 +213,8 @@ impl State {
             Kind::Power(power) => power,
             Kind::NotResponding { .. } if button == Button::Cancel => return,
             Kind::NotResponding { pid, client, .. } => return self.kill(pid, client),
+            Kind::Wifi { .. } if button == Button::Cancel => return,
+            Kind::Wifi { ssid, ap, device, field } => return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) }),
         };
         match (power, self.nested) {
             (Power::LogOut, _) => self.loop_signal.stop(),
@@ -221,5 +263,12 @@ mod tests {
         assert_eq!(pair(None, true).title(), "Pair with “Keyboard”?");
         assert!(!pair(Some("1"), false).cancellable() && pair(None, true).cancellable());
         assert_eq!(pair(None, true).seconds_left(now), None);
+    }
+
+    #[test]
+    fn wifi_text() {
+        let alert = Alert { kind: Kind::Wifi { ssid: "Home".into(), ap: String::new(), device: String::new(), field: TextField::secure() }, deadline: None };
+        assert_eq!((alert.title().as_str(), alert.confirm(), alert.cancel()), ("Join “Home”?", "Join", "Cancel"));
+        assert!(alert.field().is_some_and(|f| f.secure) && alert.cancellable());
     }
 }
