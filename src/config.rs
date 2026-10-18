@@ -17,7 +17,7 @@ use notify::{
 };
 use serde::Deserialize;
 
-use crate::rules::{RULE_KEYS, Rule};
+use crate::rules::{AllSpaces, Layer, Length, RULE_KEYS, Rule, Space};
 
 /// The commented defaults shipped as `data/config.toml`; parsing it yields `Config::default()` (tested).
 pub const DEFAULT_TOML: &str = include_str!("../data/config.toml");
@@ -205,11 +205,25 @@ impl Default for Config {
             windows: Windows::default(),
             clock: Clock::default(),
             bindings: default_bindings(),
-            rules: vec![Rule {
-                app_id: None,
-                title: Some("^Picture in picture$".into()),
-                actions: crate::rules::Actions { float_above: Some(true), ..Default::default() },
-            }],
+            rules: vec![
+                Rule {
+                    app_id: Some(crate::rules::QUAKE_ID.into()),
+                    title: None,
+                    actions: crate::rules::Actions {
+                        space: Some(Space::All(AllSpaces::All)),
+                        size: Some([Length::Fraction(1.0), Length::Fraction(0.4)]),
+                        position: Some([Length::Px(0), Length::Px(0)]),
+                        decorations: Some(false),
+                        layer: Some(Layer::Overlay),
+                        ..Default::default()
+                    },
+                },
+                Rule {
+                    app_id: None,
+                    title: Some("^Picture in picture$".into()),
+                    actions: crate::rules::Actions { float_above: Some(true), ..Default::default() },
+                },
+            ],
         }
     }
 }
@@ -244,7 +258,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+H", "hide"),
         ("Super+Alt+H", "hide-others"),
         ("Super+Tab", "cycle"),
-        ("F12", "exec noobsbot --quake"),
+        ("F12", "quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),
         ("XF86AudioMute", "mute"),
