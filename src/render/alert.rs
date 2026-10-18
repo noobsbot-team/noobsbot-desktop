@@ -93,7 +93,8 @@ impl AlertSheet {
         let title_rect = Rectangle::new((x + PAD, icon.loc.y + ICON + 12).into(), (INNER, title_h).into());
         let body_rect = Rectangle::new((x + PAD, title_rect.loc.y + title_h + 8).into(), (INNER, body_h).into());
         let button_w = if alert.cancellable() { (INNER - BUTTON_GAP) / 2 } else { INNER };
-        let field_rect = Rectangle::new((x + PAD, body_rect.loc.y + body_h + 12).into(), (INNER, FIELD_H).into());
+        // Shaken sideways after a wrong password (polkit).
+        let field_rect = Rectangle::new((x + PAD + alert.shake().unwrap_or(0), body_rect.loc.y + body_h + 12).into(), (INNER, FIELD_H).into());
         let button_y = body_rect.loc.y + body_h + field_h + PAD;
         let cancel = Rectangle::new((x + PAD, button_y).into(), (button_w, BUTTON_H).into());
         let confirm = Rectangle::new((x + PAD + INNER - button_w, button_y).into(), (button_w, BUTTON_H).into());
@@ -118,6 +119,7 @@ impl AlertSheet {
             match alert.kind {
                 Kind::Pair(_) | Kind::Pin { .. } => symbols.get(Symbol::Bluetooth, Weight::Regular, ICON as u16, scale, label),
                 Kind::Wifi { .. } => symbols.get(Symbol::WifiHigh, Weight::Regular, ICON as u16, scale, label),
+                Kind::Polkit { .. } => symbols.get(Symbol::Lock, Weight::Regular, ICON as u16, scale, label),
                 Kind::ScreenRecording { .. } => symbols.get(Symbol::Record, Weight::Regular, ICON as u16, scale, label),
                 Kind::Power(_) | Kind::NotResponding { .. } => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
             },

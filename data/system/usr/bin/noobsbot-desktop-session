@@ -43,7 +43,7 @@ if [ -n "$ver" ] && [ "$ver" != "$good" ] && [ -x "$lib/versions/$good/noobsbot-
 fi
 
 # Once the compositor listens, hand WAYLAND_DISPLAY and DISPLAY (xwayland-satellite, E6.9) over too and start the
-# session target (graphical-session.target, polkit agent, keyring, XDG autostart).
+# session target (graphical-session.target, keyring, XDG autostart; the polkit agent is the compositor's own).
 marker=""
 if [ -n "$running" ]; then
     (sleep "$ok_after" && echo "$running" >"$state/boot-ok") &

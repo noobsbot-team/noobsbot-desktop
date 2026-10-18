@@ -299,6 +299,7 @@ impl State {
                     crate::services::Update::Pairing(pairing) => state.show_pairing(pairing),
                     crate::services::Update::WifiSecret(ssid) => state.show_wifi_secret(ssid),
                     crate::services::Update::PinEntry { device, passkey } => state.show_pin_entry(device, passkey),
+                    crate::services::Update::Polkit(event) => state.polkit_event(event),
                     crate::services::Update::Tray(tray) => state.tray = tray,
                     crate::services::Update::TrayMenu { service, menu, rows } => state.show_tray_menu(service, menu, rows),
                     crate::services::Update::Notify(n) => state.notify(*n),

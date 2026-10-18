@@ -15,7 +15,11 @@ use smithay::{
 };
 
 use crate::{
-    services::{Command, bluetooth::Pairing},
+    services::{
+        Command,
+        bluetooth::Pairing,
+        polkit::{Auth, Event},
+    },
     state::State,
     ui::field::{Edit, TextField},
 };
@@ -58,6 +62,15 @@ pub enum Kind {
         exe: String,
         client: ClientId,
     },
+    /// An admin password for polkit (E7.2): `user` indexes `auth.users` (Tab picks the next); `checking` while
+    /// polkit's helper has it; `wrong` since the last wrong one (the field shakes, the body says so).
+    Polkit {
+        auth: Auth,
+        user: usize,
+        field: TextField,
+        checking: bool,
+        wrong: Option<Instant>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -88,6 +101,7 @@ impl Alert {
             Kind::Wifi { ssid, .. } => format!("Join “{ssid}”?"),
             Kind::Pin { device, .. } => format!("Pair with “{device}”"),
             Kind::ScreenRecording { app, .. } => format!("“{app}” would like to record this computer's screen."),
+            Kind::Polkit { auth, .. } => auth.message.clone(),
         }
     }
 
@@ -105,6 +119,12 @@ impl Alert {
             Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
             Kind::ScreenRecording { .. } => "It will see everything on the screen, including other apps' windows. The answer is kept in config.toml.".into(),
+            Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
+            Kind::Polkit { auth, user, .. } => {
+                let name = auth.users.get(*user).map_or("", String::as_str);
+                let other = if auth.users.len() > 1 { " Press Tab for another administrator." } else { "" };
+                format!("Enter the password for “{name}” to allow this.{other}")
+            }
         }
     }
 
@@ -127,13 +147,14 @@ impl Alert {
             Kind::Wifi { .. } => "Join",
             Kind::Pin { .. } => "Pair",
             Kind::ScreenRecording { .. } => "Allow",
+            Kind::Polkit { .. } => "OK",
         }
     }
 
     /// The text field the alert types into, if it has one.
     pub fn field(&self) -> Option<&TextField> {
         match &self.kind {
-            Kind::Wifi { field, .. } | Kind::Pin { field, .. } => Some(field),
+            Kind::Wifi { field, .. } | Kind::Pin { field, .. } | Kind::Polkit { field, .. } => Some(field),
             _ => None,
         }
     }
@@ -141,6 +162,15 @@ impl Alert {
     /// `false`: one button only (a code to type on the device needs no answer).
     pub fn cancellable(&self) -> bool {
         !matches!(&self.kind, Kind::Pair(Pairing { answer: false, .. }))
+    }
+}
+
+impl Alert {
+    /// The field's sideways offset after a wrong password; `None` once it has settled.
+    pub fn shake(&self) -> Option<i32> {
+        let Kind::Polkit { wrong: Some(at), .. } = &self.kind else { return None };
+        let t = at.elapsed();
+        (t < crate::shell::lock::SHAKE).then(|| crate::shell::lock::shake_offset(t))
     }
 }
 
@@ -158,6 +188,10 @@ impl State {
     }
 
     pub fn open_ask(&mut self, kind: Kind) {
+        // Another alert over a polkit one: its request must not wait forever.
+        if matches!(&self.alert, Some(Alert { kind: Kind::Polkit { .. }, .. })) && !matches!(kind, Kind::Polkit { .. }) {
+            self.services.send(Command::PolkitAnswer(None));
+        }
         self.close_alert();
         self.popup = None;
         let power = matches!(kind, Kind::Power(_));
@@ -184,6 +218,18 @@ impl State {
     pub fn alert_key(&mut self, keysym: Keysym, ctrl: bool) -> bool {
         let Some(alert) = self.alert.as_mut() else { return false };
         let edit = match &mut alert.kind {
+            Kind::Polkit { checking: true, .. } => return true,
+            Kind::Polkit { auth, user, wrong, .. } if keysym == Keysym::Tab => {
+                (*user, *wrong) = ((*user + 1) % auth.users.len().max(1), None);
+                Edit::Changed
+            }
+            Kind::Polkit { field, wrong, .. } => {
+                let edit = field.key(keysym, keysym.key_char().map(String::from).as_deref(), ctrl);
+                if edit == Edit::Changed {
+                    *wrong = None;
+                }
+                edit
+            }
             Kind::Wifi { field, .. } | Kind::Pin { field, .. } => field.key(keysym, keysym.key_char().map(String::from).as_deref(), ctrl),
             _ => match keysym {
                 Keysym::Escape => Edit::Cancel,
@@ -206,6 +252,31 @@ impl State {
             Some(ssid) => self.open_ask(Kind::Wifi { ssid, join: None, field: TextField::secure() }),
             None if matches!(&self.alert, Some(Alert { kind: Kind::Wifi { join: None, .. }, .. })) => self.close_alert(),
             None => {}
+        }
+    }
+
+    /// Our polkit agent: ask, shake after a wrong password, or close (only the alert with that cookie).
+    pub fn polkit_event(&mut self, event: Event) {
+        let ours = |alert: &Option<Alert>, cookie: &str| matches!(alert, Some(Alert { kind: Kind::Polkit { auth, .. }, .. }) if auth.cookie == cookie);
+        match event {
+            Event::Ask(auth) => self.open_ask(Kind::Polkit { auth, user: 0, field: TextField::secure(), checking: false, wrong: None }),
+            Event::Done(cookie) if ours(&self.alert, &cookie) => self.close_alert(),
+            Event::Wrong(cookie) if ours(&self.alert, &cookie) => {
+                if let Some(Alert { kind: Kind::Polkit { field, checking, wrong, .. }, .. }) = self.alert.as_mut() {
+                    crate::shell::lock::wipe(field);
+                    (*checking, *wrong) = (false, Some(Instant::now()));
+                }
+                // Redraw every frame while the field shakes.
+                let shaking = |_, _: &mut (), state: &mut State| {
+                    state.schedule_redraw();
+                    match state.alert.as_ref().and_then(Alert::shake) {
+                        Some(_) => TimeoutAction::ToDuration(Duration::from_millis(16)),
+                        None => TimeoutAction::Drop,
+                    }
+                };
+                self.loop_handle.insert_source(Timer::from_duration(Duration::ZERO), shaking).map_or_else(|err| tracing::warn!("polkit alert: {err}"), drop);
+            }
+            Event::Done(_) | Event::Wrong(_) => {}
         }
     }
 
@@ -240,6 +311,19 @@ impl State {
     /// Cancel (Esc) or the default button (Return, or the countdown running out).
     pub fn alert_answer(&mut self, button: Button) {
         let Some(alert) = self.alert.clone() else { return };
+        if let Kind::Polkit { auth, user, field, checking, .. } = &alert.kind {
+            if button == Button::Confirm {
+                if !*checking && !field.text.is_empty() {
+                    let user = auth.users.get(*user).cloned().unwrap_or_default();
+                    self.services.send(Command::PolkitAnswer(Some((user, field.text.clone()))));
+                    if let Some(Alert { kind: Kind::Polkit { checking, .. }, .. }) = self.alert.as_mut() {
+                        *checking = true;
+                    }
+                }
+                return;
+            }
+            self.services.send(Command::PolkitAnswer(None));
+        }
         // ponytail: WPA's 8-character minimum for every secured network; WEP keys (5/13) can't be typed yet.
         if button == Button::Confirm && matches!(&alert.kind, Kind::Wifi { field, .. } if field.text.chars().count() < 8) {
             return;
@@ -263,6 +347,7 @@ impl State {
                 return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
             }
             Kind::ScreenRecording { exe, client, .. } => return self.recording_answer(client, exe, button == Button::Confirm),
+            Kind::Polkit { .. } => return,
         };
         self.power_now(power);
     }
@@ -324,5 +409,20 @@ mod tests {
         let alert = Alert { kind: Kind::Wifi { ssid: "Home".into(), join: None, field: TextField::secure() }, deadline: None };
         assert_eq!((alert.title().as_str(), alert.confirm(), alert.cancel()), ("Join “Home”?", "Join", "Cancel"));
         assert!(alert.field().is_some_and(|f| f.secure) && alert.cancellable());
+    }
+
+    #[test]
+    fn polkit_text() {
+        let auth = Auth { cookie: "c".into(), message: "Authentication is required.".into(), users: vec!["ann".into(), "root".into()] };
+        let mut alert = Alert { kind: Kind::Polkit { auth, user: 1, field: TextField::secure(), checking: false, wrong: None }, deadline: None };
+        let now = Instant::now();
+        assert_eq!(alert.title(), "Authentication is required.");
+        assert_eq!(alert.body(now), "Enter the password for “root” to allow this. Press Tab for another administrator.");
+        assert!(alert.field().is_some_and(|f| f.secure) && alert.shake().is_none());
+        if let Kind::Polkit { wrong, .. } = &mut alert.kind {
+            *wrong = Some(now);
+        }
+        assert_eq!(alert.body(now), "The password is incorrect. Try again.");
+        assert!(alert.shake().is_some());
     }
 }
