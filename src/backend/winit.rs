@@ -129,6 +129,7 @@ impl State {
         let dock_items = self.dock_items();
         let dock_frame = self.dock_frame(&dock_items);
         let dock_layout = dock_frame.layout.clone();
+        let held_at = self.dock_ui.dragged().and(self.seat.get_pointer()).map(|p| self.to_output(p.current_location()));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
         let now = Instant::now();
         self.launchpad_frame(now);
@@ -386,16 +387,30 @@ impl State {
         bar.extend(strip);
         // The dock: behind the bar and popups, above windows.
         if let Some(layout) = &dock_layout {
-            let icons: Vec<DockIcon> = dock_items
+            let mut icons: Vec<DockIcon> = dock_items
                 .iter()
+                .zip(&dock_frame.shades)
                 .enumerate()
-                .map(|(i, item)| DockIcon { name: item.icon(), running: !item.windows.is_empty(), focused: focused_item == Some(i) })
+                .map(|(i, (item, shade))| DockIcon { name: item.icon(), windows: item.windows.len(), focused: focused_item == Some(i), shade: *shade })
                 .collect();
             let zoom = if self.config.dock.zoom { f64::from(self.config.dock.zoom_percent) / 100.0 } else { 1.0 };
             let px = (layout.icon * zoom * scale).ceil() as u32;
+            // The dragged icon follows the pointer: one more icon, without a column (so without dots).
+            let mut layout = layout.clone();
+            let held = self.dock_ui.dragged().and_then(|key| dock_items.iter().find(|i| i.key == key));
+            if let Some((item, at)) = held.zip(held_at) {
+                let s = layout.icon;
+                layout.icons.push(smithay::utils::Rectangle::new((at.x - s / 2.0, at.y - s / 2.0).into(), (s, s).into()));
+                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0 };
+                icons.push(DockIcon { name: item.icon(), windows: 0, focused: false, shade });
+            }
             let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
+            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, dock_frame.tip.as_ref(), dark, scale));
             bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
-            bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, layout, px, scale));
+            bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, scale));
+            bar.extend(DockView::poofs(shaders, &dock_frame.poofs, layout.icon, scale));
+        } else {
+            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, None, dark, scale));
         }
         bar.extend(DockView::glows(shaders, &dock_frame.glows, scale));
         // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.
