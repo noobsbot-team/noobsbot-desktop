@@ -42,13 +42,20 @@ pub struct WifiNetwork {
 pub enum Link {
     None,
     /// `bars`: 1–3, the arcs of the Wi-Fi symbol.
-    Wifi { ssid: String, bars: u8 },
+    Wifi {
+        ssid: String,
+        bars: u8,
+    },
     Ethernet,
     /// VPN, mobile broadband, …: shown by connection name.
     Other(String),
 }
 
-#[zbus::proxy(interface = "org.freedesktop.NetworkManager", default_service = "org.freedesktop.NetworkManager", default_path = "/org/freedesktop/NetworkManager")]
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager",
+    default_service = "org.freedesktop.NetworkManager",
+    default_path = "/org/freedesktop/NetworkManager"
+)]
 trait Manager {
     #[zbus(property)]
     fn wireless_enabled(&self) -> zbus::Result<bool>;
@@ -65,7 +72,11 @@ trait Manager {
     ) -> zbus::Result<(OwnedObjectPath, OwnedObjectPath)>;
 }
 
-#[zbus::proxy(interface = "org.freedesktop.NetworkManager.Settings", default_service = "org.freedesktop.NetworkManager", default_path = "/org/freedesktop/NetworkManager/Settings")]
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager.Settings",
+    default_service = "org.freedesktop.NetworkManager",
+    default_path = "/org/freedesktop/NetworkManager/Settings"
+)]
 trait Settings {
     fn list_connections(&self) -> zbus::Result<Vec<OwnedObjectPath>>;
 }
@@ -212,7 +223,8 @@ async fn read(bus: &Connection) -> Option<Network> {
     // ponytail: re-reads every saved connection on each NetworkManager signal (a few a minute); cache it if that shows up.
     let networks = async {
         let known: Vec<Vec<u8>> = saved(bus).await.unwrap_or_default().into_iter().map(|(_, s)| s).collect();
-        let objects = ObjectManagerProxy::builder(bus).destination(SERVICE).ok()?.path("/org/freedesktop").ok()?.build().await.ok()?.get_managed_objects().await.ok()?;
+        let objects =
+            ObjectManagerProxy::builder(bus).destination(SERVICE).ok()?.path("/org/freedesktop").ok()?.build().await.ok()?.get_managed_objects().await.ok()?;
         Some(networks(&objects, &known))
     };
     let networks = if wifi_enabled { networks.await.unwrap_or_default() } else { Vec::new() };
@@ -263,7 +275,16 @@ mod tests {
             (OwnedInterfaceName::try_from(name).unwrap(), props.into_iter().map(|(k, v)| (k.to_owned(), v)).collect::<HashMap<_, _>>())
         };
         let ap = |ssid: &[u8], strength: u8, rsn: u32| {
-            HashMap::from([iface(ACCESS_POINT, vec![("Ssid", value(Value::from(ssid.to_vec()))), ("Strength", value(Value::from(strength))), ("Flags", value(Value::from(0u32))), ("WpaFlags", value(Value::from(0u32))), ("RsnFlags", value(Value::from(rsn)))])])
+            HashMap::from([iface(
+                ACCESS_POINT,
+                vec![
+                    ("Ssid", value(Value::from(ssid.to_vec()))),
+                    ("Strength", value(Value::from(strength))),
+                    ("Flags", value(Value::from(0u32))),
+                    ("WpaFlags", value(Value::from(0u32))),
+                    ("RsnFlags", value(Value::from(rsn))),
+                ],
+            )])
         };
         let aps = ["/ap/1", "/ap/2", "/ap/3", "/ap/4"].map(path).to_vec();
         let objects: ManagedObjects = HashMap::from([
@@ -316,7 +337,14 @@ fn secret_ssid(connection: &Settings, setting: &str, flags: u32) -> Option<Strin
 #[zbus::interface(name = "org.freedesktop.NetworkManager.SecretAgent")]
 impl SecretAgent {
     // ponytail: WPA/WPA3 personal (`psk`) only; WEP keys and enterprise (802.1X) logins get NoSecrets.
-    async fn get_secrets(&self, connection: Settings, _path: OwnedObjectPath, setting: String, _hints: Vec<String>, flags: u32) -> Result<Settings, SecretError> {
+    async fn get_secrets(
+        &self,
+        connection: Settings,
+        _path: OwnedObjectPath,
+        setting: String,
+        _hints: Vec<String>,
+        flags: u32,
+    ) -> Result<Settings, SecretError> {
         let Some(ssid) = secret_ssid(&connection, &setting, flags) else { return Err(SecretError::NoSecrets("not a Wi-Fi password".into())) };
         let rx = self.answer.wait();
         let _ = self.updates.send(Update::WifiSecret(Some(ssid)));
@@ -340,7 +368,11 @@ impl SecretAgent {
     fn delete_secrets(&self, _connection: Settings, _path: OwnedObjectPath) {}
 }
 
-#[zbus::proxy(interface = "org.freedesktop.NetworkManager.AgentManager", default_service = "org.freedesktop.NetworkManager", default_path = "/org/freedesktop/NetworkManager/AgentManager")]
+#[zbus::proxy(
+    interface = "org.freedesktop.NetworkManager.AgentManager",
+    default_service = "org.freedesktop.NetworkManager",
+    default_path = "/org/freedesktop/NetworkManager/AgentManager"
+)]
 trait AgentManager {
     fn register(&self, identifier: &str) -> zbus::Result<()>;
 }

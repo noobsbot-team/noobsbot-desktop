@@ -58,11 +58,7 @@ async fn read(bus: &Connection) -> Option<Battery> {
 }
 
 fn from_raw(percentage: f64, charging: bool, seconds: i64) -> Battery {
-    Battery {
-        percent: percentage.round().clamp(0.0, 100.0) as u8,
-        charging,
-        minutes_left: (seconds > 0).then_some((seconds / 60) as u32),
-    }
+    Battery { percent: percentage.round().clamp(0.0, 100.0) as u8, charging, minutes_left: (seconds > 0).then_some((seconds / 60) as u32) }
 }
 
 #[cfg(test)]

@@ -16,7 +16,11 @@ pub struct Profiles {
     pub available: Vec<String>,
 }
 
-#[zbus::proxy(interface = "org.freedesktop.UPower.PowerProfiles", default_service = "org.freedesktop.UPower.PowerProfiles", default_path = "/org/freedesktop/UPower/PowerProfiles")]
+#[zbus::proxy(
+    interface = "org.freedesktop.UPower.PowerProfiles",
+    default_service = "org.freedesktop.UPower.PowerProfiles",
+    default_path = "/org/freedesktop/UPower/PowerProfiles"
+)]
 trait PowerProfiles {
     #[zbus(property)]
     fn active_profile(&self) -> zbus::Result<String>;
@@ -33,13 +37,7 @@ pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
 /// `None` when power-profiles-daemon isn't installed or running.
 async fn read(bus: &Connection) -> Option<Profiles> {
     let proxy = PowerProfilesProxy::builder(bus).cache_properties(CacheProperties::No).build().await.ok()?;
-    let available = proxy
-        .profiles()
-        .await
-        .ok()?
-        .iter()
-        .filter_map(|p| p.get("Profile")?.downcast_ref::<&str>().ok().map(str::to_owned))
-        .collect();
+    let available = proxy.profiles().await.ok()?.iter().filter_map(|p| p.get("Profile")?.downcast_ref::<&str>().ok().map(str::to_owned)).collect();
     Some(Profiles { active: proxy.active_profile().await.ok()?, available })
 }
 

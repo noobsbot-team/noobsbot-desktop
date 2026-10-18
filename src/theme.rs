@@ -98,7 +98,8 @@ fn colour_groups(dark: bool, accent: Accent) -> Groups {
 
 /// The `.colors` file.
 fn scheme(dark: bool, accent: Accent) -> Groups {
-    let mut groups: Groups = vec![("General", vec![("ColorScheme", name(dark).into()), ("Name", format!("Noobsbot Glass{}", if dark { " Dark" } else { "" }))])];
+    let mut groups: Groups =
+        vec![("General", vec![("ColorScheme", name(dark).into()), ("Name", format!("Noobsbot Glass{}", if dark { " Dark" } else { "" }))])];
     groups.extend(colour_groups(dark, accent));
     groups.push(("KDE", vec![("contrast", "4".into())]));
     groups

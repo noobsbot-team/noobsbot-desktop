@@ -138,7 +138,16 @@ impl Server {
 
 /// Everything but the icon pixels and the time, from a `Notify` call.
 #[expect(clippy::too_many_arguments, reason = "the D-Bus method's arguments")]
-fn parse(id: u32, app: String, app_icon: String, summary: String, body: String, actions: &[String], hints: &HashMap<String, OwnedValue>, expire: i32) -> Notification {
+fn parse(
+    id: u32,
+    app: String,
+    app_icon: String,
+    summary: String,
+    body: String,
+    actions: &[String],
+    hints: &HashMap<String, OwnedValue>,
+    expire: i32,
+) -> Notification {
     let text = |key: &str| hints.get(key).and_then(|v| <&str>::try_from(&**v).ok()).unwrap_or_default().to_owned();
     let flag = |key: &str| hints.get(key).is_some_and(|v| matches!(**v, Value::Bool(true)));
     let desktop_entry = text("desktop-entry");
@@ -348,7 +357,8 @@ fn load_history() -> Vec<Notification> {
 pub fn save_history(text: &str) {
     let path = history_path();
     let temporary = path.with_extension("new");
-    let result = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&temporary, text)).and_then(|()| std::fs::rename(&temporary, &path));
+    let result =
+        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&temporary, text)).and_then(|()| std::fs::rename(&temporary, &path));
     if let Err(err) = result {
         tracing::warn!("saving notification history to {}: {err}", path.display());
     }
@@ -358,9 +368,7 @@ pub fn save_history(text: &str) {
 /// the app that would answer them is gone after a restart.
 pub fn encode_history(list: &[Notification]) -> String {
     let escape = |s: &str| s.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n");
-    list.iter()
-        .map(|n| format!("{}\t{}\t{}\t{}\t{}\t{}\n", n.id, n.time, escape(&n.app), escape(&n.icon_name), escape(&n.summary), escape(&n.body)))
-        .collect()
+    list.iter().map(|n| format!("{}\t{}\t{}\t{}\t{}\t{}\n", n.id, n.time, escape(&n.app), escape(&n.icon_name), escape(&n.summary), escape(&n.body))).collect()
 }
 
 pub fn decode_history(text: &str) -> Vec<Notification> {
@@ -415,7 +423,16 @@ mod tests {
     fn image_data_becomes_premultiplied_rgba_at_icon_size() {
         // 2 × 1 RGBA with a padded row: opaque red, half-transparent white.
         let data = vec![255u8, 0, 0, 255, 255, 255, 255, 128, 9, 9];
-        let image = StructureBuilder::new().add_field(2i32).add_field(1i32).add_field(10i32).add_field(true).add_field(8i32).add_field(4i32).add_field(data).build().unwrap();
+        let image = StructureBuilder::new()
+            .add_field(2i32)
+            .add_field(1i32)
+            .add_field(10i32)
+            .add_field(true)
+            .add_field(8i32)
+            .add_field(4i32)
+            .add_field(data)
+            .build()
+            .unwrap();
         let icon = image_data(&Value::Structure(image)).unwrap();
         assert_eq!((icon.width, icon.height, icon.pixels.len()), (ICON_PX, ICON_PX, (ICON_PX * ICON_PX * 4) as usize));
         // Fitted and centred: the 2 × 1 picture is 64 × 32 in the middle; left half red, right half white at half alpha.
@@ -427,14 +444,28 @@ mod tests {
         // Short data, odd channels and 16-bit samples are refused.
         assert_eq!(to_rgba(2, 2, 8, 4, &[0; 10]), None);
         assert_eq!(to_rgba(1, 1, 1, 1, &[0]), None);
-        let deep = StructureBuilder::new().add_field(1i32).add_field(1i32).add_field(8i32).add_field(true).add_field(16i32).add_field(4i32).add_field(vec![0u8; 8]).build().unwrap();
+        let deep = StructureBuilder::new()
+            .add_field(1i32)
+            .add_field(1i32)
+            .add_field(8i32)
+            .add_field(true)
+            .add_field(16i32)
+            .add_field(4i32)
+            .add_field(vec![0u8; 8])
+            .build()
+            .unwrap();
         assert!(image_data(&Value::Structure(deep)).is_none());
     }
 
     #[test]
     fn notify_arguments_parse() {
         let actions = ["default", "Open", "reply", "Reply", "odd"].map(String::from);
-        let h = hints(vec![("urgency", Value::U8(2)), ("desktop-entry", Value::from("org.kde.dolphin")), ("transient", Value::Bool(true)), ("value", Value::I32(140))]);
+        let h = hints(vec![
+            ("urgency", Value::U8(2)),
+            ("desktop-entry", Value::from("org.kde.dolphin")),
+            ("transient", Value::Bool(true)),
+            ("value", Value::I32(140)),
+        ]);
         let n = parse(7, String::new(), String::new(), "Copied".into(), "3 files".into(), &actions, &h, 0);
         assert_eq!(n.app, "org.kde.dolphin");
         assert_eq!(n.icon_name, "org.kde.dolphin");
@@ -448,7 +479,17 @@ mod tests {
 
     #[test]
     fn history_round_trips_and_keeps_the_last_hundred() {
-        let n = Notification { id: 3, time: 1_700_000_000, app: "Kate".into(), icon_name: "kate".into(), summary: "Saved\tfile".into(), body: "line 1\nline \\2".into(), urgency: 1, expire: -1, ..Default::default() };
+        let n = Notification {
+            id: 3,
+            time: 1_700_000_000,
+            app: "Kate".into(),
+            icon_name: "kate".into(),
+            summary: "Saved\tfile".into(),
+            body: "line 1\nline \\2".into(),
+            urgency: 1,
+            expire: -1,
+            ..Default::default()
+        };
         let text = encode_history(std::slice::from_ref(&n));
         assert_eq!(text.lines().count(), 1);
         assert_eq!(decode_history(&text), vec![n.clone()]);

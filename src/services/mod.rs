@@ -72,20 +72,37 @@ pub enum Command {
     Wifi(bool),
     Bluetooth(bool),
     /// Connect (`true`) or disconnect a device by its BlueZ path.
-    BluetoothDevice { path: String, connect: bool },
+    BluetoothDevice {
+        path: String,
+        connect: bool,
+    },
     /// Ask the Wi-Fi devices for a fresh list of networks.
     WifiScan,
     /// Join a network: its saved connection, or a new one (with the password, when it needs one).
-    WifiJoin { ssid: String, ap: String, device: String, password: Option<String> },
+    WifiJoin {
+        ssid: String,
+        ap: String,
+        device: String,
+        password: Option<String>,
+    },
     /// Percent.
     Brightness(u8),
     /// Percent of the default output (`true`) or input.
-    Volume { output: bool, percent: u8 },
-    Mute { output: bool, muted: bool },
+    Volume {
+        output: bool,
+        percent: u8,
+    },
+    Mute {
+        output: bool,
+        muted: bool,
+    },
     /// The sound picker: a `sound::Output` id.
     Output(u32),
     /// To the player `Update::Media` named.
-    Media { player: String, action: media::Action },
+    Media {
+        player: String,
+        action: media::Action,
+    },
     /// The pairing alert's answer.
     PairingAnswer(bool),
     /// The password NetworkManager asked for, or `None`: cancelled.
@@ -93,11 +110,23 @@ pub enum Command {
     /// The PIN or passkey typed for a pairing device, or `None`: cancelled.
     PinEntry(Option<String>),
     /// A click on a tray item without a menu, at screen `x`, `y`.
-    TrayActivate { service: String, path: String, x: i32, y: i32 },
+    TrayActivate {
+        service: String,
+        path: String,
+        x: i32,
+        y: i32,
+    },
     /// Fetch a tray item's dbusmenu.
-    TrayMenu { service: String, menu: String },
+    TrayMenu {
+        service: String,
+        menu: String,
+    },
     /// A row of that menu was clicked.
-    TrayClicked { service: String, menu: String, id: i32 },
+    TrayClicked {
+        service: String,
+        menu: String,
+        id: i32,
+    },
     /// Logo menu ▸ Sleep.
     Suspend,
     /// After the Restart alert.
@@ -105,9 +134,15 @@ pub enum Command {
     /// After the Shut Down alert.
     PowerOff,
     /// A notification went; tells its app.
-    NotificationClosed { id: u32, reason: notifications::Reason },
+    NotificationClosed {
+        id: u32,
+        reason: notifications::Reason,
+    },
     /// A notification's button (or the click on it, key "default").
-    NotificationAction { id: u32, key: String },
+    NotificationAction {
+        id: u32,
+        key: String,
+    },
     /// The history file's new text.
     SaveNotifications(String),
 }
@@ -188,8 +223,14 @@ fn get<'a>(interfaces: &'a Interfaces, interface: &str, property: &str) -> Optio
     interfaces.iter().find(|(name, _)| name.as_str() == interface)?.1.get(property)
 }
 
-async fn follow<'a, T, F>(bus: &'a Connection, service: &str, path: &str, updates: &Sender<Update>, wrap: fn(Option<T>) -> Update, read: impl Fn(&'a Connection) -> F)
-where
+async fn follow<'a, T, F>(
+    bus: &'a Connection,
+    service: &str,
+    path: &str,
+    updates: &Sender<Update>,
+    wrap: fn(Option<T>) -> Update,
+    read: impl Fn(&'a Connection) -> F,
+) where
     T: Clone + Debug + PartialEq,
     F: Future<Output = Option<T>>,
 {
@@ -274,11 +315,7 @@ async fn handle(
     }
 }
 
-#[zbus::proxy(
-    interface = "org.freedesktop.timedate1",
-    default_service = "org.freedesktop.timedate1",
-    default_path = "/org/freedesktop/timedate1"
-)]
+#[zbus::proxy(interface = "org.freedesktop.timedate1", default_service = "org.freedesktop.timedate1", default_path = "/org/freedesktop/timedate1")]
 trait Timedate {
     fn set_timezone(&self, timezone: &str, interactive: bool) -> zbus::Result<()>;
 }

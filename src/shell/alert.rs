@@ -15,9 +15,9 @@ use smithay::{
 };
 
 use crate::{
-    ui::field::{Edit, TextField},
     services::{Command, bluetooth::Pairing},
     state::State,
+    ui::field::{Edit, TextField},
 };
 
 const COUNTDOWN: Duration = Duration::from_secs(60);
@@ -34,12 +34,24 @@ pub enum Kind {
     Power(Power),
     Pair(Pairing),
     /// A frozen app's window was closed (E4.7): Wait / Force Quit.
-    NotResponding { app: String, pid: i32, client: ClientId },
+    NotResponding {
+        app: String,
+        pid: i32,
+        client: ClientId,
+    },
     /// A Wi-Fi password (E2.3): `join` has the access point and device paths when we join, `None` when
     /// NetworkManager asked (its secret agent); `field` is the password typed so far.
-    Wifi { ssid: String, join: Option<(String, String)>, field: TextField },
+    Wifi {
+        ssid: String,
+        join: Option<(String, String)>,
+        field: TextField,
+    },
     /// An old Bluetooth device needs a PIN (or six-digit passkey) typed (E2.3).
-    Pin { device: String, passkey: bool, field: TextField },
+    Pin {
+        device: String,
+        passkey: bool,
+        field: TextField,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -237,7 +249,9 @@ impl State {
             Kind::Pin { field, .. } => return self.services.send(Command::PinEntry((button == Button::Confirm).then_some(field.text))),
             Kind::Wifi { join: None, field, .. } => return self.services.send(Command::WifiSecret((button == Button::Confirm).then_some(field.text))),
             Kind::Wifi { .. } if button == Button::Cancel => return,
-            Kind::Wifi { ssid, join: Some((ap, device)), field } => return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) }),
+            Kind::Wifi { ssid, join: Some((ap, device)), field } => {
+                return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
+            }
         };
         match (power, self.nested) {
             (Power::LogOut, _) => self.loop_signal.stop(),
@@ -279,7 +293,8 @@ mod tests {
 
     #[test]
     fn pairing_text() {
-        let pair = |code: Option<&str>, answer| Alert { kind: Kind::Pair(Pairing { device: "Keyboard".into(), code: code.map(Into::into), answer }), deadline: None };
+        let pair =
+            |code: Option<&str>, answer| Alert { kind: Kind::Pair(Pairing { device: "Keyboard".into(), code: code.map(Into::into), answer }), deadline: None };
         let now = Instant::now();
         assert_eq!(pair(Some("012345"), true).body(now), "Make sure “Keyboard” shows the code 012345.");
         assert_eq!(pair(Some("012345"), false).body(now), "Type 012345 on “Keyboard”, then press Return.");

@@ -143,7 +143,8 @@ fn draw(ui: &mut Ui, output: Size<i32, Logical>) {
     let mark = ui.glass.len();
     let mut row = body(y);
     let cell = INNER / 6;
-    let switches = [(true, State::Normal), (false, State::Normal), (true, State::Disabled), (false, State::Disabled), (true, State::Focused), (false, State::Focused)];
+    let switches =
+        [(true, State::Normal), (false, State::Normal), (true, State::Disabled), (false, State::Disabled), (true, State::Focused), (false, State::Focused)];
     for (i, (on, state)) in switches.into_iter().enumerate() {
         let x = c2 + PAD + i as i32 * cell;
         caption(ui, if on { "On" } else { "Off" }, rect(x, row, cell, 13));
@@ -151,7 +152,8 @@ fn draw(ui: &mut Ui, output: Size<i32, Logical>) {
         caption(ui, name(state), rect(x, row + 40, cell, 13));
     }
     row += 40 + 13 + 16;
-    let rounds = [(true, State::Normal), (false, State::Normal), (false, State::Hover), (false, State::Pressed), (true, State::Disabled), (true, State::Focused)];
+    let rounds =
+        [(true, State::Normal), (false, State::Normal), (false, State::Hover), (false, State::Pressed), (true, State::Disabled), (true, State::Focused)];
     for (i, (on, state)) in rounds.into_iter().enumerate() {
         let x = c2 + PAD + i as i32 * cell;
         ui.round_toggle(rect(x + (cell - 28) / 2, row, 28, 28), Symbol::WifiHigh, on, state);

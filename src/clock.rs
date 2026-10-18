@@ -51,8 +51,7 @@ pub fn until_next_tick<Tz: TimeZone>(now: &DateTime<Tz>, seconds: bool) -> Durat
     const SECOND: u64 = 1_000_000_000;
     // A leap second shows up as nanosecond() >= 1e9: treat it as the end of the second.
     let into_second = u64::from(now.nanosecond()).min(SECOND - 1);
-    let (into, period) =
-        if seconds { (into_second, SECOND) } else { (u64::from(now.second()) * SECOND + into_second, 60 * SECOND) };
+    let (into, period) = if seconds { (into_second, SECOND) } else { (u64::from(now.second()) * SECOND + into_second, 60 * SECOND) };
     Duration::from_nanos(period - into)
 }
 

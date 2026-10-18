@@ -31,7 +31,9 @@ const CARD_RADIUS: f64 = 16.0;
 enum Shape {
     Panel,
     /// A notification card; banners float, so they cast a shadow.
-    Card { shadow: bool },
+    Card {
+        shadow: bool,
+    },
     /// A widget or the Do Not Disturb strip: `card`, radius 12.
     Widget,
     /// The plate peeking out under a collapsed group.
@@ -122,7 +124,18 @@ fn when(n: &Notification, banner: bool, hour24: bool) -> String {
 }
 
 #[expect(clippy::too_many_arguments, reason = "one card's pieces in one place")]
-fn card_pieces(pieces: &mut Pieces, shapes: &mut Vec<(Rect, Shape)>, text: &mut Text, symbols: &mut Symbols, ink: &Ink, card: &Card, n: &Notification, banner: bool, hour24: bool, scale: f64) {
+fn card_pieces(
+    pieces: &mut Pieces,
+    shapes: &mut Vec<(Rect, Shape)>,
+    text: &mut Text,
+    symbols: &mut Symbols,
+    ink: &Ink,
+    card: &Card,
+    n: &Notification,
+    banner: bool,
+    hour24: bool,
+    scale: f64,
+) {
     let width = |r: Rect| r.size.w.max(1) as u32;
     if let Some(close) = card.close {
         pieces.put(symbols.get(Symbol::X, Weight::Regular, 10, scale, ink.label), close, Align::Centre);
@@ -198,7 +211,11 @@ impl NotificationViews {
                 let row_w = |r: Rect| r.size.w.max(1) as u32;
                 if shown(center.date) {
                     let date = month.today.format("%A, %-d %B").to_string();
-                    pieces.put(text.label(&date, Style { size: 17, line_height: 22, weight: 600, color: ink.label, tabular: false }, row_w(center.date), scale), center.date, Align::Left);
+                    pieces.put(
+                        text.label(&date, Style { size: 17, line_height: 22, weight: 600, color: ink.label, tabular: false }, row_w(center.date), scale),
+                        center.date,
+                        Align::Left,
+                    );
                     // ponytail: ⚙ shows the sliders glyph and opens nothing until the Settings app (M7).
                     pieces.put(symbols.get(Symbol::Sliders, Weight::Regular, 16, scale, ink.secondary), center.settings, Align::Centre);
                 }
@@ -243,7 +260,11 @@ impl NotificationViews {
                 }
                 if let Some((card, slots)) = center.batteries.as_ref().filter(|(c, _)| shown(*c)) {
                     let title = Rectangle::new((card.loc.x + 12, card.loc.y + 10).into(), (card.size.w - 24, 20).into());
-                    pieces.put(text.label("Batteries", Style { size: 15, line_height: 20, weight: 600, color: ink.label, tabular: false }, row_w(title), scale), title, Align::Left);
+                    pieces.put(
+                        text.label("Batteries", Style { size: 15, line_height: 20, weight: 600, color: ink.label, tabular: false }, row_w(title), scale),
+                        title,
+                        Align::Left,
+                    );
                     for (slot, (name, percent)) in slots.iter().zip(batteries) {
                         let symbol = if name == "Laptop" { Symbol::BatteryHigh } else { Symbol::Headphones };
                         pieces.put(symbols.get(symbol, Weight::Regular, 18, scale, ink.label), Rectangle::new(slot.loc, (20, 20).into()), Align::Centre);
@@ -262,7 +283,8 @@ impl NotificationViews {
             self.glass = Some((key, glass));
         }
         self.labels = keep_buffers(&self.labels, pieces.0.iter().map(|(p, _, _)| p.clone()));
-        let mut out: Vec<SceneElement> = self.labels.iter().zip(&pieces.0).filter_map(|(label, (piece, rect, align))| place(renderer, label, piece, *rect, *align, scale)).collect();
+        let mut out: Vec<SceneElement> =
+            self.labels.iter().zip(&pieces.0).filter_map(|(label, (piece, rect, align))| place(renderer, label, piece, *rect, *align, scale)).collect();
         // The calendar overlaps nothing but the panel, so all of it can go in front of the other glass.
         out.extend(calendar);
         if let Some((_, glass)) = &self.glass {

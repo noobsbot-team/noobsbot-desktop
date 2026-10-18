@@ -372,7 +372,12 @@ impl State {
             self.sound.as_ref().map(|s| simple(menubar::volume(s))),
         ];
         let tray = self.tray.iter().map(|t| t.icon.clone()).collect();
-        Some(menubar::Content { app, tray, status: status.into_iter().flatten().collect(), clock: crate::clock::text(&chrono::Local::now(), self.config.clock.format) })
+        Some(menubar::Content {
+            app,
+            tray,
+            status: status.into_iter().flatten().collect(),
+            clock: crate::clock::text(&chrono::Local::now(), self.config.clock.format),
+        })
     }
 
     /// The window's app id; noobsbot and others set none, so then the process name.

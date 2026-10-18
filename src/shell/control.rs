@@ -141,7 +141,12 @@ pub fn track_in(card: Rect) -> Rect {
 
 /// The Now Playing buttons, right to left from the card's edge: previous, play/pause, next.
 pub fn media_buttons(card: Rect) -> [Rect; 3] {
-    let at = |i: i32| Rectangle::new((card.loc.x + card.size.w - 12 - TOGGLE - (2 - i) * (TOGGLE + 8), card.loc.y + (card.size.h - TOGGLE) / 2).into(), (TOGGLE, TOGGLE).into());
+    let at = |i: i32| {
+        Rectangle::new(
+            (card.loc.x + card.size.w - 12 - TOGGLE - (2 - i) * (TOGGLE + 8), card.loc.y + (card.size.h - TOGGLE) / 2).into(),
+            (TOGGLE, TOGGLE).into(),
+        )
+    };
     [at(0), at(1), at(2)]
 }
 
@@ -155,7 +160,8 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
     let dnd = card(PAD + HALF + GAP, y, HALF, small);
     let dark = card(PAD + HALF + GAP, y + small + GAP, HALF, small);
     // Right of a toggle: its title and subtitle.
-    let label_of = |t: Rect| Rectangle::new((t.loc.x + TOGGLE + 4, t.loc.y - 4).into(), (network.loc.x + network.size.w - t.loc.x - TOGGLE - 8, TOGGLE + 8).into());
+    let label_of =
+        |t: Rect| Rectangle::new((t.loc.x + TOGGLE + 4, t.loc.y - 4).into(), (network.loc.x + network.size.w - t.loc.x - TOGGLE - 8, TOGGLE + 8).into());
     let mut hits = vec![
         (Control::Wifi, toggle_in(network, 0)),
         (Control::WifiMore, label_of(toggle_in(network, 0))),
@@ -177,7 +183,9 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
     let list = open.then(|| {
         let rows = status.rows.len().max(1) as i32;
         let list = card(PAD, y, INNER, 2 * LIST_PAD + rows * LIST_ROW);
-        let cells: Vec<Rect> = (0..rows).map(|i| Rectangle::new((list.loc.x + LIST_PAD, list.loc.y + LIST_PAD + i * LIST_ROW).into(), (list.size.w - 2 * LIST_PAD, LIST_ROW).into())).collect();
+        let cells: Vec<Rect> = (0..rows)
+            .map(|i| Rectangle::new((list.loc.x + LIST_PAD, list.loc.y + LIST_PAD + i * LIST_ROW).into(), (list.size.w - 2 * LIST_PAD, LIST_ROW).into()))
+            .collect();
         hits.extend(cells.iter().take(status.rows.len()).enumerate().map(|(i, r)| (Control::Row(i), *r)));
         cards.push(list);
         y += list.size.h + GAP;
@@ -201,7 +209,10 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
         hits.push((Control::SoundMore, Rectangle::new(c.loc, (c.size.w, 28).into())));
         if open {
             for (i, (id, _, _)) in status.outputs.iter().enumerate() {
-                let row = Rectangle::new((c.loc.x + LIST_PAD, c.loc.y + SLIDER_CARD + LIST_PAD + i as i32 * LIST_ROW).into(), (c.size.w - 2 * LIST_PAD, LIST_ROW).into());
+                let row = Rectangle::new(
+                    (c.loc.x + LIST_PAD, c.loc.y + SLIDER_CARD + LIST_PAD + i as i32 * LIST_ROW).into(),
+                    (c.size.w - 2 * LIST_PAD, LIST_ROW).into(),
+                );
                 hits.push((Control::Output(*id), row));
                 outputs.push(row);
             }
@@ -223,7 +234,20 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
         c
     });
     // The last gap becomes the bottom padding.
-    Layout { rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()), cards, hits, network, dnd, dark, display, sound, outputs, list, media, power }
+    Layout {
+        rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()),
+        cards,
+        hits,
+        network,
+        dnd,
+        dark,
+        display,
+        sound,
+        outputs,
+        list,
+        media,
+        power,
+    }
 }
 
 /// The percent a slider shows with the pointer at `x`: the knob end follows the pointer, as on macOS.
@@ -326,13 +350,25 @@ impl State {
                     };
                     n.networks
                         .iter()
-                        .map(|w| ListRow { symbol: wifi_symbol(w.bars), name: w.ssid.clone(), detail: None, lock: w.secure, on: current == Some(w.ssid.as_str()) })
+                        .map(|w| ListRow {
+                            symbol: wifi_symbol(w.bars),
+                            name: w.ssid.clone(),
+                            detail: None,
+                            lock: w.secure,
+                            on: current == Some(w.ssid.as_str()),
+                        })
                         .collect()
                 }),
                 Some(Module::Bluetooth) => self.bluetooth.as_ref().map_or_else(Vec::new, |b| {
                     b.devices
                         .iter()
-                        .map(|d| ListRow { symbol: device_symbol(&d.name), name: d.name.clone(), detail: d.battery.map(|p| format!("{p}%")), lock: false, on: d.connected })
+                        .map(|d| ListRow {
+                            symbol: device_symbol(&d.name),
+                            name: d.name.clone(),
+                            detail: d.battery.map(|p| format!("{p}%")),
+                            lock: false,
+                            on: d.connected,
+                        })
                         .collect()
                 }),
                 _ => Vec::new(),

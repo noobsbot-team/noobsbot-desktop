@@ -1,6 +1,5 @@
 //! Bluetooth state from BlueZ (E2.3): whether it is on, and the paired devices with their battery level.
 
-
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
     Connection,
@@ -289,7 +288,10 @@ mod tests {
                     ("org.bluez.Battery1", &[("Percentage", value(80u8))]),
                 ]),
             ),
-            (path("/org/bluez/hci0/dev_2"), object(&[("org.bluez.Device1", &[("Alias", value("Keyboard")), ("Connected", value(false)), ("Paired", value(true))])])),
+            (
+                path("/org/bluez/hci0/dev_2"),
+                object(&[("org.bluez.Device1", &[("Alias", value("Keyboard")), ("Connected", value(false)), ("Paired", value(true))])]),
+            ),
             (path("/org/bluez/hci0/dev_4"), object(&[("org.bluez.Device1", &[("Alias", value("Stranger")), ("Connected", value(false))])])),
             (path("/org/bluez/hci0/dev_3"), object(&[("org.bluez.Device1", &[("Alias", value("Mouse")), ("Connected", value(true))])])),
         ]

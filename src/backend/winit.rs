@@ -21,7 +21,10 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, AlertSheet, Components, ControlCenter, ForceQuitWindow, DockIcon, DockView, Gallery, MenuBar, MenuPopover, NotificationViews, OsdPopover, Shaders, SwitcherPanel, View, Wallpaper},
+    render::{
+        self, AlertSheet, Components, ControlCenter, DockIcon, DockView, ForceQuitWindow, Gallery, MenuBar, MenuPopover, NotificationViews, OsdPopover,
+        Shaders, SwitcherPanel, View, Wallpaper,
+    },
     shell::Popup,
     state::State,
 };
@@ -92,7 +95,25 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), notifications: NotificationViews::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default(), switcher: SwitcherPanel::default(), force_quit: ForceQuitWindow::default(), components: None });
+    state.backend = Some(Winit {
+        backend,
+        output,
+        damage_tracker,
+        shaders,
+        wallpaper,
+        clock,
+        gallery: None,
+        menu_bar: MenuBar::default(),
+        notifications: NotificationViews::default(),
+        menu: MenuPopover::default(),
+        osd: OsdPopover::default(),
+        control: ControlCenter::default(),
+        alert: AlertSheet::default(),
+        dock: DockView::default(),
+        switcher: SwitcherPanel::default(),
+        force_quit: ForceQuitWindow::default(),
+        components: None,
+    });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -129,8 +150,25 @@ impl State {
         let dock_items = self.dock_items();
         let dock_layout = self.dock_layout(dock_items.len()).filter(|l| !dock_items.is_empty() && self.dock_visible(l));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, notifications, menu, osd, control, alert: sheet, dock, switcher, force_quit }) =
-            self.backend.as_mut()
+        let Some(Winit {
+            backend,
+            output,
+            damage_tracker,
+            shaders,
+            wallpaper,
+            clock,
+            gallery,
+            components,
+            menu_bar,
+            notifications,
+            menu,
+            osd,
+            control,
+            alert: sheet,
+            dock,
+            switcher,
+            force_quit,
+        }) = self.backend.as_mut()
         else {
             return;
         };
@@ -150,7 +188,18 @@ impl State {
                 match &self.alert {
                     Some(shown) => {
                         let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
-                        bar.extend(sheet.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, size, dark, accent, appearance.glass_opacity, scale));
+                        bar.extend(sheet.elements(
+                            renderer,
+                            shaders,
+                            &mut self.text,
+                            &mut self.symbols,
+                            shown,
+                            size,
+                            dark,
+                            accent,
+                            appearance.glass_opacity,
+                            scale,
+                        ));
                     }
                     None => sheet.hide(),
                 }
@@ -168,14 +217,39 @@ impl State {
                 let hour24 = self.config.clock.format.hour24;
                 if !cards.is_empty() {
                     let view = View::Banners { cards: &cards, more };
-                    bar.extend(notifications.elements(renderer, shaders, &mut self.text, &mut self.symbols, view, &self.notifications, hour24, dark, accent, appearance.glass_opacity, scale));
+                    bar.extend(notifications.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &mut self.symbols,
+                        view,
+                        &self.notifications,
+                        hour24,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
                 }
                 match self.popup {
                     Some(Popup::Notifications { year, month }) => {
-                        let shown = render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };
+                        let shown =
+                            render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };
                         if let Some(center) = &center {
                             let view = View::Center { center, month: &shown, batteries: &batteries, dnd: self.dnd };
-                            bar.extend(notifications.elements(renderer, shaders, &mut self.text, &mut self.symbols, view, &self.notifications, hour24, dark, accent, appearance.glass_opacity, scale));
+                            bar.extend(notifications.elements(
+                                renderer,
+                                shaders,
+                                &mut self.text,
+                                &mut self.symbols,
+                                view,
+                                &self.notifications,
+                                hour24,
+                                dark,
+                                accent,
+                                appearance.glass_opacity,
+                                scale,
+                            ));
                         }
                     }
                     Some(popup @ Popup::Menu(kind)) => {
@@ -184,11 +258,34 @@ impl State {
                         let rows = crate::shell::menu_rows(kind, &app, tray);
                         let anchor = menu_bar.pill(popup.item()).map_or(0, |r| r.loc.x);
                         let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
-                        bar.extend(menu.elements(renderer, shaders, &mut self.text, &rows, anchor, width, hover, dark, accent, appearance.glass_opacity, scale));
+                        bar.extend(menu.elements(
+                            renderer,
+                            shaders,
+                            &mut self.text,
+                            &rows,
+                            anchor,
+                            width,
+                            hover,
+                            dark,
+                            accent,
+                            appearance.glass_opacity,
+                            scale,
+                        ));
                     }
                     Some(Popup::Control) => {
                         if let Some(status) = &status {
-                            bar.extend(control.elements(renderer, shaders, &mut self.text, &mut self.symbols, status, width, dark, accent, appearance.glass_opacity, scale));
+                            bar.extend(control.elements(
+                                renderer,
+                                shaders,
+                                &mut self.text,
+                                &mut self.symbols,
+                                status,
+                                width,
+                                dark,
+                                accent,
+                                appearance.glass_opacity,
+                                scale,
+                            ));
                         }
                     }
                     None => {}
@@ -221,7 +318,17 @@ impl State {
                     bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, layout, px, scale));
                 }
                 if let (Some(components), Some(geo)) = (components.as_mut(), self.space.output_geometry(output)) {
-                    bar.extend(components.elements(renderer, shaders, &mut self.text, &mut self.symbols, geo.size, dark, accent, appearance.glass_opacity, scale));
+                    bar.extend(components.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &mut self.symbols,
+                        geo.size,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
                 }
                 let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar);
                 if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {

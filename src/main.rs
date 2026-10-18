@@ -3,8 +3,8 @@
 mod apps;
 mod backend;
 mod calendar;
-mod clock;
 mod clipboard;
+mod clock;
 mod config;
 mod decorations;
 mod frame;

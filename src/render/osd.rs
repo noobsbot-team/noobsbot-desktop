@@ -91,7 +91,8 @@ impl OsdPopover {
             None => Rectangle::new(place.loc, (w, h).into()),
         };
         self.labels = keep_buffers(&self.labels, [symbols.get(osd.symbol, Weight::Fill, SYMBOL as u16, scale, color), line]);
-        let mut out: Vec<SceneElement> = self.labels.iter().zip([symbol, place]).filter_map(|(label, rect)| label_element(renderer, label, rect, scale)).collect();
+        let mut out: Vec<SceneElement> =
+            self.labels.iter().zip([symbol, place]).filter_map(|(label, rect)| label_element(renderer, label, rect, scale)).collect();
         if let Some((_, glass)) = &self.glass {
             out.extend(glass.iter().cloned().map(SceneElement::Shader));
         }

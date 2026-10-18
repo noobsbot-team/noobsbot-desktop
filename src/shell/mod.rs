@@ -4,8 +4,8 @@
 pub mod alert;
 pub mod control;
 pub mod dock;
-pub mod notify;
 pub mod force_quit;
+pub mod notify;
 pub mod switcher;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
@@ -43,7 +43,10 @@ pub fn osd_rect(output_width: i32) -> Rect {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Popup {
     /// Notification Center (E4.2); its calendar shows (year, month 1–12).
-    Notifications { year: i32, month: u32 },
+    Notifications {
+        year: i32,
+        month: u32,
+    },
     Menu(Menu),
     Control,
 }

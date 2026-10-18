@@ -42,12 +42,8 @@ trait Player {
 
 pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
     let streams = async {
-        let owners = MatchRule::builder()
-            .msg_type(message::Type::Signal)
-            .sender("org.freedesktop.DBus")?
-            .member("NameOwnerChanged")?
-            .arg0ns(NAMESPACE)?
-            .build();
+        let owners =
+            MatchRule::builder().msg_type(message::Type::Signal).sender("org.freedesktop.DBus")?.member("NameOwnerChanged")?.arg0ns(NAMESPACE)?.build();
         let changes = MatchRule::builder().msg_type(message::Type::Signal).member("PropertiesChanged")?.path(PATH)?.build();
         let owners = MessageStream::for_match_rule(owners, bus, Some(16)).await?;
         let changes = MessageStream::for_match_rule(changes, bus, Some(16)).await?;

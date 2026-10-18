@@ -112,9 +112,8 @@ pub fn volume(sound: &Sound) -> Symbol {
 pub fn app_name(id: &str) -> String {
     let home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
     let system = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
-    let entry = std::iter::once(home.as_str())
-        .chain(system.split(':'))
-        .find_map(|dir| std::fs::read_to_string(format!("{dir}/applications/{id}.desktop")).ok());
+    let entry =
+        std::iter::once(home.as_str()).chain(system.split(':')).find_map(|dir| std::fs::read_to_string(format!("{dir}/applications/{id}.desktop")).ok());
     let name = entry.as_deref().and_then(|text| {
         let main = text.split_once("[Desktop Entry]")?.1;
         let main = main.split("\n[").next().unwrap_or(main);

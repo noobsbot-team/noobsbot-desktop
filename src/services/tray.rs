@@ -549,4 +549,3 @@ mod tests {
         assert_eq!(rows, vec![row(1, "Open", true), None, row(3, "✓ Mute", true), row(5, "More", false), row(6, "    A_B", false)]);
     }
 }
-

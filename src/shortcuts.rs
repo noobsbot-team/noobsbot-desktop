@@ -34,7 +34,10 @@ pub enum Action {
     /// Ask, then restart, shut down or log out (logo menu).
     Power(crate::shell::alert::Power),
     /// The app switcher (E4.5); `back`: Shift was held. `held` is the binding, whose modifiers keep it open.
-    Switcher { back: bool, held: crate::shell::switcher::Held },
+    Switcher {
+        back: bool,
+        held: crate::shell::switcher::Held,
+    },
     /// The Force Quit window (E4.7).
     ForceQuit,
     /// Shows or hides the quake terminal, starting `noobsbot --quake` the first time (E2.8).

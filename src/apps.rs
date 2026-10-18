@@ -216,7 +216,8 @@ impl Apps {
             walk(dir, &mut files);
             files.sort();
             for path in files {
-                let Some(id) = path.strip_prefix(dir).ok().and_then(|p| p.to_str()).and_then(|p| p.strip_suffix(".desktop")).map(|p| p.replace('/', "-")) else {
+                let Some(id) = path.strip_prefix(dir).ok().and_then(|p| p.to_str()).and_then(|p| p.strip_suffix(".desktop")).map(|p| p.replace('/', "-"))
+                else {
                     continue;
                 };
                 if !seen.insert(id.clone()) {
@@ -312,7 +313,8 @@ fn find_icon(name: &str) -> Option<PathBuf> {
         return Some(PathBuf::from(name)).filter(|p| p.is_file());
     }
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-    let bases: Vec<PathBuf> = std::iter::once(data_home().join("icons")).chain([home.join(".icons")]).chain(data_dirs().iter().skip(1).map(|d| d.join("icons"))).collect();
+    let bases: Vec<PathBuf> =
+        std::iter::once(data_home().join("icons")).chain([home.join(".icons")]).chain(data_dirs().iter().skip(1).map(|d| d.join("icons"))).collect();
     let files = |dir: &Path| [dir.join(format!("{name}.svg")), dir.join(format!("{name}.png"))];
     for theme in THEMES {
         for base in &bases {
@@ -375,7 +377,8 @@ fn rasterise(path: &Path, px: u32) -> Option<Rendered> {
             png::ColorType::Rgba => pixels,
             png::ColorType::Indexed => return None,
         };
-        let premultiplied = rgba.as_chunks::<4>().0.iter().flat_map(|p| [0, 1, 2].map(|i| (u16::from(p[i]) * u16::from(p[3]) / 255) as u8).into_iter().chain([p[3]])).collect();
+        let premultiplied =
+            rgba.as_chunks::<4>().0.iter().flat_map(|p| [0, 1, 2].map(|i| (u16::from(p[i]) * u16::from(p[3]) / 255) as u8).into_iter().chain([p[3]])).collect();
         return Some(rendered(premultiplied, info.width, info.height));
     }
     let tree = usvg::Tree::from_data(&bytes, &usvg::Options { resources_dir: path.parent().map(Path::to_owned), ..Default::default() }).ok()?;

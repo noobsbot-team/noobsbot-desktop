@@ -480,7 +480,9 @@ impl State {
         }
         let wanted = [n.desktop_entry.to_lowercase(), n.app.to_lowercase()];
         let window = self.space.elements().find(|w| {
-            let id = w.toplevel().and_then(|t| with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.app_id.clone())));
+            let id = w
+                .toplevel()
+                .and_then(|t| with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.app_id.clone())));
             id.is_some_and(|id| wanted.iter().any(|w| !w.is_empty() && id.to_lowercase().ends_with(w.as_str())))
         });
         if let Some(window) = window.cloned() {

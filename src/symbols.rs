@@ -143,6 +143,9 @@ mod tests {
                 assert!(ink.iter().all(|p| p[0] == p[3] && p[3] <= 128 && p[1] == 0 && p[2] == 0), "{symbol:?} {weight:?}");
             }
         }
-        assert!(Arc::ptr_eq(&symbols.get(Symbol::Sun, Weight::Fill, 16, 2.0, [255, 0, 0, 128]), &symbols.get(Symbol::Sun, Weight::Fill, 16, 2.0, [255, 0, 0, 128])));
+        assert!(Arc::ptr_eq(
+            &symbols.get(Symbol::Sun, Weight::Fill, 16, 2.0, [255, 0, 0, 128]),
+            &symbols.get(Symbol::Sun, Weight::Fill, 16, 2.0, [255, 0, 0, 128])
+        ));
     }
 }

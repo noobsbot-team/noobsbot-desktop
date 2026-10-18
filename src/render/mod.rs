@@ -20,6 +20,16 @@ mod wallpaper;
 
 use std::cell::RefCell;
 
+pub use alert::AlertSheet;
+pub use components::Components;
+pub use control::ControlCenter;
+pub use dock::{DockView, Icon as DockIcon};
+pub use force_quit::ForceQuitWindow;
+pub use gallery::Gallery;
+pub use menu::MenuPopover;
+pub use menubar::MenuBar;
+pub use notify::{NotificationViews, View};
+pub use osd::OsdPopover;
 use smithay::{
     backend::renderer::{
         Texture,
@@ -41,16 +51,6 @@ use smithay::{
     utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
     wayland::shell::wlr_layer::Layer,
 };
-pub use gallery::Gallery;
-pub use alert::AlertSheet;
-pub use components::Components;
-pub use control::ControlCenter;
-pub use dock::{DockView, Icon as DockIcon};
-pub use force_quit::ForceQuitWindow;
-pub use menu::MenuPopover;
-pub use menubar::MenuBar;
-pub use notify::{NotificationViews, View};
-pub use osd::OsdPopover;
 pub use switcher::SwitcherPanel;
 pub use wallpaper::Wallpaper;
 
