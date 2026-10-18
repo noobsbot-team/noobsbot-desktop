@@ -80,6 +80,8 @@ pub struct State {
 
     pub space: Space<Window>,
     pub popups: PopupManager,
+    /// The keyboard layouts and the active one (E6.12).
+    pub layouts: crate::ime::Layouts,
     pub seat: Seat<Self>,
     pub clipboard: Clipboard,
     /// Set by the backend once the renderer exists.
@@ -295,6 +297,7 @@ impl State {
             loop_handle: handle,
             space: Space::default(),
             popups: PopupManager::default(),
+            layouts: Default::default(),
             seat,
             clipboard: Clipboard::new(clipboard_tx),
             backend: None,
@@ -408,6 +411,7 @@ impl State {
             app,
             tray,
             status: status.into_iter().flatten().collect(),
+            input: self.input_item(),
             clock: crate::clock::text(&chrono::Local::now(), self.config.clock.format),
         })
     }
@@ -705,6 +709,7 @@ impl CompositorHandler for State {
 
         self.layer_commit(surface);
         self.popups.commit(surface);
+        self.ime_commit(surface);
         self.schedule_redraw();
         if let Some(PopupKind::Xdg(popup)) = self.popups.find_popup(surface)
             && !popup.is_initial_configure_sent()

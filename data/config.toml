@@ -107,6 +107,8 @@ hide = "intelligent"
 "Super+Alt+Escape" = "force-quit"
 "Super+N" = "notification-center"
 "Super+Space" = "spotlight"
+# Next keyboard layout (E6.12); fcitx5 keeps its own switch key for its input methods.
+"Super+Ctrl+Space" = "input-source"
 # Spaces (E5.1) and Mission Control (E5.2). Ctrl+arrows and Ctrl+digits stay with the apps.
 "Super+Left" = "space left"
 "Super+Right" = "space right"

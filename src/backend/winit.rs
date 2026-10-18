@@ -182,6 +182,7 @@ impl State {
         let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
         let dock_menu =
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
+        let input_menu = self.input_menu_rows();
         let overview = self.mission_frame();
         let slide = if overview.is_none() { self.slide_frame() } else { None };
         let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
@@ -352,7 +353,7 @@ impl State {
                         let (rows, anchor) = match (kind, dock_menu) {
                             (crate::shell::Menu::Dock, Some((rows, at))) => (rows, crate::shell::Anchor::Above(at)),
                             _ => (
-                                crate::shell::menu_rows(kind, &app, tray),
+                                if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray) },
                                 crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
                             ),
                         };

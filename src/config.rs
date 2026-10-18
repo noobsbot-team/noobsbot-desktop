@@ -334,6 +334,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Alt+Escape", "force-quit"),
         ("Super+N", "notification-center"),
         ("Super+Space", "spotlight"),
+        ("Super+Ctrl+Space", "input-source"),
         ("Super+Left", "space left"),
         ("Super+Right", "space right"),
         ("Super+1", "space 1"),

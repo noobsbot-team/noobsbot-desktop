@@ -1,6 +1,6 @@
 //! The rest of the E1.1/E1.7 protocols: layer shell, presentation time, pointer constraints, shortcut inhibiting,
 //! cursor shapes, fractional scale, tearing hints, security contexts, pointer gestures and text input (the input
-//! method behind it is E6.12).
+//! method behind it is E6.12, see ime.rs).
 
 use std::sync::{
     Arc,
@@ -29,6 +29,7 @@ use smithay::{
         compositor::{RegionAttributes, with_states},
         cursor_shape::CursorShapeManagerState,
         fractional_scale::{FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale},
+        input_method::InputMethodManagerState,
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor, KeyboardShortcutsInhibitorSeat,
         },
@@ -63,6 +64,7 @@ pub struct Protocols {
     _security_context: SecurityContextState,
     _tearing_control: GlobalId,
     _text_input: TextInputManagerState,
+    _input_method: InputMethodManagerState,
 }
 
 impl Protocols {
@@ -85,6 +87,8 @@ impl Protocols {
             _security_context: SecurityContextState::new::<State, _>(dh, unsandboxed),
             _tearing_control: dh.create_global::<State, WpTearingControlManagerV1, _>(1, ()),
             _text_input: TextInputManagerState::new::<State>(dh),
+            // An input method sees every key typed: not for sandboxed apps.
+            _input_method: InputMethodManagerState::new::<State, _>(dh, unsandboxed),
         }
     }
 }
