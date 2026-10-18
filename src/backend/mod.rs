@@ -16,8 +16,8 @@ use smithay::{
 
 use crate::{
     render::{
-        self, AlertSheet, Components, ControlCenter, DockView, ForceQuitWindow, Gallery, LaunchpadView, LockView, MenuBar, MenuPopover, MissionView,
-        NotificationViews, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, Wallpaper,
+        self, AlertSheet, Components, ControlCenter, DockView, EmojiPicker, ForceQuitWindow, Gallery, LaunchpadView, LockView, MenuBar, MenuPopover,
+        MissionView, NotificationViews, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, Wallpaper,
     },
     state::State,
 };
@@ -40,6 +40,7 @@ pub struct Views {
     pub switcher: SwitcherPanel,
     pub force_quit: ForceQuitWindow,
     pub spotlight: SpotlightPanel,
+    pub emoji: EmojiPicker,
     pub launchpad: LaunchpadView,
     pub mission: MissionView,
     /// Closing and minimising windows still animating (E5.5).
@@ -67,6 +68,7 @@ impl Views {
             switcher: SwitcherPanel::default(),
             force_quit: ForceQuitWindow::default(),
             spotlight: SpotlightPanel::default(),
+            emoji: EmojiPicker::default(),
             launchpad: LaunchpadView::default(),
             mission: MissionView::default(),
             ghosts: Vec::new(),

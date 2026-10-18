@@ -340,6 +340,19 @@ mod tests {
     }
 
     #[test]
+    fn emoji_render_in_colour() {
+        let Some(mut text) = text() else { return };
+        // Noto Color Emoji, Twemoji: cosmic-text's fallback finds either.
+        if !text.fonts().0.db().faces().any(|f| f.families.iter().any(|(name, _)| name.to_lowercase().contains("emoji"))) {
+            return eprintln!("no colour emoji font installed, skipping");
+        }
+        let r = text.label("😀", Style { size: 24, line_height: 30, ..HEADLINE }, 100, 1.0);
+        let coloured = r.pixels.as_chunks::<4>().0.iter().filter(|p| p[3] > 128 && p[0].abs_diff(p[2]) > 60).count();
+        eprintln!("emoji {}x{}, coloured px {coloured}", r.width, r.height);
+        assert!(coloured > 20, "no colour emoji font: install noto-fonts-emoji");
+    }
+
+    #[test]
     fn font_load_time() {
         let start = Instant::now();
         let Some(mut text) = text() else { return };

@@ -154,6 +154,7 @@ impl State {
             switcher,
             force_quit,
             spotlight,
+            emoji: emoji_view,
             launchpad: pad_view,
             mission,
             ghosts,
@@ -237,6 +238,9 @@ impl State {
                 appearance.glass_opacity,
                 scale,
             ));
+        }
+        if let Some(picker) = &self.emoji {
+            bar.extend(emoji_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, picker, dark, accent, appearance.glass_opacity, scale));
         }
         if let Some((count, current)) = indicator {
             bar.extend(mission.indicator(shaders, count, current, width, dark, appearance.glass_opacity, scale));

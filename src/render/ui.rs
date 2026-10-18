@@ -233,7 +233,7 @@ impl Ui<'_> {
     }
 
     /// A field's text, placeholder, selection and caret, and its D7 ring at `ring` radius, on a background drawn already.
-    fn field_text(&mut self, rect: Rect, field: &TextField, placeholder: &str, state: State, ring: Option<f64>) {
+    pub(super) fn field_text(&mut self, rect: Rect, field: &TextField, placeholder: &str, state: State, ring: Option<f64>) {
         let k = state.alpha();
         let large = rect.size.h >= 40;
         let (style, pad) = if large { (TITLE1, 16) } else { (BODY, 6) };

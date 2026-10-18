@@ -42,7 +42,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|emoji|emoji-search|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -234,6 +234,19 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             let text = if show == "spotlight" { "te" } else { "12*7" };
             let field = ui::field::TextField { text: text.into(), caret: text.len(), ..Default::default() };
             state.spotlight = Some(shell::spotlight::Spotlight { field, selected: 0 });
+        }
+        // The emoji picker centred, with sample recents; or searching "heart".
+        Some(show @ ("emoji" | "emoji-search")) => {
+            state.toggle_emoji();
+            if let Some(picker) = state.emoji.as_mut() {
+                picker.recent = ["😂", "❤️", "👍", "🎉", "🙏"].map(String::from).to_vec();
+                if show == "emoji-search" {
+                    picker.field = ui::field::TextField { text: "heart".into(), caret: 5, ..Default::default() };
+                    picker.selected = 2;
+                } else {
+                    picker.selected = 12;
+                }
+            }
         }
         // Launchpad, or Launchpad searching "k".
         Some("launchpad") => state.open_launchpad(),

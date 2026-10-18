@@ -9,7 +9,7 @@ use std::sync::{
 
 use smithay::{
     delegate_cursor_shape, delegate_fractional_scale, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_pointer_constraints,
-    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context, delegate_text_input_manager,
+    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context,
     desktop::{LayerSurface, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorIcon, CursorImageStatus, MotionEvent, PointerHandle, RelativeMotionEvent},
     output::Output,
@@ -416,7 +416,7 @@ delegate_fractional_scale!(State);
 delegate_relative_pointer!(State);
 delegate_pointer_constraints!(State);
 delegate_pointer_gestures!(State);
-delegate_text_input_manager!(State);
+// Text input: ime.rs delegates it, watching each request first (the emoji picker, E7.2).
 delegate_cursor_shape!(State);
 delegate_keyboard_shortcuts_inhibit!(State);
 delegate_security_context!(State);

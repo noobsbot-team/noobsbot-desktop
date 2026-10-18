@@ -5,11 +5,18 @@ use smithay::{
     delegate_input_method_manager,
     desktop::{PopupKind, PopupManager, utils::bbox_from_surface_tree},
     input::keyboard::Layout,
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::{
+        wayland_protocols::wp::text_input::zv3::server::{
+            zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+            zwp_text_input_v3::{self, ZwpTextInputV3},
+        },
+        wayland_server::{Client, DataInit, Dispatch, DisplayHandle, Resource, backend::ClientId, protocol::wl_surface::WlSurface},
+    },
     utils::{Logical, Point, Rectangle, Size},
     wayland::{
         input_method::{InputMethodHandler, PopupSurface},
         seat::WaylandFocus,
+        text_input::{TextInputManagerState, TextInputSeat, TextInputUserData},
     },
 };
 
@@ -32,6 +39,44 @@ pub struct Layouts {
     pub fcitx: bool,
 }
 
+/// One text-input-v3 object as its requests left it. smithay drops every request while no input method runs, so we
+/// read them first: the emoji picker (E7.2) commits into the field and opens at its cursor, fcitx5 or not.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub struct Field {
+    /// Commit requests so far: `done` must carry it.
+    serial: u32,
+    enabled: bool,
+    /// The text cursor, surface-local.
+    cursor: Option<Rectangle<i32, Logical>>,
+    /// Double-buffered until the next commit.
+    pending: (Option<bool>, Option<Rectangle<i32, Logical>>),
+}
+
+impl Field {
+    fn request(&mut self, request: &zwp_text_input_v3::Request) {
+        match *request {
+            zwp_text_input_v3::Request::Enable => self.pending.0 = Some(true),
+            zwp_text_input_v3::Request::Disable => self.pending.0 = Some(false),
+            zwp_text_input_v3::Request::SetCursorRectangle { x, y, width, height } => {
+                self.pending.1 = Some(Rectangle::new((x, y).into(), (width, height).into()));
+            }
+            zwp_text_input_v3::Request::Commit => {
+                self.serial = self.serial.wrapping_add(1);
+                let (enabled, cursor) = std::mem::take(&mut self.pending);
+                // Enabling starts from a clean state (the protocol's reset).
+                if enabled == Some(true) {
+                    self.cursor = None;
+                }
+                self.enabled = enabled.unwrap_or(self.enabled);
+                self.cursor = cursor.or(self.cursor);
+            }
+            _ => {}
+        }
+    }
+}
+
+pub type TextInputs = Vec<(ZwpTextInputV3, Field)>;
+
 /// Pairs the configured codes with xkb's names; a missing code (the layout fell back to xkb's default) becomes the
 /// name's first two letters.
 fn pair(codes: &str, names: Vec<String>) -> Vec<(String, String)> {
@@ -47,7 +92,7 @@ fn pair(codes: &str, names: Vec<String>) -> Vec<(String, String)> {
 
 /// Where the candidate popup goes, in global coordinates: under the text cursor, or above it when there's no room
 /// below, kept on `screen` sideways.
-fn place(cursor: Rectangle<i32, Logical>, size: Size<i32, Logical>, screen: Rectangle<i32, Logical>) -> Point<i32, Logical> {
+pub(crate) fn place(cursor: Rectangle<i32, Logical>, size: Size<i32, Logical>, screen: Rectangle<i32, Logical>) -> Point<i32, Logical> {
     let right = screen.loc.x + screen.size.w - size.w;
     let x = cursor.loc.x.min(right).max(screen.loc.x);
     let below = cursor.loc.y + cursor.size.h;
@@ -127,6 +172,29 @@ impl State {
         popup.set_location(at - origin);
     }
 
+    /// The enabled text field of the app with keyboard focus, and its surface.
+    fn focused_field(&self) -> Option<(ZwpTextInputV3, Field, WlSurface)> {
+        let focus = self.seat.text_input().focus()?;
+        let (input, field) = self.text_inputs.iter().find(|(t, f)| f.enabled && t.is_alive() && t.id().same_client_as(&focus.id()))?;
+        Some((input.clone(), *field, focus))
+    }
+
+    /// Types `text` into the focused text field, as an input method would; `false` when there is none.
+    pub fn commit_text(&mut self, text: &str) -> bool {
+        let Some((input, field, _)) = self.focused_field() else { return false };
+        input.commit_string(Some(text.to_owned()));
+        input.done(field.serial);
+        true
+    }
+
+    /// The focused text field's cursor, in global coordinates, when its app says where it is.
+    pub fn text_cursor(&self) -> Option<Rectangle<i32, Logical>> {
+        let (_, field, surface) = self.focused_field()?;
+        let window = self.space.elements().find(|w| w.wl_surface().as_deref() == Some(&surface))?;
+        let origin = self.space.element_geometry(window)?.loc - window.geometry().loc;
+        field.cursor.map(|c| Rectangle::new(origin + c.loc, c.size))
+    }
+
     /// An input-method popup committed: its size may have changed.
     pub fn ime_commit(&mut self, surface: &WlSurface) {
         if let Some(PopupKind::InputMethod(popup)) = self.popups.find_popup(surface) {
@@ -164,6 +232,37 @@ impl InputMethodHandler for State {
 
 delegate_input_method_manager!(State);
 
+// smithay's `delegate_text_input_manager!`, but each text-input request passes `Field::request` first.
+smithay::reexports::wayland_server::delegate_global_dispatch!(State: [ZwpTextInputManagerV3: ()] => TextInputManagerState);
+smithay::reexports::wayland_server::delegate_dispatch!(State: [ZwpTextInputManagerV3: ()] => TextInputManagerState);
+
+impl Dispatch<ZwpTextInputV3, TextInputUserData> for State {
+    fn request(
+        state: &mut Self,
+        client: &Client,
+        resource: &ZwpTextInputV3,
+        request: zwp_text_input_v3::Request,
+        data: &TextInputUserData,
+        dh: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        match state.text_inputs.iter_mut().find(|(t, _)| t == resource) {
+            Some((_, field)) => field.request(&request),
+            None => {
+                let mut field = Field::default();
+                field.request(&request);
+                state.text_inputs.push((resource.clone(), field));
+            }
+        }
+        <TextInputManagerState as Dispatch<ZwpTextInputV3, TextInputUserData, State>>::request(state, client, resource, request, data, dh, init);
+    }
+
+    fn destroyed(state: &mut Self, client: ClientId, resource: &ZwpTextInputV3, data: &TextInputUserData) {
+        state.text_inputs.retain(|(t, _)| t != resource);
+        <TextInputManagerState as Dispatch<ZwpTextInputV3, TextInputUserData, State>>::destroyed(state, client, resource, data);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +272,22 @@ mod tests {
         let names = || vec!["English (US)".to_string(), "Nepali".to_string()];
         assert_eq!(pair("us, np", names()), [("us".into(), "English (US)".into()), ("np".into(), "Nepali".into())]);
         assert_eq!(pair("", names()), [("en".into(), "English (US)".into()), ("ne".into(), "Nepali".into())]);
+    }
+
+    #[test]
+    fn field_state_applies_on_commit() {
+        use zwp_text_input_v3::Request;
+        let mut f = Field::default();
+        f.request(&Request::Enable);
+        f.request(&Request::SetCursorRectangle { x: 5, y: 6, width: 1, height: 18 });
+        assert!(!f.enabled && f.cursor.is_none(), "double-buffered");
+        f.request(&Request::Commit);
+        assert_eq!((f.serial, f.enabled, f.cursor), (1, true, Some(Rectangle::new((5, 6).into(), (1, 18).into()))));
+        // A commit without a new rectangle keeps the old one; disabling counts as a commit too.
+        f.request(&Request::Commit);
+        f.request(&Request::Disable);
+        f.request(&Request::Commit);
+        assert_eq!((f.serial, f.enabled, f.cursor.is_some()), (3, false, true));
     }
 
     #[test]
