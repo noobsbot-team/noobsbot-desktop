@@ -64,6 +64,8 @@ pub enum Action {
     Dock(crate::shell::dock::Command),
     /// Opens or closes Launchpad (E4.4; F4, off by default).
     Launchpad,
+    /// Installs the downloaded update, then logs out (logo menu / notification ▸ Restart to Update, E6.13).
+    InstallUpdate,
     /// The Space to the left (-1) or right (+1) (E5.1).
     SwitchSpace(i32),
     /// Space n, from 0.
@@ -303,6 +305,7 @@ impl State {
             Action::Dock(command) => self.dock_command(command),
             Action::Launchpad => self.toggle_launchpad(),
             Action::Screenshot(start) => self.screenshot(start),
+            Action::InstallUpdate => self.install_update(),
         }
     }
 

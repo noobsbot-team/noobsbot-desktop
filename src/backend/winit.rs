@@ -122,6 +122,10 @@ impl State {
         let center = self.center_layout();
         let (cards, more) = self.banner_layout();
         let batteries = self.batteries();
+        let calendar = match self.popup {
+            Some(Popup::Notifications { year, month }) => Some(self.calendar_view(year, month, self.config.clock.week_start.into())),
+            _ => None,
+        };
         let dock_items = self.dock_items();
         let dock_frame = self.dock_frame(&dock_items);
         let dock_layout = dock_frame.layout.clone();
@@ -132,6 +136,7 @@ impl State {
         let dock_menu =
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
         let input_menu = self.input_menu_rows();
+        let update_ready = self.update_ready();
         let overview = self.mission_frame();
         let slide = if overview.is_none() { self.slide_frame() } else { None };
         let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
@@ -278,9 +283,11 @@ impl State {
         let mark = bar.len();
         match self.popup {
             Some(Popup::Notifications { year, month }) => {
-                let shown = render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };
+                let week_start = self.config.clock.week_start.into();
+                let (dots, up_next) = calendar.clone().unwrap_or_default();
+                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots };
                 if let Some(center) = &center {
-                    let view = View::Center { center, month: &shown, batteries: &batteries, dnd: self.dnd };
+                    let view = View::Center { center, month: &shown, up_next: &up_next, batteries: &batteries, dnd: self.dnd };
                     bar.extend(notifications.elements(
                         renderer,
                         shaders,
@@ -302,7 +309,7 @@ impl State {
                 let (rows, anchor) = match (kind, dock_menu) {
                     (crate::shell::Menu::Dock, Some((rows, at))) => (rows, crate::shell::Anchor::Above(at)),
                     _ => (
-                        if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray) },
+                        if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray, update_ready) },
                         crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
                     ),
                 };

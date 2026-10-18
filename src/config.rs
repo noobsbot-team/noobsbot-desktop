@@ -44,6 +44,8 @@ pub struct Config {
     pub dock: Dock,
     pub idle: Idle,
     pub privacy: Privacy,
+    pub calendar: Calendar,
+    pub update: Update,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -246,6 +248,8 @@ impl Default for Config {
             dock: Dock::default(),
             idle: Idle::default(),
             privacy: Privacy::default(),
+            calendar: Calendar::default(),
+            update: Update::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -283,11 +287,31 @@ pub struct Dock {
 }
 
 /// Screen-recording answers (E6.11), by program path; the "would like to record this screen" alert fills them in.
+/// Calendar events (E7.2): `.ics` files, dirs or `dir/*.ics` patterns, read live.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Calendar {
+    pub files: Vec<String>,
+}
+
+impl Default for Calendar {
+    fn default() -> Self {
+        Self { files: vec!["~/.local/share/noobsbot-desktop/calendars/*.ics".into()] }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Privacy {
     pub screen_recording: Vec<String>,
     pub screen_recording_denied: Vec<String>,
+}
+
+/// Software Update (E6.13); read at start.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Update {
+    pub channel: crate::services::update::Channel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
