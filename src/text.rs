@@ -247,8 +247,8 @@ fn draw(buffer: &mut cosmic_text::BorrowedWithFontSystem<Buffer>, swash: &mut Sw
 
 /// Upload target for a label; `None` for an empty one. Keep it while the `Arc<Rendered>` is unchanged,
 /// so the texture is not re-imported every frame. Draw it with
-/// `MemoryRenderBufferRenderElement::from_buffer(renderer, physical_location, &buf, None, None, Some(logical_size), Kind::Unspecified)`,
-/// where `logical_size` is the pixel size divided by the output scale.
+/// `MemoryRenderBufferRenderElement::from_buffer(renderer, physical_location, &buf, None, Some(whole), Some(logical_size), Kind::Unspecified)`,
+/// where `whole` is the pixel size as a rect and `logical_size` the pixel size divided by the output scale.
 pub fn to_buffer(rendered: &Rendered) -> Option<MemoryRenderBuffer> {
     // Memory order R, G, B, A is DRM's little-endian Abgr8888; GLES treats memory buffers as premultiplied.
     (rendered.width > 0).then(|| {
