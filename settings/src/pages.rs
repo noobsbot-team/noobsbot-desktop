@@ -467,7 +467,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         Page::About => {
             let version = version();
             let head = column![
-                svg(svg::Handle::from_memory(include_bytes!("../../assets/logo.svg").as_slice())).width(72).height(72),
+                svg(svg::Handle::from_memory(include_bytes!("../../assets/logo.svg").as_slice())).width(72).height(72).style(Tokens::tint(t.label())),
                 text("Noobsbot Desktop").size(22).font(font(Weight::Semibold)),
                 text(format!("Opal · Version {version}")).size(12).color(t.secondary()),
             ]
