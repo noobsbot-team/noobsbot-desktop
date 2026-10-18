@@ -8,6 +8,53 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
+## [1.0.0-alpha.2](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.1...v1.0.0-alpha.2) - 2026-10-18
+
+### Added
+
+- *(weather)* Now shows the current conditions; weather toggle, city and units in System Settings
+- *(settings)* follow config.toml changes made elsewhere; no caret wakeups at idle
+- *(desktop)* desktop icons for the Desktop folder (E7.2, L12)
+- *(text)* centred line-capped wrapping; draw icon themes' embedded PNGs
+- *(weather)* Open-Meteo Weather widget in Notification Center, off by default
+- *(polkit)* own authentication agent with the password in our alert (E7.2)
+- *(update)* background signed download, Restart to Update, beta channel (E6.13)
+- *(update)* minisign-verified privileged install helper (E6.13)
+- *(greeter)* graphical login screen as a greetd greeter (E7.2)
+- *(capture)* read the screen back on the real screen too, any output transform
+- *(calendar)* .ics events with Up Next, event dots and reminders (E7.2)
+- *(ime)* list and switch fcitx5 input methods in the input menu
+- *(gestures)* Show Desktop on a 4-finger spread and a show-desktop action
+- *(motion)* fade popovers, the OSD and banners out; lay the bar out before its menus
+- *(emoji)* emoji picker popover with search, Recent row and category tabs (E7.2)
+
+### Fixed
+
+- *(ime)* send text-input enter/leave without an input method
+- *(greeter)* ring hugs the picked user's picture
+- *(update)* Restart to Update needs the installed helper
+- *(emoji)* draw picker emoji in the colour emoji font
+- *(greeter)* drop an unused type alias
+
+### Other
+
+- *(release)* read the last version from git tags (git_only)
+- *(polkit)* identities test also holds when run as root (CI)
+- *(plan)* mark the E7.2 extras done; L6, L12 and Open-5 settled
+- cargo fmt after the E7.2 merges
+- Merge branch 'worktree-agent-ab2253e4d740cdaca' into worktree-m1-compositor-core
+- Merge branch 'worktree-agent-a901a3602a0188690' into worktree-m1-compositor-core
+- Merge branch 'worktree-agent-ab4a766d91649324a' into worktree-m1-compositor-core
+- Merge branch 'worktree-m1-compositor-core' into worktree-agent-ab2253e4d740cdaca
+- Merge branch 'worktree-agent-ae436951edddb572f' into worktree-m1-compositor-core
+- Merge branch 'worktree-agent-a54b0dc818ff649e0' into worktree-m1-compositor-core
+- Merge branch 'worktree-agent-a6fe217bbe95274d4' into worktree-m1-compositor-core
+- *(plan)* graphical login screen done as an opt-in greetd greeter (E7.2)
+- Merge branch 'worktree-agent-a69b3d6465af9848a' into worktree-m1-compositor-core
+- Merge worktree-m1-compositor-core into the polkit agent branch
+- Merge branch 'worktree-agent-aa182b612f71235ff' into worktree-m1-compositor-core
+- Merge worktree-m1-compositor-core into the greeter branch
+
 ## [1.0.0-alpha.1](https://github.com/anil0403/noobsbot-desktop/releases/tag/v1.0.0-alpha.1) - 2026-10-18
 
 ### Added
