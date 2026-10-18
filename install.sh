@@ -137,8 +137,11 @@ install_aur() {
         run bash -c 'cd "$1" && makepkg -si --needed --noconfirm' _ "$CACHE/paru"
     fi
     say "Installing Helium and the WhiteSur themes (AUR)"
-    run paru -S --needed --noconfirm --skipreview helium-browser-bin \
-        whitesur-icon-theme whitesur-cursor-theme-git whitesur-gtk-theme-git kvantum-theme-whitesur-git
+    local aur=(helium-browser-bin whitesur-icon-theme whitesur-cursor-theme-git whitesur-gtk-theme-git kvantum-theme-whitesur-git)
+    # An AUR package that fails to build upstream (whitesur-gtk-theme-git did in 2026-10) must not stop the desktop
+    # itself from installing: paru still installs the ones that built, and the desktop runs without the rest.
+    run paru -S --needed --noconfirm --skipreview "${aur[@]}" ||
+        warn "some AUR packages failed to build; the desktop works without them. Retry later: paru -S --needed ${aur[*]}"
 }
 
 # use_version <ver>: points /usr/bin/noobsbot-desktop at versions/<ver>, keeping the previous ones for rollback (E6.13).
@@ -327,7 +330,8 @@ main() {
     real && enable_services
     user_settings
     security_check
-    say "Done. Reboot, log in at the text login screen, and Noobsbot Desktop starts."
+    if ((GREETER)); then say "Done. Reboot, log in at the login screen, and Noobsbot Desktop starts."
+    else say "Done. Reboot, log in at the text login screen, and Noobsbot Desktop starts."; fi
 }
 
 main
