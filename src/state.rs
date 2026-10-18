@@ -135,6 +135,9 @@ pub struct State {
     pub symbols: crate::symbols::Symbols,
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
+    pub osd: Option<crate::shell::Osd>,
+    /// Hides the OSD; replaced on every key press.
+    pub osd_timer: Option<smithay::reexports::calloop::RegistrationToken>,
 }
 
 impl State {
@@ -258,6 +261,8 @@ impl State {
             media: None,
             symbols: Default::default(),
             popup: None,
+            osd: None,
+            osd_timer: None,
             display_handle: dh,
         })
     }

@@ -11,7 +11,9 @@ use smithay::{
 use crate::{
     config::Config,
     services::{Command, media::Action as MediaAction},
+    shell::Osd,
     state::State,
+    symbols::Symbol,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,7 +174,7 @@ impl State {
                     self.focus_window(next, SERIAL_COUNTER.next_serial());
                 }
             }
-            // ponytail: one step per press, no repeat while held; the OSD (E2.7) waits for the M2 mockup approval.
+            // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
             Action::Volume(up) => {
                 let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
@@ -183,25 +185,51 @@ impl State {
                 }
                 output.volume = step(output.volume, up);
                 self.services.send(Command::Volume { output: true, percent: output.volume });
+                self.show_volume();
             }
             Action::Mute | Action::MicMute => {
                 let output = action == Action::Mute;
                 let sound = self.sound.as_mut();
                 let Some(device) = sound.and_then(|s| if output { Some(&mut s.output) } else { s.input.as_mut() }) else { return };
                 device.muted = !device.muted;
-                self.services.send(Command::Mute { output, muted: device.muted });
+                let muted = device.muted;
+                self.services.send(Command::Mute { output, muted });
+                if output {
+                    self.show_volume();
+                } else {
+                    let (symbol, text) = if muted { (Symbol::MicrophoneSlash, "Microphone Off") } else { (Symbol::Microphone, "Microphone On") };
+                    self.show_osd(Osd { symbol, level: None, text: Some(text.into()) });
+                }
             }
             Action::Brightness(up) => {
                 let Some(percent) = self.brightness.as_mut() else { return };
                 // Never to 0: a black screen leaves no way to see what happened.
                 *percent = step(*percent, up).max(1);
-                self.services.send(Command::Brightness(*percent));
+                let percent = *percent;
+                self.services.send(Command::Brightness(percent));
+                self.show_osd(Osd { symbol: Symbol::Sun, level: Some(percent), text: None });
             }
             Action::Media(media) => {
-                let Some(player) = self.media.as_ref().map(|m| m.player.clone()) else { return };
-                self.services.send(Command::Media { player, action: media });
+                let Some(now) = self.media.as_ref() else { return };
+                // What the key does, shown before the player's echo arrives.
+                let symbol = match media {
+                    MediaAction::PlayPause if now.playing => Symbol::Pause,
+                    MediaAction::PlayPause => Symbol::Play,
+                    MediaAction::Next => Symbol::SkipForward,
+                    MediaAction::Previous => Symbol::SkipBack,
+                };
+                let osd = Osd { symbol, level: None, text: Some(now.title.clone()).filter(|t| !t.is_empty()) };
+                self.services.send(Command::Media { player: now.player.clone(), action: media });
+                self.show_osd(osd);
             }
         }
+    }
+
+    /// The volume OSD for the default output: muted shows the crossed-out speaker at 0.
+    fn show_volume(&mut self) {
+        let Some(sound) = self.sound.as_ref() else { return };
+        let level = if sound.output.muted { 0 } else { sound.output.volume };
+        self.show_osd(Osd { symbol: crate::render::menubar::volume(sound), level: Some(level), text: None });
     }
 
     /// Starts a program on this display; a thread reaps it so no zombie is left. The user launched it, so it gets an

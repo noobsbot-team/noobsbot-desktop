@@ -8,7 +8,6 @@ use resvg::{tiny_skia, usvg};
 use crate::text::Rendered;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-#[cfg_attr(not(test), expect(dead_code, reason = "fill is for the Control Center's on states (E2.3)"))]
 pub enum Weight {
     Regular,
     /// The "on" state: an enabled toggle, the playing control.

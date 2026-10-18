@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, CalendarPopover, Gallery, MenuBar, MenuPopover, Shaders, Wallpaper},
+    render::{self, CalendarPopover, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
     shell::Popup,
     state::State,
 };
@@ -40,6 +40,7 @@ pub struct Winit {
     pub menu_bar: MenuBar,
     calendar: CalendarPopover,
     pub menu: MenuPopover,
+    osd: OsdPopover,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -84,7 +85,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default() });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default() });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -109,7 +110,7 @@ impl State {
     /// Draws one frame and tells apps it was shown. Runs only when something changed (see `schedule_redraw`).
     pub fn render(&mut self) {
         let content = self.menu_bar();
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar, menu }) = self.backend.as_mut() else { return };
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, menu_bar, calendar, menu, osd }) = self.backend.as_mut() else { return };
         let started = Instant::now();
         let age = backend.buffer_age().unwrap_or(0);
         let damage = match backend.bind() {
@@ -120,8 +121,11 @@ impl State {
                 let dark = render::is_dark(appearance);
                 let (geo_origin, width) = self.space.output_geometry(output).map_or(((0, 0).into(), 0), |g| (g.loc, g.size.w));
                 let accent = render::accent(appearance.accent, dark);
-                // Popups in front of the bar, the bar in front of windows.
+                // The OSD in front of popups, popups in front of the bar, the bar in front of windows.
                 let mut bar = Vec::new();
+                if let Some(shown) = &self.osd {
+                    bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
+                }
                 match self.popup {
                     Some(Popup::Calendar { year, month }) => {
                         let shown = render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };

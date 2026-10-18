@@ -4,12 +4,33 @@
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use smithay::utils::{Logical, Point, Rectangle};
 
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+
 use crate::{
     render::menubar::{self, BarItem},
     shortcuts::Action,
     state::State,
+    symbols::Symbol,
     wm::Rect,
 };
+
+/// The on-screen display (E2.7): a symbol with a level bar (volume, brightness) or a line of text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Osd {
+    pub symbol: Symbol,
+    /// Percent.
+    pub level: Option<u8>,
+    /// Shown instead of the bar when there's no level.
+    pub text: Option<String>,
+}
+
+/// How long the OSD stays after the last key press.
+const OSD_TIME: std::time::Duration = std::time::Duration::from_millis(1500);
+
+/// E2.7: 280 × 48 at the top right, under the bar.
+pub fn osd_rect(output_width: i32) -> Rect {
+    Rectangle::new(((output_width - MARGIN - 280).max(MARGIN), menubar::HEIGHT + DROP).into(), (280, 48).into())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Popup {
@@ -267,6 +288,23 @@ impl State {
         } else if matches!(open, Popup::Menu(_)) && backend.menu.row_at(from) != backend.menu.row_at(to) {
             self.schedule_redraw();
         }
+    }
+
+    /// Shows `osd` for 1.5 s after the latest call.
+    // ponytail: appears and goes without the `snappy` fade; animation comes with the spring module.
+    pub fn show_osd(&mut self, osd: Osd) {
+        if let Some(token) = self.osd_timer.take() {
+            self.loop_handle.remove(token);
+        }
+        self.osd = Some(osd);
+        let hide = self.loop_handle.insert_source(Timer::from_duration(OSD_TIME), |_, _, state| {
+            state.osd = None;
+            state.osd_timer = None;
+            state.schedule_redraw();
+            TimeoutAction::Drop
+        });
+        self.osd_timer = hide.inspect_err(|err| tracing::warn!("OSD timer: {err}")).ok();
+        self.schedule_redraw();
     }
 
     /// Esc: closes the open popup. `true` if there was one.

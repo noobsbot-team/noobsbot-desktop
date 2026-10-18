@@ -29,7 +29,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu] [-- command [args...]]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|osd] [-- command [args...]]";
 
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
@@ -116,7 +116,9 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         }
         Some("logo-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::Logo)),
         Some("app-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::App)),
-        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu)"),
+        // Stays up: no hide timer.
+        Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),
+        Some(other) => tracing::warn!("--show {other}: unknown popup (calendar, logo-menu, app-menu, osd)"),
         None => {}
     }
 

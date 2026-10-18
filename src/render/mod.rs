@@ -6,6 +6,7 @@ pub mod calendar;
 mod gallery;
 mod menu;
 pub mod menubar;
+mod osd;
 mod titlebar;
 mod wallpaper;
 
@@ -36,6 +37,7 @@ pub use gallery::Gallery;
 pub use calendar::CalendarPopover;
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
+pub use osd::OsdPopover;
 pub use wallpaper::Wallpaper;
 
 use crate::{
