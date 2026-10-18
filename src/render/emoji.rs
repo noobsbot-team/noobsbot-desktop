@@ -68,7 +68,8 @@ impl EmojiPicker {
                 if on {
                     ui.shape(Rectangle::new((rect.loc.x + 2, rect.loc.y + 2).into(), (rect.size.w - 4, rect.size.h - 4).into()), [r, g, b, 0.3], 8.0);
                 }
-                ui.text(emoji, EMOJI, rect, Align::Centre);
+                let piece = ui.text.emoji(emoji, Style { color: ui.ink(1.0), ..EMOJI }, ui.scale);
+                ui.pieces.push((piece, rect));
             };
             let header = Style { color, ..CAPTION };
             if let Some((title, row)) = &l.recent {
@@ -99,8 +100,9 @@ impl EmojiPicker {
                 if on {
                     ui.shape(Rectangle::new((rect.loc.x + 3, rect.loc.y + 2).into(), (rect.size.w - 6, rect.size.h - 4).into()), ui.fill(2.0), 7.0);
                 }
-                let style = Style { size: 17, line_height: 22, color: [255, 255, 255, if on { 255 } else { 150 }], ..EMOJI };
-                ui.text(icon, style, *rect, Align::Centre);
+                let style = Style { size: 17, line_height: 22, color: ui.ink(if on { 1.0 } else { 0.6 }), ..EMOJI };
+                let piece = ui.text.emoji(icon, style, ui.scale);
+                ui.pieces.push((piece, *rect));
             }
             let (mut glass, pieces) = (ui.glass, ui.pieces);
             glass.reverse();
