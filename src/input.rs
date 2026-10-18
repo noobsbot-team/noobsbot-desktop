@@ -57,6 +57,7 @@ pub fn resize_icon(edges: Edges) -> CursorIcon {
 
 impl State {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
+        self.idle_activity();
         match event {
             InputEvent::Keyboard { event } => {
                 let Some(keyboard) = self.seat.get_keyboard() else { return };
@@ -75,6 +76,14 @@ impl State {
                             }
                             None => FilterResult::Forward,
                         };
+                    }
+                    // Locked: the lock screen takes every key (or its client's lock surface gets them).
+                    if state.locked() {
+                        if state.lock_key(key.modified_sym(), mods.ctrl) {
+                            state.suppressed.push(code);
+                            return FilterResult::Intercept(None);
+                        }
+                        return FilterResult::Forward;
                     }
                     // An alert answers first (its field takes every key); then Esc closes an open menu-bar popup.
                     if state.alert_key(key.modified_sym(), mods.ctrl) {
@@ -132,6 +141,15 @@ impl State {
                 let serial = SERIAL_COUNTER.next_serial();
                 let state = event.state();
                 let location = pointer.current_location();
+                if self.locked() {
+                    if state == ButtonState::Pressed {
+                        self.lock_press(self.to_output(location));
+                    }
+                    // Only a client's lock surface (under the pointer, see surface_under) gets the button.
+                    pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
+                    pointer.frame(self);
+                    return;
+                }
                 // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
                 // pointer comes to the front.
                 if state == ButtonState::Pressed
@@ -183,6 +201,9 @@ impl State {
             InputEvent::PointerAxis { event } => {
                 let Some(pointer) = self.seat.get_pointer() else { return };
                 let source = event.source();
+                if self.lock.as_ref().is_some_and(|l| l.client_surface().is_none()) {
+                    return;
+                }
                 // Notification Center scrolls; a banner swipes away.
                 let amount = |axis| event.amount(axis).unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0);
                 let pos = self.to_output(pointer.current_location());
@@ -247,6 +268,11 @@ impl State {
     /// Top/overlay layer surfaces, then windows, then bottom/background layer surfaces; nothing over the menu bar or
     /// an open popup, which the shell draws itself.
     pub fn surface_under(&self, location: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
+        // Locked: only a client's lock surface, covering the output.
+        if let Some(lock) = &self.lock {
+            let origin = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.loc.to_f64()).unwrap_or_default();
+            return lock.client_surface().map(|s| (s.wl_surface().clone(), origin));
+        }
         if self.shell_covers(self.to_output(location)) {
             return None;
         }

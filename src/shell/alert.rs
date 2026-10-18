@@ -253,6 +253,11 @@ impl State {
                 return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
             }
         };
+        self.power_now(power);
+    }
+
+    /// Restart, shut down or log out without asking (the alert asked, or the lock screen's buttons).
+    pub fn power_now(&mut self, power: Power) {
         match (power, self.nested) {
             (Power::LogOut, _) => self.loop_signal.stop(),
             // A nested session is a window on another desktop: never restart or power off the machine under it.

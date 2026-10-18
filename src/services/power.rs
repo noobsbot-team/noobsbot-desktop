@@ -12,6 +12,8 @@ const PATH: &str = "/org/freedesktop/UPower/devices/DisplayDevice";
 pub struct Battery {
     pub percent: u8,
     pub charging: bool,
+    /// Running on the battery (discharging), not on AC.
+    pub on_battery: bool,
     /// Until empty while discharging, until full while charging; `None` while UPower is still estimating.
     pub minutes_left: Option<u32>,
 }
@@ -54,11 +56,11 @@ async fn read(bus: &Connection) -> Option<Battery> {
         2 => device.time_to_empty().await.ok()?,
         _ => 0,
     };
-    Some(from_raw(device.percentage().await.ok()?, charging, seconds))
+    Some(Battery { on_battery: matches!(state, 2 | 6), ..from_raw(device.percentage().await.ok()?, charging, seconds) })
 }
 
 fn from_raw(percentage: f64, charging: bool, seconds: i64) -> Battery {
-    Battery { percent: percentage.round().clamp(0.0, 100.0) as u8, charging, minutes_left: (seconds > 0).then_some((seconds / 60) as u32) }
+    Battery { percent: percentage.round().clamp(0.0, 100.0) as u8, charging, on_battery: false, minutes_left: (seconds > 0).then_some((seconds / 60) as u32) }
 }
 
 #[cfg(test)]
@@ -67,9 +69,9 @@ mod tests {
 
     #[test]
     fn raw_values() {
-        assert_eq!(from_raw(84.6, false, 11_400), Battery { percent: 85, charging: false, minutes_left: Some(190) });
+        assert_eq!(from_raw(84.6, false, 11_400), Battery { percent: 85, charging: false, on_battery: false, minutes_left: Some(190) });
         // UPower reports 0 s while it is still estimating.
         assert_eq!(from_raw(100.0, true, 0).minutes_left, None);
-        assert_eq!(from_raw(140.0, false, -5), Battery { percent: 100, charging: false, minutes_left: None });
+        assert_eq!(from_raw(140.0, false, -5), Battery { percent: 100, charging: false, on_battery: false, minutes_left: None });
     }
 }

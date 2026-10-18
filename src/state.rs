@@ -180,6 +180,10 @@ pub struct State {
     pub spaces: crate::spaces::Spaces,
     /// Mission Control (E5.2), while up or closing.
     pub mission: Option<crate::mission::Mission>,
+    /// The lock screen (E6.4), while locked.
+    pub lock: Option<crate::shell::lock::Lock>,
+    /// Idle timers, idle-notify, idle-inhibit and session-lock globals (E6.5).
+    pub idle: crate::idle::Idle,
 }
 
 impl State {
@@ -244,7 +248,7 @@ impl State {
             if let channel::Event::Msg(update) = event {
                 // Only the changed menu-bar item gets a new buffer, so the redraw damages just that item.
                 match update {
-                    crate::services::Update::Battery(battery) => state.battery = battery,
+                    crate::services::Update::Battery(battery) => state.battery_changed(battery),
                     crate::services::Update::Network(network) => state.network = network,
                     crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,
                     crate::services::Update::Profiles(profiles) => state.profiles = profiles,
@@ -262,6 +266,8 @@ impl State {
                     crate::services::Update::Disks(volumes) => state.disks_changed(volumes),
                     crate::services::Update::DiskFailed { name, error } => state.disk_failed(name, error),
                     crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
+                    crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
+                    crate::services::Update::Resumed => state.idle_activity(),
                 }
                 state.schedule_redraw();
             }
@@ -286,7 +292,7 @@ impl State {
             start_time: Instant::now(),
             socket_name,
             loop_signal: event_loop.get_signal(),
-            loop_handle: handle,
+            loop_handle: handle.clone(),
             space: Space::default(),
             popups: PopupManager::default(),
             seat,
@@ -351,6 +357,8 @@ impl State {
             launchpad: None,
             spaces: Default::default(),
             mission: None,
+            lock: None,
+            idle: crate::idle::Idle::new(&dh, handle.clone()),
             display_handle: dh,
         })
     }
@@ -517,6 +525,10 @@ impl State {
     /// Raises and activates `window`, giving it the keyboard; `None` clears focus.
     pub fn focus_window(&mut self, window: Option<Window>, serial: Serial) {
         let Some(keyboard) = self.seat.get_keyboard() else { return };
+        // While locked, no app gets the keyboard (a client lock screen keeps it).
+        if self.locked() {
+            return;
+        }
         // A layer surface with exclusive keyboard (a launcher, a lock screen) keeps it while it is up.
         let exclusive = self.exclusive_layer().map(|l| l.wl_surface().clone());
         match window {

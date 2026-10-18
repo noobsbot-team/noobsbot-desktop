@@ -22,8 +22,8 @@ use smithay::{
 use crate::{
     frame::FrameClock,
     render::{
-        self, AlertSheet, Components, ControlCenter, DockIcon, DockView, ForceQuitWindow, Gallery, LaunchpadFrame, LaunchpadView, MenuBar, MenuPopover,
-        MissionView, NotificationViews, OsdPopover, Shaders, SpotlightPanel, SwitcherPanel, View, Wallpaper,
+        self, AlertSheet, Components, ControlCenter, DockIcon, DockView, ForceQuitWindow, Gallery, LaunchpadFrame, LaunchpadView, LockContent, LockView,
+        MenuBar, MenuPopover, MissionView, NotificationViews, OsdPopover, SceneElement, Shaders, SpotlightPanel, SwitcherPanel, View, Wallpaper,
     },
     shell::Popup,
     state::State,
@@ -54,6 +54,7 @@ pub struct Winit {
     spotlight: SpotlightPanel,
     launchpad: LaunchpadView,
     mission: MissionView,
+    lock: LockView,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -116,6 +117,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         switcher: SwitcherPanel::default(),
         force_quit: ForceQuitWindow::default(),
         mission: MissionView::default(),
+        lock: LockView::default(),
         components: None,
         spotlight: SpotlightPanel::default(),
         launchpad: LaunchpadView::default(),
@@ -172,6 +174,7 @@ impl State {
         let slide = if overview.is_none() { self.slide_frame() } else { None };
         let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
         let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
+        let idle_shade = self.idle_shade();
         let Some(Winit {
             backend,
             output,
@@ -193,6 +196,7 @@ impl State {
             spotlight,
             launchpad: pad_view,
             mission,
+            lock: lock_view,
         }) = self.backend.as_mut()
         else {
             return;
@@ -439,6 +443,39 @@ impl State {
                     // Above the wallpaper (the last element), below every window.
                     elements.splice(elements.len().saturating_sub(1)..elements.len().saturating_sub(1), cards);
                 }
+                // Locked (E6.4): only the lock screen, ours or a client's, over the wallpaper.
+                // ponytail: the desktop's elements above are still built (cheap, and only on a redraw); skip them if a
+                // locked frame ever shows up in a profile.
+                if let (Some(lock), Some(geo)) = (&self.lock, self.space.output_geometry(output)) {
+                    elements = match lock.client_surface() {
+                        Some(surface) => smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
+                            renderer,
+                            surface.wl_surface(),
+                            (0, 0),
+                            scale,
+                            1.0,
+                            smithay::backend::renderer::element::Kind::Unspecified,
+                        )
+                        .into_iter()
+                        .map(SceneElement::Surface)
+                        .collect(),
+                        None => {
+                            let content = LockContent {
+                                lock,
+                                battery: self.battery,
+                                keyboard: &lock.keyboard,
+                                hour24: self.config.clock.format.hour24,
+                                now: chrono::Local::now(),
+                            };
+                            lock_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, &content, geo.size, dark, accent, appearance.glass_opacity, scale)
+                        }
+                    };
+                    elements.push(wallpaper.element(shaders, geo.size, dark));
+                }
+                // Idle (E6.5): dimmed, or black while the screen is off.
+                if let (Some(alpha), Some(geo)) = (idle_shade, self.space.output_geometry(output)) {
+                    elements.insert(0, SceneElement::Shader(lock_view.shade(shaders, geo.size, alpha, scale)));
+                }
                 damage_tracker.render_output(renderer, &mut framebuffer, age, &elements, [0.1, 0.1, 0.1, 1.0]).map(|result| {
                     if gallery.is_some() {
                         // The test scene is a benchmark: wait for the GPU so the time includes its work (E1.4 budget).
@@ -474,7 +511,8 @@ impl State {
         let elapsed = self.start_time.elapsed();
         // Hidden Spaces' apps get no frame callbacks, so they idle (E5.1).
         let top = self.space.output_geometry(output).map_or(0, |g| g.loc.y);
-        for window in self.space.elements().filter(|w| self.space.element_location(w).is_some_and(|l| crate::spaces::row_at(l.y, top) == 0)) {
+        // Locked, apps get none either: nothing of them is shown.
+        for window in self.space.elements().filter(|w| self.lock.is_none() && self.space.element_location(w).is_some_and(|l| crate::spaces::row_at(l.y, top) == 0)) {
             window.send_frame(output, elapsed, Some(Duration::ZERO), on_output);
             window.take_presentation_feedback(&mut feedback, on_output, |_, _| wp_presentation_feedback::Kind::empty());
         }
@@ -485,6 +523,9 @@ impl State {
         }
         layers.cleanup();
         drop(layers);
+        for surface in self.lock.iter().flat_map(|l| &l.surfaces) {
+            smithay::desktop::utils::send_frames_surface_tree(surface.wl_surface(), output, elapsed, Some(Duration::ZERO), on_output);
+        }
         if shown {
             // ponytail: nested, the swap returning stands in for the vblank and only CPU render time is measured; DRM
             // page-flip events and GPU timestamps give the real ones (M6).
@@ -500,6 +541,9 @@ impl State {
         // The dock redraws only while it bounces, slides, zooms or glows.
         if benchmark || dock_frame.animating || animating {
             self.schedule_redraw();
+        }
+        if shown {
+            self.lock_frame_shown();
         }
     }
 }

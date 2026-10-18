@@ -40,6 +40,7 @@ pub struct Config {
     pub windows: Windows,
     pub clock: Clock,
     pub dock: Dock,
+    pub idle: Idle,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -208,6 +209,7 @@ impl Default for Config {
             windows: Windows::default(),
             clock: Clock::default(),
             dock: Dock::default(),
+            idle: Idle::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -268,6 +270,24 @@ impl Default for Dock {
     }
 }
 
+/// Idle and sleep (E6.5): seconds without input before each step; 0 = never.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Idle {
+    pub dim: u32,
+    pub screen_off: u32,
+    pub sleep_on_battery: u32,
+    pub sleep_on_ac: u32,
+    /// Lock when the screen turns off.
+    pub lock: bool,
+}
+
+impl Default for Idle {
+    fn default() -> Self {
+        Self { dim: 120, screen_off: 300, sleep_on_battery: 900, sleep_on_ac: 0, lock: true }
+    }
+}
+
 impl Default for Appearance {
     fn default() -> Self {
         Self { mode: Mode::Light, accent: Accent::Blue, glass_opacity: 1.0, wallpaper: String::new(), wallpaper_dark: String::new(), theme_apps: false }
@@ -299,6 +319,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Alt+H", "hide-others"),
         ("Super+Tab", "switcher"),
         ("Super+Alt+Escape", "force-quit"),
+        ("Super+Ctrl+Q", "lock"),
         ("Super+N", "notification-center"),
         ("Super+Space", "spotlight"),
         ("Super+Left", "space left"),
@@ -327,6 +348,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("XF86AudioPause", "media play-pause"),
         ("XF86AudioNext", "media next"),
         ("XF86AudioPrev", "media previous"),
+        ("XF86PowerOff", "shut-down"),
     ]
     .into_iter()
     .map(|(k, v)| (k.into(), v.into()))

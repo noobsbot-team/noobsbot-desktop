@@ -36,9 +36,9 @@ pub struct Decoded {
 }
 
 /// 8-bit RGBX pixels.
-struct Image {
-    size: Size<i32, Buffer>,
-    rgbx: Vec<u8>,
+pub(super) struct Image {
+    pub(super) size: Size<i32, Buffer>,
+    pub(super) rgbx: Vec<u8>,
 }
 
 pub struct Wallpaper {
@@ -132,7 +132,7 @@ pub fn cover(image: Size<i32, Buffer>, output: Size<i32, Logical>) -> Rectangle<
 /// PNG by its signature, anything else as JPEG. Alpha is dropped: a wallpaper is opaque.
 /// ponytail: the GPU scales the full-size picture every frame it is damaged (linear filter, no mipmaps); downscale
 /// once per output size here if a huge photo shimmers or costs too much.
-fn decode(path: &Path) -> Result<Image, String> {
+pub(super) fn decode(path: &Path) -> Result<Image, String> {
     let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
     let (width, height, channels, pixels) = if bytes.starts_with(b"\x89PNG") {
         let mut decoder = png::Decoder::new(Cursor::new(&bytes));

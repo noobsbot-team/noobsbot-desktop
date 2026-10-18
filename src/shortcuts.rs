@@ -29,7 +29,9 @@ pub enum Action {
     HideOthers,
     /// Bring back every hidden window.
     ShowAll,
-    /// Suspend the computer (logo menu ▸ Sleep).
+    /// Lock the screen (Super+Ctrl+Q, logo menu ▸ Lock Screen; E6.4).
+    Lock,
+    /// Lock, then suspend the computer (logo menu ▸ Sleep).
     Sleep,
     /// Ask, then restart, shut down or log out (logo menu).
     Power(crate::shell::alert::Power),
@@ -124,6 +126,7 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("hide", "") => Some(Action::Hide),
         ("hide-others", "") => Some(Action::HideOthers),
         ("show-all", "") => Some(Action::ShowAll),
+        ("lock", "") => Some(Action::Lock),
         ("sleep", "") => Some(Action::Sleep),
         ("restart", "") => Some(Action::Power(Power::Restart)),
         ("shut-down", "") => Some(Action::Power(Power::ShutDown)),
@@ -214,7 +217,8 @@ impl State {
                 }
                 self.schedule_redraw();
             }
-            Action::Sleep => self.services.send(Command::Suspend),
+            Action::Lock => self.lock_screen(),
+            Action::Sleep => self.sleep(),
             Action::TrayMenu(id) => {
                 if let Some((service, menu, _)) = &self.tray_menu {
                     self.services.send(Command::TrayClicked { service: service.clone(), menu: menu.clone(), id });
