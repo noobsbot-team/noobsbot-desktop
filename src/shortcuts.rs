@@ -323,12 +323,12 @@ mod tests {
     #[test]
     fn looks_up_with_exact_modifiers() {
         let table = from_config(&Config::default());
-        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::b, false), Some(&Action::Spawn("brave".into())));
+        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::b, false), Some(&Action::Spawn("helium-browser".into())));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::b, false), None, "Shift is not part of Super+B");
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::b, false), None, "plain b goes to the app");
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::c, false), None, "Super+C passes through");
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::F12, false), Some(&Action::Spawn("noobsbot --quake".into())));
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::F12, false), None, "Super+F12 is not F12");
-        assert_eq!(lookup(&table, &mods(false, true, false), Keysym::b, true), Some(&Action::Spawn("brave".into())), "nested: Alt is the desktop key");
+        assert_eq!(lookup(&table, &mods(false, true, false), Keysym::b, true), Some(&Action::Spawn("helium-browser".into())), "nested: Alt is the desktop key");
     }
 }

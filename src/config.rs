@@ -37,7 +37,7 @@ pub struct Config {
     pub touchpad: Touchpad,
     pub windows: Windows,
     pub clock: Clock,
-    /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec brave"`, …). Parsed by input.rs.
+    /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
     pub rules: Vec<Rule>,
@@ -201,7 +201,7 @@ impl Default for Config {
             clock: Clock::default(),
             bindings: default_bindings(),
             rules: vec![Rule {
-                app_id: Some("brave-browser".into()),
+                app_id: None,
                 title: Some("^Picture in picture$".into()),
                 actions: crate::rules::Actions { float_above: Some(true), ..Default::default() },
             }],
@@ -231,7 +231,7 @@ impl Default for Windows {
 fn default_bindings() -> BTreeMap<String, String> {
     [
         ("Super+Return", "terminal"),
-        ("Super+B", "exec brave"),
+        ("Super+B", "exec helium-browser"),
         ("Super+E", "exec dolphin"),
         ("Super+Q", "quit"),
         ("Super+W", "close"),

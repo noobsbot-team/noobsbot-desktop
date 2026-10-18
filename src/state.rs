@@ -597,7 +597,7 @@ impl XdgShellHandler for State {
         &mut self.xdg_shell_state
     }
 
-    /// A rule can match on the title, so `float_above` follows it (Brave names its PiP window after it opens).
+    /// A rule can match on the title, so `float_above` follows it (Helium names its PiP window after it opens).
     fn title_changed(&mut self, surface: ToplevelSurface) {
         let float_above = self.resolve_rules(&surface).float_above;
         let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
@@ -834,7 +834,7 @@ impl XdgActivationHandler for State {
         focused.and_then(|f| f.client()).is_some_and(|c| data.client_id == Some(c.id()))
     }
 
-    /// An app asks to bring a window forward (e.g. a link clicked in the terminal raises Brave).
+    /// An app asks to bring a window forward (e.g. a link clicked in the terminal raises Helium).
     /// ponytail: any valid token under ACTIVATION_TIMEOUT is honoured, without checking its input serial.
     fn request_activation(&mut self, _token: XdgActivationToken, token_data: XdgActivationTokenData, surface: WlSurface) {
         if token_data.timestamp.elapsed() >= wm::ACTIVATION_TIMEOUT {

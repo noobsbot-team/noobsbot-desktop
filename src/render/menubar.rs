@@ -38,7 +38,7 @@ const SYMBOL: u16 = 16;
 /// What the bar shows; `State::menu_bar` builds it from the service states.
 #[derive(Debug, Default, PartialEq)]
 pub struct Content {
-    /// The focused app's id (`brave-browser`), else its process name; `None`: no window focused.
+    /// The focused app's id (`helium`), else its process name; `None`: no window focused.
     pub app: Option<String>,
     pub status: Vec<Item>,
     pub clock: String,

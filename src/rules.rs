@@ -176,7 +176,7 @@ mod tests {
             decorations = false
 
             [[rules]]
-            app_id = "brave-browser"
+            app_id = "helium"
             title = "^Picture in picture$"
             float_above = true
 
@@ -198,11 +198,11 @@ mod tests {
         assert_eq!(quake.size.map(|[w, h]| (w.to_px(1920), h.to_px(1000))), Some((1920, 400)));
         assert_eq!(quake.float_above, None);
 
-        assert_eq!(resolve(&r, "brave-browser", "Picture in picture").float_above, Some(true));
-        assert_eq!(resolve(&r, "brave-browser", "Picture in picture - YouTube").float_above, None);
+        assert_eq!(resolve(&r, "helium", "Picture in picture").float_above, Some(true));
+        assert_eq!(resolve(&r, "helium", "Picture in picture - YouTube").float_above, None);
         assert_eq!(resolve(&r, "noobsbot-other", "zsh"), Actions::default(), "app_id is exact");
 
-        let private = resolve(&r, "brave-browser", "New Private Tab");
+        let private = resolve(&r, "helium", "New Private Tab");
         assert_eq!((private.space, private.opacity), (Some(Space::Number(2)), Some(1.0)));
     }
 

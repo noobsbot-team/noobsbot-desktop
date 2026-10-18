@@ -1,4 +1,4 @@
-//! Now Playing (E2.3) over MPRIS: every media app (Brave, Spotify, mpv) publishes `org.mpris.MediaPlayer2.<app>` on
+//! Now Playing (E2.3) over MPRIS: every media app (Helium, Spotify, mpv) publishes `org.mpris.MediaPlayer2.<app>` on
 //! the session bus. Follows players appearing, leaving and changing track or state.
 
 use std::collections::HashMap;
@@ -124,7 +124,7 @@ mod tests {
         metadata.insert("xesam:artist".to_owned(), Value::from(vec!["A", "B"]).try_into().unwrap());
         let media = from_raw("org.mpris.MediaPlayer2.mpv", "Playing", &metadata).unwrap();
         assert_eq!((media.title.as_str(), media.artist.as_str(), media.playing), ("Opal", "A, B", true));
-        let media = from_raw("org.mpris.MediaPlayer2.brave", "Paused", &HashMap::new()).unwrap();
+        let media = from_raw("org.mpris.MediaPlayer2.helium", "Paused", &HashMap::new()).unwrap();
         assert_eq!((media.title.as_str(), media.artist.as_str(), media.playing), ("", "", false));
         assert_eq!(from_raw("org.mpris.MediaPlayer2.mpv", "Stopped", &metadata), None);
     }

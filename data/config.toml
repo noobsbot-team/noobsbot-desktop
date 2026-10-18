@@ -58,7 +58,7 @@ week_start = "sunday"
 # "brightness up|down", "media play-pause|next|previous".
 [bindings]
 "Super+Return" = "terminal"
-"Super+B" = "exec brave"
+"Super+B" = "exec helium-browser"
 "Super+E" = "exec dolphin"
 "Super+Q" = "quit"
 "Super+W" = "close"
@@ -103,8 +103,7 @@ week_start = "sunday"
 #   decorations = false
 #   layer = "overlay"
 
-# Brave's picture-in-picture window stays on top.
+# The browser's (Helium, any Chromium) picture-in-picture window stays on top.
 [[rules]]
-app_id = "brave-browser"
 title = "^Picture in picture$"
 float_above = true

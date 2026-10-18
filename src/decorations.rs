@@ -222,7 +222,7 @@ impl XdgDecorationHandler for State {
         self.set_xdg_decoration(toplevel, Mode::ServerSide);
     }
 
-    /// An app that insists on its own title bar keeps it (Brave with its tabs in the title bar, F2).
+    /// An app that insists on its own title bar keeps it (Helium with its tabs in the title bar, F2).
     fn request_mode(&mut self, toplevel: ToplevelSurface, mode: Mode) {
         self.set_xdg_decoration(toplevel, mode);
     }
