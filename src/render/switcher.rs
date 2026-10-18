@@ -69,7 +69,9 @@ impl SwitcherPanel {
         let key = (panel, highlight, names.to_vec(), dark, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             let mut glass = tiles;
-            glass.push(shaders.glass_shape(highlight, [1.0, 1.0, 1.0, 0.20], 12.0, false, dark, scale));
+            // White @ 20% (E4.5) vanishes on light hud glass: there, black @ 10%.
+            let fill = if dark { [1.0, 1.0, 1.0, 0.20] } else { [0.0, 0.0, 0.0, 0.10] };
+            glass.push(shaders.glass_shape(highlight, fill, 12.0, false, dark, scale));
             let spec = Material::Hud.spec(dark);
             let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
             glass.push(shaders.glass_shape(panel, [r, g, b, spec.opacity * glass_opacity], RADIUS, true, dark, scale));
