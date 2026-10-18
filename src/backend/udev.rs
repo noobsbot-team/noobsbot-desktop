@@ -302,11 +302,8 @@ impl State {
         for output in &outputs {
             let Some(mode) = output.current_mode() else { continue };
             let mm = output.physical_properties().size;
-            let scale = if configured > 0.0 {
-                configured.clamp(1.0, 3.0)
-            } else {
-                pick_scale((mode.size.w, mode.size.h), (mm.w.max(0) as u32, mm.h.max(0) as u32))
-            };
+            let scale =
+                if configured > 0.0 { configured.clamp(1.0, 3.0) } else { pick_scale((mode.size.w, mode.size.h), (mm.w.max(0) as u32, mm.h.max(0) as u32)) };
             output.change_current_state(None, None, Some(OutputScale::Fractional(scale)), Some((x, 0).into()));
             self.space.map_output(output, (x, 0));
             layer_map_for_output(output).arrange();
