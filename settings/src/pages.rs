@@ -6,10 +6,10 @@ use std::{collections::HashMap, sync::LazyLock};
 use iced::{
     Alignment, Color, Element, Length,
     font::Weight,
-    widget::{button, column, container, row, slider, space, svg, text, text_input, toggler},
+    widget::{button, canvas, column, container, pick_list, row, slider, space, svg, text, text_input, toggler},
 };
 
-use crate::{App, Message, font, style::Tokens};
+use crate::{App, Message, arrange::Arrangement, display_info::Display, font, style::Tokens};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -458,15 +458,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             }
             parts
         }
-        Page::Displays => {
-            let displays = crate::system::displays();
-            let rows = if displays.is_empty() {
-                vec![fact(t, "No display information", String::new())]
-            } else {
-                displays.into_iter().map(|(name, mode)| fact(t, display_name(&name), mode)).collect()
-            };
-            vec![group(t, "Connected displays", rows), note(t, "Arranging displays, scale and refresh rate come with multi-monitor support.")]
-        }
+        Page::Displays => displays_part(app),
         Page::About => {
             let version = version();
             let head = column![
@@ -517,9 +509,188 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
     }
 }
 
-/// `eDP-1` → `Built-in display`, `HDMI-A-1` → `HDMI-A-1`.
-fn display_name(connector: &str) -> String {
-    if connector.starts_with("eDP") || connector.starts_with("LVDS") { "Built-in display".into() } else { connector.to_owned() }
+/// `eDP-1` → `Built-in display`, `winit` → `Nested window`, `HDMI-A-1` → `HDMI-A-1`.
+pub fn display_name(connector: &str) -> String {
+    match connector {
+        _ if crate::display_info::built_in(connector) => "Built-in display".into(),
+        "winit" => "Nested window".into(),
+        _ => connector.to_owned(),
+    }
+}
+
+/// A resolution in a dropdown.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Resolution(i32, i32);
+
+impl std::fmt::Display for Resolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} × {}", self.0, self.1)
+    }
+}
+
+/// A refresh rate (mHz) in a dropdown.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Rate(i32);
+
+impl std::fmt::Display for Rate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:.2} Hz", f64::from(self.0) / 1000.0)
+    }
+}
+
+/// The scale presets (Cinnamon's and macOS's steps).
+const SCALES: [f64; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
+
+/// `1.25` → `125%`, `1.333` → `133%`.
+fn percent(scale: f64) -> String {
+    format!("{:.0}%", scale * 100.0)
+}
+
+/// A typed custom scale: `133%`, `133` or `1.33` → 1.33; `None` outside 100 … 300%.
+pub fn parse_scale(typed: &str) -> Option<f64> {
+    let typed = typed.trim().trim_end_matches('%').trim();
+    let value: f64 = typed.parse().ok()?;
+    let scale = if value >= 10.0 { value / 100.0 } else { value };
+    (1.0..=3.0).contains(&scale).then(|| (scale * 1000.0).round() / 1000.0)
+}
+
+/// A segmented control (D8) of `(label, selected, message)`.
+fn segments<'a>(t: Tokens, items: Vec<(String, bool, Message)>) -> Element<'a, Message> {
+    let mut row = row![].spacing(2);
+    for (label, selected, message) in items {
+        row = row.push(button(text(label).size(12).center()).padding([2, 8]).height(22).style(t.segment(selected)).on_press(message));
+    }
+    container(row).padding(2).style(t.field()).into()
+}
+
+/// The Displays page (E6.2): the arrangement, then the selected display's settings, from `displays.json`.
+fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
+    let t = app.tokens;
+    if app.displays.is_empty() {
+        // The desktop isn't running (or is older): what the kernel says is connected.
+        let rows: Vec<_> = crate::system::displays().into_iter().map(|(name, mode)| fact(t, display_name(&name), mode)).collect();
+        let rows = if rows.is_empty() { vec![fact(t, "No display information", String::new())] } else { rows };
+        return vec![group(t, "Connected displays", rows), note(t, "Arrangement, resolution and scale show while Noobsbot Desktop is running.")];
+    }
+    let selected = app.selected_display();
+    let mut parts = Vec::new();
+    let on: Vec<&Display> = app.displays.iter().filter(|d| d.enabled).collect();
+    let arrangement = Arrangement { displays: on, selected: selected.map(|d| d.name.as_str()), tokens: t };
+    parts.push(group(t, "", vec![container(canvas(arrangement).width(Length::Fill).height(200)).padding(4).into()]));
+    parts.push(note(
+        t,
+        if app.displays.len() > 1 {
+            "Drag the displays to arrange them; the white bar marks the main display (the menu bar and the Dock)."
+        } else {
+            "The white bar marks the main display: it has the menu bar and the Dock."
+        },
+    ));
+    // Displays that are off aren't in the arrangement: pick any one here.
+    if app.displays.len() > 1 {
+        let items =
+            app.displays.iter().map(|d| (display_name(&d.name), selected.is_some_and(|s| s.name == d.name), Message::SelectDisplay(d.name.clone()))).collect();
+        parts.push(container(segments(t, items)).center_x(Length::Fill).into());
+    }
+    let Some(d) = selected else { return parts };
+    let name: &'a str = &d.name;
+    let change = move |changes: Vec<(&'static str, toml_edit::Value)>| Message::Output(name.to_owned(), changes);
+    let mut rows = Vec::new();
+    let maker = [d.make.as_str(), d.model.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+    let size = (d.width_mm > 0).then(|| {
+        let inches = f64::from(d.width_mm).hypot(f64::from(d.height_mm)) / 25.4;
+        format!("{inches:.1}-inch, {} × {} mm", d.width_mm, d.height_mm)
+    });
+    let about = [Some(maker).filter(|m| !m.is_empty()), size].into_iter().flatten().collect::<Vec<_>>().join(" · ");
+    if !about.is_empty() {
+        rows.push(fact(t, "Display", about));
+    }
+    if !d.nested {
+        rows.push(line(t, "Use this display", "", toggle(t, d.enabled, move |on| change(vec![("enabled", on.into())]))));
+    }
+    if d.enabled && app.displays.len() > 1 {
+        let control: Element<'a, Message> = if d.primary {
+            text("Main display").size(13).color(t.secondary()).into()
+        } else {
+            button(text("Set as Primary").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::Primary(name.to_owned())).into()
+        };
+        rows.push(line(t, "Menu bar and Dock", "", control));
+    }
+    if d.nested {
+        rows.push(fact(t, "Resolution", format!("{} (the window's size)", Resolution(d.mode.width, d.mode.height))));
+    } else {
+        let mut sizes: Vec<Resolution> = Vec::new();
+        for m in &d.modes {
+            if !sizes.contains(&Resolution(m.width, m.height)) {
+                sizes.push(Resolution(m.width, m.height));
+            }
+        }
+        sizes.sort_by_key(|r| std::cmp::Reverse(r.0 * r.1));
+        let preferred = d.modes.iter().find(|m| m.preferred).map(|m| (m.width, m.height));
+        let help = if preferred == Some((d.mode.width, d.mode.height)) { "Recommended" } else { "" };
+        let pick = pick_list(sizes, Some(Resolution(d.mode.width, d.mode.height)), move |r: Resolution| {
+            change(vec![("mode", format!("{}x{}", r.0, r.1).into()), ("refresh", 0.0.into())])
+        });
+        rows.push(line(t, "Resolution", help, pick.text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()));
+        let mut rates: Vec<Rate> = d.modes.iter().filter(|m| (m.width, m.height) == (d.mode.width, d.mode.height)).map(|m| Rate(m.refresh)).collect();
+        rates.sort_by_key(|r| std::cmp::Reverse(r.0));
+        rates.dedup();
+        let pick = pick_list(rates, Some(Rate(d.mode.refresh)), move |r: Rate| change(vec![("refresh", ((f64::from(r.0) / 10.0).round() / 100.0).into())]));
+        rows.push(line(t, "Refresh rate", "", pick.text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()));
+    }
+    // The entry's own scale; 0 or none = the default ([display] scale, else auto).
+    let own = app.config.output(&d.name).and_then(|e| e.get("scale")).and_then(|v| v.as_float().or(v.as_integer().map(|i| i as f64))).unwrap_or(0.0);
+    let global = app.config.num("display.scale");
+    let default = if global > 0.0 { global } else { d.auto_scale };
+    let mut items = vec![("Default".to_string(), own <= 0.0, change(vec![("scale", 0.0.into())]))];
+    items.extend(SCALES.iter().map(|&s| (percent(s), own == s, change(vec![("scale", s.into())]))));
+    let custom_key = format!("display.custom_scale.{}", d.name);
+    let typed = app.texts.get(&custom_key).cloned().unwrap_or_else(|| if own > 0.0 && !SCALES.contains(&own) { percent(own) } else { String::new() });
+    let custom = text_input("Custom", &typed)
+        .on_input({
+            let key = custom_key.clone();
+            move |v| Message::Type(key.clone(), v)
+        })
+        .on_submit(Message::Submit(custom_key))
+        .size(12)
+        .padding([3, 6])
+        .width(64)
+        .style(t.input(false));
+    let help = format!("Default: {} ({})", percent(default), if global > 0.0 { "every display" } else { "from the pixel density" });
+    let scale_row = row![segments(t, items), custom].spacing(8).align_y(Alignment::Center);
+    rows.push(
+        column![
+            line(t, "Scale", "", space().into()),
+            container(scale_row).padding(iced::Padding { top: 0.0, right: 12.0, bottom: 4.0, left: 12.0 }),
+            container(text(help).size(11).color(t.secondary())).padding(iced::Padding { top: 0.0, right: 12.0, bottom: 8.0, left: 12.0 })
+        ]
+        .into(),
+    );
+    let rotations = [(0, "Normal"), (90, "90°"), (180, "180°"), (270, "270°")];
+    let items = rotations.iter().map(|&(deg, label)| (label.to_string(), d.rotation == deg, change(vec![("rotation", i64::from(deg).into())]))).collect();
+    rows.push(line(t, "Rotation", "", segments(t, items)));
+    parts.push(group(t, if d.nested { "Nested window" } else { "Display settings" }, rows));
+    if d.nested {
+        parts.push(note(t, "Nested in another desktop, only scale and rotation apply; the window's size is the resolution."));
+    }
+    parts
+}
+
+/// "Keep these display settings?" over the page, counting down to the revert (Cinnamon's safety prompt).
+pub fn keep_sheet<'a>(t: Tokens, left: u64) -> Element<'a, Message> {
+    let card = column![
+        text("Keep these display settings?").size(15).font(font(Weight::Semibold)),
+        text(format!("The previous settings come back in {left} second{}.", if left == 1 { "" } else { "s" })).size(12).color(t.secondary()),
+        row![
+            space().width(Length::Fill),
+            button(text("Revert").size(13)).padding([4, 14]).style(t.push(false)).on_press(Message::Revert),
+            button(text("Keep Changes").size(13)).padding([4, 14]).style(t.push(true)).on_press(Message::Keep),
+        ]
+        .spacing(8),
+    ]
+    .spacing(10)
+    .width(340);
+    let sheet = container(card).padding(18).style(t.sheet());
+    iced::widget::opaque(container(sheet).center(Length::Fill).style(t.dim()))
 }
 
 /// The desktop's version: the root package's, which release-plz bumps (this crate's own stays 0.1.0).
@@ -559,6 +730,20 @@ mod tests {
 
     fn semver_like(v: &str) -> bool {
         v.split('.').count() == 3 && v.split('.').all(|p| p.chars().next().is_some_and(|c| c.is_ascii_digit()))
+    }
+
+    #[test]
+    fn custom_scales() {
+        assert_eq!(parse_scale("133%"), Some(1.33));
+        assert_eq!(parse_scale(" 133 "), Some(1.33));
+        assert_eq!(parse_scale("1.333"), Some(1.333));
+        assert_eq!(parse_scale("2"), Some(2.0));
+        assert_eq!(parse_scale("90%"), None);
+        assert_eq!(parse_scale("400"), None);
+        assert_eq!(parse_scale("big"), None);
+        assert_eq!(percent(1.25), "125%");
+        assert_eq!(display_name("eDP-1"), "Built-in display");
+        assert_eq!(display_name("HDMI-A-1"), "HDMI-A-1");
     }
 
     #[test]

@@ -1,17 +1,20 @@
 //! Noobsbot Desktop System Settings (E7.1): the one separate program. It edits `config.toml`, which the desktop
 //! reloads the moment it is saved, and asks the system services (NetworkManager, BlueZ, PipeWire) for the rest.
 
+mod arrange;
 mod config;
+#[path = "../../src/display_info.rs"]
+mod display_info;
 mod pages;
 mod style;
 mod system;
 
-use std::{collections::HashMap, sync::OnceLock};
+use std::{collections::HashMap, sync::OnceLock, time::Instant};
 
 use iced::{
     Alignment, Element, Font, Length, Task,
     font::Weight,
-    widget::{button, column, container, row, scrollable, space, svg, text, text_input},
+    widget::{button, column, container, row, scrollable, space, stack, svg, text, text_input},
 };
 
 use pages::Page;
@@ -27,8 +30,16 @@ fn main() -> iced::Result {
     iced::application(App::new, App::update, App::view)
         .title("System Settings")
         .theme(|app: &App| app.tokens.theme())
-        .subscription(|_: &App| {
-            iced::Subscription::batch([iced::Subscription::run(config::changes).map(|()| Message::Reload), iced::event::listen_with(type_ahead)])
+        .subscription(|app: &App| {
+            let mut all = vec![iced::Subscription::run_with(config::path(), config::changes).map(|()| Message::Reload), iced::event::listen_with(type_ahead)];
+            if let Some(path) = display_info::path() {
+                all.push(iced::Subscription::run_with(path, config::changes).map(|()| Message::Displays));
+            }
+            // Only while "Keep these display settings?" counts down: no timer otherwise.
+            if app.keep.is_some() {
+                all.push(iced::Subscription::run(arrange::ticks).map(|()| Message::Tick));
+            }
+            iced::Subscription::batch(all)
         })
         .window(window)
         .default_font(font(Weight::Normal))
@@ -41,6 +52,11 @@ fn type_ahead(event: iced::Event, status: iced::event::Status, _: iced::window::
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { text: Some(text), modifiers, .. }) = event else { return None };
     let typed = status == iced::event::Status::Ignored && !(modifiers.control() || modifiers.alt() || modifiers.logo());
     (typed && !text.chars().any(char::is_control)).then(|| Message::TypeAhead(text.to_string()))
+}
+
+/// `displays.json`, or nothing when the desktop isn't running (or wrote something unreadable).
+fn read_displays() -> Vec<display_info::Display> {
+    display_info::path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
 }
 
 /// Inter (D4) in `weight`, or the system sans-serif when it isn't installed.
@@ -69,6 +85,12 @@ pub struct App {
     /// The last save or read failure, shown under the page.
     error: Option<String>,
     user: (String, String),
+    /// `displays.json`: the connected displays as the desktop sees them (empty when it isn't running).
+    displays: Vec<display_info::Display>,
+    /// The display the Displays page shows, by connector name; `None`: the primary.
+    selected: Option<String>,
+    /// A display change waiting for "Keep Changes" before it reverts.
+    keep: Option<arrange::Keep>,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +112,19 @@ pub enum Message {
     Reload,
     /// Typed with no field focused: goes to the search field.
     TypeAhead(String),
+    /// `displays.json` was rewritten by the desktop.
+    Displays,
+    SelectDisplay(String),
+    /// One display's `[[display.outputs]]` keys.
+    Output(String, Vec<(&'static str, toml_edit::Value)>),
+    /// Every display that is on, at its new place (dragged in the arrangement).
+    Arrange(Vec<(String, i32, i32)>),
+    /// The menu bar and Dock go to this display.
+    Primary(String),
+    Keep,
+    Revert,
+    /// Half a second of "Keep these display settings?" went by.
+    Tick,
 }
 
 impl App {
@@ -106,6 +141,9 @@ impl App {
             status: system::Status::default(),
             error,
             user: system::user(),
+            displays: read_displays(),
+            selected: None,
+            keep: None,
         };
         app.retheme();
         // Typing searches at once, as in macOS (see `type_ahead`).
@@ -151,7 +189,13 @@ impl App {
                 self.texts.insert(key, value);
             }
             Message::Submit(key) => {
-                if let Some(value) = self.texts.remove(&key) {
+                let Some(value) = self.texts.remove(&key) else { return Task::none() };
+                if let Some(name) = key.strip_prefix("display.custom_scale.") {
+                    match pages::parse_scale(&value) {
+                        Some(scale) => self.change_outputs(vec![(name.to_owned(), "scale", scale.into())], false),
+                        None => self.error = Some(format!("“{}” isn't a scale from 100% to 300%", value.trim())),
+                    }
+                } else {
                     self.save(&key, value.trim());
                 }
             }
@@ -167,6 +211,31 @@ impl App {
                     self.retheme();
                 }
                 self.error = error;
+            }
+            Message::Displays => self.displays = read_displays(),
+            Message::SelectDisplay(name) => self.selected = Some(name),
+            Message::Output(name, changes) => {
+                // What could leave a screen dark or unusable asks to be kept, as in Cinnamon.
+                let risky = changes.iter().any(|(key, _)| ["mode", "refresh", "rotation", "enabled"].contains(key));
+                self.change_outputs(changes.into_iter().map(|(key, value)| (name.clone(), key, value)).collect(), risky);
+            }
+            Message::Arrange(places) => {
+                let changes = places
+                    .into_iter()
+                    .map(|(name, x, y)| (name, "position", toml_edit::Value::Array([i64::from(x), i64::from(y)].into_iter().collect())))
+                    .collect();
+                self.change_outputs(changes, true);
+            }
+            Message::Primary(name) => {
+                let changes = self.displays.iter().map(|d| (d.name.clone(), "primary", (d.name == name).into())).collect();
+                self.change_outputs(changes, false);
+            }
+            Message::Keep => self.keep = None,
+            Message::Revert => self.revert(),
+            Message::Tick => {
+                if self.keep.as_ref().is_some_and(|k| k.expired(Instant::now())) {
+                    self.revert();
+                }
             }
             Message::TypeAhead(text) => {
                 self.query.push_str(&text);
@@ -185,7 +254,39 @@ impl App {
             body = body.push(text(error).size(11).color(style::rgb(0xFF3B30)));
         }
         let content = scrollable(container(body).center_x(Length::Fill)).direction(style::thin()).style(t.scroll()).height(Length::Fill);
-        row![self.sidebar(), content].height(Length::Fill).into()
+        let window = row![self.sidebar(), content].height(Length::Fill);
+        match &self.keep {
+            Some(keep) => stack![window, pages::keep_sheet(t, keep.left(Instant::now()))].into(),
+            None => window.into(),
+        }
+    }
+
+    /// The display the Displays page shows: the chosen one, else the primary, else the first.
+    fn selected_display(&self) -> Option<&display_info::Display> {
+        let chosen = self.selected.as_ref().and_then(|name| self.displays.iter().find(|d| &d.name == name));
+        chosen.or_else(|| self.displays.iter().find(|d| d.primary)).or(self.displays.first())
+    }
+
+    /// Writes display settings; `ask`: then "Keep these display settings?" counts down to putting the file back as
+    /// it was before the first unkept change.
+    fn change_outputs(&mut self, changes: Vec<(String, &'static str, toml_edit::Value)>, ask: bool) {
+        let before = self.config.text();
+        match self.config.set_outputs(changes) {
+            Ok(()) => {
+                self.error = None;
+                if ask {
+                    let previous = self.keep.take().map_or(before, |k| k.previous);
+                    self.keep = Some(arrange::Keep { previous, since: Instant::now() });
+                }
+            }
+            Err(err) => self.error = Some(format!("Couldn't save the display settings: {err}")),
+        }
+    }
+
+    /// "Revert", or the countdown ran out: the display settings from before go back.
+    fn revert(&mut self) {
+        let Some(keep) = self.keep.take() else { return };
+        self.error = self.config.restore(keep.previous).err().map(|err| format!("Couldn't put the display settings back: {err}"));
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
