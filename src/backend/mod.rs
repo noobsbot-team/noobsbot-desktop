@@ -16,7 +16,7 @@ use smithay::{
 
 use crate::{
     render::{
-        self, AlertSheet, Components, ControlCenter, DockView, ForceQuitWindow, Gallery, LaunchpadView, LockView, MenuBar, MenuPopover, MissionView,
+        self, AlertSheet, Components, ControlCenter, DesktopView, DockView, ForceQuitWindow, Gallery, LaunchpadView, LockView, MenuBar, MenuPopover, MissionView,
         NotificationViews, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, Wallpaper,
     },
     state::State,
@@ -47,6 +47,7 @@ pub struct Views {
     pub entrances: render::motion::Entrances,
     pub lock: LockView,
     pub screenshot: ScreenshotView,
+    pub desktop: DesktopView,
 }
 
 impl Views {
@@ -73,6 +74,7 @@ impl Views {
             entrances: Default::default(),
             lock: LockView::default(),
             screenshot: ScreenshotView::default(),
+            desktop: DesktopView::default(),
         })
     }
 }

@@ -110,6 +110,11 @@ lock = true
 screen_recording = []
 screen_recording_denied = []
 
+[desktop]
+# The files in your Desktop folder (XDG_DESKTOP_DIR, usually ~/Desktop) as icons on the wallpaper. Drag them to
+# arrange; right-click for Open, Rename, Move to Trash and New Folder.
+icons = true
+
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",

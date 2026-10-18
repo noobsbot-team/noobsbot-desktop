@@ -42,7 +42,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail|desktop|desktop-menu|desktop-rename] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -145,6 +145,7 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             state.config = config;
+            state.desktop_start();
         }
     })?;
 
@@ -330,9 +331,20 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             // No 5 s timer: it stays for the screenshot.
             state.screenshots.thumbnail = Some((shell::screenshot::shrink(&rgba, w, h, 400), "/dev/null".into()));
         }
+        // Desktop icons over sample files in a scratch folder: one selected, with its right-click menu, or being renamed.
+        Some(name @ ("desktop" | "desktop-menu" | "desktop-rename")) => {
+            shell::desktop::sample(&mut state);
+            let name = name.to_owned();
+            let open = move |_: std::time::Instant, _: &mut (), state: &mut State| {
+                state.desktop_show(&name);
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            };
+            event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(2)), open)?;
+        }
         Some(other) => tracing::warn!("--show {other}: unknown popup\n{USAGE}"),
         None => {}
     }
+    state.desktop_start();
 
     tracing::info!("listening on WAYLAND_DISPLAY={}", state.socket_name.to_string_lossy());
     state.x_display = xwayland::spawn(&state.socket_name);

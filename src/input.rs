@@ -23,8 +23,8 @@ use crate::{
 };
 
 /// Linux input code of the left mouse button.
-const BTN_LEFT: u32 = 0x110;
-const BTN_RIGHT: u32 = 0x111;
+pub const BTN_LEFT: u32 = 0x110;
+pub const BTN_RIGHT: u32 = 0x111;
 
 /// The xkb names for a resolved `[keyboard]` section (see `Keyboard::resolved`).
 pub fn xkb(keyboard: &Keyboard) -> XkbConfig<'_> {
@@ -120,6 +120,11 @@ impl State {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }
+                    // A desktop icon's name being edited takes every key; Return with no window focused renames.
+                    if state.desktop_key(key.modified_sym(), mods.ctrl) {
+                        state.suppressed.push(code);
+                        return FilterResult::Intercept(None);
+                    }
                     // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
                     let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
                     match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
@@ -160,6 +165,9 @@ impl State {
                     pointer.frame(self);
                     return;
                 }
+                if state == ButtonState::Pressed {
+                    self.desktop_blur(self.to_output(location));
+                }
                 // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
                 // pointer comes to the front.
                 if state == ButtonState::Pressed
@@ -186,6 +194,10 @@ impl State {
                         }
                     } else {
                         self.focus_window(window.clone(), serial);
+                        // The bare desktop: its icons.
+                        if window.is_none() {
+                            self.desktop_press(self.to_output(location), event.button_code());
+                        }
                         if let Some(window) = &window {
                             self.ping(window);
                         }
@@ -205,6 +217,7 @@ impl State {
                     self.bar_release(pointer.current_location());
                     self.mission_release(self.to_output(pointer.current_location()));
                     self.shell_release();
+                    self.desktop_release();
                     self.dock_release(self.to_output(pointer.current_location()));
                 }
                 pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });

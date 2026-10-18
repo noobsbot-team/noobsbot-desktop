@@ -3,6 +3,7 @@
 
 pub mod alert;
 pub mod control;
+pub mod desktop;
 pub mod disks;
 pub mod dock;
 pub mod dock_fx;
@@ -67,7 +68,7 @@ impl Popup {
             Popup::Menu(Menu::App) => BarItem::App,
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
             Popup::Menu(Menu::Input) => BarItem::Input,
-            Popup::Menu(Menu::Dock) => return None,
+            Popup::Menu(Menu::Dock | Menu::Desktop) => return None,
             Popup::Control => BarItem::ControlCenter,
         })
     }
@@ -101,13 +102,17 @@ pub enum Menu {
     Dock,
     /// Keyboard layouts and input methods (E6.12): `State::input_menu_rows`.
     Input,
+    /// A desktop icon's or the desktop's right-click menu (E7.2): `State::desktop_menu_rows`.
+    Desktop,
 }
 
-/// Where a menu opens: under the bar with its left edge at x, or centred over (x, bottom) like the dock's.
+/// Where a menu opens: under the bar with its left edge at x, centred over (x, bottom) like the dock's, or with its
+/// top-left corner at a point (a right click on the desktop).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Anchor {
     Below(i32),
     Above(Point<i32, Logical>),
+    At(Point<i32, Logical>),
 }
 
 /// A menu row (D8); `None` in a row list is a separator. No action: drawn disabled.
@@ -149,9 +154,14 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>]) -> Vec<Option<
             row(format!("Quit {app}"), "⌘Q", Some(Action::QuitApp)),
         ],
         Menu::Tray(_) => tray.iter().map(|r| r.as_ref().and_then(|r| row(r.label.clone(), "", r.enabled.then_some(Action::TrayMenu(r.id))))).collect(),
-        // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`.
-        Menu::Dock | Menu::Input => Vec::new(),
+        // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
+        Menu::Dock | Menu::Input | Menu::Desktop => Vec::new(),
     }
+}
+
+/// A menu's height with `rows`.
+pub fn menu_height(rows: &[Option<Row>]) -> i32 {
+    2 * menu::PAD + rows.iter().map(|r| if r.is_some() { menu::ROW } else { menu::SEPARATOR }).sum::<i32>()
 }
 
 /// Menus (D8), in logical px.
@@ -167,10 +177,11 @@ pub mod menu {
 /// A `width`-wide menu at `anchor`, kept on screen sideways; its rect and one rect per row.
 pub fn menu_layout(anchor: Anchor, output_width: i32, width: i32, rows: &[Option<Row>]) -> (Rect, Vec<Rect>) {
     use menu::*;
-    let height: i32 = 2 * PAD + rows.iter().map(|r| if r.is_some() { ROW } else { SEPARATOR }).sum::<i32>();
+    let height = menu_height(rows);
     let (left, top) = match anchor {
         Anchor::Below(x) => (x, menubar::HEIGHT + DROP),
         Anchor::Above(p) => (p.x - width / 2, p.y - DROP - height),
+        Anchor::At(p) => (p.x, p.y),
     };
     let x = left.min(output_width - MARGIN - width).max(MARGIN);
     let mut y = top + PAD;
@@ -338,6 +349,7 @@ impl State {
                 let rows = match menu {
                     Menu::Dock => self.dock_menu_rows(),
                     Menu::Input => self.input_menu_rows(),
+                    Menu::Desktop => self.desktop_menu_rows(),
                     _ => menu_rows(menu, "", tray),
                 };
                 if let Some(action) = index.and_then(|i| rows.into_iter().nth(i)).flatten().and_then(|row| row.action) {

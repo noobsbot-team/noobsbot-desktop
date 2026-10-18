@@ -215,7 +215,7 @@ fn data_home() -> PathBuf {
 }
 
 /// The XDG data dirs, highest priority first.
-fn data_dirs() -> Vec<PathBuf> {
+pub fn data_dirs() -> Vec<PathBuf> {
     let system = std::env::var("XDG_DATA_DIRS").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
     std::iter::once(data_home()).chain(system.split(':').filter(|d| !d.is_empty()).map(PathBuf::from)).collect()
 }
