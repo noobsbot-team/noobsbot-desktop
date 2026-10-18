@@ -39,13 +39,13 @@ jobs:
         run: |
           export NOOBSBOT_COMMIT="$(git -c safe.directory='*' rev-parse --short HEAD)"
           export NOOBSBOT_DATE="$(git -c safe.directory='*' log -1 --format=%cs)"
-          cargo build --release --locked
+          cargo build --workspace --release --locked
       - name: Package
         run: |
           version="${TAG#v}"
           name="noobsbot-desktop-$version-x86_64"
           mkdir -p "dist/$name"
-          cp target/release/noobsbot-desktop LICENSE README.md "dist/$name/"
+          cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings LICENSE README.md "dist/$name/"
           cp -r data "dist/$name/"
           cd dist
           tar --zstd -cf "$name.tar.zst" "$name"

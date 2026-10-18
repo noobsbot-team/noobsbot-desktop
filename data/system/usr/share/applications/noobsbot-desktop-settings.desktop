@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=System Settings
+Comment=Appearance, Dock, keyboard, sound and more
+Exec=noobsbot-desktop-settings
+Icon=preferences-system
+Categories=Settings;System;
+Keywords=preferences;settings;appearance;dock;wallpaper;keyboard;
+OnlyShowIn=noobsbot-desktop;
+StartupWMClass=noobsbot-desktop-settings
