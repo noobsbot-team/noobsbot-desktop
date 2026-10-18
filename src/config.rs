@@ -44,6 +44,7 @@ pub struct Config {
     pub dock: Dock,
     pub idle: Idle,
     pub privacy: Privacy,
+    pub weather: Weather,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -246,6 +247,7 @@ impl Default for Config {
             dock: Dock::default(),
             idle: Idle::default(),
             privacy: Privacy::default(),
+            weather: Weather::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -268,6 +270,26 @@ impl Default for Config {
             ],
         }
     }
+}
+
+/// The Weather widget (E7.2): off until turned on, and then only for the place given here.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Weather {
+    pub enabled: bool,
+    /// Geocoded once by Open-Meteo; empty = `latitude`/`longitude`.
+    pub city: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub units: Units,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Units {
+    #[default]
+    Celsius,
+    Fahrenheit,
 }
 
 /// The dock (E3.1); defaults are the owner's Plank settings.

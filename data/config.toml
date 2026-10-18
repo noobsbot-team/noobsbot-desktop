@@ -110,6 +110,17 @@ lock = true
 screen_recording = []
 screen_recording_denied = []
 
+[weather]
+# The Weather widget in Notification Center, from Open-Meteo (no account, no key). Off by default: while on, the
+# forecast for this one place is fetched every 30 minutes; your location is never looked up from your IP.
+enabled = false
+# A city name, looked up once; empty = use latitude and longitude.
+city = ""
+latitude = 0.0
+longitude = 0.0
+# "celsius" or "fahrenheit".
+units = "celsius"
+
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",

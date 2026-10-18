@@ -280,7 +280,7 @@ impl State {
             Some(Popup::Notifications { year, month }) => {
                 let shown = render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };
                 if let Some(center) = &center {
-                    let view = View::Center { center, month: &shown, batteries: &batteries, dnd: self.dnd };
+                    let view = View::Center { center, month: &shown, batteries: &batteries, dnd: self.dnd, weather: self.weather.as_ref() };
                     bar.extend(notifications.elements(
                         renderer,
                         shaders,

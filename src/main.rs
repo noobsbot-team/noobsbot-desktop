@@ -42,7 +42,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|weather|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -142,6 +142,9 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             if config.clock.timezone != state.config.clock.timezone && !config.clock.timezone.is_empty() {
                 state.services.send(services::Command::Timezone(config.clock.timezone.clone()));
             }
+            if config.weather != state.config.weather {
+                let _ = state.weather_settings.send(config.weather.clone());
+            }
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             state.config = config;
@@ -167,6 +170,12 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         Some("notification-center") => {
             state.restore_notifications(shell::notify::samples());
             state.dnd = true;
+            let (year, month) = shell::this_month();
+            state.popup = Some(shell::Popup::Notifications { year, month });
+        }
+        // Notification Center with the canned forecast (no network).
+        Some("weather") => {
+            state.weather = Some(services::weather::Weather::sample());
             let (year, month) = shell::this_month();
             state.popup = Some(shell::Popup::Notifications { year, month });
         }

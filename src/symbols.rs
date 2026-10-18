@@ -98,6 +98,14 @@ symbols! {
     Selection = "selection",
     Record = "record",
     Stop = "stop",
+    // The Weather widget (E7.2).
+    Cloud = "cloud",
+    CloudSun = "cloud-sun",
+    CloudMoon = "cloud-moon",
+    CloudRain = "cloud-rain",
+    CloudSnow = "cloud-snow",
+    CloudLightning = "cloud-lightning",
+    CloudFog = "cloud-fog",
 }
 
 type Key = (Symbol, Weight, u16, u64, [u8; 4]);

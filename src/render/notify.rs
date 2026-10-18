@@ -18,6 +18,7 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
+    services::weather::{Weather, condition},
     shell::notify::{BODY, CLOSE, Card, Center, LINE, Notification, PLATE, Store, buttons},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
@@ -54,7 +55,53 @@ type Key = (Vec<(Rect, Shape)>, bool, [u8; 3], u32, u64);
 /// What is on screen.
 pub enum View<'a> {
     Banners { cards: &'a [Card], more: Option<(Rect, usize)> },
-    Center { center: &'a Center, month: &'a Month, batteries: &'a [(String, u8)], dnd: bool },
+    Center { center: &'a Center, month: &'a Month, batteries: &'a [(String, u8)], dnd: bool, weather: Option<&'a Weather> },
+}
+
+/// "22°", never "-0°".
+fn degrees(t: f32) -> String {
+    format!("{}°", t.round() as i32)
+}
+
+/// "Updated 40 min ago", "Updated 3 h ago", "Updated 2 d ago".
+fn updated(ago: i64) -> String {
+    match ago / 60 {
+        m if m < 120 => format!("Updated {m} min ago"),
+        m if m < 48 * 60 => format!("Updated {} h ago", m / 60),
+        m => format!("Updated {} d ago", m / (24 * 60)),
+    }
+}
+
+/// The Weather widget (E7.2), like macOS's medium one: place, temperature and condition with today's high and low,
+/// then the next hours.
+#[expect(clippy::too_many_arguments, reason = "the widget's pieces in one place")]
+fn weather_pieces(pieces: &mut Pieces, text: &mut Text, symbols: &mut Symbols, ink: &Ink, w: &Weather, card: Rect, hour24: bool, scale: f64) {
+    let at = |x: i32, y: i32, width: i32, h: i32| Rectangle::new((card.loc.x + x, card.loc.y + y).into(), (width, h).into());
+    let inner = card.size.w - 28;
+    let (words, symbol) = condition(w.code, w.day);
+    pieces.put(text.label(&w.place, ink.headline(), (inner - 120) as u32, scale), at(14, 12, inner - 120, 16), Align::Left);
+    let big = Style { size: 34, line_height: 40, weight: 400, color: ink.label, tabular: false };
+    pieces.put(text.label(&degrees(w.temp), big, 120, scale), at(12, 30, 120, 40), Align::Left);
+    let now = chrono::Utc::now().timestamp();
+    if w.stale(now) {
+        pieces.put(text.label(&updated(now - w.fetched), ink.caption(), 200, scale), at(14, 72, 200, 13), Align::Left);
+    }
+    pieces.put(symbols.get(symbol, Weight::Fill, 20, scale, ink.label), at(card.size.w - 14 - 20, 12, 20, 20), Align::Centre);
+    let right = |y: i32| at(card.size.w - 14 - 160, y, 160, 16);
+    pieces.put(text.label(words, Style { size: 12, ..ink.headline() }, 160, scale), right(38), Align::Right);
+    pieces.put(text.label(&format!("H:{}  L:{}", degrees(w.high), degrees(w.low)), Style { size: 12, ..ink.body() }, 160, scale), right(54), Align::Right);
+    let each = inner / 6;
+    for (i, &(hour, code, day, temp)) in w.hours.iter().enumerate() {
+        let x = 14 + i as i32 * each;
+        let name = match i {
+            0 => "Now".to_owned(),
+            _ if hour24 => format!("{hour:02}"),
+            _ => format!("{}{}", (hour + 11) % 12 + 1, if hour < 12 { "AM" } else { "PM" }),
+        };
+        pieces.put(text.label(&name, ink.caption(), each as u32, scale), at(x, 92, each, 13), Align::Centre);
+        pieces.put(symbols.get(condition(code, day).1, Weight::Fill, 18, scale, ink.label), at(x + (each - 18) / 2, 110, 18, 18), Align::Centre);
+        pieces.put(text.label(&degrees(temp), Style { tabular: true, ..ink.body() }, each as u32, scale), at(x, 132, each, 16), Align::Centre);
+    }
 }
 
 #[derive(Default)]
@@ -206,7 +253,7 @@ impl NotificationViews {
                     shapes.push((pill, Shape::Card { shadow: true }));
                 }
             }
-            View::Center { center, month, batteries, dnd } => {
+            View::Center { center, month, batteries, dnd, weather } => {
                 let shown = |r: Rect| center.visible(r);
                 let row_w = |r: Rect| r.size.w.max(1) as u32;
                 if shown(center.date) {
@@ -257,6 +304,10 @@ impl NotificationViews {
                 let (card, layout) = &center.calendar;
                 if shown(*card) {
                     calendar = self.calendar.elements(renderer, shaders, text, symbols, month, layout, *card, dark, accent, glass_opacity, scale);
+                }
+                if let (Some(card), Some(w)) = (center.weather.filter(|c| shown(*c)), weather) {
+                    weather_pieces(&mut pieces, text, symbols, &ink, w, card, hour24, scale);
+                    shapes.push((card, Shape::Widget));
                 }
                 if let Some((card, slots)) = center.batteries.as_ref().filter(|(c, _)| shown(*c)) {
                     let title = Rectangle::new((card.loc.x + 12, card.loc.y + 10).into(), (card.size.w - 24, 20).into());
@@ -364,5 +415,11 @@ mod tests {
         assert_eq!(when(&n(5), true, false), "now");
         assert_eq!(when(&n(300), true, false), "5m ago");
         assert!(when(&n(0), false, true).contains(':'));
+    }
+
+    #[test]
+    fn weather_words() {
+        assert_eq!((degrees(-0.4), degrees(21.5), degrees(-3.6)), ("0°".into(), "22°".into(), "-4°".into()));
+        assert_eq!((updated(50 * 60), updated(3 * 3600), updated(3 * 86400)), ("Updated 50 min ago".into(), "Updated 3 h ago".into(), "Updated 3 d ago".into()));
     }
 }
