@@ -275,6 +275,9 @@ impl State {
             Control::Dark => {
                 let appearance = &mut self.config.appearance;
                 appearance.mode = if crate::render::is_dark(appearance) { Mode::Light } else { Mode::Dark };
+                if appearance.theme_apps {
+                    crate::theme::write_in_background(appearance.clone());
+                }
             }
             Control::Brightness | Control::Volume => {
                 self.shell_drag = Some(control);
