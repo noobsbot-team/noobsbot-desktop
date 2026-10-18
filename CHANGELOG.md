@@ -8,6 +8,19 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
+## [1.0.0-alpha.3](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.2...v1.0.0-alpha.3) - 2026-10-18
+
+### Fixed
+
+- *(install)* --greeter's last line no longer says text login screen
+- *(session)* keep the session's log in ~/.local/state/noobsbot-desktop/session.log
+- *(update)* drop the update notice once the update is installed
+- *(install)* a failing AUR theme build no longer aborts the whole install
+
+### Other
+
+- *(vm)* scripts for a throwaway QEMU test VM (install.sh, greeter, polkit, Software Update)
+
 ## [1.0.0-alpha.2](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.1...v1.0.0-alpha.2) - 2026-10-18
 
 ### Added
