@@ -111,9 +111,14 @@ impl Clipboard {
 
     /// The desktop copies `text` itself (Spotlight's calculator); apps paste it from us.
     pub fn set_text(&mut self, dh: &DisplayHandle, seat: &Seat<State>, text: &str) {
+        self.set_bytes(dh, seat, &["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"], text.as_bytes().to_vec());
+    }
+
+    /// The desktop copies `bytes` (a screenshot's PNG), offered as each of `mimes`.
+    pub fn set_bytes(&mut self, dh: &DisplayHandle, seat: &Seat<State>, mimes: &[&str], bytes: Vec<u8>) {
         self.replaced(None);
-        let bytes: Arc<[u8]> = text.as_bytes().into();
-        self.data = ["text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT"].map(|m| (m.to_owned(), bytes.clone())).into();
+        let bytes: Arc<[u8]> = bytes.into();
+        self.data = mimes.iter().map(|m| ((*m).to_owned(), bytes.clone())).collect();
         set_data_device_selection(dh, seat, self.data.iter().map(|(m, _)| m.clone()).collect(), ());
     }
 

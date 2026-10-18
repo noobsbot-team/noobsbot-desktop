@@ -4,6 +4,7 @@ mod anim;
 mod apps;
 mod backend;
 mod calendar;
+mod capture;
 mod clipboard;
 mod clock;
 mod config;
@@ -16,6 +17,7 @@ mod ime;
 mod input;
 mod mission;
 mod pam;
+mod perms;
 mod protocols;
 mod render;
 mod rules;
@@ -40,7 +42,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -68,6 +70,10 @@ fn main() {
     // `dock --import-plank`: the one-time Plank importer (E3.1).
     if std::env::args().nth(1).as_deref() == Some("dock") {
         std::process::exit(shell::plank::cli(std::env::args().skip(2)));
+    }
+    // `--trusted <command>`: runs it on the trusted socket of the running desktop (E6.11).
+    if std::env::args().nth(1).as_deref() == Some("--trusted") {
+        std::process::exit(perms::exec_trusted(std::env::args().skip(2)));
     }
 
     let mut args = std::env::args().skip(1);
@@ -284,6 +290,36 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
                     _ => {}
                 }
             }
+        }
+        // The screenshot toolbar (E6.8): in Region mode with a sample selection, with Options open, in Window mode
+        // over the first app's window, Super+Shift+4's drag; and a floating thumbnail.
+        Some(name @ ("screenshot-toolbar" | "screenshot-region" | "screenshot-window" | "screenshot-options")) => {
+            use shell::screenshot::{Mode, Shot};
+            let selection = Some(((340.0, 220.0).into(), (820.0, 520.0).into()));
+            let shot = match name {
+                "screenshot-toolbar" => Shot {
+                    mode: Mode::Region,
+                    toolbar: true,
+                    region: Some(shell::screenshot::region((340.0, 220.0).into(), (820.0, 520.0).into())),
+                    ..Default::default()
+                },
+                "screenshot-options" => Shot { mode: Mode::Screen, toolbar: true, options: true, ..Default::default() },
+                "screenshot-window" => Shot { mode: Mode::Window, toolbar: true, ..Default::default() },
+                _ => Shot { mode: Mode::Region, drag: selection, ..Default::default() },
+            };
+            let open = move |_: std::time::Instant, _: &mut (), state: &mut State| {
+                let window = (shot.mode == Mode::Window).then(|| state.space.elements().next().and_then(|w| state.frame(w))).flatten();
+                state.screenshots.shot = Some(shell::screenshot::Shot { window, ..shot.clone() });
+                state.schedule_redraw();
+                smithay::reexports::calloop::timer::TimeoutAction::Drop
+            };
+            event_loop.handle().insert_source(smithay::reexports::calloop::timer::Timer::from_duration(std::time::Duration::from_secs(5)), open)?;
+        }
+        Some("screenshot-thumbnail") => {
+            let (w, h) = (400u32, 250u32);
+            let rgba: Vec<u8> = (0..w * h).flat_map(|i| [(i % w * 255 / w) as u8, (i / w * 255 / h) as u8, 200, 255]).collect();
+            // No 5 s timer: it stays for the screenshot.
+            state.screenshots.thumbnail = Some((shell::screenshot::shrink(&rgba, w, h, 400), "/dev/null".into()));
         }
         Some(other) => tracing::warn!("--show {other}: unknown popup\n{USAGE}"),
         None => {}

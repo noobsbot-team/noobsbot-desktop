@@ -76,6 +76,8 @@ pub enum Action {
     AppExpose,
     /// Keyboard layout n, from 0, or the next one (Super+Ctrl+Space, E6.12).
     Layout(Option<usize>),
+    /// Super+Shift+3 / 4 / 5 (E6.8).
+    Screenshot(crate::shell::screenshot::Start),
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -157,6 +159,9 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("mission-control", "") => Some(Action::MissionControl),
         ("app-expose", "") => Some(Action::AppExpose),
         ("input-source", "") => Some(Action::Layout(None)),
+        ("screenshot", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Screen)),
+        ("screenshot-region", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Region)),
+        ("screenshot-toolbar", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Toolbar)),
         _ => None,
     }
 }
@@ -297,6 +302,7 @@ impl State {
             }
             Action::Dock(command) => self.dock_command(command),
             Action::Launchpad => self.toggle_launchpad(),
+            Action::Screenshot(start) => self.screenshot(start),
         }
     }
 

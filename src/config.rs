@@ -42,6 +42,7 @@ pub struct Config {
     pub clock: Clock,
     pub dock: Dock,
     pub idle: Idle,
+    pub privacy: Privacy,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -235,6 +236,7 @@ impl Default for Config {
             clock: Clock::default(),
             dock: Dock::default(),
             idle: Idle::default(),
+            privacy: Privacy::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -269,6 +271,14 @@ pub struct Dock {
     pub zoom: bool,
     pub zoom_percent: u16,
     pub hide: DockHide,
+}
+
+/// Screen-recording answers (E6.11), by program path; the "would like to record this screen" alert fills them in.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Privacy {
+    pub screen_recording: Vec<String>,
+    pub screen_recording_denied: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -371,6 +381,9 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Shift+Right", "move-to-space right"),
         ("Super+Up", "mission-control"),
         ("Super+Down", "app-expose"),
+        ("Super+Shift+3", "screenshot"),
+        ("Super+Shift+4", "screenshot-region"),
+        ("Super+Shift+5", "screenshot-toolbar"),
         ("F12", "quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),
@@ -505,6 +518,44 @@ pub fn set_key(text: &str, table: &str, key: &str, value: &str) -> String {
             let at = (start + 1..end).rev().find(|&i| !lines[i].trim().is_empty() && !lines[i].trim_start().starts_with('#')).map_or(start + 1, |i| i + 1);
             lines.insert(at, entry);
         }
+    }
+    lines.concat()
+}
+
+/// `text` with `key = [items]` set in `[section]`, keeping every other line and comment; adds the section or the
+/// key when missing, and replaces a multi-line array whole.
+// ponytail: brackets inside quoted names or comments of a multi-line array would confuse the line scan.
+pub fn set_array(text: &str, section: &str, key: &str, items: &[String]) -> String {
+    let quoted: Vec<String> = items.iter().map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))).collect();
+    let value = format!("{key} = [{}]\n", quoted.join(", "));
+    let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
+    if let Some(last) = lines.last_mut().filter(|l| !l.ends_with('\n')) {
+        last.push('\n');
+    }
+    let header = |l: &str| l.trim_start().starts_with('[');
+    let title = format!("[{section}]");
+    let Some(at) = lines.iter().position(|l| l.trim_start().starts_with(&title)) else {
+        let gap = if lines.is_empty() { "" } else { "\n" };
+        return format!("{}{gap}{title}\n{value}", lines.concat());
+    };
+    let end = lines[at + 1..].iter().position(|l| header(l)).map_or(lines.len(), |i| at + 1 + i);
+    let is_key = |l: &str| l.trim_start().strip_prefix(key).is_some_and(|r| r.trim_start().starts_with('='));
+    match (at + 1..end).find(|&i| is_key(&lines[i])) {
+        Some(start) => {
+            // A multi-line array runs until its brackets close.
+            let mut depth = 0;
+            let mut last = start;
+            for (i, line) in lines.iter().enumerate().skip(start) {
+                let code = line.split('#').next().unwrap_or("");
+                depth += code.matches('[').count() as i32 - code.matches(']').count() as i32;
+                last = i;
+                if depth <= 0 {
+                    break;
+                }
+            }
+            lines.splice(start..=last, [value]);
+        }
+        None => lines.insert(at + 1, value),
     }
     lines.concat()
 }

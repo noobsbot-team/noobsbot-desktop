@@ -94,7 +94,7 @@ impl Protocols {
 }
 
 /// True unless the client connected through a security context (Flatpak and other sandboxes).
-/// ponytail: only layer-shell, security-context and shortcut inhibiting are privileged today; screencopy and friends join when they exist.
+/// Who sees which privileged global: perms.rs.
 pub fn unsandboxed(client: &Client) -> bool {
     client.get_data::<ClientState>().is_none_or(|data| data.security_context.is_none())
 }
@@ -108,6 +108,12 @@ impl State {
         let current = pointer.current_location();
         if self.locked() {
             self.lock_motion(self.to_output(host));
+        }
+        // The screenshot overlay keeps the pointer from every app (and its cursor).
+        if self.shot_motion(self.to_output(host)) {
+            pointer.motion(self, None, &MotionEvent { location: host, serial: SERIAL_COUNTER.next_serial(), time: (utime / 1000) as u32 });
+            pointer.frame(self);
+            return;
         }
         self.shell_motion(self.to_output(current), self.to_output(host));
         self.dock_motion(self.to_output(current), self.to_output(host));

@@ -348,7 +348,7 @@ fn banner_hit(cards: &[Card], more: Option<(Rect, usize)>, location: Point<f64, 
 }
 
 impl State {
-    fn output_size(&self) -> Size<i32, Logical> {
+    pub(crate) fn output_size(&self) -> Size<i32, Logical> {
         self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or_else(Default::default, |g| g.size)
     }
 

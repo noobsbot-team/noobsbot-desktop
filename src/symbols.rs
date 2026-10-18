@@ -93,6 +93,11 @@ symbols! {
     X = "x",
     MagnifyingGlass = "magnifying-glass",
     ArrowRight = "arrow-right",
+    // The screenshot toolbar (E6.8).
+    AppWindow = "app-window",
+    Selection = "selection",
+    Record = "record",
+    Stop = "stop",
 }
 
 type Key = (Symbol, Weight, u16, u64, [u8; 4]);

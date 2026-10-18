@@ -11,6 +11,7 @@ pub mod launchpad;
 pub mod lock;
 pub mod notify;
 pub mod plank;
+pub mod screenshot;
 pub mod spotlight;
 pub mod switcher;
 

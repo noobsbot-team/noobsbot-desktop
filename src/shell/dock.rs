@@ -422,39 +422,8 @@ pub fn repin(items: &[String], shown: &[usize], name: &str, from: Option<usize>,
 }
 
 /// `text` (a config.toml) with `[dock] items` set to `items`; every other line, comments included, is kept.
-// ponytail: brackets inside quoted names or comments of a multi-line `items` array would confuse the line scan.
 pub fn set_items(text: &str, items: &[String]) -> String {
-    let quoted: Vec<String> = items.iter().map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))).collect();
-    let value = format!("items = [{}]\n", quoted.join(", "));
-    let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
-    if let Some(last) = lines.last_mut().filter(|l| !l.ends_with('\n')) {
-        last.push('\n');
-    }
-    let header = |l: &str| l.trim_start().starts_with('[');
-    let Some(dock) = lines.iter().position(|l| l.trim_start().starts_with("[dock]")) else {
-        let gap = if lines.is_empty() { "" } else { "\n" };
-        return format!("{}{gap}[dock]\n{value}", lines.concat());
-    };
-    let end = lines[dock + 1..].iter().position(|l| header(l)).map_or(lines.len(), |i| dock + 1 + i);
-    let key = |l: &str| l.trim_start().strip_prefix("items").is_some_and(|r| r.trim_start().starts_with('='));
-    match (dock + 1..end).find(|&i| key(&lines[i])) {
-        Some(start) => {
-            // A multi-line array runs until its brackets close.
-            let mut depth = 0;
-            let mut last = start;
-            for (i, line) in lines.iter().enumerate().skip(start) {
-                let code = line.split('#').next().unwrap_or("");
-                depth += code.matches('[').count() as i32 - code.matches(']').count() as i32;
-                last = i;
-                if depth <= 0 {
-                    break;
-                }
-            }
-            lines.splice(start..=last, [value]);
-        }
-        None => lines.insert(dock + 1, value),
-    }
-    lines.concat()
+    config::set_array(text, "dock", "items", items)
 }
 
 /// The URIs of a `text/uri-list` (comments and blank lines skipped).
