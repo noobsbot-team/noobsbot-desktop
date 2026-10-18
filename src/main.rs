@@ -35,7 +35,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|launchpad|launchpad-search|mission-control|mission-control-bar|update] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -146,6 +146,15 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
             state.popup = Some(shell::Popup::Notifications { year, month });
         }
         Some("usb") => shell::disks::sample(&mut state),
+        Some("update") => {
+            let release =
+                services::update::Release { version: semver::Version::new(1, 3, 0), url: "https://github.com/anil0403/noobsbot-desktop/releases".into() };
+            // Kept up and hovered (buttons showing) for the screenshot.
+            let notice = services::notifications::Notification { expire: 0, ..services::update::notice(&release) };
+            state.notifications.hovered = Some(notice.id);
+            state.notify(notice);
+            state.update = Some(release);
+        }
         Some("logo-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::Logo)),
         Some("app-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::App)),
         Some("control") => state.popup = Some(shell::Popup::Control),

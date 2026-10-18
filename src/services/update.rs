@@ -1,8 +1,11 @@
 //! Software Update check (E6.13): once at start and every 24 h, ask GitHub for the latest stable release and compare
 //! it with the running version. No account, no identifier: the request carries only the version in its User-Agent.
-//! Fails silently when offline. Off in nested mode and with `check_updates = false`.
+//! Fails silently when offline. Off in nested mode and with `check_updates = false`. A newer release shows a
+//! notification whose Details button opens its release page.
 
 use std::{process::Command, sync::LazyLock, time::Duration};
+
+use smithay::reexports::calloop::channel::Sender;
 
 use regex_lite::Regex;
 use semver::Version;
@@ -11,7 +14,7 @@ const URL: &str = "https://api.github.com/repos/anil0403/noobsbot-desktop/releas
 const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 
 /// A release newer than the running version.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Release {
     pub version: Version,
     /// The release page (notes, downloads).
@@ -19,20 +22,44 @@ pub struct Release {
 }
 
 /// Its own thread: the check blocks on the network for up to 20 s, and between checks it only sleeps (no wakeups).
-pub fn spawn() {
-    let thread = std::thread::Builder::new().name("update".into()).spawn(|| {
+pub fn spawn(found: Sender<Release>) {
+    let thread = std::thread::Builder::new().name("update".into()).spawn(move || {
         let running = Version::parse(env!("CARGO_PKG_VERSION")).expect("Cargo.toml has a SemVer version");
         loop {
             if let Some(release) = fetch().and_then(|json| newer(&json, &running)) {
-                // ponytail: logged only; the notification (E4.1), logo-menu badge and Settings pane (M7) consume
-                // this once they exist, together with the download + minisign check.
+                // ponytail: notify only; the download + minisign check, the polkit install helper, the logo-menu
+                // badge and the Settings pane (M7) come next.
                 tracing::info!("Noobsbot Desktop {} is available: {}", release.version, release.url);
+                if found.send(release).is_err() {
+                    return;
+                }
             }
             std::thread::sleep(EVERY);
         }
     });
     if let Err(err) = thread {
         tracing::warn!("update check off: {err}");
+    }
+}
+
+/// The update notification's id, below the disk notices' range (shell/disks.rs) and far above the server's counter.
+pub const NOTICE_ID: u32 = 0xFFFE_0000;
+
+/// "Noobsbot Desktop 1.3 is available".
+pub fn notice(release: &Release) -> super::notifications::Notification {
+    let icon = "system-software-update";
+    super::notifications::Notification {
+        id: NOTICE_ID,
+        app: "Software Update".into(),
+        icon_name: icon.into(),
+        icon: super::notifications::load_icon(icon).map(std::sync::Arc::new),
+        summary: format!("Noobsbot Desktop {}.{} is available", release.version.major, release.version.minor),
+        body: format!("Version {} is ready to install.", release.version),
+        actions: vec![("default".into(), String::new()), ("details".into(), "Details".into())],
+        urgency: 1,
+        expire: -1,
+        time: chrono::Local::now().timestamp(),
+        ..Default::default()
     }
 }
 
@@ -102,6 +129,12 @@ mod tests {
         assert_eq!(newer("", &v("0.1.0")), None);
         assert_eq!(newer(r#"{"message":"Not Found"}"#, &v("0.1.0")), None);
         assert_eq!(newer(r#"{"tag_name":"nightly"}"#, &v("0.1.0")), None);
+    }
+
+    #[test]
+    fn notice_names_major_minor() {
+        let n = notice(&Release { version: v("1.3.2"), url: String::new() });
+        assert_eq!((n.id, n.summary.as_str(), n.body.as_str()), (NOTICE_ID, "Noobsbot Desktop 1.3 is available", "Version 1.3.2 is ready to install."));
     }
 
     #[test]

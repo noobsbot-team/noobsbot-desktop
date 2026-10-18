@@ -101,6 +101,8 @@ pub struct State {
     pub quake: Option<u32>,
     /// xwayland-satellite's `DISPLAY` (E6.9), given to every program we start.
     pub x_display: Option<String>,
+    /// A newer release, found by Software Update (E6.13).
+    pub update: Option<crate::services::update::Release>,
     pub zones: crate::input::Zones,
 
     pub compositor_state: CompositorState,
@@ -237,7 +239,15 @@ impl State {
         let services = crate::services::spawn(services_tx, !nested);
         // Nested is a dev session: no network.
         if !nested && config.check_updates {
-            crate::services::update::spawn();
+            let (found_tx, found_rx) = channel::channel();
+            crate::services::update::spawn(found_tx);
+            handle.insert_source(found_rx, |event, _, state| {
+                if let channel::Event::Msg(release) = event {
+                    state.notify(crate::services::update::notice(&release));
+                    state.update = Some(release);
+                    state.schedule_redraw();
+                }
+            })?;
         }
         if !config.clock.timezone.is_empty() {
             services.send(crate::services::Command::Timezone(config.clock.timezone.clone()));
@@ -298,6 +308,7 @@ impl State {
             resize: None,
             nested,
             x_display: None,
+            update: None,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
             config,
