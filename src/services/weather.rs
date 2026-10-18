@@ -224,28 +224,25 @@ fn parse(json: &str, fetched: i64, now: chrono::DateTime<chrono::Utc>) -> Option
     let times = array(hourly, "time");
     let (temps, codes, days) = (array(hourly, "temperature_2m"), array(hourly, "weather_code"), array(hourly, "is_day"));
     let first = times.iter().position(|t| *t >= this_hour.as_str()).unwrap_or(times.len());
-    let hours = (first..times.len())
+    let mut hours: Vec<_> = (first..times.len())
         .take(HOURS)
         .filter_map(|i| Some((times[i].get(11..13)?.parse().ok()?, u(codes.get(i)?)?, *days.get(i)? == "1", f(temps.get(i)?)?)))
         .collect();
+    let (temp, code) = (f(scalar(current, "temperature_2m")?)?, u(scalar(current, "weather_code")?)?);
+    let is_day = scalar(current, "is_day") != Some("0");
+    // "Now" is the current conditions while they are this hour's.
+    if let Some(now) = hours.first_mut().filter(|_| scalar(current, "time").and_then(|t| t.get(1..14)) == this_hour.get(..13)) {
+        *now = (now.0, code, is_day, temp);
+    }
 
-    Some(Weather {
-        place: unquote(scalar(place, "name")?),
-        temp: f(scalar(current, "temperature_2m")?)?,
-        code: u(scalar(current, "weather_code")?)?,
-        day: scalar(current, "is_day") != Some("0"),
-        high: f(highs.get(day)?)?,
-        low: f(lows.get(day)?)?,
-        hours,
-        fetched,
-    })
+    Some(Weather { place: unquote(scalar(place, "name")?), temp, code, day: is_day, high: f(highs.get(day)?)?, low: f(lows.get(day)?)?, hours, fetched })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    const CACHE: &str = r#"{"place":{"name":"Kathmandu","query":"Kathmandu","units":"celsius","latitude":27.70169,"longitude":85.3206},"latitude":27.732864,"longitude":85.34831,"utc_offset_seconds":20700,"timezone":"Asia/Kathmandu","current_units":{"time":"iso8601","temperature_2m":"°C"},"current":{"time":"2026-10-18T15:00","interval":900,"temperature_2m":22.2,"weather_code":0,"is_day":1},"hourly_units":{"time":"iso8601","temperature_2m":"°C"},"hourly":{"time":["2026-10-18T14:00","2026-10-18T15:00","2026-10-18T16:00","2026-10-18T17:00","2026-10-18T18:00","2026-10-18T19:00","2026-10-18T20:00","2026-10-18T21:00"],"temperature_2m":[23.0,22.2,21.5,20.1,18.0,17.2,16.5,16.0],"weather_code":[0,0,2,3,61,61,1,0],"is_day":[1,1,1,1,0,0,0,0]},"daily_units":{"time":"iso8601"},"daily":{"time":["2026-10-18","2026-10-19"],"temperature_2m_max":[24.1,25.3],"temperature_2m_min":[13.2,14.0]}}"#;
+    const CACHE: &str = r#"{"place":{"name":"Kathmandu","query":"Kathmandu","units":"celsius","latitude":27.70169,"longitude":85.3206},"latitude":27.732864,"longitude":85.34831,"utc_offset_seconds":20700,"timezone":"Asia/Kathmandu","current_units":{"time":"iso8601","temperature_2m":"°C"},"current":{"time":"2026-10-18T15:00","interval":900,"temperature_2m":22.6,"weather_code":0,"is_day":1},"hourly_units":{"time":"iso8601","temperature_2m":"°C"},"hourly":{"time":["2026-10-18T14:00","2026-10-18T15:00","2026-10-18T16:00","2026-10-18T17:00","2026-10-18T18:00","2026-10-18T19:00","2026-10-18T20:00","2026-10-18T21:00"],"temperature_2m":[23.0,22.2,21.5,20.1,18.0,17.2,16.5,16.0],"weather_code":[0,0,2,3,61,61,1,0],"is_day":[1,1,1,1,0,0,0,0]},"daily_units":{"time":"iso8601"},"daily":{"time":["2026-10-18","2026-10-19"],"temperature_2m_max":[24.1,25.3],"temperature_2m_min":[13.2,14.0]}}"#;
 
     fn at(utc: &str) -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::parse_from_rfc3339(utc).unwrap().into()
@@ -255,9 +252,10 @@ mod tests {
     fn parses_in_the_places_time() {
         // 09:30 UTC is 15:15 in Kathmandu (+5:45): the row starts at 15:00.
         let w = parse(CACHE, 7, at("2026-10-18T09:30:00Z")).unwrap();
-        assert_eq!((w.place.as_str(), w.temp, w.code, w.day, w.high, w.low, w.fetched), ("Kathmandu", 22.2, 0, true, 24.1, 13.2, 7));
+        assert_eq!((w.place.as_str(), w.temp, w.code, w.day, w.high, w.low, w.fetched), ("Kathmandu", 22.6, 0, true, 24.1, 13.2, 7));
         assert_eq!(w.hours.len(), HOURS);
-        assert_eq!(w.hours[0], (15, 0, true, 22.2));
+        assert_eq!(w.hours[0], (15, 0, true, 22.6), "Now is the current conditions");
+        assert_eq!(w.hours[1], (16, 2, true, 21.5));
         assert_eq!(w.hours[3], (18, 61, false, 18.0));
         // Offline the next morning (local): today is the 19th, and no hours are left.
         let later = parse(CACHE, 7, at("2026-10-19T03:00:00Z")).unwrap();
