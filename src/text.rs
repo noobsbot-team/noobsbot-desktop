@@ -26,21 +26,19 @@ pub struct Style {
 }
 
 /// A rasterised label: premultiplied RGBA8 (byte order R, G, B, A), in physical px.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct Rendered {
     pub pixels: Vec<u8>,
     pub width: u32,
     pub height: u32,
     /// Baseline, in px from the top.
-    #[cfg_attr(not(test), expect(dead_code, reason = "for aligning labels with other text (menu bar, M2)"))]
     pub baseline: u32,
     /// The text did not fit `max_width` and ends in "…".
-    #[cfg_attr(not(test), expect(dead_code, reason = "a truncated title shows in full on hover (later)"))]
     pub truncated: bool,
 }
 
-/// Text, style, width, scale, wrapped.
-type Key = (String, Style, u32, u64, bool);
+/// Text, style, width, scale, wrapping (see `cached`).
+type Key = (String, Style, u32, u64, Option<u8>);
 
 /// Owns the font database and glyph rasteriser.
 ///
@@ -57,22 +55,32 @@ pub struct Text {
 impl Text {
     /// One line of `text`, ellipsised to `max_width` logical px. Unchanged labels come from the cache.
     pub fn label(&mut self, text: &str, style: Style, max_width: u32, scale: f64) -> Arc<Rendered> {
-        self.cached(text, style, max_width, scale, false)
+        self.cached(text, style, max_width, scale, None)
     }
 
     /// `text` word-wrapped to `width` logical px, every line centred in it (alerts); as wide as `width`.
     pub fn paragraph(&mut self, text: &str, style: Style, width: u32, scale: f64) -> Arc<Rendered> {
-        self.cached(text, style, width, scale, true)
+        self.cached(text, style, width, scale, Some(0))
     }
 
-    fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: bool) -> Arc<Rendered> {
+    /// `text` word-wrapped to `width` logical px, left-aligned, at most `lines` lines (the last ends in "…" when
+    /// cut); as wide as `width`. Its height tells how many lines it took.
+    pub fn wrapped(&mut self, text: &str, style: Style, width: u32, lines: u8, scale: f64) -> Arc<Rendered> {
+        self.cached(text, style, width, scale, Some(lines.max(1)))
+    }
+
+    /// `wrap`: `None` one line, `Some(0)` centred lines, `Some(n)` at most `n` left-aligned lines.
+    fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<u8>) -> Arc<Rendered> {
         self.tick += 1;
         let key = (text.to_owned(), style, max_width, scale.to_bits(), wrap);
         if let Some((rendered, used)) = self.cache.get_mut(&key) {
             *used = self.tick;
             return rendered.clone();
         }
-        let rendered = Arc::new(if wrap { self.rasterise_wrapped(text, style, max_width, scale) } else { self.rasterise(text, style, max_width, scale) });
+        let rendered = Arc::new(match wrap {
+            Some(lines) => self.rasterise_wrapped(text, style, max_width, lines, scale),
+            None => self.rasterise(text, style, max_width, scale),
+        });
         // ponytail: O(n) scan for the oldest entry, fine at 256 entries; a linked LRU if the cap grows.
         while !self.cache.is_empty() && (self.cache.len() >= MAX_ENTRIES || self.bytes + rendered.pixels.len() > MAX_BYTES) {
             let Some(oldest) = self.cache.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone()) else { break };
@@ -111,7 +119,8 @@ impl Text {
         })
     }
 
-    fn rasterise_wrapped(&mut self, text: &str, style: Style, width: u32, scale: f64) -> Rendered {
+    /// `lines` 0: centred, as many as it takes; otherwise left-aligned, at most `lines`.
+    fn rasterise_wrapped(&mut self, text: &str, style: Style, width: u32, lines: u8, scale: f64) -> Rendered {
         let (fonts, swash, family) = self.fonts();
         let scale = scale as f32;
         let metrics = Metrics::new(f32::from(style.size.max(1)) * scale, f32::from(style.line_height.max(1)) * scale);
@@ -123,10 +132,28 @@ impl Text {
         buffer.set_wrap(Wrap::Word);
         buffer.set_size(Some(limit), None);
         buffer.set_text(text, &attrs, Shaping::Advanced, None);
-        for line in &mut buffer.lines {
-            line.set_align(Some(Align::Center));
+        if lines == 0 {
+            for line in &mut buffer.lines {
+                line.set_align(Some(Align::Center));
+            }
         }
         buffer.shape_until_scroll(false);
+        // Over the cap: cut after the last line that fits and end in "…", dropping words until it fits. (cosmic-text
+        // 0.19's own ellipsis keeps the space at each line break, which indents the next line.)
+        let cap = usize::from(lines);
+        if cap > 0 && buffer.layout_runs().count() > cap {
+            let starts: Vec<usize> = text.split('\n').scan(0, |at, line| Some(std::mem::replace(at, *at + line.len() + 1))).collect();
+            let end = buffer.layout_runs().nth(cap - 1).map_or(0, |run| starts[run.line_i] + run.glyphs.last().map_or(0, |g| g.end));
+            let mut cut = text[..end].trim_end().to_owned();
+            loop {
+                buffer.set_text(&format!("{cut}…"), &attrs, Shaping::Advanced, None);
+                buffer.shape_until_scroll(false);
+                if buffer.layout_runs().count() <= cap || cut.is_empty() {
+                    break;
+                }
+                cut.truncate(cut.trim_end().rfind(char::is_whitespace).unwrap_or(0));
+            }
+        }
         let lines = buffer.layout_runs().count() as u32;
         let width = limit.floor() as u32;
         let height = if text.is_empty() { 0 } else { lines * metrics.line_height.ceil() as u32 };
@@ -213,6 +240,23 @@ mod tests {
             return None;
         }
         Some(text)
+    }
+
+    #[test]
+    fn wrapped_text_stops_at_its_line_cap() {
+        let Some(mut text) = text() else { return };
+        let long = "Download complete: report.pdf (2.4 MB) was saved to your Downloads folder, where it waits for you.";
+        assert_eq!(text.wrapped("Short", HEADLINE, 200, 2, 1.0).height, 16);
+        assert_eq!(text.wrapped(long, HEADLINE, 200, 2, 1.0).height, 32);
+        assert!(text.wrapped(long, HEADLINE, 200, 9, 1.0).height > 32);
+        // Left-aligned: ink starts at the left edge.
+        let one = text.wrapped("Short", HEADLINE, 200, 2, 1.0);
+        let first_ink = one.pixels.as_chunks::<4>().0.iter().position(|p| p[3] > 0).map(|i| i as u32 % 200);
+        assert!(first_ink.is_some_and(|x| x < 4), "{first_ink:?}");
+        // The second line starts at the left edge too (no space carried over from the break).
+        let two = text.wrapped(long, HEADLINE, 200, 2, 1.0);
+        let left = (16..32).filter_map(|y| (0..200).find(|x| two.pixels[((y * 200 + x) * 4 + 3) as usize] > 0)).min();
+        assert!(left.is_some_and(|x| x < 4), "{left:?}");
     }
 
     #[test]

@@ -49,6 +49,8 @@ pub enum Action {
     Media(MediaAction),
     /// A row of the open tray menu, by dbusmenu id.
     TrayMenu(i32),
+    /// Opens or closes Notification Center (Super+N).
+    NotificationCenter,
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -116,6 +118,7 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("media", "play-pause") => Some(Action::Media(MediaAction::PlayPause)),
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
+        ("notification-center", "") => Some(Action::NotificationCenter),
         _ => None,
     };
     let mut table = Vec::new();
@@ -240,6 +243,12 @@ impl State {
                 let osd = Osd { symbol, level: None, text: Some(now.title.clone()).filter(|t| !t.is_empty()) };
                 self.services.send(Command::Media { player: now.player.clone(), action: media });
                 self.show_osd(osd);
+            }
+            Action::NotificationCenter => {
+                let (year, month) = crate::shell::this_month();
+                let open = matches!(self.popup, Some(crate::shell::Popup::Notifications { .. }));
+                self.popup = (!open).then_some(crate::shell::Popup::Notifications { year, month });
+                self.schedule_redraw();
             }
         }
     }

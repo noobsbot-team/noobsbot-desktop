@@ -1,5 +1,5 @@
-//! The calendar popover (E2.5): `popover` glass, radius 12, under the clock. Title and ‹ › on top, weekday initials,
-//! then the month grid; today in an accent circle, other months' days at `label-tertiary`.
+//! The calendar widget in Notification Center (E2.5, E4.2): a `card`, radius 12. Title and ‹ › on top, weekday
+//! initials, then the month grid; today in an accent circle, other months' days at `label-tertiary`.
 
 use chrono::{Datelike, NaiveDate, Weekday};
 use smithay::{
@@ -21,16 +21,16 @@ use crate::{
 const RADIUS: f64 = 12.0;
 const TODAY: i32 = 26;
 
-/// What the card, its shadow and the today circle depend on: rect, today's cell, dark, accent, opacity, scale.
-type Key = (Rect, Option<usize>, bool, [u8; 3], u32, u64);
+/// What the card and the today circle depend on: card, grid rect, today's cell, dark, accent, opacity, scale.
+type Key = (Rect, Rect, Option<usize>, bool, [u8; 3], u32, u64);
 
 #[derive(Default)]
-pub struct CalendarPopover {
+pub struct CalendarWidget {
     glass: Option<(Key, Vec<PixelShaderElement>)>,
     labels: Vec<Label>,
 }
 
-/// Everything the popover shows besides the theme.
+/// Everything the widget shows besides the theme.
 pub struct Month {
     pub year: i32,
     pub month: u32,
@@ -38,8 +38,8 @@ pub struct Month {
     pub today: NaiveDate,
 }
 
-impl CalendarPopover {
-    /// Front to back: text and arrows, the today circle, the card, its shadow.
+impl CalendarWidget {
+    /// Front to back: text and arrows, the today circle, the `card` behind them.
     #[allow(clippy::too_many_arguments)]
     pub fn elements(
         &mut self,
@@ -48,22 +48,22 @@ impl CalendarPopover {
         text: &mut Text,
         symbols: &mut Symbols,
         shown: &Month,
-        output_width: i32,
+        layout: &CalendarLayout,
+        card: Rect,
         dark: bool,
         accent: [u8; 3],
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
         let grid = shell::grid(shown.year, shown.month, shown.week_start);
-        let layout = calendar_layout(output_width, &grid);
         let days: Vec<NaiveDate> = grid.iter().flatten().copied().collect();
         let today = days.iter().position(|d| *d == shown.today);
 
-        let key = (layout.rect, today, dark, accent, glass_opacity.to_bits(), scale.to_bits());
+        let key = (card, layout.rect, today, dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
-            let spec = Material::Popover.spec(dark);
+            let spec = Material::Card.spec(dark);
             let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
-            let card = shaders.glass_shape(layout.rect, [r, g, b, spec.opacity * glass_opacity], RADIUS, true, dark, scale);
+            let card = shaders.glass_shape(card, [r, g, b, spec.opacity * glass_opacity], RADIUS, true, dark, scale);
             let mut glass = Vec::new();
             if let Some(cell) = today.map(|i| layout.cells[i]) {
                 let circle = Rectangle::new((cell.loc.x + (cell.size.w - TODAY) / 2, cell.loc.y + (cell.size.h - TODAY) / 2).into(), (TODAY, TODAY).into());
@@ -71,7 +71,6 @@ impl CalendarPopover {
                 glass.push(shaders.light(circle, [r, g, b, 1.0], false, scale));
             }
             glass.push(card);
-            glass.extend(shaders.shadow(layout.rect, RADIUS, spec.elevation, dark, scale, false));
             self.glass = Some((key, glass));
         }
 
@@ -114,10 +113,6 @@ impl CalendarPopover {
         }
         out
     }
-}
-
-fn calendar_layout(output_width: i32, grid: &[[NaiveDate; 7]]) -> CalendarLayout {
-    shell::calendar_layout(output_width, grid.len())
 }
 
 /// S M T W T F S.

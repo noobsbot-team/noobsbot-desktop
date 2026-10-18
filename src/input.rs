@@ -159,9 +159,12 @@ impl State {
             InputEvent::PointerAxis { event } => {
                 let Some(pointer) = self.seat.get_pointer() else { return };
                 let source = event.source();
+                // Notification Center scrolls; a banner swipes away.
+                let amount = |axis| event.amount(axis).unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0);
+                let pos = self.to_output(pointer.current_location());
                 // Over the dock, a wheel step cycles the app's windows; touchpad scrolling there is just swallowed.
                 let wheel = event.amount_v120(Axis::Vertical).unwrap_or(0.0);
-                if self.dock_scroll(self.to_output(pointer.current_location()), wheel != 0.0) {
+                if self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, wheel != 0.0) {
                     return;
                 }
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);

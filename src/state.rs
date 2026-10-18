@@ -161,6 +161,8 @@ pub struct State {
     pub dock_reveal: bool,
     /// `--show dock-zoom`: a fake pointer position the dock zooms around.
     pub dock_pointer: Option<Point<f64, Logical>>,
+    /// Notifications, their banners and Notification Center's state (E4.1, E4.2).
+    pub notifications: crate::shell::notify::Store,
 }
 
 impl State {
@@ -235,6 +237,9 @@ impl State {
                     crate::services::Update::Pairing(pairing) => state.show_pairing(pairing),
                     crate::services::Update::Tray(tray) => state.tray = tray,
                     crate::services::Update::TrayMenu { service, menu, rows } => state.show_tray_menu(service, menu, rows),
+                    crate::services::Update::Notify(n) => state.notify(*n),
+                    crate::services::Update::CloseNotification(id) => state.close_notification(id, crate::shell::notify::Reason::Closed),
+                    crate::services::Update::History(list) => state.restore_notifications(list),
                 }
                 state.schedule_redraw();
             }
@@ -314,6 +319,7 @@ impl State {
             icons: Default::default(),
             dock_reveal: false,
             dock_pointer: None,
+            notifications: Default::default(),
             display_handle: dh,
         })
     }

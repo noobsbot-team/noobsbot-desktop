@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, AlertSheet, CalendarPopover, Components, ControlCenter, DockIcon, DockView, Gallery, MenuBar, MenuPopover, OsdPopover, Shaders, Wallpaper},
+    render::{self, AlertSheet, Components, ControlCenter, DockIcon, DockView, Gallery, MenuBar, MenuPopover, NotificationViews, OsdPopover, Shaders, View, Wallpaper},
     shell::Popup,
     state::State,
 };
@@ -40,7 +40,7 @@ pub struct Winit {
     /// The `--show gallery` component gallery (E2.1), over the whole output under the bar and popups.
     pub components: Option<Components>,
     pub menu_bar: MenuBar,
-    calendar: CalendarPopover,
+    notifications: NotificationViews,
     pub menu: MenuPopover,
     osd: OsdPopover,
     control: ControlCenter,
@@ -90,7 +90,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), calendar: CalendarPopover::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default(), components: None });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), notifications: NotificationViews::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default(), components: None });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -116,10 +116,13 @@ impl State {
     pub fn render(&mut self) {
         let content = self.menu_bar();
         let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
+        let center = self.center_layout();
+        let (cards, more) = self.banner_layout();
+        let batteries = self.batteries();
         let dock_items = self.dock_items();
         let dock_layout = self.dock_layout(dock_items.len()).filter(|l| !dock_items.is_empty() && self.dock_visible(l));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, calendar, menu, osd, control, alert: sheet, dock }) =
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, notifications, menu, osd, control, alert: sheet, dock }) =
             self.backend.as_mut()
         else {
             return;
@@ -147,10 +150,18 @@ impl State {
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
                 }
+                let hour24 = self.config.clock.format.hour24;
+                if !cards.is_empty() {
+                    let view = View::Banners { cards: &cards, more };
+                    bar.extend(notifications.elements(renderer, shaders, &mut self.text, &mut self.symbols, view, &self.notifications, hour24, dark, accent, appearance.glass_opacity, scale));
+                }
                 match self.popup {
-                    Some(Popup::Calendar { year, month }) => {
+                    Some(Popup::Notifications { year, month }) => {
                         let shown = render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };
-                        bar.extend(calendar.elements(renderer, shaders, &mut self.text, &mut self.symbols, &shown, width, dark, accent, appearance.glass_opacity, scale));
+                        if let Some(center) = &center {
+                            let view = View::Center { center, month: &shown, batteries: &batteries, dnd: self.dnd };
+                            bar.extend(notifications.elements(renderer, shaders, &mut self.text, &mut self.symbols, view, &self.notifications, hour24, dark, accent, appearance.glass_opacity, scale));
+                        }
                     }
                     Some(popup @ Popup::Menu(kind)) => {
                         let app = content.as_ref().and_then(|c| c.app.as_deref()).map(|id| menu_bar.name(id)).unwrap_or_default();

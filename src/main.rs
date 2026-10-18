@@ -32,7 +32,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|dock-zoom|gallery] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|dock-zoom|gallery] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -126,9 +126,17 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         winit.gallery = Some(Default::default());
     }
     match show {
-        Some("calendar") => {
+        // Sample notifications: one banner (hovered, so its buttons show), or Notification Center with DND on.
+        Some("notification") => {
+            state.restore_notifications(shell::notify::samples());
+            state.notifications.banners = vec![4, 1];
+            state.notifications.hovered = Some(4);
+        }
+        Some("notification-center") => {
+            state.restore_notifications(shell::notify::samples());
+            state.dnd = true;
             let (year, month) = shell::this_month();
-            state.popup = Some(shell::Popup::Calendar { year, month });
+            state.popup = Some(shell::Popup::Notifications { year, month });
         }
         Some("logo-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::Logo)),
         Some("app-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::App)),
