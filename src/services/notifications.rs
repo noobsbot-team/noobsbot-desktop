@@ -270,8 +270,10 @@ pub async fn serve(bus: &Connection, updates: &Sender<Update>) {
     let history = load_history();
     let next = history.iter().map(|n| n.id).max().unwrap_or(0).checked_add(1).unwrap_or(1);
     let mut server = Server { updates: updates.clone(), next, icons: HashMap::new() };
+    // The update notice is the updater's to post again: after an update it would offer a version already running.
     let history = history
         .into_iter()
+        .filter(|n| n.id != super::update::NOTICE_ID)
         .map(|mut n| {
             n.icon = server.icon(&n.icon_name.clone());
             n

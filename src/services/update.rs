@@ -219,6 +219,7 @@ impl crate::state::State {
             let smithay::reexports::calloop::channel::Event::Msg(ok) = event else { return };
             if ok {
                 state.update = None;
+                state.close_notification(NOTICE_ID, super::notifications::Reason::Dismissed);
                 state.open_alert(crate::shell::alert::Power::LogOut);
             } else if let Some(release) = state.update.as_mut() {
                 // Cancelled or refused (the helper logs why): offered again.
