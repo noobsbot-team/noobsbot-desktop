@@ -302,7 +302,9 @@ mod tests {
         // SAFETY: getuid has no failure mode.
         let me = unsafe { libc::getuid() };
         let (login, _) = crate::pam::user();
-        assert_eq!(users(&[user(0), group, user(me), user(0)], me), [login, "root".to_string()]);
+        // Logged-in user first, root once (just root when the tests run as root, as in CI).
+        let want = if me == 0 { vec![login] } else { vec![login, "root".to_string()] };
+        assert_eq!(users(&[user(0), group, user(me), user(0)], me), want);
         assert!(users(&[user(u32::MAX - 7)], me).is_empty(), "an unknown uid is left out");
     }
 
