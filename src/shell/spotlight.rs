@@ -54,6 +54,7 @@ pub fn layout(output: Size<i32, Logical>, bottom: i32, count: usize) -> Layout {
 
 /// One result row.
 #[derive(Debug, Clone, PartialEq)]
+#[expect(clippy::large_enum_variant, reason = "at most MAX_ROWS of them, rebuilt per keystroke")]
 pub enum Hit {
     App(App),
     /// The calculator's answer, formatted.
