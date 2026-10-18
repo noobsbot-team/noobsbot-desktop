@@ -38,7 +38,7 @@ pub struct Rendered {
 }
 
 /// Text, style, width, scale, wrapping (see `cached`).
-type Key = (String, Style, u32, u64, Option<u8>);
+type Key = (String, Style, u32, u64, Option<(u8, bool)>);
 
 /// Owns the font database and glyph rasteriser.
 ///
@@ -60,17 +60,22 @@ impl Text {
 
     /// `text` word-wrapped to `width` logical px, every line centred in it (alerts); as wide as `width`.
     pub fn paragraph(&mut self, text: &str, style: Style, width: u32, scale: f64) -> Arc<Rendered> {
-        self.cached(text, style, width, scale, Some(0))
+        self.cached(text, style, width, scale, Some((0, true)))
+    }
+
+    /// `text` word-wrapped to `width` logical px, every line centred, at most `lines` lines (desktop icon names).
+    pub fn centred(&mut self, text: &str, style: Style, width: u32, lines: u8, scale: f64) -> Arc<Rendered> {
+        self.cached(text, style, width, scale, Some((lines.max(1), true)))
     }
 
     /// `text` word-wrapped to `width` logical px, left-aligned, at most `lines` lines (the last ends in "…" when
     /// cut); as wide as `width`. Its height tells how many lines it took.
     pub fn wrapped(&mut self, text: &str, style: Style, width: u32, lines: u8, scale: f64) -> Arc<Rendered> {
-        self.cached(text, style, width, scale, Some(lines.max(1)))
+        self.cached(text, style, width, scale, Some((lines.max(1), false)))
     }
 
-    /// `wrap`: `None` one line, `Some(0)` centred lines, `Some(n)` at most `n` left-aligned lines.
-    fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<u8>) -> Arc<Rendered> {
+    /// `wrap`: `None` one line, else (at most n lines, 0 = any; centred).
+    fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<(u8, bool)>) -> Arc<Rendered> {
         self.tick += 1;
         let key = (text.to_owned(), style, max_width, scale.to_bits(), wrap);
         if let Some((rendered, used)) = self.cache.get_mut(&key) {
@@ -78,7 +83,7 @@ impl Text {
             return rendered.clone();
         }
         let rendered = Arc::new(match wrap {
-            Some(lines) => self.rasterise_wrapped(text, style, max_width, lines, scale),
+            Some((lines, centre)) => self.rasterise_wrapped(text, style, max_width, lines, centre, scale),
             None => self.rasterise(text, style, max_width, scale),
         });
         // ponytail: O(n) scan for the oldest entry, fine at 256 entries; a linked LRU if the cap grows.
@@ -119,8 +124,8 @@ impl Text {
         })
     }
 
-    /// `lines` 0: centred, as many as it takes; otherwise left-aligned, at most `lines`.
-    fn rasterise_wrapped(&mut self, text: &str, style: Style, width: u32, lines: u8, scale: f64) -> Rendered {
+    /// At most `lines` lines (0: as many as it takes), centred or left-aligned.
+    fn rasterise_wrapped(&mut self, text: &str, style: Style, width: u32, lines: u8, centre: bool, scale: f64) -> Rendered {
         let (fonts, swash, family) = self.fonts();
         let scale = scale as f32;
         let metrics = Metrics::new(f32::from(style.size.max(1)) * scale, f32::from(style.line_height.max(1)) * scale);
@@ -129,10 +134,11 @@ impl Text {
         let limit = width as f32 * scale;
         let mut buffer = Buffer::new(fonts, metrics);
         let mut buffer = buffer.borrow_with(fonts);
-        buffer.set_wrap(Wrap::Word);
+        // A word wider than the line breaks between letters.
+        buffer.set_wrap(Wrap::WordOrGlyph);
         buffer.set_size(Some(limit), None);
         buffer.set_text(text, &attrs, Shaping::Advanced, None);
-        if lines == 0 {
+        if centre {
             for line in &mut buffer.lines {
                 line.set_align(Some(Align::Center));
             }
@@ -147,11 +153,20 @@ impl Text {
             let mut cut = text[..end].trim_end().to_owned();
             loop {
                 buffer.set_text(&format!("{cut}…"), &attrs, Shaping::Advanced, None);
+                if centre {
+                    for line in &mut buffer.lines {
+                        line.set_align(Some(Align::Center));
+                    }
+                }
                 buffer.shape_until_scroll(false);
                 if buffer.layout_runs().count() <= cap || cut.is_empty() {
                     break;
                 }
-                cut.truncate(cut.trim_end().rfind(char::is_whitespace).unwrap_or(0));
+                // A word at a time, or a char at a time through one long word (file names).
+                match cut.trim_end().rfind(char::is_whitespace) {
+                    Some(at) => cut.truncate(at),
+                    None => _ = cut.pop(),
+                }
             }
         }
         let lines = buffer.layout_runs().count() as u32;
