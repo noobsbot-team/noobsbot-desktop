@@ -265,7 +265,7 @@ impl State {
         // Nested is a dev session: no network.
         if !nested && config.check_updates {
             let (found_tx, found_rx) = channel::channel();
-            crate::services::update::spawn(found_tx);
+            crate::services::update::spawn(found_tx, config.update.channel);
             handle.insert_source(found_rx, |event, _, state| {
                 if let channel::Event::Msg(release) = event {
                     state.notify(crate::services::update::notice(&release));

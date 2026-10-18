@@ -471,7 +471,9 @@ impl State {
     fn invoke(&mut self, id: u32, key: String) {
         let resident = self.notifications.get(id).is_some_and(|n| n.resident);
         if id == crate::services::update::NOTICE_ID {
-            if let Some(url) = self.update.as_ref().map(|r| r.url.clone()) {
+            if key == "install" {
+                self.install_update();
+            } else if let Some(url) = self.update.as_ref().map(|r| r.url.clone()) {
                 self.spawn(&["xdg-open".into(), url]);
             }
         } else if !self.disk_action(id, &key) {

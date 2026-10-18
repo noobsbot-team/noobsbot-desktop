@@ -119,16 +119,18 @@ pub struct Row {
     pub action: Option<Action>,
 }
 
-/// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows.
+/// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows, `update`: a verified
+/// update is waiting (E6.13).
 // ponytail: rows whose window isn't built yet (About, Settings) are disabled until
 // their milestone adds it.
-pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>]) -> Vec<Option<Row>> {
+pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) -> Vec<Option<Row>> {
     let row = |label: String, shortcut, action| Some(Row { label, shortcut, action });
     match menu {
         Menu::Logo => vec![
             row("About This Computer".into(), "", None),
             row("System Settings…".into(), "", None),
-            row("Software Update…".into(), "", None),
+            // ponytail: the row itself is the badge until Settings ▸ Software Update (M7) exists to open.
+            if update { row("Restart to Update…".into(), "", Some(Action::InstallUpdate)) } else { row("Software Update…".into(), "", None) },
             None,
             row("Force Quit…".into(), "⌥⌘⎋", Some(Action::ForceQuit)),
             None,
@@ -338,7 +340,7 @@ impl State {
                 let rows = match menu {
                     Menu::Dock => self.dock_menu_rows(),
                     Menu::Input => self.input_menu_rows(),
-                    _ => menu_rows(menu, "", tray),
+                    _ => menu_rows(menu, "", tray, self.update_ready()),
                 };
                 if let Some(action) = index.and_then(|i| rows.into_iter().nth(i)).flatten().and_then(|row| row.action) {
                     self.popup = None;
@@ -454,7 +456,7 @@ mod tests {
 
     #[test]
     fn menus_stay_on_screen_and_stack_rows() {
-        let rows = menu_rows(Menu::App, "Kate", &[]);
+        let rows = menu_rows(Menu::App, "Kate", &[], false);
         let (rect, cells) = menu_layout(Anchor::Below(6), 1280, 200, &rows);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
         assert_eq!(rect, Rectangle::new((8, 28).into(), (200, 142).into()));

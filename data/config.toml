@@ -110,6 +110,11 @@ lock = true
 screen_recording = []
 screen_recording_denied = []
 
+[update]
+# "stable", or "beta" to also get pre-releases (1.4.0-beta.2). Updates download in the background, are checked
+# against the release signature, and install with "Restart to Update" (asks for the admin password).
+channel = "stable"
+
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",
