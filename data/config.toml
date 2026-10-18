@@ -54,6 +54,10 @@ top_right = "none"
 bottom_left = "none"
 bottom_right = "none"
 
+[display]
+# The GPU that draws the desktop, e.g. "/dev/dri/card1"; empty = the one the computer booted with. Applies at next login.
+gpu = ""
+
 [windows]
 # Hold this key and drag anywhere in a window to move it: "super" or "alt".
 move_modifier = "super"

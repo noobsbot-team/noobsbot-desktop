@@ -54,7 +54,7 @@ pub struct Protocols {
     /// What apps asked the cursor to look like (wl_pointer.set_cursor or cursor-shape).
     pub cursor: CursorImageStatus,
     /// Where the host cursor was last; relative motion is the step from there, even while the pointer is locked.
-    last_host_pointer: Option<Point<f64, Logical>>,
+    pub last_host_pointer: Option<Point<f64, Logical>>,
     _presentation: PresentationState,
     _fractional_scale: FractionalScaleManagerState,
     _relative_pointer: RelativePointerManagerState,
@@ -179,7 +179,7 @@ impl State {
 
     /// Stores the cursor an app asked for and, nested, shows it on the host window.
     pub fn set_cursor(&mut self, image: CursorImageStatus) {
-        if let Some(winit) = &self.backend {
+        if let Some(crate::backend::Device::Winit(winit)) = &self.device {
             let window = winit.backend.window();
             window.set_cursor_visible(image != CursorImageStatus::Hidden);
             match &image {

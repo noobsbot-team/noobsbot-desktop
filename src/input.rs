@@ -79,6 +79,11 @@ impl State {
                             None => FilterResult::Forward,
                         };
                     }
+                    // Ctrl+Alt+F1…F12 on the real screen switch virtual terminals, whatever is open.
+                    if state.switch_vt(key.modified_sym()) {
+                        state.suppressed.push(code);
+                        return FilterResult::Intercept(None);
+                    }
                     // Locked: the lock screen takes every key (or its client's lock surface gets them).
                     if state.locked() {
                         if state.lock_key(key.modified_sym(), mods.ctrl) {

@@ -11,7 +11,7 @@ repository = "https://github.com/anil0403/noobsbot-desktop"
 members = ["settings"]
 
 [dependencies]
-smithay = { version = "=0.7.0", default-features = false, features = ["backend_drm", "backend_winit", "desktop", "renderer_gl", "wayland_frontend"] }
+smithay = { version = "=0.7.0", default-features = false, features = ["backend_drm", "backend_gbm", "backend_libinput", "backend_session_libseat", "backend_udev", "backend_winit", "desktop", "renderer_gl", "renderer_multi", "wayland_frontend"] }
 notify = "8.2.0"
 regex-lite = "0.1.9"
 serde = { version = "1.0.229", features = ["derive"] }

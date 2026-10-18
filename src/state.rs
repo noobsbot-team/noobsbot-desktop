@@ -85,7 +85,9 @@ pub struct State {
     pub seat: Seat<Self>,
     pub clipboard: Clipboard,
     /// Set by the backend once the renderer exists.
-    pub backend: Option<crate::backend::winit::Winit>,
+    pub backend: Option<crate::backend::Views>,
+    /// The renderer and outputs: a winit window or the real screen.
+    pub device: Option<crate::backend::Device>,
     redraw_pending: bool,
     /// Frames keep coming until then (anim.rs).
     pub anim_until: Option<Instant>,
@@ -330,6 +332,7 @@ impl State {
             seat,
             clipboard: Clipboard::new(clipboard_tx),
             backend: None,
+            device: None,
             redraw_pending: false,
             anim_until: None,
             resize: None,
@@ -405,11 +408,18 @@ impl State {
     /// Draws a frame at the next vblank. Called only when something changed, so an idle desktop costs no CPU.
     /// The frame starts as late as the frame clock allows (E1.10), so input arriving meanwhile is still in it.
     pub fn schedule_redraw(&mut self) {
+        // The real screen keeps a frame clock per output.
+        if let Some(crate::backend::Device::Udev(udev)) = self.device.as_mut() {
+            return udev.redraw_all(&self.loop_handle);
+        }
         if self.redraw_pending {
             return;
         }
         self.redraw_pending = true;
-        let delay = self.backend.as_mut().map_or(std::time::Duration::ZERO, |b| b.clock.delay(Instant::now()));
+        let delay = match self.device.as_mut() {
+            Some(crate::backend::Device::Winit(winit)) => winit.clock.delay(Instant::now()),
+            _ => std::time::Duration::ZERO,
+        };
         let draw = |state: &mut Self| {
             state.redraw_pending = false;
             state.render();
@@ -1012,7 +1022,7 @@ impl DmabufHandler for State {
 
     /// Test-import every buffer so a format the GPU can't read fails here, not as a black window.
     fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
-        if self.backend.as_mut().is_some_and(|w| w.backend.renderer().import_dmabuf(&dmabuf, None).is_ok()) {
+        if self.device.as_mut().and_then(crate::backend::Device::renderer).is_some_and(|r| r.import_dmabuf(&dmabuf, None).is_ok()) {
             let _ = notifier.successful::<Self>();
         } else {
             notifier.failed();

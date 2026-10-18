@@ -303,8 +303,14 @@ impl State {
         let dark = crate::render::is_dark(&self.config.appearance);
         let reduce = self.config.appearance.reduce_motion;
         let curve = self.curve(curve);
-        let Some(backend) = self.backend.as_mut() else { return };
-        let Some(mut ghost) = backend.ghost(&mut self.text, &self.space, window, dark) else { return };
+        let Some(output) = self.space.outputs().next().cloned() else { return };
+        let output_loc = self.space.output_geometry(&output).map_or_else(Default::default, |g| g.loc);
+        let scale = output.current_scale().fractional_scale();
+        let (Some(backend), Some(renderer)) = (self.backend.as_mut(), self.device.as_mut().and_then(crate::backend::Device::renderer)) else { return };
+        let Some(mut ghost) = crate::render::motion::Ghost::capture(renderer, &backend.shaders, &mut self.text, &self.space, window, output_loc, scale, dark)
+        else {
+            return;
+        };
         backend.ghosts.retain(|g| g.window != *window);
         ghost.from = from.unwrap_or(ghost.from);
         ghost.to = match to {
