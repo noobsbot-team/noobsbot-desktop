@@ -122,6 +122,10 @@ impl State {
         let center = self.center_layout();
         let (cards, more) = self.banner_layout();
         let batteries = self.batteries();
+        let calendar = match self.popup {
+            Some(Popup::Notifications { year, month }) => Some(self.calendar_view(year, month, self.config.clock.week_start.into())),
+            _ => None,
+        };
         let dock_items = self.dock_items();
         let dock_frame = self.dock_frame(&dock_items);
         let dock_layout = dock_frame.layout.clone();
@@ -278,9 +282,11 @@ impl State {
         let mark = bar.len();
         match self.popup {
             Some(Popup::Notifications { year, month }) => {
-                let shown = render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };
+                let week_start = self.config.clock.week_start.into();
+                let (dots, up_next) = calendar.clone().unwrap_or_default();
+                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots };
                 if let Some(center) = &center {
-                    let view = View::Center { center, month: &shown, batteries: &batteries, dnd: self.dnd };
+                    let view = View::Center { center, month: &shown, up_next: &up_next, batteries: &batteries, dnd: self.dnd };
                     bar.extend(notifications.elements(
                         renderer,
                         shaders,

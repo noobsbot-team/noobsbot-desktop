@@ -178,6 +178,8 @@ pub struct State {
     pub dock_ui: crate::shell::dock::Ui,
     /// Notifications, their banners and Notification Center's state (E4.1, E4.2).
     pub notifications: crate::shell::notify::Store,
+    /// Calendar events from .ics files (E7.2).
+    pub calendar: crate::events::Calendar,
     /// The app switcher (E4.5) and its most-recently-used order.
     pub switcher: crate::shell::switcher::Switcher,
     /// The Force Quit window (E4.7), when open.
@@ -389,6 +391,7 @@ impl State {
             dock_fx: Default::default(),
             dock_ui: Default::default(),
             notifications: Default::default(),
+            calendar: Default::default(),
             switcher: Default::default(),
             force_quit: None,
             spotlight: None,
