@@ -540,11 +540,16 @@ pub fn scene(
         None => {
             let now = std::time::Instant::now();
             for window in space.elements().rev().filter(|w| space.element_location(w).is_some_and(|l| crate::spaces::row_at(l.y, output_geo.loc.y) == 0)) {
+                let motion = motion::current(window, now).zip(motion::window_frame(space, window, output_geo.loc)).map(|(m, frame)| (frame, m.look(frame, now)));
+                // Only sliding (Show Desktop): drawn shifted, not as a snapshot that clips past the output's left edge.
+                if let Some((frame, look)) = motion.filter(|(frame, look)| look.rect.size == frame.size && look.alpha >= 1.0) {
+                    let shift = (look.rect.loc - frame.loc).to_i32_round();
+                    out.extend(window_elements(renderer, shaders, text, space, window, output_geo.loc - shift, scale, dark));
+                    continue;
+                }
                 let elements = window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark);
                 // Animating (E5.5): drawn as one moved, scaled, faded snapshot.
-                let moved = motion::current(window, now)
-                    .zip(motion::window_frame(space, window, output_geo.loc))
-                    .and_then(|(m, frame)| motion::moved(renderer, &elements, frame, m.look(frame, now), scale));
+                let moved = motion.and_then(|(frame, look)| motion::moved(renderer, &elements, frame, look, scale));
                 match moved {
                     Some(element) => out.push(element),
                     None => out.extend(elements),

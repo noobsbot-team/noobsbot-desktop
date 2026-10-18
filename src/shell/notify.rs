@@ -45,6 +45,9 @@ const CENTER_PAD: i32 = 12;
 pub const PLATE: i32 = 16;
 /// The Weather widget's height.
 pub const WEATHER_H: i32 = 156;
+/// Up Next: its title, then rows of a title and a time line.
+const UP_NEXT_TOP: i32 = 36;
+const UP_NEXT_ROW: i32 = 40;
 /// A horizontal swipe this long dismisses a banner.
 const SWIPE: f64 = 80.0;
 
@@ -217,6 +220,8 @@ pub struct Center {
     /// "Notifications" and Clear All; `None` with nothing to show.
     pub header: Option<(Rect, Rect)>,
     pub groups: Vec<Group>,
+    /// Up Next (E7.2): its card and one row per event; `None` with nothing coming up.
+    pub up_next: Option<(Rect, Vec<Rect>)>,
     /// The widget card, and the month grid inside it.
     pub calendar: (Rect, CalendarLayout),
     /// The Batteries widget, with one slot per battery.
@@ -235,9 +240,9 @@ impl Center {
     }
 }
 
-/// Notification Center for `store` on an `output`-sized screen, with `rows` calendar weeks, `batteries` batteries and
-/// maybe the Weather widget.
-pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize, batteries: usize, weather: bool) -> Center {
+/// Notification Center for `store` on an `output`-sized screen, with `rows` calendar weeks, `up_next` upcoming
+/// events, `batteries` batteries and maybe the Weather widget.
+pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize, up_next: usize, batteries: usize, weather: bool) -> Center {
     let x = output.w - MARGIN - CENTER_W;
     let top = menubar::HEIGHT + DROP;
     let rect = Rectangle::new((x, top).into(), (CENTER_W, (output.h - top - MARGIN).max(100)).into());
@@ -283,6 +288,11 @@ pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize,
         groups.push(group);
     }
     y += 4;
+    let up_next = (up_next > 0).then(|| {
+        let card = row(inner_x, y, inner_w, UP_NEXT_TOP + up_next as i32 * UP_NEXT_ROW + 6);
+        y += card.size.h + GAP;
+        (card, (0..up_next as i32).map(|i| row(inner_x + 12, card.loc.y + UP_NEXT_TOP + i * UP_NEXT_ROW, inner_w - 24, UP_NEXT_ROW - 6)).collect())
+    });
     let cal_h = super::calendar::GRID_Y + rows as i32 * super::calendar::CELL_H + super::calendar::BOTTOM;
     let calendar = (row(inner_x, y, inner_w, cal_h), calendar_layout(inner_x + (inner_w - super::calendar::WIDTH) / 2, y, rows));
     y += cal_h + GAP;
@@ -298,7 +308,7 @@ pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize,
         (card, (0..batteries.min(3) as i32).map(|i| row(inner_x + 12 + i * each, card.loc.y + 36, each, 20)).collect())
     });
     let content = y - start + 8;
-    Center { rect, date, settings, dnd, header, groups, calendar, batteries, weather, max_scroll: (content - (rect.size.h - 16)).max(0) }
+    Center { rect, date, settings, dnd, header, groups, up_next, calendar, batteries, weather, max_scroll: (content - (rect.size.h - 16)).max(0) }
 }
 
 /// What a click in Notification Center hits.
@@ -384,7 +394,8 @@ impl State {
     pub fn center_layout(&self) -> Option<Center> {
         let Some(Popup::Notifications { year, month }) = self.popup else { return None };
         let rows = grid(year, month, self.config.clock.week_start.into()).len();
-        Some(center(&self.notifications, self.output_size(), self.dnd, rows, self.batteries().len(), self.weather.is_some()))
+        let up_next = self.calendar_view(year, month, self.config.clock.week_start.into()).1.len();
+        Some(center(&self.notifications, self.output_size(), self.dnd, rows, up_next, self.batteries().len(), self.weather.is_some()))
     }
 
     /// A notification from an app: stored, and shown as a banner unless Do Not Disturb is on, a fullscreen app has
@@ -481,7 +492,9 @@ impl State {
     fn invoke(&mut self, id: u32, key: String) {
         let resident = self.notifications.get(id).is_some_and(|n| n.resident);
         if id == crate::services::update::NOTICE_ID {
-            if let Some(url) = self.update.as_ref().map(|r| r.url.clone()) {
+            if key == "install" {
+                self.install_update();
+            } else if let Some(url) = self.update.as_ref().map(|r| r.url.clone()) {
                 self.spawn(&["xdg-open".into(), url]);
             }
         } else if !self.disk_action(id, &key) {
@@ -737,7 +750,7 @@ mod tests {
             store.insert(note(id, app));
         }
         let size = Size::from((1280, 720));
-        let center = center(&store, size, true, 5, 1, true);
+        let center = center(&store, size, true, 5, 0, 1, true);
         assert_eq!(center.rect, Rectangle::new((1280 - 8 - 360, 28).into(), (360, 720 - 28 - 8).into()));
         assert_eq!(center.groups.iter().map(|g| (g.app.as_str(), g.count, g.cards.len())).collect::<Vec<_>>(), vec![("A", 3, 1), ("B", 1, 1)]);
         assert!(center.groups[0].plate.is_some() && center.groups[1].plate.is_none());
@@ -751,15 +764,21 @@ mod tests {
         assert_eq!(center_hit(&center, at(center.header.unwrap().1)), Some(Hit::ClearAll));
         // Opened out: every card, newest first, and Show Less.
         store.expanded = Some("A".into());
-        let open = super::center(&store, size, false, 5, 0, false);
+        let open = super::center(&store, size, false, 5, 0, 0, false);
         assert_eq!(open.groups[0].cards.iter().map(|c| c.id).collect::<Vec<_>>(), vec![4, 3, 1]);
         assert_eq!(center_hit(&open, at(open.groups[0].header.unwrap().1)), Some(Hit::Collapse));
         // Too tall for a short screen: it scrolls, and what scrolled out is not hit.
-        let short = super::center(&store, Size::from((1280, 400)), false, 5, 0, false);
+        let short = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false);
         assert!(short.max_scroll > 0);
         store.scroll = short.max_scroll;
-        let scrolled = super::center(&store, Size::from((1280, 400)), false, 5, 0, false);
+        let scrolled = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false);
         assert!(!scrolled.visible(scrolled.date));
         assert!(scrolled.visible(scrolled.calendar.0));
+        // Up Next sits above the calendar, its rows inside its card.
+        let next = super::center(&store, size, false, 5, 2, 0, false);
+        let (card, rows) = next.up_next.clone().unwrap();
+        assert!(rows.len() == 2 && rows.iter().all(|r| card.contains_rect(*r)) && !rows[0].overlaps(rows[1]));
+        assert!(card.loc.y + card.size.h < next.calendar.0.loc.y);
+        assert!(center.up_next.is_none());
     }
 }

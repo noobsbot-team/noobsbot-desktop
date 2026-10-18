@@ -15,7 +15,7 @@ TERMINAL_REPO=anil0403/noobsbot-terminal
 DESKTOP_TAG=${NOOBSBOT_DESKTOP_TAG:-v0.1.0}
 TERMINAL_TAG=${NOOBSBOT_TERMINAL_TAG:-v0.5.1}
 # The release signing key (E6.13); its private half lives only in the release CI secret.
-MINISIGN_PUBKEY=""
+MINISIGN_PUBKEY="RWQgk/P2Bfb6JYQ3p8/ObaP2nG0S1gYPhE/KIJa7jYnCArCLukiRPTyR"
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/noobsbot-desktop
 LIB=/usr/lib/noobsbot-desktop
 DESTDIR=${DESTDIR:-}
@@ -143,6 +143,10 @@ install_aur() {
 use_version() {
     as_root ln -sfn "$LIB/versions/$1/noobsbot-desktop" /usr/bin/noobsbot-desktop
     as_root ln -sfn "$LIB/versions/$1/noobsbot-desktop-settings" /usr/bin/noobsbot-desktop-settings
+    # Software Update's privileged helper, at the fixed path its polkit action (org.noobsbot.desktop.update) names.
+    if ((DRY)) || [[ -f $LIB/versions/$1/noobsbot-desktop-update ]]; then
+        as_root install -Dm755 "$LIB/versions/$1/noobsbot-desktop-update" "$LIB/noobsbot-desktop-update"
+    fi
 }
 
 install_desktop_release() {
@@ -188,6 +192,10 @@ install_desktop_source() {
     run cargo build --workspace --release --locked --manifest-path "$src/Cargo.toml"
     as_root install -Dm755 "$src/target/release/noobsbot-desktop" "$LIB/versions/$ver/noobsbot-desktop"
     as_root install -Dm755 "$src/target/release/noobsbot-desktop-settings" "$LIB/versions/$ver/noobsbot-desktop-settings"
+    # Tags before Software Update's helper existed don't build it.
+    if ((DRY)) || [[ -f $src/target/release/noobsbot-desktop-update ]]; then
+        as_root install -Dm755 "$src/target/release/noobsbot-desktop-update" "$LIB/versions/$ver/noobsbot-desktop-update"
+    fi
     use_version "$ver"
 }
 

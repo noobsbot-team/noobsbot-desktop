@@ -19,6 +19,7 @@ use super::{
 };
 use crate::{
     services::weather::{Weather, condition},
+    events::Upcoming,
     shell::notify::{BODY, CLOSE, Card, Center, LINE, Notification, PLATE, Store, buttons},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
@@ -55,7 +56,7 @@ type Key = (Vec<(Rect, Shape)>, bool, [u8; 3], u32, u64);
 /// What is on screen.
 pub enum View<'a> {
     Banners { cards: &'a [Card], more: Option<(Rect, usize)> },
-    Center { center: &'a Center, month: &'a Month, batteries: &'a [(String, u8)], dnd: bool, weather: Option<&'a Weather> },
+    Center { center: &'a Center, month: &'a Month, up_next: &'a [Upcoming], batteries: &'a [(String, u8)], dnd: bool, weather: Option<&'a Weather> },
 }
 
 /// "22°", never "-0°".
@@ -253,7 +254,7 @@ impl NotificationViews {
                     shapes.push((pill, Shape::Card { shadow: true }));
                 }
             }
-            View::Center { center, month, batteries, dnd, weather } => {
+            View::Center { center, month, up_next, batteries, dnd, weather } => {
                 let shown = |r: Rect| center.visible(r);
                 let row_w = |r: Rect| r.size.w.max(1) as u32;
                 if shown(center.date) {
@@ -300,6 +301,21 @@ impl NotificationViews {
                         pieces.put(text.label(&format!("{} more", group.count - 1), ink.caption(), row_w(peek), scale), peek, Align::Centre);
                         shapes.push((plate, Shape::Plate));
                     }
+                }
+                if let Some((card, rows)) = center.up_next.as_ref().filter(|(c, _)| shown(*c)) {
+                    let title = Rectangle::new((card.loc.x + 12, card.loc.y + 10).into(), (card.size.w - 24, 20).into());
+                    pieces.put(text.label("Up Next", Style { size: 15, line_height: 20, weight: 600, color: ink.label, tabular: false }, row_w(title), scale), title, Align::Left);
+                    let now = chrono::Local::now().timestamp();
+                    for (row, u) in rows.iter().zip(up_next.iter()) {
+                        // An accent bar, the title, then when and where.
+                        shapes.push((Rectangle::new(row.loc, (3, row.size.h).into()), Shape::Bar));
+                        let line = |dy: i32, h: i32| Rectangle::new((row.loc.x + 11, row.loc.y + dy).into(), (row.size.w - 11, h).into());
+                        pieces.put(text.label(&u.summary, ink.headline(), row_w(line(0, 0)), scale), line(1, 16), Align::Left);
+                        let place = if u.location.is_empty() { String::new() } else { format!(" · {}", u.location) };
+                        let detail = format!("{}{place}", crate::events::when(u, now, hour24));
+                        pieces.put(text.label(&detail, ink.subheadline(), row_w(line(0, 0)), scale), line(19, 14), Align::Left);
+                    }
+                    shapes.push((*card, Shape::Widget));
                 }
                 let (card, layout) = &center.calendar;
                 if shown(*card) {
@@ -397,7 +413,7 @@ fn glass(shaders: &Shaders, shapes: &[(Rect, Shape)], dark: bool, accent: [u8; 3
             Shape::Close => shaders.glass_shape(rect, material(Material::Card, 1.0), f64::from(CLOSE) / 2.0, true, dark, scale),
             Shape::IconBack => shaders.glass_shape(rect, fill, 8.0, false, dark, scale),
             Shape::Track => shaders.glass_shape(rect, fill, f64::from(rect.size.h) / 2.0, false, dark, scale),
-            Shape::Bar => shaders.glass_shape(rect, [r, g, b, 1.0], f64::from(rect.size.h) / 2.0, false, dark, scale),
+            Shape::Bar => shaders.glass_shape(rect, [r, g, b, 1.0], f64::from(rect.size.h.min(rect.size.w)) / 2.0, false, dark, scale),
         });
     }
     out.extend(shadows);

@@ -122,6 +122,10 @@ impl State {
         let center = self.center_layout();
         let (cards, more) = self.banner_layout();
         let batteries = self.batteries();
+        let calendar = match self.popup {
+            Some(Popup::Notifications { year, month }) => Some(self.calendar_view(year, month, self.config.clock.week_start.into())),
+            _ => None,
+        };
         let dock_items = self.dock_items();
         let dock_frame = self.dock_frame(&dock_items);
         let dock_layout = dock_frame.layout.clone();
@@ -132,6 +136,7 @@ impl State {
         let dock_menu =
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
         let input_menu = self.input_menu_rows();
+        let update_ready = self.update_ready();
         let overview = self.mission_frame();
         let slide = if overview.is_none() { self.slide_frame() } else { None };
         let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
@@ -146,6 +151,7 @@ impl State {
             components,
             menu_bar,
             notifications,
+            entering,
             menu,
             osd,
             control,
@@ -256,10 +262,31 @@ impl State {
             bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
         }
         render::motion::appear(entrances.osd(), renderer, &mut bar, mark, scale, now);
+        let reduce = appearance.reduce_motion;
+        entrances.fade_osd.track(renderer, &mut bar, mark, false, false, reduce, scale, now, &mut self.anim_until);
         let hour24 = self.config.clock.format.hour24;
         let mark = bar.len();
-        if !cards.is_empty() {
-            let view = View::Banners { cards: &cards, more };
+        // Only the new card slides in, drawn on its own; the cards under it are already there.
+        let split = usize::from(cards.first().is_some_and(|c| entrances.entering_banner(now) == Some(c.id)));
+        if split == 1 {
+            let view = View::Banners { cards: &cards[..1], more: None };
+            bar.extend(entering.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                view,
+                &self.notifications,
+                hour24,
+                dark,
+                accent,
+                appearance.glass_opacity,
+                scale,
+            ));
+            render::motion::appear(entrances.banner(), renderer, &mut bar, mark, scale, now);
+        }
+        if cards.len() > split {
+            let view = View::Banners { cards: &cards[split..], more };
             bar.extend(notifications.elements(
                 renderer,
                 shaders,
@@ -274,13 +301,36 @@ impl State {
                 scale,
             ));
         }
-        render::motion::appear(entrances.banner(), renderer, &mut bar, mark, scale, now);
+        entrances.fade_banners.track(renderer, &mut bar, mark, false, false, reduce, scale, now, &mut self.anim_until);
+        // The bar is laid out before its menus, so they line up with this frame's items (it is drawn behind them).
+        let active = self.popup.and_then(Popup::item);
+        // Launchpad covers the menu bar.
+        let strip = match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
+            Some(content) => menu_bar.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                content,
+                active,
+                width,
+                dark,
+                appearance.glass_opacity,
+                scale,
+            ),
+            None => {
+                menu_bar.hide();
+                Vec::new()
+            }
+        };
         let mark = bar.len();
         match self.popup {
             Some(Popup::Notifications { year, month }) => {
-                let shown = render::calendar::Month { year, month, week_start: self.config.clock.week_start.into(), today: chrono::Local::now().date_naive() };
+                let week_start = self.config.clock.week_start.into();
+                let (dots, up_next) = calendar.clone().unwrap_or_default();
+                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots };
                 if let Some(center) = &center {
-                    let view = View::Center { center, month: &shown, batteries: &batteries, dnd: self.dnd, weather: self.weather.as_ref() };
+                    let view = View::Center { center, month: &shown, up_next: &up_next, batteries: &batteries, dnd: self.dnd, weather: self.weather.as_ref() };
                     bar.extend(notifications.elements(
                         renderer,
                         shaders,
@@ -302,7 +352,7 @@ impl State {
                 let (rows, anchor) = match (kind, dock_menu) {
                     (crate::shell::Menu::Dock, Some((rows, at))) => (rows, crate::shell::Anchor::Above(at)),
                     _ => (
-                        if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray) },
+                        if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray, update_ready) },
                         crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
                     ),
                 };
@@ -328,23 +378,9 @@ impl State {
             None => {}
         }
         render::motion::appear(entrances.popup(), renderer, &mut bar, mark, scale, now);
-        let active = self.popup.and_then(Popup::item);
-        // Launchpad covers the menu bar.
-        match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
-            Some(content) => bar.extend(menu_bar.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                content,
-                active,
-                width,
-                dark,
-                appearance.glass_opacity,
-                scale,
-            )),
-            None => menu_bar.hide(),
-        }
+        let replaced = entrances.replaced;
+        entrances.fade_popup.track(renderer, &mut bar, mark, replaced, true, reduce, scale, now, &mut self.anim_until);
+        bar.extend(strip);
         // The dock: behind the bar and popups, above windows.
         if let Some(layout) = &dock_layout {
             let icons: Vec<DockIcon> = dock_items

@@ -64,6 +64,8 @@ pub enum Action {
     Dock(crate::shell::dock::Command),
     /// Opens or closes Launchpad (E4.4; F4, off by default).
     Launchpad,
+    /// Installs the downloaded update, then logs out (logo menu / notification ▸ Restart to Update, E6.13).
+    InstallUpdate,
     /// The Space to the left (-1) or right (+1) (E5.1).
     SwitchSpace(i32),
     /// Space n, from 0.
@@ -74,8 +76,12 @@ pub enum Action {
     MissionControl,
     /// Mission Control with only the focused app's windows.
     AppExpose,
+    /// Windows slide to the screen edges, or back (E5.3; no default key).
+    ShowDesktop,
     /// Keyboard layout n, from 0, or the next one (Super+Ctrl+Space, E6.12).
     Layout(Option<usize>),
+    /// An fcitx5 input method, by unique name (the input menu).
+    InputMethod(String),
     /// Super+Shift+3 / 4 / 5 (E6.8).
     Screenshot(crate::shell::screenshot::Start),
 }
@@ -158,6 +164,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("move-to-space", "right") => Some(Action::MoveToSpace(1)),
         ("mission-control", "") => Some(Action::MissionControl),
         ("app-expose", "") => Some(Action::AppExpose),
+        ("show-desktop", "") => Some(Action::ShowDesktop),
         ("input-source", "") => Some(Action::Layout(None)),
         ("screenshot", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Screen)),
         ("screenshot-region", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Region)),
@@ -241,6 +248,7 @@ impl State {
             Action::ForceQuit => self.open_force_quit(),
             Action::Spotlight => self.toggle_spotlight(),
             Action::Layout(index) => self.switch_layout(index),
+            Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
             // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
             Action::Volume(up) => {
@@ -294,6 +302,7 @@ impl State {
             Action::MoveToSpace(delta) => self.move_to_space(delta),
             Action::MissionControl => self.toggle_mission_control(),
             Action::AppExpose => self.app_expose(),
+            Action::ShowDesktop => self.toggle_desktop(),
             Action::NotificationCenter => {
                 let (year, month) = crate::shell::this_month();
                 let open = matches!(self.popup, Some(crate::shell::Popup::Notifications { .. }));
@@ -303,6 +312,7 @@ impl State {
             Action::Dock(command) => self.dock_command(command),
             Action::Launchpad => self.toggle_launchpad(),
             Action::Screenshot(start) => self.screenshot(start),
+            Action::InstallUpdate => self.install_update(),
         }
     }
 

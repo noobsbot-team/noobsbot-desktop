@@ -45,7 +45,7 @@ jobs:
           version="${TAG#v}"
           name="noobsbot-desktop-$version-x86_64"
           mkdir -p "dist/$name"
-          cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings LICENSE README.md "dist/$name/"
+          cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings target/release/noobsbot-desktop-update LICENSE README.md "dist/$name/"
           cp -r data "dist/$name/"
           cd dist
           tar --zstd -cf "$name.tar.zst" "$name"

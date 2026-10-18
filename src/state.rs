@@ -182,6 +182,8 @@ pub struct State {
     pub dock_ui: crate::shell::dock::Ui,
     /// Notifications, their banners and Notification Center's state (E4.1, E4.2).
     pub notifications: crate::shell::notify::Store,
+    /// Calendar events from .ics files (E7.2).
+    pub calendar: crate::events::Calendar,
     /// The app switcher (E4.5) and its most-recently-used order.
     pub switcher: crate::shell::switcher::Switcher,
     /// The Force Quit window (E4.7), when open.
@@ -194,6 +196,8 @@ pub struct State {
     pub spaces: crate::spaces::Spaces,
     /// Mission Control (E5.2), while up or closing.
     pub mission: Option<crate::mission::Mission>,
+    /// Show Desktop is on: the windows pushed aside and the frame spots they go back to (E5.3).
+    pub desktop_shown: Option<Vec<(Window, Point<i32, Logical>)>>,
     /// The system touchpad gesture in progress (E5.3).
     pub gesture: Option<crate::gestures::Tracker>,
     /// Hot corners (E5.4).
@@ -269,7 +273,7 @@ impl State {
         // Nested is a dev session: no network.
         if !nested && config.check_updates {
             let (found_tx, found_rx) = channel::channel();
-            crate::services::update::spawn(found_tx);
+            crate::services::update::spawn(found_tx, config.update.channel);
             handle.insert_source(found_rx, |event, _, state| {
                 if let channel::Event::Msg(release) = event {
                     state.notify(crate::services::update::notice(&release));
@@ -314,6 +318,7 @@ impl State {
                     crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
                     crate::services::Update::Resumed => state.idle_activity(),
+                    crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                 }
                 state.schedule_redraw();
             }
@@ -404,12 +409,14 @@ impl State {
             dock_fx: Default::default(),
             dock_ui: Default::default(),
             notifications: Default::default(),
+            calendar: Default::default(),
             switcher: Default::default(),
             force_quit: None,
             spotlight: None,
             launchpad: None,
             spaces: Default::default(),
             mission: None,
+            desktop_shown: None,
             gesture: None,
             corners: Default::default(),
             lock: None,
@@ -604,6 +611,8 @@ impl State {
         let exclusive = self.exclusive_layer().map(|l| l.wl_surface().clone());
         match window {
             Some(window) => {
+                // Any window taking focus ends Show Desktop.
+                self.restore_desktop();
                 self.reveal(&window);
                 self.switcher.touch(&window);
                 self.space.raise_element(&window, true);

@@ -21,8 +21,10 @@ use crate::{
 const RADIUS: f64 = 12.0;
 const TODAY: i32 = 26;
 
-/// What the card and the today circle depend on: card, grid rect, today's cell, dark, accent, opacity, scale.
-type Key = (Rect, Rect, Option<usize>, bool, [u8; 3], u32, u64);
+/// What the card, the today circle and the event dots depend on: card, grid rect, today's cell, dots, dark, accent,
+/// opacity, scale.
+type Key = (Rect, Rect, Option<usize>, Vec<bool>, bool, [u8; 3], u32, u64);
+const DOT: i32 = 4;
 
 #[derive(Default)]
 pub struct CalendarWidget {
@@ -36,6 +38,8 @@ pub struct Month {
     pub month: u32,
     pub week_start: Weekday,
     pub today: NaiveDate,
+    /// One per grid day: it has an event (E7.2).
+    pub dots: Vec<bool>,
 }
 
 impl CalendarWidget {
@@ -59,12 +63,23 @@ impl CalendarWidget {
         let days: Vec<NaiveDate> = grid.iter().flatten().copied().collect();
         let today = days.iter().position(|d| *d == shown.today);
 
-        let key = (card, layout.rect, today, dark, accent, glass_opacity.to_bits(), scale.to_bits());
+        let key = (card, layout.rect, today, shown.dots.clone(), dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             let spec = Material::Card.spec(dark);
             let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
             let card = shaders.glass_shape(card, [r, g, b, spec.opacity * glass_opacity], RADIUS, true, dark, scale);
             let mut glass = Vec::new();
+            // Event dots under the day numbers: white inside today's circle, else the number's ink, fainter.
+            for (i, cell) in layout.cells.iter().enumerate().filter(|(i, _)| shown.dots.get(*i) == Some(&true)) {
+                let dot = Rectangle::new((cell.loc.x + (cell.size.w - DOT) / 2, cell.loc.y + cell.size.h - 9).into(), (DOT, DOT).into());
+                let ink = if dark { 1.0 } else { 0.0 };
+                let fill = match (Some(i) == today, days[i].month() == shown.month) {
+                    (true, _) => [1.0, 1.0, 1.0, 1.0],
+                    (false, true) => [ink, ink, ink, 0.5],
+                    (false, false) => [ink, ink, ink, 0.25],
+                };
+                glass.push(shaders.light(dot, fill, false, scale));
+            }
             if let Some(cell) = today.map(|i| layout.cells[i]) {
                 let circle = Rectangle::new((cell.loc.x + (cell.size.w - TODAY) / 2, cell.loc.y + (cell.size.h - TODAY) / 2).into(), (TODAY, TODAY).into());
                 let [r, g, b] = accent.map(|c| f32::from(c) / 255.0);
