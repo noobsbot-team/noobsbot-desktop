@@ -23,8 +23,8 @@ use crate::{
 
 /// The dock item that opens Launchpad (`[dock] items`).
 pub const DOCK_KEY: &str = "launchpad";
-/// Its icon in the icon theme (WhiteSur's Launchpad look-alike).
-pub const ICON: &str = "appgrid";
+/// Its icon in the icon theme: WhiteSur draws the Launchpad rocket for Slingscold, a Launchpad clone.
+pub const ICON: &str = "slingscold";
 
 pub mod layout {
     /// D13's examples (5 × 4 at 1280 × 720, 7 × 5 at 1920 × 1080, 9 × 6 at 4K): a column takes 232 px past the 48 px
