@@ -33,8 +33,10 @@ pub enum Action {
     Sleep,
     /// Ask, then restart, shut down or log out (logo menu).
     Power(crate::shell::alert::Power),
-    /// Basic window cycling; the full switcher comes in M4.
-    CycleWindows,
+    /// The app switcher (E4.5); `back`: Shift was held. `held` is the binding, whose modifiers keep it open.
+    Switcher { back: bool, held: crate::shell::switcher::Held },
+    /// The Force Quit window (E4.7).
+    ForceQuit,
     /// Shows or hides the quake terminal, starting `noobsbot --quake` the first time (E2.8).
     Quake,
     /// The default output's volume by one step; `true`: up (E2.7).
@@ -107,7 +109,9 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("restart", "") => Some(Action::Power(Power::Restart)),
         ("shut-down", "") => Some(Action::Power(Power::ShutDown)),
         ("log-out", "") => Some(Action::Power(Power::LogOut)),
-        ("cycle", "") => Some(Action::CycleWindows),
+        // "cycle" is the M1 name.
+        ("switcher" | "cycle", "") => Some(Action::Switcher { back: false, held: Default::default() }),
+        ("force-quit", "") => Some(Action::ForceQuit),
         ("quake", "") => Some(Action::Quake),
         ("volume", "up") => Some(Action::Volume(true)),
         ("volume", "down") => Some(Action::Volume(false)),
@@ -124,6 +128,12 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
     let mut table = Vec::new();
     for (combo, text) in &config.bindings {
         match (parse(combo), action(text)) {
+            (Some(binding), Some(Action::Switcher { .. })) => {
+                // The same keys with Shift step back.
+                let held = crate::shell::switcher::Held { desktop: binding.desktop, ctrl: binding.ctrl, alt: binding.alt, key: binding.key };
+                table.push((binding, Action::Switcher { back: false, held }));
+                table.push((Binding { shift: true, ..binding }, Action::Switcher { back: true, held }));
+            }
             (Some(binding), Some(action)) => table.push((binding, action)),
             _ => tracing::warn!("config: shortcut `{combo}` = `{text}` not understood, skipped"),
         }
@@ -153,8 +163,8 @@ impl State {
             }
             Action::Quake => self.toggle_quake(),
             Action::CloseWindow => {
-                if let Some(toplevel) = focused.as_ref().and_then(|w| w.toplevel()) {
-                    toplevel.send_close();
+                if let Some(window) = focused {
+                    self.close_window(&window);
                 }
             }
             // ponytail: closes the app's windows and lets the app decide to exit; a real quit comes with app tracking (M3).
@@ -183,19 +193,8 @@ impl State {
                 }
             }
             Action::Power(power) => self.open_alert(power),
-            // ponytail: brings back the oldest hidden window first, else rotates the stack; the real switcher is M4.
-            Action::CycleWindows => {
-                let next = if self.hidden.is_empty() {
-                    self.space.elements().next().cloned()
-                } else {
-                    let (window, loc) = self.hidden.remove(0);
-                    self.set_visible_loc(&window, loc);
-                    Some(window)
-                };
-                if next.is_some() {
-                    self.focus_window(next, SERIAL_COUNTER.next_serial());
-                }
-            }
+            Action::Switcher { back, held } => self.switcher_start(back, held),
+            Action::ForceQuit => self.open_force_quit(),
             // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
             Action::Volume(up) => {
@@ -387,5 +386,8 @@ mod tests {
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::F12, false), Some(&Action::Quake));
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::F12, false), None, "Super+F12 is not F12");
         assert_eq!(lookup(&table, &mods(false, true, false), Keysym::b, true), Some(&Action::Spawn("helium-browser".into())), "nested: Alt is the desktop key");
+        assert!(matches!(lookup(&table, &mods(true, false, false), Keysym::Tab, false), Some(Action::Switcher { back: false, held }) if held.desktop));
+        assert!(matches!(lookup(&table, &mods(true, false, true), Keysym::Tab, false), Some(Action::Switcher { back: true, .. })), "Shift steps back");
+        assert_eq!(lookup(&table, &ModifiersState { logo: true, alt: true, ..Default::default() }, Keysym::Escape, false), Some(&Action::ForceQuit));
     }
 }

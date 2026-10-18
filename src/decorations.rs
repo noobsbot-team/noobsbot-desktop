@@ -156,11 +156,7 @@ impl State {
             return;
         }
         match part {
-            Part::Close => {
-                if let Some(toplevel) = window.toplevel() {
-                    toplevel.send_close();
-                }
-            }
+            Part::Close => self.close_window(&window),
             Part::Minimise => self.hide_windows(vec![window]),
             Part::Zoom => self.toggle_zoom(&window),
             Part::Title => {}

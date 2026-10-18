@@ -7,11 +7,13 @@ pub mod calendar;
 mod components;
 mod control;
 mod dock;
+mod force_quit;
 mod gallery;
 mod menu;
 pub mod menubar;
 mod notify;
 mod osd;
+mod switcher;
 mod titlebar;
 mod ui;
 mod wallpaper;
@@ -44,10 +46,12 @@ pub use alert::AlertSheet;
 pub use components::Components;
 pub use control::ControlCenter;
 pub use dock::{DockView, Icon as DockIcon};
+pub use force_quit::ForceQuitWindow;
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
 pub use notify::{NotificationViews, View};
 pub use osd::OsdPopover;
+pub use switcher::SwitcherPanel;
 pub use wallpaper::Wallpaper;
 
 use crate::{

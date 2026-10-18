@@ -163,6 +163,10 @@ pub struct State {
     pub dock_pointer: Option<Point<f64, Logical>>,
     /// Notifications, their banners and Notification Center's state (E4.1, E4.2).
     pub notifications: crate::shell::notify::Store,
+    /// The app switcher (E4.5) and its most-recently-used order.
+    pub switcher: crate::shell::switcher::Switcher,
+    /// The Force Quit window (E4.7), when open.
+    pub force_quit: Option<crate::shell::force_quit::ForceQuit>,
 }
 
 impl State {
@@ -320,6 +324,8 @@ impl State {
             dock_reveal: false,
             dock_pointer: None,
             notifications: Default::default(),
+            switcher: Default::default(),
+            force_quit: None,
             display_handle: dh,
         })
     }
@@ -365,6 +371,21 @@ impl State {
         ];
         let tray = self.tray.iter().map(|t| t.icon.clone()).collect();
         Some(menubar::Content { app, tray, status: status.into_iter().flatten().collect(), clock: crate::clock::text(&chrono::Local::now(), self.config.clock.format) })
+    }
+
+    /// The window's app id; noobsbot and others set none, so then the process name.
+    pub fn app_id(&self, window: &Window) -> Option<String> {
+        let t = window.toplevel()?;
+        let id = with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.app_id.clone()));
+        id.filter(|id| !id.is_empty()).or_else(|| {
+            let pid = self.pid(window)?;
+            Some(std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim().to_owned())
+        })
+    }
+
+    /// The process behind a window, from its Wayland connection.
+    pub fn pid(&self, window: &Window) -> Option<i32> {
+        Some(window.toplevel()?.wl_surface().client()?.get_credentials(&self.display_handle).ok()?.pid)
     }
 
     /// Where windows may go: the first output minus the menu bar and what layer surfaces (bars, docks) reserve.
@@ -464,6 +485,7 @@ impl State {
         let exclusive = self.exclusive_layer().map(|l| l.wl_surface().clone());
         match window {
             Some(window) => {
+                self.switcher.touch(&window);
                 self.space.raise_element(&window, true);
                 self.restack();
                 keyboard.set_focus(self, exclusive.or_else(|| window.toplevel().map(|t| t.wl_surface().clone())), serial);
@@ -641,6 +663,10 @@ impl CompositorHandler for State {
 impl XdgShellHandler for State {
     fn xdg_shell_state(&mut self) -> &mut XdgShellState {
         &mut self.xdg_shell_state
+    }
+
+    fn client_pong(&mut self, client: smithay::wayland::shell::xdg::ShellClient) {
+        self.pong(&client);
     }
 
     /// A rule can match on the title, so `float_above` follows it (Helium names its PiP window after it opens).

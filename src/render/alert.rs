@@ -107,11 +107,11 @@ impl AlertSheet {
         let pieces = [
             match alert.kind {
                 Kind::Pair(_) => symbols.get(Symbol::Bluetooth, Weight::Regular, ICON as u16, scale, label),
-                Kind::Power(_) => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
+                Kind::Power(_) | Kind::NotResponding { .. } => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
             },
             title,
             words,
-            text.label(if cancel == confirm { "" } else { "Cancel" }, body, button_w as u32, scale),
+            text.label(if cancel == confirm { "" } else { alert.cancel() }, body, button_w as u32, scale),
             text.label(alert.confirm(), Style { color: [255, 255, 255, 255], ..body }, button_w as u32, scale),
         ];
         self.labels = keep_buffers(&self.labels, pieces);

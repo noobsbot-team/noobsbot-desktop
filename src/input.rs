@@ -66,6 +66,7 @@ impl State {
                 let action = keyboard.input::<Option<Action>, _>(self, event.key_code(), key_state, serial, event.time_msec(), |state, mods, key| {
                     let code = key.raw_code();
                     if key_state == KeyState::Released {
+                        state.switcher_release(mods);
                         // The release of a shortcut key never reaches the app, which never saw the press.
                         return match state.suppressed.iter().position(|c| *c == code) {
                             Some(i) => {
@@ -87,6 +88,12 @@ impl State {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }
+                    // The app switcher takes every key while it's up; the Force Quit window its few.
+                    let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
+                    if state.switcher_key(raw, mods) || state.force_quit_key(key.modified_sym()) {
+                        state.suppressed.push(code);
+                        return FilterResult::Intercept(None);
+                    }
                     if key.modified_sym() == Keysym::Escape && state.close_popup() {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
@@ -101,8 +108,16 @@ impl State {
                         None => FilterResult::Forward,
                     }
                 });
-                if let Some(action) = action.flatten() {
-                    self.run_action(action);
+                self.switcher_settle();
+                match action {
+                    Some(Some(action)) => self.run_action(action),
+                    // A key the app gets: is it still answering (E4.7)?
+                    None if key_state == KeyState::Pressed => {
+                        if let Some(window) = self.focused_window() {
+                            self.ping(&window);
+                        }
+                    }
+                    _ => {}
                 }
             }
             InputEvent::PointerMotionAbsolute { event } => {
@@ -138,6 +153,9 @@ impl State {
                         }
                     } else {
                         self.focus_window(window.clone(), serial);
+                        if let Some(window) = &window {
+                            self.ping(window);
+                        }
                         let start_data = GrabStartData { focus: None, button: BTN_LEFT, location };
                         // Super + drag anywhere in a window moves it (the click never reaches the app).
                         if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {

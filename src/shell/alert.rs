@@ -1,11 +1,15 @@
 //! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s, as on
-//! macOS. Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. Drawn by render/alert.rs, which
-//! keeps the button rects of the last frame.
+//! macOS. Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. A frozen app asks
+//! Wait / Force Quit (E4.7).
+//! Drawn by render/alert.rs, which keeps the button rects of the last frame.
 
 use std::time::{Duration, Instant};
 
 use smithay::{
-    reexports::calloop::timer::{TimeoutAction, Timer},
+    reexports::{
+        calloop::timer::{TimeoutAction, Timer},
+        wayland_server::backend::ClientId,
+    },
     utils::{Logical, Point},
 };
 
@@ -27,6 +31,8 @@ pub enum Power {
 pub enum Kind {
     Power(Power),
     Pair(Pairing),
+    /// A frozen app's window was closed (E4.7): Wait / Force Quit.
+    NotResponding { app: String, pid: i32, client: ClientId },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +59,7 @@ impl Alert {
             Kind::Power(Power::LogOut) => "Are you sure you want to quit all applications and log out now?".into(),
             Kind::Pair(p) if p.answer => format!("Pair with “{}”?", p.device),
             Kind::Pair(p) => format!("Pair with “{}”", p.device),
+            Kind::NotResponding { app, .. } => format!("{app} is not responding."),
         }
     }
 
@@ -65,6 +72,14 @@ impl Alert {
             Kind::Pair(Pairing { device, code: Some(code), answer: true }) => format!("Make sure “{device}” shows the code {code}."),
             Kind::Pair(Pairing { device, code: None, .. }) => format!("“{device}” wants to pair with this computer."),
             Kind::Pair(Pairing { device, code: Some(code), answer: false }) => format!("Type {code} on “{device}”, then press Return."),
+            Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
+        }
+    }
+
+    pub fn cancel(&self) -> &'static str {
+        match &self.kind {
+            Kind::NotResponding { .. } => "Wait",
+            _ => "Cancel",
         }
     }
 
@@ -75,6 +90,7 @@ impl Alert {
             Kind::Power(Power::LogOut) => "Log Out",
             Kind::Pair(p) if p.answer => "Pair",
             Kind::Pair(_) => "OK",
+            Kind::NotResponding { .. } => "Force Quit",
         }
     }
 
@@ -94,14 +110,22 @@ pub enum Button {
 impl State {
     /// Asks before `power`; the countdown redraws once a second while the alert is up.
     pub fn open_alert(&mut self, power: Power) {
+        self.open_ask(Kind::Power(power));
+    }
+
+    pub fn open_ask(&mut self, kind: Kind) {
         self.close_alert();
         self.popup = None;
-        self.alert = Some(Alert::power(power, Instant::now()));
+        let power = matches!(kind, Kind::Power(_));
+        self.alert = Some(Alert { kind, deadline: power.then(|| Instant::now() + COUNTDOWN) });
+        self.schedule_redraw();
+        if !power {
+            return;
+        }
         let tick = self.loop_handle.insert_source(Timer::from_duration(Duration::from_secs(1)), |_, _, state| {
-            let Some(alert) = &state.alert else { return TimeoutAction::Drop };
-            let left = alert.seconds_left(Instant::now());
+            let Some(left) = state.alert.as_ref().and_then(|a| a.seconds_left(Instant::now())) else { return TimeoutAction::Drop };
             state.schedule_redraw();
-            if left == Some(0) {
+            if left == 0 {
                 state.alert_timer = None;
                 state.alert_answer(Button::Confirm);
                 return TimeoutAction::Drop;
@@ -109,7 +133,6 @@ impl State {
             TimeoutAction::ToDuration(Duration::from_secs(1))
         });
         self.alert_timer = tick.inspect_err(|err| tracing::warn!("alert timer: {err}")).ok();
-        self.schedule_redraw();
     }
 
     /// BlueZ asks (`Some`) or gives up (`None`, which closes only a pairing alert).
@@ -148,6 +171,8 @@ impl State {
             }
             Kind::Power(_) if button == Button::Cancel => return,
             Kind::Power(power) => power,
+            Kind::NotResponding { .. } if button == Button::Cancel => return,
+            Kind::NotResponding { pid, client, .. } => return self.kill(pid, client),
         };
         match (power, self.nested) {
             (Power::LogOut, _) => self.loop_signal.stop(),
