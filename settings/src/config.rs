@@ -123,7 +123,10 @@ pub fn changes() -> impl iced::futures::Stream<Item = ()> {
 
 /// A write, rename or delete of the file `name`; reads (ours included) don't count, or every reload would loop.
 fn written(event: &notify::Event, name: &std::ffi::OsStr) -> bool {
-    use notify::{EventKind, event::{AccessKind, AccessMode}};
+    use notify::{
+        EventKind,
+        event::{AccessKind, AccessMode},
+    };
     let write = matches!(event.kind, EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_))
         || matches!(event.kind, EventKind::Access(AccessKind::Close(AccessMode::Write)));
     write && event.paths.iter().any(|p| p.file_name() == Some(name))

@@ -151,7 +151,9 @@ pub fn place(names: &[&str], saved: &HashMap<String, Cell>, grid: &Grid) -> Vec<
 /// The Desktop folder: `XDG_DESKTOP_DIR` from `user-dirs.dirs` (or its env var), else `~/Desktop`. `None` when it is
 /// the home folder itself, which the XDG spec says means no desktop.
 pub fn desktop_dir(env: Option<&str>, user_dirs: &str, home: &Path) -> Option<PathBuf> {
-    let value = env.map(str::to_owned).or_else(|| user_dirs.lines().find_map(|l| l.trim().strip_prefix("XDG_DESKTOP_DIR=")).map(|v| v.trim().trim_matches('"').to_owned()));
+    let value = env
+        .map(str::to_owned)
+        .or_else(|| user_dirs.lines().find_map(|l| l.trim().strip_prefix("XDG_DESKTOP_DIR=")).map(|v| v.trim().trim_matches('"').to_owned()));
     let dir = match value {
         Some(v) => match v.strip_prefix("$HOME") {
             Some(rest) => home.join(rest.trim_start_matches('/')),
@@ -221,7 +223,8 @@ impl Mime {
 
     fn load() -> Self {
         // Every data dir's, the user's first (it usually holds only a few of its own).
-        let read = |file: &str| crate::apps::data_dirs().iter().filter_map(|d| std::fs::read_to_string(d.join("mime").join(file)).ok()).collect::<Vec<_>>().join("\n");
+        let read =
+            |file: &str| crate::apps::data_dirs().iter().filter_map(|d| std::fs::read_to_string(d.join("mime").join(file)).ok()).collect::<Vec<_>>().join("\n");
         Self::parse(&read("globs2"), &read("generic-icons"))
     }
 
@@ -229,10 +232,11 @@ impl Mime {
     pub fn icons(&self, name: &str) -> Vec<String> {
         let lower = name.to_lowercase();
         // The longest matching suffix wins (`.tar.gz` over `.gz`); among equals the higher weight, listed first.
-        let mime = self.globs.iter().filter(|(s, _)| lower.len() > s.len() && lower.ends_with(s.as_str()) && lower[..lower.len() - s.len()].ends_with('.')).fold(
-            None::<&(String, String)>,
-            |best, g| if best.is_none_or(|b| g.0.len() > b.0.len()) { Some(g) } else { best },
-        );
+        let mime = self
+            .globs
+            .iter()
+            .filter(|(s, _)| lower.len() > s.len() && lower.ends_with(s.as_str()) && lower[..lower.len() - s.len()].ends_with('.'))
+            .fold(None::<&(String, String)>, |best, g| if best.is_none_or(|b| g.0.len() > b.0.len()) { Some(g) } else { best });
         let Some((_, mime)) = mime else { return vec![FALLBACK_ICON.into()] };
         let media = mime.split('/').next().unwrap_or_default();
         let mut out = vec![mime.replace('/', "-")];
@@ -255,11 +259,8 @@ fn scan(dir: &Path, mime: &Mime, found: &mut HashMap<String, bool>) -> Vec<Entry
             if name.starts_with('.') || name.ends_with('~') {
                 return None;
             }
-            let icon = if e.path().is_dir() {
-                FOLDER.to_owned()
-            } else {
-                mime.icons(&name).into_iter().find(|i| has(i)).unwrap_or_else(|| FALLBACK_ICON.into())
-            };
+            let icon =
+                if e.path().is_dir() { FOLDER.to_owned() } else { mime.icons(&name).into_iter().find(|i| has(i)).unwrap_or_else(|| FALLBACK_ICON.into()) };
             Some(Entry { name, icon })
         })
         .collect();
@@ -416,11 +417,7 @@ impl State {
             })
             .collect();
         let index = |name: &str| d.entries.iter().position(|e| e.name == name);
-        Some(Frame {
-            icons,
-            selected: d.selected.as_deref().and_then(index),
-            renaming: d.renaming.as_ref().and_then(|(n, f)| Some((index(n)?, f.clone()))),
-        })
+        Some(Frame { icons, selected: d.selected.as_deref().and_then(index), renaming: d.renaming.as_ref().and_then(|(n, f)| Some((index(n)?, f.clone()))) })
     }
 
     /// Any press (output-relative): one outside the name being edited finishes the rename.
@@ -564,7 +561,9 @@ impl State {
     pub fn desktop_menu_rows(&self) -> Vec<Option<Row>> {
         let row = |label: &str, command: Option<Command>| Some(Row { label: label.to_owned(), shortcut: "", action: command.map(Action::Desktop) });
         match &self.desktop.menu {
-            Some((Some(_), _)) => vec![row("Open", Some(Command::Open)), None, row("Rename", Some(Command::Rename)), row("Move to Trash", Some(Command::Trash))],
+            Some((Some(_), _)) => {
+                vec![row("Open", Some(Command::Open)), None, row("Rename", Some(Command::Rename)), row("Move to Trash", Some(Command::Trash))]
+            }
             _ => vec![row("New Folder", Some(Command::NewFolder)), None, row("Change Wallpaper…", None)],
         }
     }
@@ -634,7 +633,8 @@ impl State {
     /// `--show desktop-menu` / `desktop-rename`, once the sample folder is listed.
     pub fn desktop_show(&mut self, show: &str) {
         let name = "notes.txt".to_owned();
-        let at = self.desktop_frame().and_then(|f| f.icons.into_iter().find(|(e, _)| e.name == name)).map(|(_, cell)| icon_rect(cell).loc + Point::from((40, 40)));
+        let at =
+            self.desktop_frame().and_then(|f| f.icons.into_iter().find(|(e, _)| e.name == name)).map(|(_, cell)| icon_rect(cell).loc + Point::from((40, 40)));
         match (show, at) {
             ("desktop-menu", Some(at)) => {
                 self.desktop.menu = Some((Some(name), at));

@@ -36,7 +36,8 @@ pub struct Content<'a> {
 
 /// Date, time, missed count, hover, wrong, battery, keyboard, size, dark, opacity, scale, greeter (user, session,
 /// error).
-type PageKey = (String, String, usize, Option<Button>, bool, Option<(u8, bool)>, String, Size<i32, Logical>, bool, u32, u64, Option<(usize, usize, Option<String>)>);
+type PageKey =
+    (String, String, usize, Option<Button>, bool, Option<(u8, bool)>, String, Size<i32, Logical>, bool, u32, u64, Option<(usize, usize, Option<String>)>);
 type FieldKey = (TextField, Rect, bool, bool, [u8; 3], u32, u64);
 /// Full name and round picture per user.
 type Users = Vec<(String, Option<Arc<Rendered>>)>;
@@ -133,7 +134,13 @@ impl LockView {
             let picked = lock.greeter.as_ref().map_or(0, |g| g.user);
             for (i, ((name, picture), (rect, name_rect))) in users.iter().zip(row.avatars.into_iter().zip(row.names)).enumerate() {
                 if users.len() > 1 && i == picked {
-                    ui.glass.push(shaders.ring(Rectangle::new((rect.loc.x - 3, rect.loc.y - 3).into(), (AVATAR + 6, AVATAR + 6).into()), f64::from(AVATAR) / 2.0 + 3.0, 2, [1.0, 1.0, 1.0, 0.85], scale));
+                    ui.glass.push(shaders.ring(
+                        Rectangle::new((rect.loc.x - 3, rect.loc.y - 3).into(), (AVATAR + 6, AVATAR + 6).into()),
+                        f64::from(AVATAR) / 2.0 + 3.0,
+                        2,
+                        [1.0, 1.0, 1.0, 0.85],
+                        scale,
+                    ));
                 }
                 match picture {
                     Some(picture) => ui.pieces.push((picture.clone(), rect)),

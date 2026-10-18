@@ -63,7 +63,8 @@ pub struct Calendar {
 
 /// The next `max` occurrences still going on or starting within a week of `now`, soonest first.
 pub fn up_next(events: &[Event], now: i64, max: usize) -> Vec<Upcoming> {
-    let mut all: Vec<Upcoming> = events.iter().flat_map(|e| e.between(now, now + AHEAD)).filter(|o| o.end > now || o.start >= now).map(|o| Upcoming::new(&o)).collect();
+    let mut all: Vec<Upcoming> =
+        events.iter().flat_map(|e| e.between(now, now + AHEAD)).filter(|o| o.end > now || o.start >= now).map(|o| Upcoming::new(&o)).collect();
     all.sort_by_key(|u| (u.start, !u.all_day));
     all.truncate(max);
     all

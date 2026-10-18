@@ -171,8 +171,7 @@ pub fn fallback() {
 
 /// The unix-user identities' login names, `me` first (polkitd has already expanded admin groups to users).
 fn users(identities: &[Identity], me: u32) -> Vec<String> {
-    let mut uids: Vec<u32> =
-        identities.iter().filter(|(kind, _)| kind == "unix-user").filter_map(|(_, d)| d.get("uid")?.downcast_ref::<u32>().ok()).collect();
+    let mut uids: Vec<u32> = identities.iter().filter(|(kind, _)| kind == "unix-user").filter_map(|(_, d)| d.get("uid")?.downcast_ref::<u32>().ok()).collect();
     uids.sort_by_key(|&uid| uid != me);
     uids.dedup();
     uids.into_iter().filter_map(user_name).collect()
@@ -380,7 +379,8 @@ mod tests {
                     let me = unsafe { libc::getuid() };
                     let ids = vec![("unix-user", HashMap::from([("uid", Value::from(me))]))];
                     let body = ("act", "Authentication is required.", "", HashMap::<&str, &str>::new(), cookie, ids);
-                    let reply = polkitd.call_method(Some(name), PATH, Some("org.freedesktop.PolicyKit1.AuthenticationAgent"), "BeginAuthentication", &body).await;
+                    let reply =
+                        polkitd.call_method(Some(name), PATH, Some("org.freedesktop.PolicyKit1.AuthenticationAgent"), "BeginAuthentication", &body).await;
                     reply.map(drop).map_err(|e| e.to_string())
                 })
             })

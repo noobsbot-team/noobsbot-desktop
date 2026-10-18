@@ -19,8 +19,8 @@ use smithay::{
 
 use crate::{
     render::{
-        self, AlertSheet, Components, ControlCenter, DesktopView, DockView, EmojiPicker, ForceQuitWindow, Gallery, LaunchpadView, LockView, MenuBar, MenuPopover,
-        MissionView, NotificationViews, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, Wallpaper,
+        self, AlertSheet, Components, ControlCenter, DesktopView, DockView, EmojiPicker, ForceQuitWindow, Gallery, LaunchpadView, LockView, MenuBar,
+        MenuPopover, MissionView, NotificationViews, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, Wallpaper,
     },
     state::State,
 };

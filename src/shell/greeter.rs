@@ -163,9 +163,15 @@ pub enum Outcome {
 #[derive(Debug, PartialEq)]
 enum Reply {
     Success,
-    Error { auth: bool, description: String },
+    Error {
+        auth: bool,
+        description: String,
+    },
     /// A PAM prompt; `answer` when it wants one (secret or visible), not for info and error messages.
-    Auth { answer: bool, message: String },
+    Auth {
+        answer: bool,
+        message: String,
+    },
 }
 
 /// `s` as a JSON string.

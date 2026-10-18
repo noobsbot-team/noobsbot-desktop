@@ -118,9 +118,12 @@ fn menu_rows(layouts: &Layouts) -> Vec<Option<Row>> {
         .collect();
     if let Some(fcitx) = layouts.methods.as_ref().filter(|f| !f.methods.is_empty()) {
         rows.push(None);
-        rows.extend(fcitx.methods.iter().map(|(id, name)| {
-            Some(Row { label: name.clone(), shortcut: tick(*id == fcitx.current), action: Some(Action::InputMethod(id.clone())) })
-        }));
+        rows.extend(
+            fcitx
+                .methods
+                .iter()
+                .map(|(id, name)| Some(Row { label: name.clone(), shortcut: tick(*id == fcitx.current), action: Some(Action::InputMethod(id.clone())) })),
+        );
     }
     if layouts.fcitx || layouts.methods.is_some() {
         rows.push(None);

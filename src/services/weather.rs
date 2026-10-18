@@ -44,7 +44,16 @@ impl Weather {
     /// The canned forecast for `--show weather`.
     pub fn sample() -> Weather {
         let hours = [(15, 1, true, 22.0), (16, 2, true, 22.0), (17, 2, true, 21.0), (18, 3, false, 19.0), (19, 61, false, 17.0), (20, 0, false, 16.0)];
-        Weather { place: "Kathmandu".into(), temp: 22.4, code: 1, day: true, high: 24.0, low: 13.0, hours: hours.to_vec(), fetched: chrono::Utc::now().timestamp() }
+        Weather {
+            place: "Kathmandu".into(),
+            temp: 22.4,
+            code: 1,
+            day: true,
+            high: 24.0,
+            low: 13.0,
+            hours: hours.to_vec(),
+            fetched: chrono::Utc::now().timestamp(),
+        }
     }
 }
 
@@ -170,7 +179,8 @@ fn curl(args: &[&str]) -> Option<String> {
 
 /// The first Open-Meteo match for `city`: (its name, latitude, longitude).
 fn geocode(city: &str) -> Option<(String, f64, f64)> {
-    let json = curl(&["--get", "--data-urlencode", &format!("name={city}"), "-d", "count=1", "-d", "language=en", "https://geocoding-api.open-meteo.com/v1/search"])?;
+    let json =
+        curl(&["--get", "--data-urlencode", &format!("name={city}"), "-d", "count=1", "-d", "language=en", "https://geocoding-api.open-meteo.com/v1/search"])?;
     let name = scalar(&json, "name").map_or_else(|| city.to_owned(), unquote);
     Some((name, scalar(&json, "latitude")?.parse().ok()?, scalar(&json, "longitude")?.parse().ok()?))
 }

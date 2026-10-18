@@ -17,8 +17,8 @@ pub mod profiles;
 pub mod sound;
 pub mod tray;
 pub mod update;
-pub mod weather;
 pub mod verify;
+pub mod weather;
 
 use std::{
     fmt::Debug,

@@ -9,9 +9,9 @@ use smithay::{
         allocator::Fourcc,
         renderer::{
             Bind, Color32F, Frame, Offscreen, Renderer,
-            utils::CommitCounter,
             element::{Element, Id, Kind, RenderElement, texture::TextureRenderElement},
             gles::{GlesRenderer, GlesTexture},
+            utils::CommitCounter,
         },
     },
     desktop::{Space, Window},

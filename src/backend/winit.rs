@@ -315,18 +315,9 @@ impl State {
         let active = self.popup.and_then(Popup::item);
         // Launchpad covers the menu bar.
         let strip = match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
-            Some(content) => menu_bar.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                content,
-                active,
-                width,
-                dark,
-                appearance.glass_opacity,
-                scale,
-            ),
+            Some(content) => {
+                menu_bar.elements(renderer, shaders, &mut self.text, &mut self.symbols, content, active, width, dark, appearance.glass_opacity, scale)
+            }
             None => {
                 menu_bar.hide();
                 Vec::new()
@@ -360,7 +351,9 @@ impl State {
                 let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
                 let (rows, anchor) = match (kind, dock_menu) {
                     (crate::shell::Menu::Dock, Some((rows, at))) => (rows, crate::shell::Anchor::Above(at)),
-                    (crate::shell::Menu::Desktop, _) => desktop_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0))),
+                    (crate::shell::Menu::Desktop, _) => {
+                        desktop_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
+                    }
                     _ => (
                         if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray, update_ready) },
                         crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
@@ -529,19 +522,17 @@ impl State {
         // in a loop at the refresh rate. When drawing starts is up to frame.rs (E1.10, see schedule_redraw).
         let render_time = started.elapsed();
         let (shown, damaged) = match damage {
-            Ok(damage) => (
-                backend.submit(damage.as_deref()).inspect_err(|err| tracing::warn!("submit: {err}")).is_ok(),
-                Some(damage.is_some_and(|d| !d.is_empty())),
-            ),
+            Ok(damage) => {
+                (backend.submit(damage.as_deref()).inspect_err(|err| tracing::warn!("submit: {err}")).is_ok(), Some(damage.is_some_and(|d| !d.is_empty())))
+            }
             Err(err) => {
                 tracing::warn!("render: {err}");
                 (false, None)
             }
         };
         // Read back only when a screenshot or an allowed copy waits, the same way as on the real screen (udev.rs).
-        let pixels = damaged
-            .filter(|&damaged| self.frame_wanted(output, damaged))
-            .and_then(|_| crate::capture::render(backend.renderer(), output, &elements, CLEAR));
+        let pixels =
+            damaged.filter(|&damaged| self.frame_wanted(output, damaged)).and_then(|_| crate::capture::render(backend.renderer(), output, &elements, CLEAR));
         drop(elements);
 
         // Everything on this output was shown. ponytail: stamped after the swap returns, without a vblank counter;

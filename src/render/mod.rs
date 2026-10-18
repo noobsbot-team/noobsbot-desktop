@@ -544,7 +544,8 @@ pub fn scene(
         None => {
             let now = std::time::Instant::now();
             for window in space.elements().rev().filter(|w| space.element_location(w).is_some_and(|l| crate::spaces::row_at(l.y, output_geo.loc.y) == 0)) {
-                let motion = motion::current(window, now).zip(motion::window_frame(space, window, output_geo.loc)).map(|(m, frame)| (frame, m.look(frame, now)));
+                let motion =
+                    motion::current(window, now).zip(motion::window_frame(space, window, output_geo.loc)).map(|(m, frame)| (frame, m.look(frame, now)));
                 // Only sliding (Show Desktop): drawn shifted, not as a snapshot that clips past the output's left edge.
                 if let Some((frame, look)) = motion.filter(|(frame, look)| look.rect.size == frame.size && look.alpha >= 1.0) {
                     let shift = (look.rect.loc - frame.loc).to_i32_round();

@@ -195,7 +195,8 @@ impl Event {
     pub fn between(&self, from: i64, to: i64) -> Vec<Occurrence<'_>> {
         let mut out = Vec::new();
         // Two days early covers any zone offset.
-        let near = chrono::DateTime::from_timestamp(from.saturating_sub(self.length.num_seconds() + 2 * 86_400), 0).map_or(self.start.date(), |d| d.date_naive());
+        let near =
+            chrono::DateTime::from_timestamp(from.saturating_sub(self.length.num_seconds() + 2 * 86_400), 0).map_or(self.start.date(), |d| d.date_naive());
         self.each(near, |t| {
             let o = self.occurrence(t);
             if o.start >= to {
@@ -694,11 +695,9 @@ mod tests {
 
     #[test]
     fn alarms_relative_and_absolute() {
-        let e = one(
-            "DTSTART:20261020T090000Z\r\nDTEND:20261020T100000Z\r\nRRULE:FREQ=DAILY;COUNT=2\r\n\
+        let e = one("DTSTART:20261020T090000Z\r\nDTEND:20261020T100000Z\r\nRRULE:FREQ=DAILY;COUNT=2\r\n\
              BEGIN:VALARM\r\nACTION:DISPLAY\r\nTRIGGER:-PT15M\r\nEND:VALARM\r\n\
-             BEGIN:VALARM\r\nTRIGGER;RELATED=END:PT0S\r\nEND:VALARM",
-        );
+             BEGIN:VALARM\r\nTRIGGER;RELATED=END:PT0S\r\nEND:VALARM");
         let at: Vec<i64> = e.alarms(utc("2026-10-01 00:00"), utc("2026-11-01 00:00")).iter().map(|(t, _)| *t).collect();
         assert_eq!(at, [utc("2026-10-20 08:45"), utc("2026-10-20 10:00"), utc("2026-10-21 08:45"), utc("2026-10-21 10:00")]);
         // The window is inclusive and narrow windows still find alarms of occurrences outside them.

@@ -18,8 +18,8 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
-    services::weather::{Weather, condition},
     events::Upcoming,
+    services::weather::{Weather, condition},
     shell::notify::{BODY, CLOSE, Card, Center, LINE, Notification, PLATE, Store, buttons},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
@@ -304,7 +304,11 @@ impl NotificationViews {
                 }
                 if let Some((card, rows)) = center.up_next.as_ref().filter(|(c, _)| shown(*c)) {
                     let title = Rectangle::new((card.loc.x + 12, card.loc.y + 10).into(), (card.size.w - 24, 20).into());
-                    pieces.put(text.label("Up Next", Style { size: 15, line_height: 20, weight: 600, color: ink.label, tabular: false }, row_w(title), scale), title, Align::Left);
+                    pieces.put(
+                        text.label("Up Next", Style { size: 15, line_height: 20, weight: 600, color: ink.label, tabular: false }, row_w(title), scale),
+                        title,
+                        Align::Left,
+                    );
                     let now = chrono::Local::now().timestamp();
                     for (row, u) in rows.iter().zip(up_next.iter()) {
                         // An accent bar, the title, then when and where.
@@ -436,6 +440,9 @@ mod tests {
     #[test]
     fn weather_words() {
         assert_eq!((degrees(-0.4), degrees(21.5), degrees(-3.6)), ("0°".into(), "22°".into(), "-4°".into()));
-        assert_eq!((updated(50 * 60), updated(3 * 3600), updated(3 * 86400)), ("Updated 50 min ago".into(), "Updated 3 h ago".into(), "Updated 3 d ago".into()));
+        assert_eq!(
+            (updated(50 * 60), updated(3 * 3600), updated(3 * 86400)),
+            ("Updated 50 min ago".into(), "Updated 3 h ago".into(), "Updated 3 d ago".into())
+        );
     }
 }
