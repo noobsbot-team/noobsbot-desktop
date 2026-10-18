@@ -132,6 +132,10 @@ pub struct State {
     pub sound: Option<crate::services::sound::Sound>,
     /// `None`: nothing playing or paused.
     pub media: Option<crate::services::media::Media>,
+    /// Shown tray items (E2.2).
+    pub tray: Vec<crate::services::tray::TrayItem>,
+    /// The open tray menu: service, dbusmenu path and rows.
+    pub tray_menu: Option<(String, String, Vec<Option<crate::services::tray::MenuRow>>)>,
     pub symbols: crate::symbols::Symbols,
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
@@ -216,6 +220,8 @@ impl State {
                     crate::services::Update::Sound(sound) => state.sound = sound,
                     crate::services::Update::Media(media) => state.media = media,
                     crate::services::Update::Pairing(pairing) => state.show_pairing(pairing),
+                    crate::services::Update::Tray(tray) => state.tray = tray,
+                    crate::services::Update::TrayMenu { service, menu, rows } => state.show_tray_menu(service, menu, rows),
                 }
                 state.schedule_redraw();
             }
@@ -270,6 +276,8 @@ impl State {
             brightness: None,
             sound: None,
             media: None,
+            tray: Vec::new(),
+            tray_menu: None,
             symbols: Default::default(),
             popup: None,
             osd: None,
@@ -329,7 +337,8 @@ impl State {
             self.battery.as_ref().map(menubar::battery),
             self.sound.as_ref().map(|s| simple(menubar::volume(s))),
         ];
-        Some(menubar::Content { app, status: status.into_iter().flatten().collect(), clock: crate::clock::text(&chrono::Local::now(), self.config.clock.format) })
+        let tray = self.tray.iter().map(|t| t.icon.clone()).collect();
+        Some(menubar::Content { app, tray, status: status.into_iter().flatten().collect(), clock: crate::clock::text(&chrono::Local::now(), self.config.clock.format) })
     }
 
     /// Where windows may go: the first output minus the menu bar and what layer surfaces (bars, docks) reserve.

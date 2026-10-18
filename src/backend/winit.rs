@@ -144,7 +144,8 @@ impl State {
                     }
                     Some(popup @ Popup::Menu(kind)) => {
                         let app = content.as_ref().and_then(|c| c.app.as_deref()).map(|id| menu_bar.name(id)).unwrap_or_default();
-                        let rows = crate::shell::menu_rows(kind, &app);
+                        let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
+                        let rows = crate::shell::menu_rows(kind, &app, tray);
                         let anchor = menu_bar.pill(popup.item()).map_or(0, |r| r.loc.x);
                         let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
                         bar.extend(menu.elements(renderer, shaders, &mut self.text, &rows, anchor, width, hover, dark, accent, appearance.glass_opacity, scale));
