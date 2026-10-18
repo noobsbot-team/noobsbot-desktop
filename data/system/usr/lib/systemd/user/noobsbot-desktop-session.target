@@ -1,8 +1,10 @@
 # Started by noobsbot-desktop-session once the compositor listens (plan.md E6.7):
-# brings up graphical-session.target, the polkit agent, the keyring and the XDG autostart apps.
+# brings up graphical-session.target, the polkit agent, the keyring, the user folders (xdg-user-dirs; its autostart
+# entry is skipped under systemd) and the XDG autostart apps. The portals start on demand over D-Bus.
 [Unit]
 Description=Noobsbot Desktop session
 BindsTo=graphical-session.target
 Wants=graphical-session-pre.target xdg-desktop-autostart.target plasma-polkit-agent.service gnome-keyring-daemon.socket
+Wants=xdg-user-dirs.service
 After=graphical-session-pre.target
 Before=graphical-session.target xdg-desktop-autostart.target
