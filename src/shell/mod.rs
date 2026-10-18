@@ -56,15 +56,16 @@ pub enum Popup {
 }
 
 impl Popup {
-    /// The bar item it hangs from, which shows the pressed pill.
-    pub fn item(self) -> BarItem {
-        match self {
+    /// The bar item it hangs from, which shows the pressed pill; the dock's menu hangs from no item.
+    pub fn item(self) -> Option<BarItem> {
+        Some(match self {
             Popup::Notifications { .. } => BarItem::Clock,
             Popup::Menu(Menu::Logo) => BarItem::Logo,
             Popup::Menu(Menu::App) => BarItem::App,
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
+            Popup::Menu(Menu::Dock) => return None,
             Popup::Control => BarItem::ControlCenter,
-        }
+        })
     }
 }
 
@@ -91,6 +92,15 @@ pub enum Menu {
     App,
     /// `State::tray[i]`'s dbusmenu, rows in `State::tray_menu`.
     Tray(usize),
+    /// A dock icon's right-click menu: `State::dock_menu_rows`, above `State::dock_ui.menu`.
+    Dock,
+}
+
+/// Where a menu opens: under the bar with its left edge at x, or centred over (x, bottom) like the dock's.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Anchor {
+    Below(i32),
+    Above(Point<i32, Logical>),
 }
 
 /// A menu row (D8); `None` in a row list is a separator. No action: drawn disabled.
@@ -132,6 +142,8 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>]) -> Vec<Option<
             row(format!("Quit {app}"), "⌘Q", Some(Action::QuitApp)),
         ],
         Menu::Tray(_) => tray.iter().map(|r| r.as_ref().and_then(|r| row(r.label.clone(), "", r.enabled.then_some(Action::TrayMenu(r.id))))).collect(),
+        // Built from the dock's items: `State::dock_menu_rows`.
+        Menu::Dock => Vec::new(),
     }
 }
 
@@ -145,11 +157,15 @@ pub mod menu {
     pub const MIN_WIDTH: i32 = 180;
 }
 
-/// A `width`-wide menu under the bar, left edge at `anchor_x` but kept on screen; its rect and one rect per row.
-pub fn menu_layout(anchor_x: i32, output_width: i32, width: i32, rows: &[Option<Row>]) -> (Rect, Vec<Rect>) {
+/// A `width`-wide menu at `anchor`, kept on screen sideways; its rect and one rect per row.
+pub fn menu_layout(anchor: Anchor, output_width: i32, width: i32, rows: &[Option<Row>]) -> (Rect, Vec<Rect>) {
     use menu::*;
-    let x = anchor_x.min(output_width - MARGIN - width).max(MARGIN);
-    let top = menubar::HEIGHT + DROP;
+    let height: i32 = 2 * PAD + rows.iter().map(|r| if r.is_some() { ROW } else { SEPARATOR }).sum::<i32>();
+    let (left, top) = match anchor {
+        Anchor::Below(x) => (x, menubar::HEIGHT + DROP),
+        Anchor::Above(p) => (p.x - width / 2, p.y - DROP - height),
+    };
+    let x = left.min(output_width - MARGIN - width).max(MARGIN);
     let mut y = top + PAD;
     let rects = rows
         .iter()
@@ -282,7 +298,7 @@ impl State {
             }
             // Its own item again closes the popup, as on macOS.
             (_, Some(item)) => {
-                let again = open.map(Popup::item) == Some(item);
+                let again = open.and_then(Popup::item) == Some(item);
                 self.popup = if again { None } else { popup_for(item) };
                 if let (BarItem::Tray(i), false) = (item, again) {
                     self.tray_press(i, location, secondary);
@@ -309,7 +325,8 @@ impl State {
                 let index = self.backend.as_ref().and_then(|b| b.menu.row_at(location));
                 // Separators and disabled rows keep the menu open, as on macOS.
                 let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
-                if let Some(action) = index.and_then(|i| menu_rows(menu, "", tray).into_iter().nth(i)).flatten().and_then(|row| row.action) {
+                let rows = if menu == Menu::Dock { self.dock_menu_rows() } else { menu_rows(menu, "", tray) };
+                if let Some(action) = index.and_then(|i| rows.into_iter().nth(i)).flatten().and_then(|row| row.action) {
                     self.popup = None;
                     self.run_action(action);
                 }
@@ -327,7 +344,7 @@ impl State {
         self.notify_motion(to);
         let Some(open) = self.popup else { return };
         let Some(backend) = self.backend.as_ref() else { return };
-        if let Some(next) = backend.menu_bar.hit(to).filter(|item| *item != open.item()).and_then(popup_for) {
+        if let Some(next) = backend.menu_bar.hit(to).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(popup_for) {
             self.popup = Some(next);
             self.schedule_redraw();
         } else if matches!(open, Popup::Menu(_)) && backend.menu.row_at(from) != backend.menu.row_at(to) {
@@ -424,14 +441,17 @@ mod tests {
     #[test]
     fn menus_stay_on_screen_and_stack_rows() {
         let rows = menu_rows(Menu::App, "Kate", &[]);
-        let (rect, cells) = menu_layout(6, 1280, 200, &rows);
+        let (rect, cells) = menu_layout(Anchor::Below(6), 1280, 200, &rows);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
         assert_eq!(rect, Rectangle::new((8, 28).into(), (200, 142).into()));
         assert_eq!(cells[0], Rectangle::new((13, 33).into(), (190, 22).into()));
         assert_eq!(cells[2].loc.y, 33 + 22 + 11);
         assert!(cells.iter().all(|c| rect.contains_rect(*c)));
         // Near the right edge it moves left to fit.
-        assert_eq!(menu_layout(1200, 1280, 200, &rows).0.loc.x, 1280 - 8 - 200);
+        assert_eq!(menu_layout(Anchor::Below(1200), 1280, 200, &rows).0.loc.x, 1280 - 8 - 200);
+        // Above a dock icon: centred on it, its bottom 4 px over the point.
+        let (above, _) = menu_layout(Anchor::Above((640, 1100).into()), 1280, 200, &rows);
+        assert_eq!(above, Rectangle::new((540, 1100 - 4 - 142).into(), (200, 142).into()));
         assert_eq!(rows[2].as_ref().map(|r| (r.label.as_str(), r.action.clone())), Some(("Hide Kate", Some(Action::Hide))));
     }
 

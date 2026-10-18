@@ -159,6 +159,8 @@ impl State {
         let dock_frame = self.dock_frame(&dock_items);
         let dock_layout = dock_frame.layout.clone();
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
+        let dock_menu =
+            self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
         let Some(Winit {
             backend,
             output,
@@ -295,8 +297,13 @@ impl State {
                     Some(popup @ Popup::Menu(kind)) => {
                         let app = content.as_ref().and_then(|c| c.app.as_deref()).map(|id| menu_bar.name(id)).unwrap_or_default();
                         let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
-                        let rows = crate::shell::menu_rows(kind, &app, tray);
-                        let anchor = menu_bar.pill(popup.item()).map_or(0, |r| r.loc.x);
+                        let (rows, anchor) = match (kind, dock_menu) {
+                            (crate::shell::Menu::Dock, Some((rows, at))) => (rows, crate::shell::Anchor::Above(at)),
+                            _ => (
+                                crate::shell::menu_rows(kind, &app, tray),
+                                crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
+                            ),
+                        };
                         let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
                         bar.extend(menu.elements(
                             renderer,
@@ -330,7 +337,7 @@ impl State {
                     }
                     None => {}
                 }
-                let active = self.popup.map(Popup::item);
+                let active = self.popup.and_then(Popup::item);
                 match &content {
                     Some(content) => bar.extend(menu_bar.elements(
                         renderer,

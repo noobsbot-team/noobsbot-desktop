@@ -58,6 +58,8 @@ pub enum Action {
     NotificationCenter,
     /// Opens or closes Spotlight (Super+Space, E4.3).
     Spotlight,
+    /// A row of a dock icon's right-click menu (E3.1).
+    Dock(crate::shell::dock::Command),
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -256,6 +258,7 @@ impl State {
                 self.popup = (!open).then_some(crate::shell::Popup::Notifications { year, month });
                 self.schedule_redraw();
             }
+            Action::Dock(command) => self.dock_command(command),
         }
     }
 
