@@ -46,6 +46,7 @@ pub struct Config {
     pub privacy: Privacy,
     pub calendar: Calendar,
     pub update: Update,
+    pub desktop: Desktop,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -250,6 +251,7 @@ impl Default for Config {
             privacy: Privacy::default(),
             calendar: Calendar::default(),
             update: Update::default(),
+            desktop: Desktop::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -284,6 +286,19 @@ pub struct Dock {
     pub zoom: bool,
     pub zoom_percent: u16,
     pub hide: DockHide,
+}
+
+/// Desktop icons (E7.2): the files in `~/Desktop` on the wallpaper.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Desktop {
+    pub icons: bool,
+}
+
+impl Default for Desktop {
+    fn default() -> Self {
+        Self { icons: true }
+    }
 }
 
 /// Screen-recording answers (E6.11), by program path; the "would like to record this screen" alert fills them in.

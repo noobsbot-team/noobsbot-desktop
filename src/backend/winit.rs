@@ -137,6 +137,10 @@ impl State {
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
         let input_menu = self.input_menu_rows();
         let update_ready = self.update_ready();
+        let desktop_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Desktop)))
+            .then(|| self.desktop_menu_rows())
+            .and_then(|rows| Some((self.desktop_menu_anchor(&rows)?, rows)));
+        let desktop_frame = self.desktop_frame();
         let overview = self.mission_frame();
         let slide = if overview.is_none() { self.slide_frame() } else { None };
         let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
@@ -167,6 +171,7 @@ impl State {
             entrances,
             lock: lock_view,
             screenshot,
+            desktop: desktop_view,
         } = self.backend.as_mut()?;
         // Wallpaper, layers, windows with rounded corners and shadows (E1.4, E1.5): see render::scene.
         let scale = output.current_scale().fractional_scale();
@@ -355,6 +360,7 @@ impl State {
                 let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
                 let (rows, anchor) = match (kind, dock_menu) {
                     (crate::shell::Menu::Dock, Some((rows, at))) => (rows, crate::shell::Anchor::Above(at)),
+                    (crate::shell::Menu::Desktop, _) => desktop_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0))),
                     _ => (
                         if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray, update_ready) },
                         crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
@@ -437,6 +443,11 @@ impl State {
             let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
             // Above the wallpaper (the last element), below every window.
             elements.splice(elements.len().saturating_sub(1)..elements.len().saturating_sub(1), cards);
+        }
+        // Desktop icons (E7.2): above the wallpaper, below every window; Launchpad's dim covers them.
+        if let Some(frame) = &desktop_frame {
+            let icons = desktop_view.elements(renderer, shaders, &mut self.text, &mut self.icons, frame, dark, accent, scale);
+            elements.splice(elements.len().saturating_sub(1)..elements.len().saturating_sub(1), icons);
         }
         // Locked (E6.4): only the lock screen, ours or a client's, over the wallpaper.
         // ponytail: the desktop's elements above are still built (cheap, and only on a redraw); skip them if a

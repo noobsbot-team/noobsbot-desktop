@@ -64,6 +64,8 @@ pub enum Action {
     Emoji,
     /// A row of a dock icon's right-click menu (E3.1).
     Dock(crate::shell::dock::Command),
+    /// A row of a desktop icon's or the desktop's right-click menu (E7.2).
+    Desktop(crate::shell::desktop::Command),
     /// Opens or closes Launchpad (E4.4; F4, off by default).
     Launchpad,
     /// Installs the downloaded update, then logs out (logo menu / notification ▸ Restart to Update, E6.13).
@@ -314,6 +316,7 @@ impl State {
                 self.schedule_redraw();
             }
             Action::Dock(command) => self.dock_command(command),
+            Action::Desktop(command) => self.desktop_command(command),
             Action::Launchpad => self.toggle_launchpad(),
             Action::Screenshot(start) => self.screenshot(start),
             Action::InstallUpdate => self.install_update(),

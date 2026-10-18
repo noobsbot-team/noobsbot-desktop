@@ -178,6 +178,8 @@ pub struct State {
     pub dock_fx: crate::shell::dock_fx::Fx,
     /// The dock's right-click menu, icon drag and file drop (E3.1).
     pub dock_ui: crate::shell::dock::Ui,
+    /// Desktop icons (E7.2).
+    pub desktop: crate::shell::desktop::Desktop,
     /// Notifications, their banners and Notification Center's state (E4.1, E4.2).
     pub notifications: crate::shell::notify::Store,
     /// Calendar events from .ics files (E7.2).
@@ -399,6 +401,7 @@ impl State {
             dock_pointer: None,
             dock_fx: Default::default(),
             dock_ui: Default::default(),
+            desktop: Default::default(),
             notifications: Default::default(),
             calendar: Default::default(),
             switcher: Default::default(),

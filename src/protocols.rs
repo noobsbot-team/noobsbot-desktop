@@ -117,6 +117,7 @@ impl State {
         }
         self.shell_motion(self.to_output(current), self.to_output(host));
         self.dock_motion(self.to_output(current), self.to_output(host));
+        self.desktop_motion(self.to_output(host));
         self.mission_motion(self.to_output(host));
         self.hot_corner_motion(self.to_output(host));
         let under = self.surface_under(current);
