@@ -8,6 +8,17 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
+## [1.0.0-alpha.4](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.3...v1.0.0-alpha.4) - 2026-10-18
+
+### Added
+
+- *(display)* [display] scale setting, applied live; Print and Shift+Print take screenshots
+
+### Other
+
+- cargo fmt
+- README covering what it is, how it works and differs, install, use, settings, updates and development
+
 ## [1.0.0-alpha.3](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.2...v1.0.0-alpha.3) - 2026-10-18
 
 ### Fixed
