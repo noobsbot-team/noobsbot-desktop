@@ -183,7 +183,7 @@ fn draw_toolbar(ui: &mut Ui, shot: &Shot, (can_record, recording, delay, no_thum
         }
         ui.states(rect, 6.0, state(shot, Hit::Mode(mode), true));
         let color = ui.label();
-        ui.symbol(symbol, if on { Weight::Fill } else { Weight::Regular }, 22, rect, color);
+        ui.symbol(symbol, Weight::Regular, 22, rect, color);
     }
 
     let record = state(shot, Hit::Record, can_record);
