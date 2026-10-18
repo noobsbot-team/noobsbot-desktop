@@ -76,6 +76,11 @@ impl State {
                             None => FilterResult::Forward,
                         };
                     }
+                    // Ctrl+Alt+F1…F12 on the real screen switch virtual terminals, whatever is open.
+                    if state.switch_vt(key.modified_sym()) {
+                        state.suppressed.push(code);
+                        return FilterResult::Intercept(None);
+                    }
                     // An alert answers first (its field takes every key); then Esc closes an open menu-bar popup.
                     if state.alert_key(key.modified_sym(), mods.ctrl) {
                         state.suppressed.push(code);

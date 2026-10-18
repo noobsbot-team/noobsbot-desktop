@@ -86,6 +86,11 @@ fn main() {
         }
     }
 
+    // Inside another desktop, the real screen belongs to it: run nested rather than fight it for the GPU.
+    if !nested && ["WAYLAND_DISPLAY", "DISPLAY"].iter().any(|v| std::env::var_os(v).is_some()) {
+        tracing::info!("started inside another desktop, running nested");
+        nested = true;
+    }
     if let Err(err) = run(command, nested, test_scene, show.as_deref()) {
         tracing::error!("{err}");
         std::process::exit(1);
@@ -127,7 +132,11 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         }
     })?;
 
-    backend::winit::init(&mut event_loop, &mut state)?;
+    if nested {
+        backend::winit::init(&mut event_loop, &mut state)?;
+    } else {
+        backend::udev::init(&mut event_loop, &mut state)?;
+    }
     if test_scene && let Some(winit) = state.backend.as_mut() {
         winit.gallery = Some(Default::default());
     }

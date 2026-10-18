@@ -1,6 +1,6 @@
 //! The rest of the E1.1/E1.7 protocols: layer shell, presentation time, pointer constraints, shortcut inhibiting,
 //! cursor shapes, fractional scale, tearing hints, security contexts, pointer gestures and text input (the input
-//! method behind it is E6.12).
+//! method behind it is E6.12), and idle inhibiting.
 
 use std::sync::{
     Arc,
@@ -8,7 +8,7 @@ use std::sync::{
 };
 
 use smithay::{
-    delegate_cursor_shape, delegate_fractional_scale, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_pointer_constraints,
+    delegate_cursor_shape, delegate_fractional_scale, delegate_idle_inhibit, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_pointer_constraints,
     delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context, delegate_text_input_manager,
     desktop::{LayerSurface, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorIcon, CursorImageStatus, MotionEvent, PointerHandle, RelativeMotionEvent},
@@ -29,6 +29,7 @@ use smithay::{
         compositor::{RegionAttributes, with_states},
         cursor_shape::CursorShapeManagerState,
         fractional_scale::{FractionalScaleHandler, FractionalScaleManagerState, with_fractional_scale},
+        idle_inhibit::{IdleInhibitHandler, IdleInhibitManagerState},
         keyboard_shortcuts_inhibit::{
             KeyboardShortcutsInhibitHandler, KeyboardShortcutsInhibitState, KeyboardShortcutsInhibitor, KeyboardShortcutsInhibitorSeat,
         },
@@ -53,7 +54,10 @@ pub struct Protocols {
     /// What apps asked the cursor to look like (wl_pointer.set_cursor or cursor-shape).
     pub cursor: CursorImageStatus,
     /// Where the host cursor was last; relative motion is the step from there, even while the pointer is locked.
-    last_host_pointer: Option<Point<f64, Logical>>,
+    pub last_host_pointer: Option<Point<f64, Logical>>,
+    /// Surfaces keeping the screen awake (idle-inhibit, E6.3: a video playing); read by `State::idle_inhibited`.
+    pub inhibitors: Vec<WlSurface>,
+    _idle_inhibit: IdleInhibitManagerState,
     _presentation: PresentationState,
     _fractional_scale: FractionalScaleManagerState,
     _relative_pointer: RelativePointerManagerState,
@@ -76,6 +80,8 @@ impl Protocols {
             clock,
             cursor: CursorImageStatus::default_named(),
             last_host_pointer: None,
+            inhibitors: Vec::new(),
+            _idle_inhibit: IdleInhibitManagerState::new::<State>(dh),
             _fractional_scale: FractionalScaleManagerState::new::<State>(dh),
             _relative_pointer: RelativePointerManagerState::new::<State>(dh),
             _pointer_constraints: PointerConstraintsState::new::<State>(dh),
@@ -165,7 +171,7 @@ impl State {
 
     /// Stores the cursor an app asked for and, nested, shows it on the host window.
     pub fn set_cursor(&mut self, image: CursorImageStatus) {
-        if let Some(winit) = &self.backend {
+        if let Some(crate::backend::Device::Winit(winit)) = &self.device {
             let window = winit.backend.window();
             window.set_cursor_visible(image != CursorImageStatus::Hidden);
             match &image {
@@ -406,3 +412,24 @@ delegate_text_input_manager!(State);
 delegate_cursor_shape!(State);
 delegate_keyboard_shortcuts_inhibit!(State);
 delegate_security_context!(State);
+delegate_idle_inhibit!(State);
+
+impl IdleInhibitHandler for State {
+    fn inhibit(&mut self, surface: WlSurface) {
+        self.protocols.inhibitors.push(surface);
+    }
+
+    fn uninhibit(&mut self, surface: WlSurface) {
+        self.protocols.inhibitors.retain(|s| *s != surface);
+    }
+}
+
+impl State {
+    /// An app keeps the screen awake: no dimming, screen-off or idle sleep (E6.5 reads this).
+    /// ponytail: any live inhibitor counts; the protocol says only visible surfaces should (check the shown Space).
+    #[expect(dead_code, reason = "the idle timer (E6.5) is its reader")]
+    pub fn idle_inhibited(&mut self) -> bool {
+        self.protocols.inhibitors.retain(IsAlive::alive);
+        !self.protocols.inhibitors.is_empty()
+    }
+}

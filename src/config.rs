@@ -37,6 +37,7 @@ pub struct Config {
     pub appearance: Appearance,
     pub keyboard: Keyboard,
     pub touchpad: Touchpad,
+    pub display: Displays,
     pub windows: Windows,
     pub clock: Clock,
     pub dock: Dock,
@@ -168,6 +169,13 @@ pub struct Touchpad {
     pub natural_scroll: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default)]
+pub struct Displays {
+    /// The GPU that draws the desktop (`/dev/dri/card1`); empty: the one the firmware booted with. Read at start.
+    pub gpu: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Windows {
@@ -205,6 +213,7 @@ impl Default for Config {
             appearance: Appearance::default(),
             keyboard: Keyboard::default(),
             touchpad: Touchpad::default(),
+            display: Displays::default(),
             windows: Windows::default(),
             clock: Clock::default(),
             dock: Dock::default(),
