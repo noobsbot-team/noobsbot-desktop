@@ -188,8 +188,17 @@ impl State {
         self.config.dock.hide == DockHide::Never || self.dock_reveal || !overlaps
     }
 
+    /// A cheap first check for every pointer motion: is `location` low enough to be on the dock at all?
+    fn near_dock(&self, location: Point<f64, Logical>) -> bool {
+        let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.h);
+        location.y >= f64::from(height - reserve(&self.config.dock))
+    }
+
     /// Whether the dock takes the pointer at `location` (output-relative).
     pub fn dock_covers(&self, location: Point<f64, Logical>) -> bool {
+        if !self.near_dock(location) {
+            return false;
+        }
         let items = self.dock_items();
         self.dock_layout(items.len()).is_some_and(|l| !items.is_empty() && self.dock_visible(&l) && l.zone.to_f64().contains(location))
     }
@@ -267,6 +276,9 @@ impl State {
     /// The pointer moved: redraw while it zooms the dock; touching the bottom edge calls up a hidden dock, leaving it
     /// lets it hide again.
     pub fn dock_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
+        if !self.dock_reveal && !self.near_dock(from) && !self.near_dock(to) {
+            return;
+        }
         let n = self.dock_items().len();
         let (Some(layout), Some(size)) = (self.dock_layout(n), self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size)) else {
             return;
