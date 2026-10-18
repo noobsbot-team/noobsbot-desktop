@@ -53,6 +53,8 @@ pub enum Action {
     TrayMenu(i32),
     /// Opens or closes Notification Center (Super+N).
     NotificationCenter,
+    /// Opens or closes Launchpad (E4.4; F4, off by default).
+    Launchpad,
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -123,6 +125,7 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
         ("notification-center", "") => Some(Action::NotificationCenter),
+        ("launchpad", "") => Some(Action::Launchpad),
         _ => None,
     };
     let mut table = Vec::new();
@@ -249,6 +252,7 @@ impl State {
                 self.popup = (!open).then_some(crate::shell::Popup::Notifications { year, month });
                 self.schedule_redraw();
             }
+            Action::Launchpad => self.toggle_launchpad(),
         }
     }
 

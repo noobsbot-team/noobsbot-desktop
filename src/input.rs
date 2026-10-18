@@ -98,6 +98,12 @@ impl State {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }
+                    // Launchpad takes every key but desktop shortcuts (its own binding closes it).
+                    if state.launchpad_open() && shortcuts::lookup(&state.bindings, mods, raw, state.nested).is_none() {
+                        state.launchpad_key(key.modified_sym(), mods.ctrl);
+                        state.suppressed.push(code);
+                        return FilterResult::Intercept(None);
+                    }
                     // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
                     let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
                     match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
@@ -182,6 +188,13 @@ impl State {
                 let pos = self.to_output(pointer.current_location());
                 // Over the dock, a wheel step cycles the app's windows; touchpad scrolling there is just swallowed.
                 let wheel = event.amount_v120(Axis::Vertical).unwrap_or(0.0);
+                // Launchpad pages: a wheel step either way, or a finger swipe sideways.
+                let page_wheel = if wheel != 0.0 { wheel } else { event.amount_v120(Axis::Horizontal).unwrap_or(0.0) };
+                let lifted = source == AxisSource::Finger && event.amount(Axis::Horizontal) == Some(0.0);
+                let swipe = if page_wheel == 0.0 { amount(Axis::Horizontal) } else { 0.0 };
+                if self.launchpad_scroll(swipe, amount(Axis::Vertical), page_wheel, lifted) {
+                    return;
+                }
                 if self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, wheel != 0.0) {
                     return;
                 }

@@ -167,6 +167,8 @@ pub struct State {
     pub switcher: crate::shell::switcher::Switcher,
     /// The Force Quit window (E4.7), when open.
     pub force_quit: Option<crate::shell::force_quit::ForceQuit>,
+    /// Launchpad (E4.4), while open or fading out.
+    pub launchpad: Option<crate::shell::launchpad::Launchpad>,
 }
 
 impl State {
@@ -326,6 +328,7 @@ impl State {
             notifications: Default::default(),
             switcher: Default::default(),
             force_quit: None,
+            launchpad: None,
             display_handle: dh,
         })
     }

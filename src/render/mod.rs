@@ -9,6 +9,7 @@ mod control;
 mod dock;
 mod force_quit;
 mod gallery;
+mod launchpad;
 mod menu;
 pub mod menubar;
 mod notify;
@@ -47,6 +48,7 @@ pub use components::Components;
 pub use control::ControlCenter;
 pub use dock::{DockView, Icon as DockIcon};
 pub use force_quit::ForceQuitWindow;
+pub use launchpad::{Frame as LaunchpadFrame, LaunchpadView};
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
 pub use notify::{NotificationViews, View};
@@ -460,7 +462,8 @@ fn window_elements(
 
 #[allow(clippy::too_many_arguments)]
 /// Every element of one output frame, front to back: top/overlay layers, `bar` (the menu bar), windows (topmost first)
-/// with their shadows, background/bottom layers, wallpaper.
+/// with their shadows (unless `windows` is false: Launchpad shows only the wallpaper), background/bottom layers,
+/// wallpaper.
 pub fn scene(
     renderer: &mut GlesRenderer,
     shaders: &Shaders,
@@ -470,6 +473,7 @@ pub fn scene(
     output: &Output,
     appearance: &Appearance,
     bar: Vec<SceneElement>,
+    windows: bool,
 ) -> Vec<SceneElement> {
     let Some(output_geo) = space.output_geometry(output) else { return Vec::new() };
     let scale = output.current_scale().fractional_scale();
@@ -487,7 +491,7 @@ pub fn scene(
 
     let mut out = layer_elements(renderer, upper);
     out.extend(bar);
-    for window in space.elements().rev() {
+    for window in space.elements().rev().filter(|_| windows) {
         out.extend(window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark));
     }
     out.extend(layer_elements(renderer, lower));

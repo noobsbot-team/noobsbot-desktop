@@ -21,7 +21,7 @@ use smithay::{
 
 use crate::{
     frame::FrameClock,
-    render::{self, AlertSheet, Components, ControlCenter, ForceQuitWindow, DockIcon, DockView, Gallery, MenuBar, MenuPopover, NotificationViews, OsdPopover, Shaders, SwitcherPanel, View, Wallpaper},
+    render::{self, AlertSheet, Components, ControlCenter, ForceQuitWindow, DockIcon, DockView, Gallery, LaunchpadFrame, LaunchpadView, MenuBar, MenuPopover, NotificationViews, OsdPopover, Shaders, SwitcherPanel, View, Wallpaper},
     shell::Popup,
     state::State,
 };
@@ -48,6 +48,7 @@ pub struct Winit {
     dock: DockView,
     switcher: SwitcherPanel,
     force_quit: ForceQuitWindow,
+    launchpad: LaunchpadView,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -92,7 +93,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     let clock = FrameClock::new(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
-    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), notifications: NotificationViews::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default(), switcher: SwitcherPanel::default(), force_quit: ForceQuitWindow::default(), components: None });
+    state.backend = Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery: None, menu_bar: MenuBar::default(), notifications: NotificationViews::default(), menu: MenuPopover::default(), osd: OsdPopover::default(), control: ControlCenter::default(), alert: AlertSheet::default(), dock: DockView::default(), switcher: SwitcherPanel::default(), force_quit: ForceQuitWindow::default(), launchpad: LaunchpadView::default(), components: None });
 
     event_loop.handle().insert_source(winit, |event, _, state| match event {
         WinitEvent::Resized { size, .. } => {
@@ -129,7 +130,10 @@ impl State {
         let dock_items = self.dock_items();
         let dock_layout = self.dock_layout(dock_items.len()).filter(|l| !dock_items.is_empty() && self.dock_visible(l));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
-        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, notifications, menu, osd, control, alert: sheet, dock, switcher, force_quit }) =
+        let now = Instant::now();
+        self.launchpad_frame(now);
+        let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
+        let Some(Winit { backend, output, damage_tracker, shaders, wallpaper, clock, gallery, components, menu_bar, notifications, menu, osd, control, alert: sheet, dock, switcher, force_quit, launchpad: pad_view }) =
             self.backend.as_mut()
         else {
             return;
@@ -194,7 +198,8 @@ impl State {
                     None => {}
                 }
                 let active = self.popup.map(Popup::item);
-                match &content {
+                // Launchpad covers the menu bar.
+                match content.as_ref().filter(|_| pad.is_none()) {
                     Some(content) => bar.extend(menu_bar.elements(
                         renderer,
                         shaders,
@@ -220,10 +225,16 @@ impl State {
                     let px = (layout.icon * zoom * scale).ceil() as u32;
                     bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, layout, px, scale));
                 }
+                // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.
+                if let Some(((position, shown, field, page), grid)) = &pad {
+                    let apps = crate::shell::launchpad::filter(self.apps.list(), &field.text);
+                    let frame = LaunchpadFrame { apps: &apps, grid, output: size, position: *position, page: *page, shown: *shown, field };
+                    bar.extend(pad_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, &mut self.icons, &frame, dark, accent, appearance.glass_opacity, scale));
+                }
                 if let (Some(components), Some(geo)) = (components.as_mut(), self.space.output_geometry(output)) {
                     bar.extend(components.elements(renderer, shaders, &mut self.text, &mut self.symbols, geo.size, dark, accent, appearance.glass_opacity, scale));
                 }
-                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar);
+                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, pad.is_none());
                 if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
                     let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
                     // Above the wallpaper (the last element), below every window.

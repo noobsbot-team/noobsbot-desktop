@@ -251,7 +251,7 @@ pub enum DockHide {
 
 impl Default for Dock {
     fn default() -> Self {
-        let items = ["google-chrome", "com.microsoft.VSCode", "helium-browser", "org.kde.dolphin", "org.kde.kate", "org.kde.spectacle", "kitty", "noobsbot"];
+        let items = ["launchpad", "google-chrome", "com.microsoft.VSCode", "helium-browser", "org.kde.dolphin", "org.kde.kate", "org.kde.spectacle", "kitty", "noobsbot"];
         Self { items: items.map(String::from).to_vec(), icon_size: 84, zoom: true, zoom_percent: 150, hide: DockHide::Intelligent }
     }
 }
