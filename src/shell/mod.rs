@@ -4,6 +4,8 @@
 pub mod alert;
 pub mod control;
 pub mod dock;
+pub mod dock_fx;
+pub mod plank;
 pub mod notify;
 pub mod force_quit;
 pub mod switcher;

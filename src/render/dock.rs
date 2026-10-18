@@ -9,11 +9,21 @@ use smithay::{
     utils::{Point, Rectangle, Size},
 };
 
+use std::sync::Arc;
+
 use super::{
     SceneElement, Shaders, grow,
-    titlebar::{Label, keep_buffers},
+    titlebar::{Label, keep_buffers, label_element},
+    ui::Ui,
 };
-use crate::{apps::Icons, shell::dock::Layout, wm::Rect};
+use crate::{
+    apps::Icons,
+    services::launcher::Entry,
+    shell::dock::Layout,
+    symbols::Symbols,
+    text::{Rendered, Text},
+    wm::Rect,
+};
 
 /// FillStartColor / FillEndColor.
 const TOP: f32 = 41.0 / 255.0;
@@ -36,6 +46,59 @@ pub struct DockView {
     /// Running dots and the focused app's highlight, by their rect.
     marks: Vec<((Rect, bool), PixelShaderElement)>,
     icons: Vec<Label>,
+    /// Badges and progress bars: built for these icons and entries, accent and scale.
+    badges: Option<(BadgeKey, Vec<PixelShaderElement>, Vec<Piece>)>,
+    badge_labels: Vec<Label>,
+}
+
+type BadgeKey = (Vec<(Rect, Option<i64>, Option<u8>)>, [u8; 3], u64);
+type Piece = (Arc<Rendered>, Rect);
+
+impl DockView {
+    /// Front to back: badge counts, then their pills and the progress bars, over `icons` (D8 badge and progress).
+    #[expect(clippy::too_many_arguments, reason = "the frame's drawing context")]
+    pub fn badges(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        shaders: &Shaders,
+        text: &mut Text,
+        symbols: &mut Symbols,
+        badges: &[(Rect, Entry)],
+        accent: [u8; 3],
+        scale: f64,
+    ) -> Vec<SceneElement> {
+        let shown = badges.iter().map(|(r, e)| (*r, e.count, e.progress.map(|p| (p * 100.0).round() as u8))).collect();
+        let key = (shown, accent, scale.to_bits());
+        if self.badges.as_ref().is_none_or(|(k, _, _)| *k != key) {
+            // The dock is a dark theme in light and dark mode, so its controls are drawn dark.
+            let mut ui = Ui { shaders, text, symbols, dark: true, accent, glass_opacity: 1.0, scale, glass: Vec::new(), pieces: Vec::new() };
+            for (icon, count, percent) in &key.0 {
+                if let Some(percent) = percent {
+                    // Low across the icon, on a dark backing so the track shows over any icon.
+                    let (w, h) = (icon.size.w, icon.size.h);
+                    let track = Rectangle::new((icon.loc.x + w / 8, icon.loc.y + h * 4 / 5).into(), (w - w / 4, 4).into());
+                    ui.shape(grow(track, 2), [0.0, 0.0, 0.0, 0.55], 4.0);
+                    ui.progress(track, *percent);
+                }
+                if let Some(count) = count {
+                    ui.badge(*icon, &count.to_string());
+                }
+            }
+            let (mut glass, pieces) = (ui.glass, ui.pieces);
+            glass.reverse();
+            self.badges = Some((key, glass, pieces));
+        }
+        let Some((_, glass, pieces)) = &self.badges else { return Vec::new() };
+        self.badge_labels = keep_buffers(&self.badge_labels, pieces.iter().map(|(p, _)| p.clone()));
+        let mut out: Vec<SceneElement> = self.badge_labels.iter().zip(pieces).filter_map(|(label, (_, r))| label_element(renderer, label, *r, scale)).collect();
+        out.extend(glass.iter().cloned().map(SceneElement::Shader));
+        out
+    }
+
+    /// The urgent glow at the edge of a hidden dock: new each frame, as it only shows while it pulses.
+    pub fn glows(shaders: &Shaders, glows: &[(Rect, [f32; 4])], scale: f64) -> Vec<SceneElement> {
+        glows.iter().map(|(rect, colour)| SceneElement::Shader(shaders.light(*rect, *colour, false, scale))).collect()
+    }
 }
 
 impl DockView {

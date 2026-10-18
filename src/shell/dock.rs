@@ -163,6 +163,7 @@ impl State {
         for item in &mut items {
             item.windows.sort_by_key(|w| stack.iter().position(|s| *s == w).unwrap_or(usize::MAX));
         }
+        items.extend(self.minimised_items());
         items
     }
 
@@ -170,8 +171,10 @@ impl State {
     pub fn dock_layout(&self, n: usize) -> Option<Layout> {
         let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
         let dock = &self.config.dock;
-        let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
-        let pointer = self.dock_pointer.or_else(|| self.seat.get_pointer().map(|p| self.to_output(p.current_location())));
+        // The zoom eases in and out (dock_fx), around the last position over the dock once the pointer has left.
+        let eased = if self.dock_pointer.is_some() { 1.0 } else { self.dock_fx.zoom.value(std::time::Instant::now()) };
+        let zoom = if dock.zoom { 1.0 + (f64::from(dock.zoom_percent) / 100.0 - 1.0) * eased } else { 1.0 };
+        let pointer = self.dock_pointer.or(self.dock_fx.zoom_at);
         Some(layout(n, size, i32::from(dock.icon_size), zoom, pointer))
     }
 
@@ -232,7 +235,7 @@ impl State {
         }
         let shown: Vec<Window> = item.windows.iter().filter(|w| self.space.elements().any(|s| s == *w)).cloned().collect();
         if self.focused_window().is_some_and(|f| shown.contains(&f)) {
-            return self.hide_windows(shown);
+            return self.minimise(shown);
         }
         let restored: Vec<(Window, Point<i32, Logical>)> = self.hidden.iter().filter(|(w, _)| item.windows.contains(w)).cloned().collect();
         self.hidden.retain(|(w, _)| !item.windows.contains(w));
@@ -248,12 +251,13 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// Starts `app` from its `Exec` line.
-    // ponytail: no launch bounce (Plank's 600 ms bounce needs the animation module); Terminal=true apps start without
-    // a terminal.
+    /// Starts `app` from its `Exec` line, with Plank's launch bounce.
+    // ponytail: Terminal=true apps start without a terminal.
     fn launch(&mut self, app: Option<&App>) {
         let Some(app) = app else { return };
         tracing::info!(app = app.id, "dock: launch");
+        self.dock_fx.launched(app.id.clone());
+        self.schedule_redraw();
         self.spawn(&app.command());
     }
 
@@ -286,6 +290,10 @@ impl State {
         let zone = layout.zone.to_f64();
         let edge = to.y >= f64::from(size.h) - 1.0;
         let reveal = if edge { true } else { self.dock_reveal && zone.contains(to) };
+        self.dock_fx.zoom.set(zone.contains(to), std::time::Instant::now());
+        if zone.contains(to) {
+            self.dock_fx.zoom_at = Some(to);
+        }
         if reveal != self.dock_reveal || (self.config.dock.zoom && (zone.contains(from) || zone.contains(to))) {
             self.dock_reveal = reveal;
             self.schedule_redraw();
