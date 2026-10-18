@@ -12,6 +12,7 @@ mod gallery;
 mod launchpad;
 mod menu;
 pub mod menubar;
+mod mission;
 mod notify;
 mod osd;
 mod spotlight;
@@ -31,6 +32,7 @@ pub use gallery::Gallery;
 pub use launchpad::{Frame as LaunchpadFrame, LaunchpadView};
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
+pub use mission::{MissionView, sliding};
 pub use notify::{NotificationViews, View};
 pub use osd::OsdPopover;
 use smithay::{
@@ -42,6 +44,7 @@ use smithay::{
             render_elements,
             surface::{WaylandSurfaceRenderElement, WaylandSurfaceTexture, render_elements_from_surface_tree},
             texture::TextureRenderElement,
+            utils::{Relocate, RelocateRenderElement, RescaleRenderElement},
         },
         gles::{
             GlesError, GlesFrame, GlesPixelProgram, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, UniformName, UniformType, element::PixelShaderElement,
@@ -75,6 +78,41 @@ render_elements! {
     Shader=PixelShaderElement,
     Texture=TextureRenderElement<GlesTexture>,
     Memory=MemoryRenderBufferRenderElement<GlesRenderer>,
+    Moved=RelocateRenderElement<RescaleRenderElement<WindowElement>>,
+}
+
+render_elements! {
+    /// What a window is drawn with, so it can be scaled and moved as one (Mission Control, E5.2).
+    pub WindowElement<=GlesRenderer>;
+    Surface=WaylandSurfaceRenderElement<GlesRenderer>,
+    Rounded=RoundedElement,
+    Shader=PixelShaderElement,
+    Memory=MemoryRenderBufferRenderElement<GlesRenderer>,
+}
+
+/// `element` scaled by `factor` about `origin`, then moved by `offset` (output-relative physical px). Only the
+/// textures the app already gave us are drawn smaller: the app is not asked to redraw.
+pub(super) fn transformed(element: SceneElement, origin: Point<i32, Physical>, factor: f64, offset: Point<i32, Physical>) -> Option<SceneElement> {
+    let inner = match element {
+        SceneElement::Surface(e) => WindowElement::Surface(e),
+        SceneElement::Rounded(mut e) => {
+            // The corner mask follows: it is applied where the surface lands.
+            let (geo, radius) = e.clip.unwrap_or((e.geo, e.radius));
+            let loc = (geo.loc - origin).to_f64().upscale(factor).to_i32_round() + origin + offset;
+            e.clip = Some((Rectangle::new(loc, geo.size.to_f64().upscale(factor).to_i32_round()), radius * factor));
+            WindowElement::Rounded(e)
+        }
+        SceneElement::Shader(e) => WindowElement::Shader(e),
+        SceneElement::Memory(e) => WindowElement::Memory(e),
+        _ => return None,
+    };
+    let scaled = RescaleRenderElement::from_element(inner, origin, factor);
+    Some(SceneElement::Moved(RelocateRenderElement::from_element(scaled, offset, Relocate::Relative)))
+}
+
+/// A window's title, as its title bar shows it.
+pub fn window_title(window: &Window) -> String {
+    titlebar::title_of(window)
 }
 
 /// Dark mode on? ponytail: `auto` is light until the Settings schedule exists (M7).
@@ -311,6 +349,8 @@ pub struct RoundedElement {
     /// The window's visible geometry, output-relative physical px.
     geo: Rectangle<i32, Physical>,
     radius: f64,
+    /// Where the corner mask goes when the element is drawn scaled (`transformed`): geometry and radius there.
+    clip: Option<(Rectangle<i32, Physical>, f64)>,
 }
 
 impl Element for RoundedElement {
@@ -366,12 +406,10 @@ impl RenderElement<GlesRenderer> for RoundedElement {
         if self.inner.transform() != Transform::Normal || src.size.w <= 0.0 || src.size.h <= 0.0 {
             return self.inner.draw(frame, src, dst, damage, opaque_regions);
         }
-        let to_geo = to_geo(texture.size(), texture.is_y_inverted(), src, dst, self.geo.loc);
-        let uniforms = vec![
-            Uniform::new("geo_size", (self.geo.size.w as f32, self.geo.size.h as f32)),
-            Uniform::new("radius", self.radius as f32),
-            Uniform::new("to_geo", to_geo),
-        ];
+        let (geo, radius) = self.clip.unwrap_or((self.geo, self.radius));
+        let to_geo = to_geo(texture.size(), texture.is_y_inverted(), src, dst, geo.loc);
+        let uniforms =
+            vec![Uniform::new("geo_size", (geo.size.w as f32, geo.size.h as f32)), Uniform::new("radius", radius as f32), Uniform::new("to_geo", to_geo)];
         frame.override_default_tex_program(self.program.clone(), uniforms);
         let drawn = self.inner.draw(frame, src, dst, damage, opaque_regions);
         frame.clear_tex_program_override();
@@ -415,7 +453,7 @@ fn window_shadow(shaders: &Shaders, window: &Window, rect: Rect, elevation: u8, 
 /// One window, front to back: popups, its surfaces clipped to rounded corners, our title bar if it has one, its
 /// shadow (5 focused, 4 not). Fullscreen windows get neither corners nor shadow.
 #[allow(clippy::too_many_arguments)]
-fn window_elements(
+pub(super) fn window_elements(
     renderer: &mut GlesRenderer,
     shaders: &Shaders,
     text: &mut Text,
@@ -448,11 +486,9 @@ fn window_elements(
     // bottom corners round.
     let frame = Rectangle::new(geo.loc - Point::from((0, bar)), geo.size + Size::from((0, bar)));
     let frame_px = frame.to_physical_precise_round(scale);
-    out.extend(
-        surfaces
-            .into_iter()
-            .map(|inner| SceneElement::Rounded(RoundedElement { inner, program: shaders.rounded.clone(), geo: frame_px, radius: WINDOW_RADIUS * scale })),
-    );
+    out.extend(surfaces.into_iter().map(|inner| {
+        SceneElement::Rounded(RoundedElement { inner, program: shaders.rounded.clone(), geo: frame_px, radius: WINDOW_RADIUS * scale, clip: None })
+    }));
     let focused = state.states.contains(xdg_toplevel::State::Activated);
     if bar > 0 {
         out.extend(titlebar::elements(renderer, shaders, text, window, frame, focused, dark, scale));
@@ -464,8 +500,8 @@ fn window_elements(
 
 #[allow(clippy::too_many_arguments)]
 /// Every element of one output frame, front to back: top/overlay layers, `bar` (the menu bar), windows (topmost first)
-/// with their shadows (unless `windows` is false: Launchpad shows only the wallpaper), background/bottom layers,
-/// wallpaper.
+/// with their shadows, background/bottom layers, wallpaper. `windows` replaces the shown Space's windows (Mission
+/// Control, a Space sliding in; empty under Launchpad).
 pub fn scene(
     renderer: &mut GlesRenderer,
     shaders: &Shaders,
@@ -475,7 +511,7 @@ pub fn scene(
     output: &Output,
     appearance: &Appearance,
     bar: Vec<SceneElement>,
-    windows: bool,
+    windows: Option<Vec<SceneElement>>,
 ) -> Vec<SceneElement> {
     let Some(output_geo) = space.output_geometry(output) else { return Vec::new() };
     let scale = output.current_scale().fractional_scale();
@@ -493,8 +529,14 @@ pub fn scene(
 
     let mut out = layer_elements(renderer, upper);
     out.extend(bar);
-    for window in space.elements().rev().filter(|_| windows) {
-        out.extend(window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark));
+    match windows {
+        Some(windows) => out.extend(windows),
+        // Hidden Spaces are not drawn (E5.1).
+        None => {
+            for window in space.elements().rev().filter(|w| space.element_location(w).is_some_and(|l| crate::spaces::row_at(l.y, output_geo.loc.y) == 0)) {
+                out.extend(window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark));
+            }
+        }
     }
     out.extend(layer_elements(renderer, lower));
     out.push(wallpaper.element(shaders, output_geo.size, dark));

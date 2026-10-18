@@ -23,7 +23,7 @@ use crate::{
     frame::FrameClock,
     render::{
         self, AlertSheet, Components, ControlCenter, DockIcon, DockView, ForceQuitWindow, Gallery, LaunchpadFrame, LaunchpadView, MenuBar, MenuPopover,
-        NotificationViews, OsdPopover, Shaders, SpotlightPanel, SwitcherPanel, View, Wallpaper,
+        MissionView, NotificationViews, OsdPopover, Shaders, SpotlightPanel, SwitcherPanel, View, Wallpaper,
     },
     shell::Popup,
     state::State,
@@ -53,6 +53,7 @@ pub struct Winit {
     force_quit: ForceQuitWindow,
     spotlight: SpotlightPanel,
     launchpad: LaunchpadView,
+    mission: MissionView,
 }
 
 pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
@@ -114,6 +115,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         dock: DockView::default(),
         switcher: SwitcherPanel::default(),
         force_quit: ForceQuitWindow::default(),
+        mission: MissionView::default(),
         components: None,
         spotlight: SpotlightPanel::default(),
         launchpad: LaunchpadView::default(),
@@ -166,6 +168,10 @@ impl State {
         let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
         let dock_menu =
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
+        let overview = self.mission_frame();
+        let slide = if overview.is_none() { self.slide_frame() } else { None };
+        let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
+        let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
         let Some(Winit {
             backend,
             output,
@@ -186,6 +192,7 @@ impl State {
             force_quit,
             spotlight,
             launchpad: pad_view,
+            mission,
         }) = self.backend.as_mut()
         else {
             return;
@@ -258,6 +265,9 @@ impl State {
                         appearance.glass_opacity,
                         scale,
                     ));
+                }
+                if let Some((count, current)) = indicator {
+                    bar.extend(mission.indicator(shaders, count, current, width, dark, appearance.glass_opacity, scale));
                 }
                 if let Some(shown) = &self.osd {
                     bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
@@ -345,7 +355,7 @@ impl State {
                 }
                 let active = self.popup.and_then(Popup::item);
                 // Launchpad covers the menu bar.
-                match content.as_ref().filter(|_| pad.is_none()) {
+                match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
                     Some(content) => bar.extend(menu_bar.elements(
                         renderer,
                         shaders,
@@ -404,7 +414,26 @@ impl State {
                         scale,
                     ));
                 }
-                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, pad.is_none());
+                let output_geo = self.space.output_geometry(output).unwrap_or_default();
+                let windows = match (&overview, &slide) {
+                    (Some(overview), _) => Some(mission.windows(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &self.space,
+                        overview,
+                        output_geo,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    )),
+                    (None, Some(slide)) => Some(render::sliding(renderer, shaders, &mut self.text, &self.space, slide, scale, dark)),
+                    // Launchpad shows only the wallpaper.
+                    (None, None) if pad.is_some() => Some(Vec::new()),
+                    (None, None) => None,
+                };
+                let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows);
                 if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
                     let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
                     // Above the wallpaper (the last element), below every window.
@@ -443,7 +472,9 @@ impl State {
         let mut feedback = OutputPresentationFeedback::new(output);
         let on_output = |_: &WlSurface, _: &SurfaceData| Some(output.clone());
         let elapsed = self.start_time.elapsed();
-        for window in self.space.elements() {
+        // Hidden Spaces' apps get no frame callbacks, so they idle (E5.1).
+        let top = self.space.output_geometry(output).map_or(0, |g| g.loc.y);
+        for window in self.space.elements().filter(|w| self.space.element_location(w).is_some_and(|l| crate::spaces::row_at(l.y, top) == 0)) {
             window.send_frame(output, elapsed, Some(Duration::ZERO), on_output);
             window.take_presentation_feedback(&mut feedback, on_output, |_, _| wp_presentation_feedback::Kind::empty());
         }
@@ -467,7 +498,7 @@ impl State {
         let _ = self.display_handle.flush_clients();
         // The test scene redraws every frame (its cards are rebuilt each time, so each frame repaints them).
         // The dock redraws only while it bounces, slides, zooms or glows.
-        if benchmark || dock_frame.animating {
+        if benchmark || dock_frame.animating || animating {
             self.schedule_redraw();
         }
     }

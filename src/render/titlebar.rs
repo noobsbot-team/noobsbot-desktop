@@ -64,7 +64,7 @@ pub(super) fn keep_buffers(old: &[Label], pieces: impl IntoIterator<Item = Arc<R
         .collect()
 }
 
-fn title_of(window: &Window) -> String {
+pub(super) fn title_of(window: &Window) -> String {
     let Some(toplevel) = window.toplevel() else { return String::new() };
     with_states(toplevel.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.title.clone())).unwrap_or_default()
 }

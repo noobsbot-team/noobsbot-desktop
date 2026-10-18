@@ -104,6 +104,7 @@ impl State {
         let current = pointer.current_location();
         self.shell_motion(self.to_output(current), self.to_output(host));
         self.dock_motion(self.to_output(current), self.to_output(host));
+        self.mission_motion(self.to_output(host));
         let under = self.surface_under(current);
 
         let (mut locked, mut confined, mut region) = (false, false, None::<RegionAttributes>);
@@ -261,7 +262,7 @@ impl WlrLayerShellHandler for State {
         }
         let focused = self.seat.get_keyboard().and_then(|k| k.current_focus());
         if focused.as_ref() == Some(surface.wl_surface()) {
-            let top = self.space.elements().next_back().cloned();
+            let top = self.top_window();
             self.focus_window(top, SERIAL_COUNTER.next_serial());
         }
         self.schedule_redraw();

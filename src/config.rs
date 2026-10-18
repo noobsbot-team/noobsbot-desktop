@@ -176,6 +176,8 @@ pub struct Windows {
     pub magnetic_edges: bool,
     pub snapping: bool,
     pub double_click_title: TitleAction,
+    /// Spaces (E5.1): 0 = dynamic (start with one, `+` in Mission Control adds more); 2–16 = that many, fixed.
+    pub spaces: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -280,7 +282,7 @@ impl Default for Touchpad {
 
 impl Default for Windows {
     fn default() -> Self {
-        Self { move_modifier: Modifier::Super, magnetic_edges: true, snapping: true, double_click_title: TitleAction::Zoom }
+        Self { move_modifier: Modifier::Super, magnetic_edges: true, snapping: true, double_click_title: TitleAction::Zoom, spaces: 0 }
     }
 }
 
@@ -299,6 +301,21 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Alt+Escape", "force-quit"),
         ("Super+N", "notification-center"),
         ("Super+Space", "spotlight"),
+        ("Super+Left", "space left"),
+        ("Super+Right", "space right"),
+        ("Super+1", "space 1"),
+        ("Super+2", "space 2"),
+        ("Super+3", "space 3"),
+        ("Super+4", "space 4"),
+        ("Super+5", "space 5"),
+        ("Super+6", "space 6"),
+        ("Super+7", "space 7"),
+        ("Super+8", "space 8"),
+        ("Super+9", "space 9"),
+        ("Super+Shift+Left", "move-to-space left"),
+        ("Super+Shift+Right", "move-to-space right"),
+        ("Super+Up", "mission-control"),
+        ("Super+Down", "app-expose"),
         ("F12", "quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),

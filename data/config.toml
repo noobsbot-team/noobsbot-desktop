@@ -48,6 +48,8 @@ magnetic_edges = true
 snapping = true
 # Double-clicking a title bar: "zoom", "minimise" or "nothing".
 double_click_title = "zoom"
+# Spaces (virtual desktops): 0 = dynamic (start with one; + in Mission Control adds more), or a fixed count 2–16.
+spaces = 0
 
 [clock]
 # Time zone, like "Asia/Kathmandu"; empty = keep the system's. Changing it sets the system zone (may ask for your password).
@@ -73,7 +75,8 @@ hide = "intelligent"
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, hide, hide-others, show-all, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
-# "brightness up|down", "media play-pause|next|previous".
+# "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",
+# mission-control, app-expose.
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec helium-browser"
@@ -89,6 +92,22 @@ hide = "intelligent"
 "Super+Alt+Escape" = "force-quit"
 "Super+N" = "notification-center"
 "Super+Space" = "spotlight"
+# Spaces (E5.1) and Mission Control (E5.2). Ctrl+arrows and Ctrl+digits stay with the apps.
+"Super+Left" = "space left"
+"Super+Right" = "space right"
+"Super+1" = "space 1"
+"Super+2" = "space 2"
+"Super+3" = "space 3"
+"Super+4" = "space 4"
+"Super+5" = "space 5"
+"Super+6" = "space 6"
+"Super+7" = "space 7"
+"Super+8" = "space 8"
+"Super+9" = "space 9"
+"Super+Shift+Left" = "move-to-space left"
+"Super+Shift+Right" = "move-to-space right"
+"Super+Up" = "mission-control"
+"Super+Down" = "app-expose"
 "F12" = "quake"
 # Launchpad also opens from its dock icon; F4 is free for apps unless you bind it.
 # "F4" = "launchpad"

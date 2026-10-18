@@ -62,6 +62,16 @@ pub enum Action {
     Dock(crate::shell::dock::Command),
     /// Opens or closes Launchpad (E4.4; F4, off by default).
     Launchpad,
+    /// The Space to the left (-1) or right (+1) (E5.1).
+    SwitchSpace(i32),
+    /// Space n, from 0.
+    ShowSpace(usize),
+    /// The focused window comes along to the Space left or right.
+    MoveToSpace(i32),
+    /// Opens or closes Mission Control (E5.2).
+    MissionControl,
+    /// Mission Control with only the focused app's windows.
+    AppExpose,
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
@@ -134,6 +144,13 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
         ("notification-center", "") => Some(Action::NotificationCenter),
         ("spotlight", "") => Some(Action::Spotlight),
         ("launchpad", "") => Some(Action::Launchpad),
+        ("space", "left") => Some(Action::SwitchSpace(-1)),
+        ("space", "right") => Some(Action::SwitchSpace(1)),
+        ("space", n) => n.parse::<usize>().ok().filter(|n| (1..=16).contains(n)).map(|n| Action::ShowSpace(n - 1)),
+        ("move-to-space", "left") => Some(Action::MoveToSpace(-1)),
+        ("move-to-space", "right") => Some(Action::MoveToSpace(1)),
+        ("mission-control", "") => Some(Action::MissionControl),
+        ("app-expose", "") => Some(Action::AppExpose),
         _ => None,
     };
     let mut table = Vec::new();
@@ -255,6 +272,11 @@ impl State {
                 self.services.send(Command::Media { player: now.player.clone(), action: media });
                 self.show_osd(osd);
             }
+            Action::SwitchSpace(delta) => self.switch_space(delta),
+            Action::ShowSpace(n) => self.show_space(n),
+            Action::MoveToSpace(delta) => self.move_to_space(delta),
+            Action::MissionControl => self.toggle_mission_control(),
+            Action::AppExpose => self.app_expose(),
             Action::NotificationCenter => {
                 let (year, month) = crate::shell::this_month();
                 let open = matches!(self.popup, Some(crate::shell::Popup::Notifications { .. }));
@@ -347,7 +369,7 @@ impl State {
             self.space.unmap_elem(&window);
             self.hidden.push((window, loc));
         }
-        let top = self.space.elements().last().cloned();
+        let top = self.top_window();
         self.focus_window(top, SERIAL_COUNTER.next_serial());
         self.schedule_redraw();
     }
@@ -404,5 +426,10 @@ mod tests {
         assert!(matches!(lookup(&table, &mods(true, false, false), Keysym::Tab, false), Some(Action::Switcher { back: false, held }) if held.desktop));
         assert!(matches!(lookup(&table, &mods(true, false, true), Keysym::Tab, false), Some(Action::Switcher { back: true, .. })), "Shift steps back");
         assert_eq!(lookup(&table, &ModifiersState { logo: true, alt: true, ..Default::default() }, Keysym::Escape, false), Some(&Action::ForceQuit));
+        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::Right, false), Some(&Action::SwitchSpace(1)));
+        assert_eq!(lookup(&table, &mods(true, false, true), Keysym::Left, false), Some(&Action::MoveToSpace(-1)));
+        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::_3, false), Some(&Action::ShowSpace(2)));
+        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::Up, false), Some(&Action::MissionControl));
+        assert_eq!(lookup(&table, &mods(false, false, false), Keysym::Left, false), None, "plain arrows go to the app");
     }
 }
