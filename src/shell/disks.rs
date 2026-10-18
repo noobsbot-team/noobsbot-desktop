@@ -85,6 +85,7 @@ impl State {
     fn disk_notice(&mut self, summary: String, body: String, actions: Vec<(String, String)>, volume: Option<Volume>) {
         let id = FIRST_ID + self.disks.next % 0xFFFF;
         self.disks.next += 1;
+        tracing::debug!(id, summary, "disk notice");
         if let Some(v) = volume {
             self.disks.shown.push((id, v));
         }
