@@ -10,6 +10,7 @@ pub mod power;
 pub mod profiles;
 pub mod sound;
 pub mod tray;
+pub mod update;
 
 use std::{fmt::Debug, future::Future, os::unix::net::UnixStream, time::Duration};
 

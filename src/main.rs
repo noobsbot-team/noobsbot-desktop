@@ -32,6 +32,13 @@ use crate::state::State;
 
 const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show calendar|logo-menu|app-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
+/// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
+// ponytail: the codename is fixed until 2.0 (Pearl) exists.
+fn version() -> String {
+    let parts = [option_env!("NOOBSBOT_DATE"), option_env!("NOOBSBOT_COMMIT")];
+    parts.into_iter().flatten().fold(format!("{} (Opal)", env!("CARGO_PKG_VERSION")), |v, part| format!("{v} · {part}"))
+}
+
 fn main() {
     tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
 
@@ -63,6 +70,7 @@ fn main() {
             "--show" => show = args.next(),
             "--" => command.extend(args.by_ref()),
             "-h" | "--help" => return println!("{USAGE}"),
+            "-V" | "--version" => return println!("{}", version()),
             other => {
                 eprintln!("unknown argument: {other}\n{USAGE}");
                 std::process::exit(2);

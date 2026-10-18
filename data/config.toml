@@ -8,6 +8,9 @@ version = 1
 # Terminal opened by Super+Enter and the "terminal" action.
 terminal = "noobsbot"
 
+# Look for a new Noobsbot Desktop release once a day (sends nothing but the version). Applies at next login.
+check_updates = true
+
 [appearance]
 # "light", "dark" or "auto" (auto follows the schedule set in Settings).
 mode = "light"
