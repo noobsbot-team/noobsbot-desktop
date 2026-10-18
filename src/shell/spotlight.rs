@@ -323,7 +323,7 @@ mod tests {
     use super::*;
 
     fn app(name: &str, exec: &str) -> App {
-        App { id: name.to_lowercase(), name: name.into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false }
+        App { id: name.to_lowercase(), name: name.into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false, ..Default::default() }
     }
 
     fn names(hits: &[Hit]) -> Vec<String> {

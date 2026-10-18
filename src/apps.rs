@@ -14,7 +14,7 @@ use resvg::{tiny_skia, usvg};
 use crate::text::Rendered;
 
 /// An installed application.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct App {
     /// Desktop-file id: the file name without `.desktop` (`org.kde.kate`), subdirectories joined with `-`.
     pub id: String,
@@ -27,6 +27,16 @@ pub struct App {
     pub wm_class: Option<String>,
     /// `NoDisplay=true`: kept out of launchers, but still matched to its windows.
     pub no_display: bool,
+    /// `Comment`, else `GenericName`, localised: the app drawer's second line.
+    pub comment: String,
+    /// `GenericName` ("Web Browser"), localised.
+    pub generic_name: String,
+    /// `Keywords`, localised, for search.
+    pub keywords: Vec<String>,
+    /// `Categories` (freedesktop: `Development`, `AudioVideo`, …).
+    pub categories: Vec<String>,
+    /// The `.desktop` file it came from (empty when built in code).
+    pub path: PathBuf,
 }
 
 impl App {
@@ -196,14 +206,23 @@ fn parse(id: &str, text: &str, locale: &str) -> Option<Entry> {
     if fields.get("Type") != Some(&"Application") {
         return None;
     }
-    let name = locale_keys(locale).iter().find_map(|l| fields.get(format!("Name[{l}]").as_str())).or(fields.get("Name"))?;
+    let locales = locale_keys(locale);
+    let localised = |key: &str| locales.iter().find_map(|l| fields.get(format!("{key}[{l}]").as_str())).or(fields.get(key)).map(|v| unescape(v));
+    // `;`-separated lists, the last `;` optional.
+    let list = |value: Option<String>| value.unwrap_or_default().split(';').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
+    let generic_name = localised("GenericName").unwrap_or_default();
     Some(Entry::App(App {
         id: id.to_owned(),
-        name: unescape(name),
+        name: localised("Name")?,
         exec,
         icon: fields.get("Icon").map(|i| unescape(i)).unwrap_or_default(),
         wm_class: fields.get("StartupWMClass").map(|c| unescape(c)).filter(|c| !c.is_empty()),
         no_display: flag("NoDisplay"),
+        comment: localised("Comment").filter(|c| !c.is_empty()).unwrap_or_else(|| generic_name.clone()),
+        generic_name,
+        keywords: list(localised("Keywords")),
+        categories: list(fields.get("Categories").map(|c| unescape(c))),
+        path: PathBuf::new(),
     }))
 }
 
@@ -249,7 +268,7 @@ impl Apps {
                     continue;
                 }
                 if let Some(Entry::App(app)) = std::fs::read_to_string(&path).ok().and_then(|t| parse(&id, &t, locale)) {
-                    apps.push(app);
+                    apps.push(App { path, ..app });
                 }
             }
         }
@@ -423,14 +442,14 @@ mod tests {
     }
 
     fn exec(exec: &str) -> Vec<String> {
-        App { id: "kate".into(), name: "Kate".into(), exec: unescape(exec), icon: "kate".into(), wm_class: None, no_display: false }.command()
+        App { id: "kate".into(), name: "Kate".into(), exec: unescape(exec), icon: "kate".into(), wm_class: None, no_display: false, ..Default::default() }.command()
     }
 
     #[test]
     fn dropped_files_fill_field_codes() {
         let kate = |exec: &str, uris: &[&str]| {
             let uris: Vec<String> = uris.iter().map(|u| u.to_string()).collect();
-            App { id: "kate".into(), name: "Kate".into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false }.command_with(&uris)
+            App { id: "kate".into(), name: "Kate".into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false, ..Default::default() }.command_with(&uris)
         };
         let two = ["file:///home/a/My%20File.txt", "file://localhost/tmp/b"];
         assert_eq!(kate("kate -b %F", &two), ["kate", "-b", "/home/a/My File.txt", "/tmp/b"]);
@@ -464,6 +483,18 @@ mod tests {
         // Keys of other groups (actions) never leak into the main entry.
         let Some(Entry::App(a)) = app("[Desktop Entry]\nType=Application\nName=A\nExec=a\n[Desktop Action new]\nName=New\nExec=a --new\n") else { panic!() };
         assert_eq!((a.name.as_str(), a.exec.as_str()), ("A", "a"));
+    }
+
+    #[test]
+    fn comment_keywords_and_categories() {
+        let base = "[Desktop Entry]\nType=Application\nName=Kate\nExec=kate\nGenericName=Text Editor\nKeywords=text;editor;\nCategories=Qt;KDE;Utility;TextEditor;\n";
+        let Some(Entry::App(kate)) = app(&format!("{base}Comment=Edit text\nComment[de]=Text bearbeiten\nKeywords[de]=Text;Bearbeiter\n")) else { panic!() };
+        assert_eq!((kate.comment.as_str(), kate.generic_name.as_str()), ("Text bearbeiten", "Text Editor"));
+        assert_eq!(kate.keywords, ["Text", "Bearbeiter"]);
+        assert_eq!(kate.categories, ["Qt", "KDE", "Utility", "TextEditor"]);
+        let Some(Entry::App(bare)) = app(base) else { panic!() };
+        assert_eq!(bare.comment, "Text Editor", "no Comment: the generic name");
+        assert_eq!(bare.keywords, ["text", "editor"]);
     }
 
     #[test]

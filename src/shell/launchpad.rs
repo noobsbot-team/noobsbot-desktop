@@ -408,7 +408,7 @@ mod tests {
     use super::*;
 
     fn app(name: &str) -> App {
-        App { id: name.to_lowercase(), name: name.into(), exec: name.to_lowercase(), icon: String::new(), wm_class: None, no_display: false }
+        App { id: name.to_lowercase(), name: name.into(), exec: name.to_lowercase(), icon: String::new(), wm_class: None, no_display: false, ..Default::default() }
     }
 
     #[test]
