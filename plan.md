@@ -1351,8 +1351,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | Auto-login | **off by default**; it skips the password by design (only for desktops nobody else touches) |
   `install.sh` runs a **security check** and warns (without changing anything) if: the root disk isn't encrypted,
   bootloader editing is enabled, auto-login is on, or Secure Boot is off (informational).
-- **Future own greeter:** `noobsbot-desktop --greeter` draws a glass macOS-style login (same design as the lock
-  screen, E6.4) and talks to greetd through the `greetd_ipc` crate. It's a swap of one line in the config; nothing else changes.
+- **Own greeter (E7.2, opt-in):** `noobsbot-desktop --greeter` draws a glass macOS-style login (the lock screen,
+  E6.4, plus a user row and session choice) and speaks greetd's small JSON IPC itself (`shell/greeter.rs`, no crate).
+  `install.sh --greeter` writes `data/system/etc/greetd/noobsbot-greeter.toml` as the config; tuigreet stays the default and fallback.
 - **Why:** minimal, doesn't depend on any desktop, the modern standard for lightweight setups.
   **Rejected:** SDDM (KDE/Qt, heavier), GDM (pulls in GNOME).
 - **Done when:** boot → tuigreet → log in → Noobsbot Desktop starts; logging out returns to tuigreet.
@@ -1568,7 +1569,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 ### E7.2 Optional extras (each its own mini-plan when chosen)
 | Extra | What | Built with |
 |---|---|---|
-| Graphical login screen | lock-screen-style login | greetd greeter mode of Noobsbot Desktop |
+| Graphical login screen (done, opt-in) | lock-screen-style login | greetd greeter mode of Noobsbot Desktop (`--greeter`, see E6.6) |
 | Calendar events | "Up Next" widget, event dots, reminders | `.ics` parser, later CalDAV |
 | Own polkit agent | password prompts in our alert design instead of KDE's | polkit agent D-Bus API + PAM helper |
 | Weather widget | forecast in Notification Center | online API (needs a decision on provider and privacy) |
@@ -1857,7 +1858,7 @@ custom-desktop-environemt/
 | `pipewire` | volume, outputs, mic (replaces `wpctl`, E1.11) | official Rust bindings; no process per key press | before M6 |
 | `libc` | `kill` for Force Quit, socket credentials | standard | M4 |
 | `pam-client` | lock screen password | standard Linux auth | M6 |
-| `greetd_ipc` (later) | own graphical greeter (E6.6) | greetd's own protocol crate | M7+ |
+| ~~`greetd_ipc`~~ | own graphical greeter (E6.6) | not needed: the protocol is spoken directly in `shell/greeter.rs` | — |
 | `ureq`, `semver`, `minisign-verify`, `zstd`, `tar` | Software Update (E6.13) | small blocking HTTP + proven signature check; no async runtime | M6 |
 | `chrono-tz` (optional) | world clocks | time-zone data | later |
 Rule: **a crate is added only when its feature is built.**

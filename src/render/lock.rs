@@ -34,9 +34,12 @@ pub struct Content<'a> {
     pub now: chrono::DateTime<chrono::Local>,
 }
 
-/// Date, time, missed count, hover, wrong, battery, keyboard, size, dark, opacity, scale.
-type PageKey = (String, String, usize, Option<Button>, bool, Option<(u8, bool)>, String, Size<i32, Logical>, bool, u32, u64);
+/// Date, time, missed count, hover, wrong, battery, keyboard, size, dark, opacity, scale, greeter (user, session,
+/// error).
+type PageKey = (String, String, usize, Option<Button>, bool, Option<(u8, bool)>, String, Size<i32, Logical>, bool, u32, u64, Option<(usize, usize, Option<String>)>);
 type FieldKey = (TextField, Rect, bool, bool, [u8; 3], u32, u64);
+/// Full name and round picture per user.
+type Users = Vec<(String, Option<Arc<Rendered>>)>;
 type ShadeKey = (Size<i32, Logical>, u32, u64);
 type Drawn<K> = (K, Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>);
 
@@ -50,8 +53,9 @@ pub struct LockView {
     page: Option<Drawn<PageKey>>,
     field: Option<Drawn<FieldKey>>,
     labels: Vec<Label>,
-    /// Full name, and the round picture at a scale (`None`: the initial in a circle); read on first lock.
-    user: Option<(String, u64, Option<Arc<Rendered>>)>,
+    /// The scale, and each user's full name and round picture (`None`: the initial in a circle); read on first
+    /// lock. One user, or the greeter's row (E7.2).
+    users: Option<(u64, Users)>,
     /// The idle shade, kept so it keeps its damage id while the screen stays dimmed.
     shade: Option<(ShadeKey, PixelShaderElement)>,
 }
@@ -82,12 +86,21 @@ impl LockView {
         scale: f64,
     ) -> Vec<SceneElement> {
         let layout = lock::layout(size);
-        if self.user.as_ref().is_none_or(|(_, s, _)| *s != scale.to_bits()) {
-            let (login, full) = crate::pam::user();
-            self.user = Some((full, scale.to_bits(), avatar(&login, scale)));
-        }
-        let Some((name, _, picture)) = &self.user else { return Vec::new() };
         let lock = content.lock;
+        let count = lock.greeter.as_ref().map_or(1, |g| g.users.len());
+        if self.users.as_ref().is_none_or(|(s, u)| *s != scale.to_bits() || u.len() != count) {
+            let users = match &lock.greeter {
+                Some(g) => g.users.iter().map(|u| (u.name.clone(), avatar(&u.login, &u.home, scale))).collect(),
+                None => {
+                    let (login, full) = crate::pam::user();
+                    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+                    vec![(full, avatar(&login, &home, scale))]
+                }
+            };
+            self.users = Some((scale.to_bits(), users));
+        }
+        let Some((_, users)) = &self.users else { return Vec::new() };
+        let greeter = lock.greeter.as_ref().map(|g| (g.user, g.session, g.error.clone()));
         let date = content.now.format("%A, %-d %B").to_string();
         let time = content.now.format(if content.hour24 { "%H:%M" } else { "%-I:%M" }).to_string();
         let battery = content.battery.map(|b| (b.percent, b.charging));
@@ -103,6 +116,7 @@ impl LockView {
             dark,
             glass_opacity.to_bits(),
             scale.to_bits(),
+            greeter,
         );
         if self.page.as_ref().is_none_or(|(k, _, _)| *k != key) {
             let mut ui = Ui { shaders, text, symbols, dark, accent, glass_opacity, scale, glass: Vec::new(), pieces: Vec::new() };
@@ -114,17 +128,33 @@ impl LockView {
                 let words = if lock.missed == 1 { "1 notification".to_owned() } else { format!("{} notifications", lock.missed) };
                 ui.text(&words, Style { color: WHITE85, ..CALLOUT }, layout.missed, Align::Centre);
             }
-            match picture {
-                Some(picture) => ui.pieces.push((picture.clone(), layout.avatar)),
-                None => {
-                    ui.glass.push(shaders.light(layout.avatar, [1.0, 1.0, 1.0, 0.3], false, scale));
-                    let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
-                    ui.text(&initial, Style { size: 28, line_height: 34, weight: 500, color: WHITE, tabular: false }, layout.avatar, Align::Centre);
+            // The greeter's row (E7.2): the picked user ringed and named in white, the others in 85%.
+            let row = crate::shell::greeter::row(&layout, size.w, users.len());
+            let picked = lock.greeter.as_ref().map_or(0, |g| g.user);
+            for (i, ((name, picture), (rect, name_rect))) in users.iter().zip(row.avatars.into_iter().zip(row.names)).enumerate() {
+                if users.len() > 1 && i == picked {
+                    ui.glass.push(shaders.ring(Rectangle::new((rect.loc.x - 3, rect.loc.y - 3).into(), (AVATAR + 6, AVATAR + 6).into()), f64::from(AVATAR) / 2.0 + 3.0, 2, [1.0, 1.0, 1.0, 0.85], scale));
                 }
+                match picture {
+                    Some(picture) => ui.pieces.push((picture.clone(), rect)),
+                    None => {
+                        ui.glass.push(shaders.light(rect, [1.0, 1.0, 1.0, 0.3], false, scale));
+                        let initial: String = name.chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+                        ui.text(&initial, Style { size: 28, line_height: 34, weight: 500, color: WHITE, tabular: false }, rect, Align::Centre);
+                    }
+                }
+                let color = if i == picked { WHITE } else { WHITE85 };
+                ui.text(name, Style { color, ..HEADLINE }, name_rect, Align::Centre);
             }
-            ui.text(name, Style { color: WHITE, ..HEADLINE }, layout.name, Align::Centre);
-            if lock.wrong.is_some() {
-                ui.text("Incorrect password", Style { color: WHITE85, ..CALLOUT }, layout.hint, Align::Centre);
+            let error = lock.greeter.as_ref().and_then(|g| g.error.as_deref());
+            if let Some(hint) = error.or(lock.wrong.map(|_| "Incorrect password")) {
+                ui.text(hint, Style { color: WHITE85, ..CALLOUT }, layout.hint, Align::Centre);
+            }
+            if let Some(session) = lock.greeter.as_ref().and_then(|g| g.session()) {
+                let r = row.session;
+                ui.symbol(Symbol::Monitor, Weight::Regular, 16, Rectangle::new((r.loc.x, r.loc.y + (r.size.h - 16) / 2).into(), (16, 16).into()), WHITE85);
+                let words = Rectangle::new((r.loc.x + 20, r.loc.y).into(), (r.size.w - 20, r.size.h).into());
+                ui.text(&session.name, Style { color: WHITE85, ..BODY }, words, Align::Left);
             }
             for (button, rect) in Button::ALL.into_iter().zip(layout.buttons) {
                 if lock.hover == Some(button) {
@@ -184,8 +214,7 @@ fn status(ui: &mut Ui, rect: Rect, keyboard: &str, battery: Option<Battery>) {
 }
 
 /// The user's picture (AccountsService's, else `~/.face`), cut to a `AVATAR` px circle at `scale`.
-fn avatar(login: &str, scale: f64) -> Option<Arc<Rendered>> {
-    let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+fn avatar(login: &str, home: &std::path::Path, scale: f64) -> Option<Arc<Rendered>> {
     let paths = [std::path::PathBuf::from("/var/lib/AccountsService/icons").join(login), home.join(".face"), home.join(".face.icon")];
     let image = paths.iter().find_map(|p| super::wallpaper::decode(p).ok())?;
     let px = (f64::from(AVATAR) * scale).round() as u32;

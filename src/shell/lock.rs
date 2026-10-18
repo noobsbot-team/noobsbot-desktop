@@ -63,6 +63,8 @@ pub struct Lock {
     pub client: bool,
     /// The client's surfaces, drawn instead of ours while one is alive.
     pub surfaces: Vec<LockSurface>,
+    /// Greeter mode (E7.2): users, sessions, greetd's last error.
+    pub greeter: Option<crate::shell::greeter::Greeter>,
 }
 
 /// What a key did on the lock screen.
@@ -93,6 +95,9 @@ impl Lock {
             }
             Edit::Changed => {
                 self.wrong = None;
+                if let Some(g) = self.greeter.as_mut() {
+                    g.error = None;
+                }
                 Key::Redraw
             }
             Edit::Moved => Key::Redraw,
@@ -209,6 +214,10 @@ impl State {
     }
 
     fn unlock_screen(&mut self) {
+        // The login screen only goes away by exiting into the session.
+        if self.greeter().is_some() {
+            return;
+        }
         let Some(lock) = self.lock.take() else { return };
         if let Some(token) = lock.checking {
             self.loop_handle.remove(token);
@@ -227,6 +236,10 @@ impl State {
             let focus = self.seat.get_keyboard().and_then(|k| k.current_focus());
             return focus.as_ref() != Some(surface.wl_surface());
         }
+        if self.greeter_key(keysym) {
+            return true;
+        }
+        let Some(lock) = self.lock.as_mut() else { return false };
         match lock.key(keysym, keysym.key_char().map(String::from).as_deref(), ctrl) {
             Key::Submit(password) => self.lock_submit(password),
             Key::Redraw => self.schedule_redraw(),
@@ -237,6 +250,9 @@ impl State {
 
     /// Checks `password` with PAM on a worker thread; the answer unlocks or shakes the field.
     fn lock_submit(&mut self, password: String) {
+        if self.greeter().is_some() {
+            return self.greeter_submit(password);
+        }
         let (tx, rx) = channel::channel();
         let token = self.loop_handle.insert_source(rx, |event, _, state| {
             let channel::Event::Msg(ok) = event else { return };
@@ -268,7 +284,7 @@ impl State {
         self.schedule_redraw();
     }
 
-    fn lock_checked(&mut self, ok: bool) {
+    pub(super) fn lock_checked(&mut self, ok: bool) {
         let Some(lock) = self.lock.as_mut() else { return };
         if lock.checked(ok, Instant::now()) {
             return self.unlock_screen();
@@ -306,7 +322,11 @@ impl State {
         if self.lock.as_ref().is_some_and(|l| l.client_surface().is_some()) {
             return;
         }
-        let hit = self.lock_layout().and_then(|l| Button::ALL.into_iter().zip(l.buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(b, _)| b));
+        let Some(layout) = self.lock_layout() else { return };
+        if self.greeter_press(&layout, location) {
+            return;
+        }
+        let hit = Button::ALL.into_iter().zip(layout.buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(b, _)| b);
         match hit {
             Some(Button::Sleep) => self.sleep(),
             Some(Button::Restart) => self.power_now(Power::Restart),

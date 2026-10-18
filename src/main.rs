@@ -44,7 +44,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--test-scene] [--show notification|notification-center|calendar-events|fades|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|emoji|emoji-search|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--greeter] [--test-scene] [--show notification|notification-center|calendar-events|fades|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|emoji|emoji-search|launchpad|launchpad-search|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|greeter|greeter-users|greeter-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -82,10 +82,13 @@ fn main() {
     let mut command = Vec::new();
     let mut nested = false;
     let mut test_scene = false;
+    let mut greeter = false;
     let mut show = None;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--nested" => nested = true,
+            // The login screen, started by greetd (E7.2).
+            "--greeter" => greeter = true,
             // Every glass material in light and dark over the wallpaper (E1.4 done check).
             "--test-scene" => test_scene = true,
             // Opens a popup at start, for screenshots of states that otherwise need a click.
@@ -105,13 +108,13 @@ fn main() {
         tracing::info!("started inside another desktop, running nested");
         nested = true;
     }
-    if let Err(err) = run(command, nested, test_scene, show.as_deref()) {
+    if let Err(err) = run(command, nested, greeter, test_scene, show.as_deref()) {
         tracing::error!("{err}");
         std::process::exit(1);
     }
 }
 
-fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, show: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;
     let config_path = config::path();
@@ -157,6 +160,9 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
         backend::udev::init(&mut event_loop, &mut state)?;
     }
     state.idle_arm();
+    if greeter {
+        state.start_greeter(shell::greeter::Greeter::load());
+    }
     if test_scene && let Some(winit) = state.backend.as_mut() {
         winit.gallery = Some(Default::default());
     }
@@ -344,6 +350,20 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
                 }
             }
         }
+        // The login screen (E7.2): this machine's users, or three samples with the second picked and a password
+        // typed, or a greetd error.
+        Some("greeter") => state.start_greeter(shell::greeter::Greeter::load()),
+        Some(show @ ("greeter-users" | "greeter-wrong")) => {
+            let mut greeter = shell::greeter::Greeter { user: 1, ..shell::greeter::Greeter::sample() };
+            if show == "greeter-wrong" {
+                greeter.error = Some("Your account has expired; please contact your system administrator".into());
+            }
+            state.start_greeter(greeter);
+            if let Some(lock) = state.lock.as_mut().filter(|_| show == "greeter-users") {
+                lock.field.text = "hunter2".into();
+                lock.field.caret = 7;
+            }
+        }
         // The screenshot toolbar (E6.8): in Region mode with a sample selection, with Options open, in Window mode
         // over the first app's window, Super+Shift+4's drag; and a floating thumbnail.
         Some(name @ ("screenshot-toolbar" | "screenshot-region" | "screenshot-window" | "screenshot-options")) => {
@@ -380,7 +400,12 @@ fn run(command: Vec<String>, nested: bool, test_scene: bool, show: Option<&str>)
     state.calendar_watch();
 
     tracing::info!("listening on WAYLAND_DISPLAY={}", state.socket_name.to_string_lossy());
-    state.x_display = xwayland::spawn(&state.socket_name);
+    // The login screen runs no apps.
+    if state.greeter().is_some() {
+        command.clear();
+    } else {
+        state.x_display = xwayland::spawn(&state.socket_name);
+    }
     if !command.is_empty() {
         state.spawn(&command);
     }

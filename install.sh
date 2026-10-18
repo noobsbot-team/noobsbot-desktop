@@ -4,6 +4,7 @@
 #   ./install.sh                install, or repair: running it again only redoes what is missing or changed
 #   ./install.sh --from-source  build Noobsbot Desktop and noobsbot-terminal from pinned git tags, not signed releases
 #   ./install.sh --update       only update Noobsbot Desktop, noobsbot-terminal and the system files
+#   ./install.sh --greeter      log in on Noobsbot Desktop's own graphical login screen, not tuigreet (E7.2)
 #   ./install.sh --dry-run      print every action, change nothing
 #   DESTDIR=<dir> ./install.sh  stage the system and user files under <dir> only (no sudo, packages or services)
 set -euo pipefail
@@ -21,13 +22,14 @@ LIB=/usr/lib/noobsbot-desktop
 DESTDIR=${DESTDIR:-}
 CFG=$DESTDIR${XDG_CONFIG_HOME:-$HOME/.config}
 
-DRY=0 FROM_SOURCE=0 UPDATE=0
+DRY=0 FROM_SOURCE=0 UPDATE=0 GREETER=0
 for arg in "$@"; do
     case $arg in
         --dry-run) DRY=1 ;;
         --from-source) FROM_SOURCE=1 ;;
         --update) UPDATE=1 ;;
-        -h | --help) sed -n '2,9s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; exit ;;
+        --greeter) GREETER=1 ;;
+        -h | --help) sed -n '2,10s/^# \{0,1\}//p' "${BASH_SOURCE[0]}"; exit ;;
         *) echo "unknown argument: $arg (see --help)" >&2; exit 2 ;;
     esac
 done
@@ -214,8 +216,11 @@ install_terminal() {
 install_system_files() {
     say "Writing system files (greetd, PAM, portals, UPower, session)"
     local f rel mode
+    # --greeter (E7.2) sticks: a later run keeps the graphical login screen once config.toml uses it.
+    grep -qs '^command = "noobsbot-desktop --greeter"' "$DESTDIR/etc/greetd/config.toml" && GREETER=1
     while IFS= read -r -d '' f; do
         rel=${f#"$REPO_DIR/data/system"}
+        ((GREETER)) && [[ $rel == /etc/greetd/config.toml ]] && f=$REPO_DIR/data/system/etc/greetd/noobsbot-greeter.toml
         mode=644
         [[ -x $f ]] && mode=755
         install_file "$mode" "$f" "$DESTDIR$rel" root

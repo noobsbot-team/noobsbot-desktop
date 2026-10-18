@@ -8,6 +8,7 @@ pub mod dock;
 pub mod dock_fx;
 pub mod emoji;
 pub mod force_quit;
+pub mod greeter;
 pub mod launchpad;
 pub mod lock;
 pub mod notify;
