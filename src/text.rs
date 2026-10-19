@@ -158,8 +158,10 @@ impl Text {
         let cap = usize::from(lines);
         if cap > 0 && buffer.layout_runs().count() > cap {
             let starts: Vec<usize> = text.split('\n').scan(0, |at, line| Some(std::mem::replace(at, *at + line.len() + 1))).collect();
-            let end = buffer.layout_runs().nth(cap - 1).map_or(0, |run| starts[run.line_i] + run.glyphs.last().map_or(0, |g| g.end));
-            let mut cut = text[..end].trim_end().to_owned();
+            // cosmic-text also breaks lines at '\r', which `starts` doesn't count: an offset that is off the end or
+            // mid-char leaves the whole text to the loop below, which cuts until it fits.
+            let end = buffer.layout_runs().nth(cap - 1).and_then(|run| Some(*starts.get(run.line_i)? + run.glyphs.last().map_or(0, |g| g.end)));
+            let mut cut = end.and_then(|end| text.get(..end)).unwrap_or(text).trim_end().to_owned();
             loop {
                 buffer.set_text(&format!("{cut}…"), &attrs, Shaping::Advanced, None);
                 if centre {
@@ -279,6 +281,9 @@ mod tests {
         assert_eq!(text.wrapped("Short", HEADLINE, 200, 2, 1.0).height, 16);
         assert_eq!(text.wrapped(long, HEADLINE, 200, 2, 1.0).height, 32);
         assert!(text.wrapped(long, HEADLINE, 200, 9, 1.0).height > 32);
+        // A '\r' is a line break to cosmic-text but not to the cut's line starts: still cut to the cap, no panic.
+        let cr = "First\rsecond line that goes on and on and on and on, far past the width\rthird line\rfourth";
+        assert_eq!(text.wrapped(cr, HEADLINE, 200, 2, 1.0).height, 32);
         // Left-aligned: ink starts at the left edge.
         let one = text.wrapped("Short", HEADLINE, 200, 2, 1.0);
         let first_ink = one.pixels.as_chunks::<4>().0.iter().position(|p| p[3] > 0).map(|i| i as u32 % 200);

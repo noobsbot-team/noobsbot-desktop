@@ -40,7 +40,7 @@ impl Zone {
             Zone::Local => Local
                 .from_local_datetime(&t)
                 .earliest()
-                .or_else(|| Local.from_local_datetime(&(t + TimeDelta::hours(1))).earliest())
+                .or_else(|| Local.from_local_datetime(&t.checked_add_signed(TimeDelta::hours(1))?).earliest())
                 .map_or_else(|| t.and_utc().timestamp(), |d| d.timestamp()),
             Zone::Tz(tz) => {
                 let wall = t.and_utc().timestamp();
@@ -188,7 +188,9 @@ impl Event {
     }
 
     fn occurrence(&self, t: NaiveDateTime) -> Occurrence<'_> {
-        Occurrence { event: self, start: self.zone.timestamp(t), end: self.zone.timestamp(t + self.length) }
+        // A length past the end of time (a hostile DURATION) makes a zero-length occurrence rather than a panic.
+        let end = t.checked_add_signed(self.length).unwrap_or(t);
+        Occurrence { event: self, start: self.zone.timestamp(t), end: self.zone.timestamp(end) }
     }
 
     /// Occurrences overlapping `from..to` (unix seconds); a zero-length one counts at its start.
@@ -416,14 +418,15 @@ fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<R
             "UNTIL" => {
                 let (t, z, date) = date_time(v, &Vec::new(), zones)?;
                 // A date-only UNTIL includes that whole day; a floating one is in the event's zone.
-                let (t, z) = if date { (t + TimeDelta::seconds(86_399), zone) } else { (t, if z == Zone::Utc { &z } else { zone }) };
+                let (t, z) = if date { (t.checked_add_signed(TimeDelta::seconds(86_399))?, zone) } else { (t, if z == Zone::Utc { &z } else { zone }) };
                 rule.until = Some(z.timestamp(t));
             }
             "BYDAY" => {
                 for day in v.split(',') {
                     let day = day.trim().to_ascii_uppercase();
                     let split = day.len().checked_sub(2)?;
-                    let wd = match &day[split..] {
+                    // `get`: a non-ASCII day ("ÄM") must not split a char.
+                    let wd = match day.get(split..)? {
                         "MO" => Weekday::Mon,
                         "TU" => Weekday::Tue,
                         "WE" => Weekday::Wed,
@@ -433,7 +436,7 @@ fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<R
                         "SU" => Weekday::Sun,
                         _ => return None,
                     };
-                    let n = match &day[..split] {
+                    let n = match day.get(..split)? {
                         "" => 0,
                         n => n.trim_start_matches('+').parse().ok()?,
                     };
@@ -454,7 +457,7 @@ fn event(props: &[(String, Params, String)], zones: &mut HashMap<String, Zone>) 
     let end = get("DTEND").and_then(|(_, p, v)| date_time(v, p, zones)).map(|(t, _, _)| t);
     let length = match (end, get("DURATION").and_then(|(_, _, v)| duration(v))) {
         (Some(end), _) => end - start,
-        (None, Some(secs)) => TimeDelta::seconds(secs),
+        (None, Some(secs)) => TimeDelta::try_seconds(secs)?,
         (None, None) if all_day => TimeDelta::days(1),
         (None, None) => TimeDelta::zero(),
     };
@@ -678,6 +681,23 @@ mod tests {
         // Two events, one broken.
         let text = "BEGIN:VEVENT\nDTSTART:2026\nEND:VEVENT\nBEGIN:VEVENT\nSUMMARY:ok\nDTSTART:20261020T090000Z\nEND:VEVENT";
         assert_eq!(parse(text).len(), 1);
+    }
+
+    /// A calendar is anyone's file: values past the end of time or splitting a char drop the event, never the session.
+    #[test]
+    fn hostile_values_drop_the_event() {
+        // Past TimeDelta's range (i64::MAX ms) but within i64 seconds: dropped by `try_seconds`.
+        let text = "BEGIN:VEVENT\nDTSTART:20261020T090000Z\nDURATION:PT2562047788015215H\nEND:VEVENT";
+        assert!(parse(text).is_empty());
+        // Past i64 seconds: the duration itself is refused, so the event has no length.
+        let text = "BEGIN:VEVENT\nDTSTART:20261020T090000Z\nDURATION:P9223372036854775807S\nEND:VEVENT";
+        for e in parse(text) {
+            assert_eq!(e.between(0, i64::MAX / 2).len(), 1);
+        }
+        let text = "BEGIN:VEVENT\nDTSTART:20261020T090000Z\nRRULE:FREQ=WEEKLY;BYDAY=ÄM\nEND:VEVENT";
+        for e in parse(text) {
+            assert!(e.between(0, i64::MAX / 2).len() <= 1);
+        }
     }
 
     #[test]
