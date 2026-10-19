@@ -46,13 +46,16 @@ pub struct Wallpaper {
     /// The file asked for; `None` = the opal gradient.
     wanted: Option<PathBuf>,
     texture: Option<(TextureBuffer<GlesTexture>, Size<i32, Buffer>)>,
-    opal: Option<(bool, PixelShaderElement)>,
+    opal: Vec<(Size<i32, Logical>, bool, PixelShaderElement)>,
 }
+
+/// Opal gradients kept, one per (output size, dark); the outputs of one desktop are a handful.
+const MAX_OPALS: usize = 8;
 
 impl Wallpaper {
     /// Decoded pictures come back through `tx`; hand each to `receive`.
     pub fn new(tx: Sender<Decoded>) -> Self {
-        Self { tx, wanted: None, texture: None, opal: None }
+        Self { tx, wanted: None, texture: None, opal: Vec::new() }
     }
 
     /// Picks the wallpaper for `appearance` (light or dark file). A new file is decoded on a worker thread;
@@ -97,15 +100,15 @@ impl Wallpaper {
             let src = cover(*image_size, size);
             return SceneElement::Texture(TextureRenderElement::from_texture_buffer((0.0, 0.0), texture, None, Some(src), Some(size), Kind::Unspecified));
         }
-        let area = Rectangle::from_size(size);
-        let opal = match self.opal.take() {
-            Some((d, mut element)) if d == dark => {
-                element.resize(area, Some(vec![area]));
-                element
-            }
-            _ => shaders.opal(area, dark),
-        };
-        self.opal = Some((dark, opal.clone()));
+        // One gradient per output size (C10): resizing a shared one every frame redrew every output every frame.
+        if let Some((_, _, opal)) = self.opal.iter().find(|(s, d, _)| (*s, *d) == (size, dark)) {
+            return SceneElement::Shader(opal.clone());
+        }
+        if self.opal.len() >= MAX_OPALS {
+            self.opal.clear();
+        }
+        let opal = shaders.opal(Rectangle::from_size(size), dark);
+        self.opal.push((size, dark, opal.clone()));
         SceneElement::Shader(opal)
     }
 }
