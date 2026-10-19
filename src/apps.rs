@@ -213,6 +213,13 @@ fn parse(id: &str, text: &str, locale: &str, desktop: &str) -> Option<Entry> {
     // `;`-separated lists, the last `;` optional.
     let list = |value: Option<String>| value.unwrap_or_default().split(';').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
     let generic_name = localised("GenericName").unwrap_or_default();
+    // Both the translated and the plain keywords: a German user still types "editor".
+    let mut keywords: Vec<String> = list(localised("Keywords"));
+    for k in list(fields.get("Keywords").map(|k| unescape(k))) {
+        if !keywords.contains(&k) {
+            keywords.push(k);
+        }
+    }
     // Meant for another desktop: kept out of launchers, like `NoDisplay`, but still matched to its windows.
     let shows_in = |key: &str| fields.get(key).map(|v| v.split(';').any(|d| !d.is_empty() && desktop.split(':').any(|c| c == d)));
     let elsewhere = shows_in("OnlyShowIn") == Some(false) || shows_in("NotShowIn") == Some(true);
@@ -225,7 +232,7 @@ fn parse(id: &str, text: &str, locale: &str, desktop: &str) -> Option<Entry> {
         no_display: flag("NoDisplay") || elsewhere,
         comment: localised("Comment").filter(|c| !c.is_empty()).unwrap_or_else(|| generic_name.clone()),
         generic_name,
-        keywords: list(localised("Keywords")),
+        keywords,
         categories: list(fields.get("Categories").map(|c| unescape(c))),
         path: PathBuf::new(),
     }))
@@ -557,7 +564,7 @@ mod tests {
             "[Desktop Entry]\nType=Application\nName=Kate\nExec=kate\nGenericName=Text Editor\nKeywords=text;editor;\nCategories=Qt;KDE;Utility;TextEditor;\n";
         let Some(Entry::App(kate)) = app(&format!("{base}Comment=Edit text\nComment[de]=Text bearbeiten\nKeywords[de]=Text;Bearbeiter\n")) else { panic!() };
         assert_eq!((kate.comment.as_str(), kate.generic_name.as_str()), ("Text bearbeiten", "Text Editor"));
-        assert_eq!(kate.keywords, ["Text", "Bearbeiter"]);
+        assert_eq!(kate.keywords, ["Text", "Bearbeiter", "text", "editor"], "translated first, then the plain ones");
         assert_eq!(kate.categories, ["Qt", "KDE", "Utility", "TextEditor"]);
         let Some(Entry::App(bare)) = app(base) else { panic!() };
         assert_eq!(bare.comment, "Text Editor", "no Comment: the generic name");

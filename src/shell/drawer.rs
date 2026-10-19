@@ -174,7 +174,7 @@ pub fn rank(app: &App, query: &str) -> Option<i32> {
 /// Every launchable app matching `query`, best first (shorter names win ties, as in Spotlight).
 // ponytail: a linear scan per keystroke, as Spotlight does (a few hundred apps, well under a millisecond).
 pub fn search<'a>(apps: &'a [App], query: &str) -> Vec<&'a App> {
-    let query = query.trim().to_lowercase();
+    let query = crate::shell::spotlight::fold(query.trim());
     if query.is_empty() {
         return Vec::new();
     }
