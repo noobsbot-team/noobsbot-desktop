@@ -582,7 +582,7 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
     bindings.retain(|_, action| action != "none");
     config.bindings = bindings;
     config.appearance.glass_opacity = config.appearance.glass_opacity.clamp(0.0, 1.0);
-    config.dock.icon_size = config.dock.icon_size.clamp(crate::shell::dock::MIN_ICON as u16, 256);
+    config.dock.icon_size = config.dock.icon_size.clamp(crate::shell::dock::MIN_ICON as u16, crate::shell::dock::MAX_ICON as u16);
     config.dock.zoom_percent = config.dock.zoom_percent.clamp(100, 300);
     Ok(config)
 }

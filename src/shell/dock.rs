@@ -33,7 +33,7 @@ use crate::{
 /// Icons never shrink below this to fit the screen (D13).
 pub const MIN_ICON: i32 = 32;
 /// Plank's largest icon size (Ctrl+scroll stops there).
-const MAX_ICON: i32 = 128;
+pub const MAX_ICON: i32 = 128;
 /// The bar stands behind the lower half of the icons only; the top half rises above it (our look).
 const BAR_COVER: f64 = 0.5;
 
