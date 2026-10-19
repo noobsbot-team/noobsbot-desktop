@@ -178,10 +178,10 @@ pub fn toolbar(output: Size<i32, Logical>) -> Toolbar {
 }
 
 /// The Options menu over its button: its rect and one rect per row.
-pub fn options_menu(bar: &Toolbar, output_w: i32) -> (Rect, Vec<Rect>) {
+pub fn options_menu(bar: &Toolbar, output: Size<i32, Logical>) -> (Rect, Vec<Rect>) {
     let rows: Vec<Option<Row>> = OPTION_ROWS.iter().map(|r| r.map(|label| Row { label: label.into(), shortcut: "", action: None })).collect();
     let at = (bar.options.loc.x + bar.options.size.w / 2, bar.rect.loc.y).into();
-    menu_layout(Anchor::Above(at), output_w, OPTIONS_MENU_W, &rows)
+    menu_layout(Anchor::Above(at), output, OPTIONS_MENU_W, &rows, 0)
 }
 
 /// The rectangle between two drag points, at least 1 px.
@@ -308,7 +308,7 @@ impl State {
         let size = self.output_size();
         let bar = toolbar(size);
         if shot.options {
-            let (menu, rows) = options_menu(&bar, size.w);
+            let (menu, rows) = options_menu(&bar, size);
             if menu.to_f64().contains(at) {
                 return rows.iter().enumerate().find(|(i, r)| OPTION_ROWS[*i].is_some() && r.to_f64().contains(at)).map(|(i, _)| Hit::Option(i));
             }
@@ -330,7 +330,7 @@ impl State {
         let Some(shot) = self.screenshots.shot.as_ref().filter(|s| s.toolbar) else { return false };
         let size = self.output_size();
         let bar = toolbar(size);
-        bar.rect.to_f64().contains(at) || (shot.options && options_menu(&bar, size.w).0.to_f64().contains(at))
+        bar.rect.to_f64().contains(at) || (shot.options && options_menu(&bar, size).0.to_f64().contains(at))
     }
 
     /// Pointer motion while the overlay is up (output-relative): `true` if it took it, so no app sees the pointer.
@@ -656,7 +656,7 @@ mod tests {
         assert!(parts.iter().all(|p| bar.rect.contains_rect(*p)));
         assert_eq!(bar.capture.loc.x + bar.capture.size.w + PAD, bar.rect.loc.x + bar.rect.size.w);
         // The menu opens above the bar.
-        let (menu, rows) = options_menu(&bar, 1280);
+        let (menu, rows) = options_menu(&bar, (1280, 800).into());
         assert!(menu.loc.y + menu.size.h <= bar.rect.loc.y && rows.len() == OPTION_ROWS.len());
     }
 

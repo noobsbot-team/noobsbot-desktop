@@ -387,7 +387,7 @@ impl State {
                     ),
                 };
                 let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
-                bar.extend(menu.elements(renderer, shaders, &mut self.text, &rows, anchor, width, hover, dark, accent, appearance.glass_opacity, scale));
+                bar.extend(menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, dark, accent, appearance.glass_opacity, scale));
             }
             Some(Popup::Control) => {
                 if let Some(status) = &status {

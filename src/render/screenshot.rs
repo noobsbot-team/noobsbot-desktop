@@ -214,7 +214,7 @@ fn draw_toolbar(ui: &mut Ui, shot: &Shot, (can_record, recording, delay, no_thum
     ui.button(bar.capture, "Capture", true, state(shot, Hit::Capture, ready));
 
     if shot.options {
-        let (menu, _) = screenshot::options_menu(&bar, output.w);
+        let (menu, _) = screenshot::options_menu(&bar, output);
         let hovered = match shot.hover {
             Some(Hit::Option(i)) => Some(i),
             _ => None,

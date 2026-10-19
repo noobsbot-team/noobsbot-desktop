@@ -3,7 +3,7 @@
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
-    utils::{Logical, Point, Rectangle},
+    utils::{Logical, Point, Rectangle, Size},
 };
 
 use super::{
@@ -32,6 +32,9 @@ pub struct MenuPopover {
     labels: Vec<Label>,
     /// The menu and its rows as last drawn, output-relative.
     layout: Option<(Rect, Vec<Rect>)>,
+    /// Rows scrolled off the top of a menu taller than the screen, the wheel's remainder under a row, and the
+    /// (anchor, row count) they belong to: another menu starts at the top again.
+    scroll: (usize, f64, Option<(shell::Anchor, usize)>),
 }
 
 impl MenuPopover {
@@ -44,6 +47,20 @@ impl MenuPopover {
         self.layout.as_ref()?.1.iter().position(|r| r.to_f64().contains(location))
     }
 
+    /// The wheel over the menu: `dy` logical px. `true`: the rows shown changed.
+    pub fn scroll_by(&mut self, dy: f64) -> bool {
+        let Some((_, cells)) = &self.layout else { return false };
+        // Hidden rows have no height: those at the top are the scroll, those at the bottom what is left to scroll.
+        let above = cells.iter().take_while(|c| c.size.h == 0).count();
+        let below = cells.iter().rev().take_while(|c| c.size.h == 0).count();
+        self.scroll.1 += dy;
+        let rows = (self.scroll.1 / f64::from(ROW)).trunc();
+        self.scroll.1 -= rows * f64::from(ROW);
+        let scroll = (above as f64 + rows).clamp(0.0, (above + below) as f64) as usize;
+        self.scroll.0 = scroll;
+        scroll != above
+    }
+
     /// Front to back: labels, the hover pill, the card with its separators, its shadow. `hover` is the pointer,
     /// output-relative.
     #[allow(clippy::too_many_arguments)]
@@ -54,7 +71,7 @@ impl MenuPopover {
         text: &mut Text,
         rows: &[Option<Row>],
         anchor: shell::Anchor,
-        output_width: i32,
+        output: Size<i32, Logical>,
         hover: Point<f64, Logical>,
         dark: bool,
         accent: [u8; 3],
@@ -73,13 +90,16 @@ impl MenuPopover {
             let shortcut = if row.shortcut.is_empty() { 0 } else { SHORTCUT_GAP + logical(text.label(row.shortcut, body, 200, scale).width) };
             width = width.max(logical(text.label(&row.label, body, 400, scale).width) + shortcut + 2 * (SIDE + PAD));
         }
-        let (rect, cells) = shell::menu_layout(anchor, output_width, width, rows);
+        if self.scroll.2 != Some((anchor, rows.len())) {
+            self.scroll = (0, 0.0, Some((anchor, rows.len())));
+        }
+        let (rect, cells) = shell::menu_layout(anchor, output, width, rows, self.scroll.0);
         let hovered = cells.iter().position(|c| c.to_f64().contains(hover)).filter(|&i| rows[i].as_ref().is_some_and(|r| r.action.is_some()));
 
         let separators: Vec<Rect> = rows
             .iter()
             .zip(&cells)
-            .filter(|(row, _)| row.is_none())
+            .filter(|(row, c)| row.is_none() && c.size.h > 0)
             .map(|(_, c)| Rectangle::new((c.loc.x + SIDE - PAD, c.loc.y + SEPARATOR / 2).into(), (c.size.w - 2 * (SIDE - PAD), 1).into()))
             .collect();
         let key = (rect, separators.clone(), dark, glass_opacity.to_bits(), scale.to_bits());
@@ -124,6 +144,9 @@ impl MenuPopover {
             .iter()
             .zip(places)
             .filter_map(|(piece, (cell, right))| {
+                if cell.size.h == 0 {
+                    return None;
+                }
                 let w = logical(piece.0.width);
                 let x = if right { cell.loc.x + cell.size.w - (SIDE - PAD) - w } else { cell.loc.x + SIDE - PAD };
                 label_element(renderer, piece, Rectangle::new((x, cell.loc.y).into(), (w, cell.size.h).into()), scale)
