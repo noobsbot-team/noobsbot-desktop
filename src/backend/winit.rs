@@ -339,9 +339,19 @@ impl State {
         let active = self.popup.and_then(Popup::item);
         // Launchpad covers the menu bar.
         let strip = match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
-            Some(content) => {
-                menu_bar.elements(renderer, shaders, &mut self.text, &mut self.symbols, content, active, width, dark, appearance.glass_opacity, scale)
-            }
+            Some(content) => menu_bar.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                &mut self.icons,
+                content,
+                active,
+                width,
+                dark,
+                appearance.glass_opacity,
+                scale,
+            ),
             None => {
                 menu_bar.hide();
                 Vec::new()

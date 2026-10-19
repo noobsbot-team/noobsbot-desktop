@@ -43,16 +43,69 @@ type Key = (String, Style, u32, u64, Option<(u8, bool)>, bool);
 /// Colour emoji fonts, best first (E7.2).
 const EMOJI_FONTS: [&str; 3] = ["Noto Color Emoji", "Twemoji", "JoyPixels"];
 
+/// Rasterised pieces by key, the least recently used dropped once over `max_entries` or `max_bytes` of pixels
+/// (labels, app icons, symbols).
+pub struct Lru<K> {
+    map: HashMap<K, (Arc<Rendered>, u64)>,
+    pub bytes: usize,
+    tick: u64,
+    max_entries: usize,
+    max_bytes: usize,
+}
+
+impl<K: std::hash::Hash + Eq + Clone> Lru<K> {
+    pub fn new(max_entries: usize, max_bytes: usize) -> Self {
+        Self { map: HashMap::new(), bytes: 0, tick: 0, max_entries, max_bytes }
+    }
+
+    /// The entry for `key`, now the most recently used.
+    pub fn get(&mut self, key: &K) -> Option<Arc<Rendered>> {
+        self.tick += 1;
+        let (rendered, used) = self.map.get_mut(key)?;
+        *used = self.tick;
+        Some(rendered.clone())
+    }
+
+    /// Stores `rendered` under `key`, dropping the oldest entries first to stay under the caps.
+    pub fn insert(&mut self, key: K, rendered: Arc<Rendered>) {
+        self.tick += 1;
+        // ponytail: O(n) scan for the oldest entry, fine at a few hundred entries; a linked LRU if the cap grows.
+        while !self.map.is_empty() && (self.map.len() >= self.max_entries || self.bytes + rendered.pixels.len() > self.max_bytes) {
+            let Some(oldest) = self.map.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone()) else { break };
+            if let Some((old, _)) = self.map.remove(&oldest) {
+                self.bytes -= old.pixels.len();
+            }
+        }
+        if let Some((old, _)) = self.map.insert(key, (rendered.clone(), self.tick)) {
+            self.bytes -= old.pixels.len();
+        }
+        self.bytes += rendered.pixels.len();
+    }
+
+    #[cfg(test)]
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Every entry, in no order; doesn't count as a use.
+    pub fn iter(&self) -> impl Iterator<Item = (&K, &Arc<Rendered>)> {
+        self.map.iter().map(|(k, (r, _))| (k, r))
+    }
+}
+
 /// Owns the font database and glyph rasteriser.
 ///
 /// Fonts load lazily on the first `label` call, or on `preload` (a one-time system font scan: ~20 ms release, ~90 ms
 /// debug, see the `font_load_time` test); the compositor preloads on a worker.
-#[derive(Default)]
 pub struct Text {
     fonts: Option<(FontSystem, SwashCache, String)>,
-    cache: HashMap<Key, (Arc<Rendered>, u64)>,
-    bytes: usize,
-    tick: u64,
+    cache: Lru<Key>,
+}
+
+impl Default for Text {
+    fn default() -> Self {
+        Self { fonts: None, cache: Lru::new(MAX_ENTRIES, MAX_BYTES) }
+    }
 }
 
 impl Text {
@@ -85,25 +138,15 @@ impl Text {
 
     /// `wrap`: `None` one line, else (at most n lines, 0 = any; centred).
     fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<(u8, bool)>, emoji: bool) -> Arc<Rendered> {
-        self.tick += 1;
         let key = (text.to_owned(), style, max_width, scale.to_bits(), wrap, emoji);
-        if let Some((rendered, used)) = self.cache.get_mut(&key) {
-            *used = self.tick;
-            return rendered.clone();
+        if let Some(rendered) = self.cache.get(&key) {
+            return rendered;
         }
         let rendered = Arc::new(match wrap {
             Some((lines, centre)) => self.rasterise_wrapped(text, style, max_width, lines, centre, scale),
             None => self.rasterise(text, style, max_width, scale, emoji),
         });
-        // ponytail: O(n) scan for the oldest entry, fine at 256 entries; a linked LRU if the cap grows.
-        while !self.cache.is_empty() && (self.cache.len() >= MAX_ENTRIES || self.bytes + rendered.pixels.len() > MAX_BYTES) {
-            let Some(oldest) = self.cache.iter().min_by_key(|(_, (_, used))| *used).map(|(k, _)| k.clone()) else { break };
-            if let Some((old, _)) = self.cache.remove(&oldest) {
-                self.bytes -= old.pixels.len();
-            }
-        }
-        self.bytes += rendered.pixels.len();
-        self.cache.insert(key, (rendered.clone(), self.tick));
+        self.cache.insert(key, rendered.clone());
         rendered
     }
 
@@ -356,7 +399,17 @@ mod tests {
             text.label(&i.to_string(), HEADLINE, 300, 1.0);
         }
         assert_eq!(text.cache.len(), MAX_ENTRIES);
-        assert!(text.bytes <= MAX_BYTES);
+        assert!(text.cache.bytes <= MAX_BYTES);
+        // Bytes are capped too, the least recently used going first.
+        let small = |n: u32| Arc::new(Rendered { pixels: vec![0; n as usize], width: n, height: 1, baseline: 0, truncated: false });
+        let mut lru = Lru::new(10, 100);
+        lru.insert(1, small(40));
+        lru.insert(2, small(40));
+        assert!(lru.get(&1).is_some(), "1 is now the newer one");
+        lru.insert(3, small(40));
+        assert_eq!((lru.get(&1).is_some(), lru.get(&2).is_some(), lru.len(), lru.bytes), (true, false, 2, 80));
+        lru.insert(1, small(10));
+        assert_eq!((lru.len(), lru.bytes), (2, 50), "a replaced entry's bytes are dropped");
     }
 
     #[test]

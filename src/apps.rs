@@ -2,7 +2,7 @@
 //! the icon theme (WhiteSur first), rasterised on first use. The dock uses it today; Spotlight and Launchpad (M4) too.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, mpsc},
     time::Duration,
@@ -10,8 +10,12 @@ use std::{
 
 use notify::{RecursiveMode, Watcher};
 use resvg::{tiny_skia, usvg};
+use smithay::reexports::calloop::channel::Sender;
 
-use crate::text::Rendered;
+use crate::{
+    services::tray::{self, Image},
+    text::{Lru, Rendered},
+};
 
 /// An installed application.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -381,40 +385,52 @@ pub fn watch(mut send: impl FnMut(Apps) -> bool + Send + 'static) {
 /// Themes searched for app icons, in order.
 const THEMES: [&str; 4] = ["WhiteSur", "hicolor", "Adwaita", "breeze"];
 
-/// The file of icon `name`: in the first theme that has it, its scalable version, else its largest bitmap; then
-/// `/usr/share/pixmaps`. Symbolic (monochrome) variants are skipped.
+/// Every file of icon `name` in the first theme that has it, as (size, path): a dir's pixel size for a PNG,
+/// `u32::MAX` for an SVG; then `/usr/share/pixmaps`. Symbolic (monochrome) variants are skipped.
 // ponytail: follows the fixed THEMES list, not each theme's `Inherits`; read index.theme chains if a theme needs it.
-pub fn find_icon(name: &str) -> Option<PathBuf> {
+pub fn icon_files(name: &str) -> Vec<(u32, PathBuf)> {
+    let files = |dir: &Path, size: u32| [(u32::MAX, dir.join(format!("{name}.svg"))), (size, dir.join(format!("{name}.png")))];
     if name.is_empty() {
-        return None;
+        return Vec::new();
     }
     if Path::new(name).is_absolute() {
-        return Some(PathBuf::from(name)).filter(|p| p.is_file());
+        return Some(PathBuf::from(name)).filter(|p| p.is_file()).map(|p| (u32::MAX, p)).into_iter().collect();
     }
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let bases: Vec<PathBuf> =
         std::iter::once(data_home().join("icons")).chain([home.join(".icons")]).chain(data_dirs().iter().skip(1).map(|d| d.join("icons"))).collect();
-    let files = |dir: &Path| [dir.join(format!("{name}.svg")), dir.join(format!("{name}.png"))];
     for theme in THEMES {
         for base in &bases {
             let root = base.join(theme);
             let Ok(index) = std::fs::read_to_string(root.join("index.theme")) else { continue };
-            let mut dirs: Vec<(u32, &str)> = index
+            let found: Vec<(u32, PathBuf)> = index
                 .lines()
                 .find_map(|l| l.strip_prefix("Directories="))
                 .unwrap_or_default()
                 .split(',')
                 .map(str::trim)
                 .filter(|d| !d.is_empty() && !d.contains("symbolic"))
-                .map(|d| (if d.contains("scalable") { u32::MAX } else { dir_size(d) }, d))
+                .flat_map(|d| files(&root.join(d), dir_size(d)))
+                .filter(|(_, p)| p.is_file())
                 .collect();
-            dirs.sort_by_key(|(size, _)| std::cmp::Reverse(*size));
-            if let Some(found) = dirs.iter().flat_map(|(_, d)| files(&root.join(d))).find(|p| p.is_file()) {
-                return Some(found);
+            if !found.is_empty() {
+                return found;
             }
         }
     }
-    files(Path::new("/usr/share/pixmaps")).into_iter().find(|p| p.is_file())
+    files(Path::new("/usr/share/pixmaps"), 0).into_iter().filter(|(_, p)| p.is_file()).collect()
+}
+
+/// The file to draw a `px`-sized icon from: a bitmap of exactly `px`, else an SVG, else the smallest bigger bitmap
+/// (`rasterise` shrinks it), else the largest there is.
+pub fn pick(files: &[(u32, PathBuf)], px: u32) -> Option<&Path> {
+    let best = files.iter().filter(|(size, _)| *size >= px).min_by_key(|(size, _)| (*size != px, *size != u32::MAX, *size));
+    best.or_else(|| files.iter().max_by_key(|(size, _)| *size)).map(|(_, p)| p.as_path())
+}
+
+/// The file of icon `name`: its SVG, else its largest bitmap.
+pub fn find_icon(name: &str) -> Option<PathBuf> {
+    pick(&icon_files(name), u32::MAX).map(Path::to_owned)
 }
 
 /// The pixel size an icon-theme dir holds: its largest number (`48x48/apps` → 48, `apps@2x/32` → 32).
@@ -422,23 +438,154 @@ fn dir_size(dir: &str) -> u32 {
     dir.split(|c: char| !c.is_ascii_digit()).filter_map(|n| n.parse().ok()).max().unwrap_or(0)
 }
 
-/// App icons by name and pixel size, rasterised on first use.
-// ponytail: rasterised on the frame thread (~2–10 ms per SVG, once per icon and size) and never evicted; move to a
-// worker with a disk cache (E1.11) if first frames stutter or sizes multiply.
-#[derive(Default)]
-pub struct Icons {
-    cache: HashMap<(String, u32), Option<Arc<Rendered>>>,
+/// Icons kept: Launchpad, the drawer and the dock each at their own size, ~10 MB at 2× for 50 apps.
+// ponytail: a working set past these caps evicts and re-rasterises every frame; raise them before a 4K Launchpad of
+// 300 apps shows up in a profile.
+const MAX_ENTRIES: usize = 512;
+const MAX_BYTES: usize = 32 << 20;
+/// Tray icons kept (image set × size).
+const MAX_TRAY: usize = 32;
+
+/// A missing icon, cached so the theme isn't searched again.
+fn missing() -> Rendered {
+    Rendered { pixels: Vec::new(), width: 0, height: 0, baseline: 0, truncated: false }
 }
 
-impl Icons {
-    /// Icon `name` (an `App::icon`) for a `px`-sized square: SVGs are drawn at `px`, PNGs come at their own size for
-    /// the GPU to scale. `None`: the theme has no such icon.
-    pub fn get(&mut self, name: &str, px: u32) -> Option<Arc<Rendered>> {
-        self.cache.entry((name.to_owned(), px)).or_insert_with(|| find_icon(name).and_then(|p| rasterise(&p, px)).map(Arc::new)).clone()
+/// What the `icon-raster` thread draws.
+enum Job {
+    Theme(String, u32),
+    Tray(Arc<Vec<Image>>, u32),
+}
+
+/// What it drew, back on the frame thread through `Icons::receive`.
+pub enum Rasterised {
+    Theme { name: String, px: u32, rendered: Option<Rendered> },
+    Tray { images: Arc<Vec<Image>>, px: u32, rendered: Rendered },
+}
+
+impl Job {
+    /// `files` remembers each name's theme files across jobs (the index.theme reads and stats).
+    fn run(self, files: &mut HashMap<String, Vec<(u32, PathBuf)>>) -> Rasterised {
+        match self {
+            Job::Theme(name, px) => {
+                let found = files.entry(name.clone()).or_insert_with(|| icon_files(&name));
+                let rendered = pick(found, px).and_then(|p| rasterise(p, px));
+                Rasterised::Theme { name, px, rendered }
+            }
+            Job::Tray(images, px) => Rasterised::Tray { rendered: tray::render(&images, px), images, px },
+        }
     }
 }
 
-/// Premultiplied RGBA of the icon file at `path`.
+/// App icons by name and pixel size, and tray icons by image set, rasterised on the `icon-raster` thread (C6, D5):
+/// an icon asked for shows at its nearest other size, or not at all, until the thread has drawn it and `receive`
+/// asked for a frame.
+pub struct Icons {
+    cache: Lru<(String, u32)>,
+    /// Sent to the thread and not back yet.
+    pending: HashSet<(String, u32)>,
+    /// Tray icons by their image set (the `Arc` kept so its address stays unique) and size, oldest first.
+    tray: Vec<(Arc<Vec<Image>>, u32, Arc<Rendered>)>,
+    tray_pending: Vec<(Arc<Vec<Image>>, u32)>,
+    /// `None`: no thread (tests), drawn on the spot.
+    jobs: Option<mpsc::Sender<Job>>,
+}
+
+impl Default for Icons {
+    fn default() -> Self {
+        Self { cache: Lru::new(MAX_ENTRIES, MAX_BYTES), pending: HashSet::new(), tray: Vec::new(), tray_pending: Vec::new(), jobs: None }
+    }
+}
+
+impl Icons {
+    /// Starts the thread; what it draws comes back through `tx`, for `receive`.
+    pub fn new(tx: Sender<Rasterised>) -> Self {
+        let (jobs, rx) = mpsc::channel::<Job>();
+        let spawned = std::thread::Builder::new().name("icon-raster".into()).spawn(move || {
+            let mut files = HashMap::new();
+            while let Ok(job) = rx.recv() {
+                if tx.send(job.run(&mut files)).is_err() {
+                    return;
+                }
+            }
+        });
+        let jobs = match spawned {
+            Ok(_) => Some(jobs),
+            Err(err) => {
+                tracing::warn!("icons: {err}, drawing on the frame thread");
+                None
+            }
+        };
+        Self { jobs, ..Self::default() }
+    }
+
+    /// Icon `name` (an `App::icon`) for a `px`-sized square. `None`: the theme has no such icon, or it isn't drawn
+    /// yet and no other size of it is.
+    pub fn get(&mut self, name: &str, px: u32) -> Option<Arc<Rendered>> {
+        let key = (name.to_owned(), px);
+        if let Some(rendered) = self.cache.get(&key) {
+            return Some(rendered).filter(|r| r.width > 0);
+        }
+        let Some(jobs) = &self.jobs else {
+            self.receive(Job::Theme(key.0, px).run(&mut HashMap::new()));
+            return self.cache.get(&(name.to_owned(), px)).filter(|r| r.width > 0);
+        };
+        if self.pending.insert(key.clone()) && jobs.send(Job::Theme(key.0.clone(), px)).is_err() {
+            // The thread is gone: draw here from now on.
+            self.jobs = None;
+            self.pending.clear();
+            return self.get(name, px);
+        }
+        // Until it lands: the same icon at the nearest size there is (the GPU scales it).
+        self.cache.iter().filter(|((n, _), r)| n == name && r.width > 0).min_by_key(|((_, p), _)| p.abs_diff(px)).map(|(_, r)| r.clone())
+    }
+
+    /// A tray item's icon (`services::tray`) in a `px` square: blank until the thread has drawn it.
+    pub fn tray(&mut self, images: &Arc<Vec<Image>>, px: u32) -> Arc<Rendered> {
+        let same = |i: &Arc<Vec<Image>>, p: u32| Arc::ptr_eq(i, images) && p == px;
+        if let Some((_, _, rendered)) = self.tray.iter().find(|(i, p, _)| same(i, *p)) {
+            return rendered.clone();
+        }
+        match &self.jobs {
+            Some(jobs) => {
+                if !self.tray_pending.iter().any(|(i, p)| same(i, *p)) && jobs.send(Job::Tray(images.clone(), px)).is_ok() {
+                    self.tray_pending.push((images.clone(), px));
+                }
+                Arc::new(Rendered { pixels: vec![0; (px * px * 4) as usize], width: px, height: px, baseline: px, truncated: false })
+            }
+            None => {
+                self.receive(Job::Tray(images.clone(), px).run(&mut HashMap::new()));
+                self.tray(images, px)
+            }
+        }
+    }
+
+    /// Keeps what the thread drew.
+    pub fn receive(&mut self, done: Rasterised) {
+        match done {
+            Rasterised::Theme { name, px, rendered } => {
+                self.pending.remove(&(name.clone(), px));
+                self.cache.insert((name, px), Arc::new(rendered.unwrap_or_else(missing)));
+            }
+            Rasterised::Tray { images, px, rendered } => {
+                self.tray_pending.retain(|(i, p)| !(Arc::ptr_eq(i, &images) && *p == px));
+                if self.tray.len() >= MAX_TRAY {
+                    self.tray.remove(0);
+                }
+                self.tray.push((images, px, Arc::new(rendered)));
+            }
+        }
+    }
+}
+
+/// usvg with `<image href="file">` turned off: an icon file never pulls other files off the disk (B18).
+pub fn svg_options() -> usvg::Options<'static> {
+    let resolver = usvg::ImageHrefResolver { resolve_data: usvg::ImageHrefResolver::default_data_resolver(), resolve_string: Box::new(|_, _| None) };
+    usvg::Options { image_href_resolver: resolver, ..Default::default() }
+}
+
+/// Premultiplied RGBA of the icon file at `path`: an SVG drawn at `px`, a PNG at its own size, or shrunk to `px`
+/// here (bicubic) when it is bigger, not by the GPU's linear filter (D4).
 pub fn rasterise(path: &Path, px: u32) -> Option<Rendered> {
     let bytes = std::fs::read(path).ok()?;
     let rendered = |pixels, width, height| Rendered { pixels, width, height, baseline: height, truncated: false };
@@ -458,9 +605,18 @@ pub fn rasterise(path: &Path, px: u32) -> Option<Rendered> {
         };
         let premultiplied =
             rgba.as_chunks::<4>().0.iter().flat_map(|p| [0, 1, 2].map(|i| (u16::from(p[i]) * u16::from(p[3]) / 255) as u8).into_iter().chain([p[3]])).collect();
-        return Some(rendered(premultiplied, info.width, info.height));
+        if info.width <= px && info.height <= px {
+            return Some(rendered(premultiplied, info.width, info.height));
+        }
+        let source = tiny_skia::Pixmap::from_vec(premultiplied, tiny_skia::IntSize::from_wh(info.width, info.height)?)?;
+        let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
+        let fit = px as f32 / source.width().max(source.height()) as f32;
+        let (dx, dy) = ((px as f32 - source.width() as f32 * fit) / 2.0, (px as f32 - source.height() as f32 * fit) / 2.0);
+        let paint = tiny_skia::PixmapPaint { quality: tiny_skia::FilterQuality::Bicubic, ..Default::default() };
+        pixmap.draw_pixmap(0, 0, source.as_ref(), &paint, tiny_skia::Transform::from_row(fit, 0.0, 0.0, fit, dx, dy), None);
+        return Some(rendered(pixmap.take(), px, px));
     }
-    let tree = usvg::Tree::from_data(&bytes, &usvg::Options { resources_dir: path.parent().map(Path::to_owned), ..Default::default() }).ok()?;
+    let tree = usvg::Tree::from_data(&bytes, &svg_options()).ok()?;
     let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
     let size = tree.size();
     let fit = px as f32 / size.width().max(size.height());
@@ -590,6 +746,56 @@ mod tests {
         assert_eq!(dir_size("48x48/apps"), 48);
         assert_eq!(dir_size("apps@2x/32"), 32);
         assert_eq!(dir_size("apps/scalable"), 0);
+    }
+
+    #[test]
+    fn picks_the_exact_size_then_svg_then_the_smallest_bigger() {
+        let files: Vec<(u32, PathBuf)> = [(16, "16.png"), (48, "48.png"), (512, "512.png"), (u32::MAX, "s.svg")].map(|(s, p)| (s, PathBuf::from(p))).into();
+        let pick_at = |px| pick(&files, px).and_then(|p| p.to_str()).unwrap();
+        assert_eq!(pick_at(48), "48.png", "exact");
+        assert_eq!(pick_at(64), "s.svg", "no exact bitmap: the SVG");
+        assert_eq!(pick_at(u32::MAX), "s.svg", "find_icon: scalable first");
+        let bitmaps = &files[..3];
+        assert_eq!(pick(bitmaps, 64).unwrap().to_str(), Some("512.png"), "the smallest bigger one, shrunk later");
+        assert_eq!(pick(bitmaps, 1024).unwrap().to_str(), Some("512.png"), "nothing bigger: the largest");
+        assert_eq!(pick(&[], 32), None);
+    }
+
+    #[test]
+    fn icon_cache_evicts_and_shows_the_nearest_size_meanwhile() {
+        let mut icons = Icons::default();
+        let big = Rendered { pixels: vec![0; MAX_BYTES / 2 + 1], width: 1, height: 1, baseline: 1, truncated: false };
+        icons.receive(Rasterised::Theme { name: "a".into(), px: 32, rendered: Some(big) });
+        icons.receive(Rasterised::Theme {
+            name: "b".into(),
+            px: 32,
+            rendered: Some(Rendered { pixels: vec![0; 4], width: 1, height: 1, baseline: 1, truncated: false }),
+        });
+        icons.receive(Rasterised::Theme {
+            name: "a".into(),
+            px: 64,
+            rendered: Some(Rendered { pixels: vec![0; MAX_BYTES / 2 + 1], width: 2, height: 2, baseline: 2, truncated: false }),
+        });
+        assert!(icons.get("a", 32).is_none() && icons.get("b", 32).is_some(), "the big one made room for the other big one");
+        // A pending size shows the nearest one there is; a missing icon stays None and isn't looked up again.
+        let (tx, rx) = smithay::reexports::calloop::channel::channel();
+        let mut icons = Icons::new(tx);
+        icons.receive(Rasterised::Theme {
+            name: "a".into(),
+            px: 64,
+            rendered: Some(Rendered { pixels: vec![0; 16], width: 2, height: 2, baseline: 2, truncated: false }),
+        });
+        icons.receive(Rasterised::Theme {
+            name: "a".into(),
+            px: 16,
+            rendered: Some(Rendered { pixels: vec![0; 4], width: 1, height: 1, baseline: 1, truncated: false }),
+        });
+        assert_eq!(icons.get("a", 48).map(|r| r.width), Some(2), "nearest size while 48 is pending");
+        assert!(icons.pending.contains(&("a".to_owned(), 48)));
+        icons.receive(Rasterised::Theme { name: "a".into(), px: 48, rendered: None });
+        assert!(icons.get("a", 48).is_none() && icons.pending.is_empty());
+        let done = rx.recv().unwrap();
+        assert!(matches!(done, Rasterised::Theme { name, px: 48, rendered: None } if name == "a"), "the thread looked a nameless icon up once");
     }
 
     #[test]

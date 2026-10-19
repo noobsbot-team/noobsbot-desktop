@@ -278,6 +278,14 @@ impl State {
                 state.schedule_redraw();
             }
         })?;
+        // App and tray icons are rasterised on their own thread too (C6): each one landing asks for a frame.
+        let (icons_tx, icons_rx) = channel::channel();
+        handle.insert_source(icons_rx, |event, _, state| {
+            if let channel::Event::Msg(done) = event {
+                state.icons.receive(done);
+                state.schedule_redraw();
+            }
+        })?;
         let (services_tx, services_rx) = channel::channel();
         let services = crate::services::spawn(services_tx, !nested);
         // Nested is a dev session: no network.
@@ -415,7 +423,7 @@ impl State {
             shell_drag: None,
             osd_timer: None,
             apps: Default::default(),
-            icons: Default::default(),
+            icons: crate::apps::Icons::new(icons_tx),
             dock_reveal: false,
             dock_pointer: None,
             dock_fx: Default::default(),
