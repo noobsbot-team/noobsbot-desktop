@@ -185,8 +185,9 @@ enum Entry {
     Hidden,
 }
 
-/// Parses the `[Desktop Entry]` group of a `.desktop` file. `None`: not a launchable application.
-fn parse(id: &str, text: &str, locale: &str) -> Option<Entry> {
+/// Parses the `[Desktop Entry]` group of a `.desktop` file. `None`: not a launchable application (or its `TryExec`
+/// isn't installed). `desktop` is `$XDG_CURRENT_DESKTOP`, for `OnlyShowIn`/`NotShowIn`.
+fn parse(id: &str, text: &str, locale: &str, desktop: &str) -> Option<Entry> {
     let mut fields = HashMap::new();
     let mut in_main = false;
     for line in text.lines().map(str::trim) {
@@ -204,7 +205,7 @@ fn parse(id: &str, text: &str, locale: &str) -> Option<Entry> {
         return Some(Entry::Hidden);
     }
     let exec = fields.get("Exec").map(|e| unescape(e)).filter(|e| !e.is_empty())?;
-    if fields.get("Type") != Some(&"Application") {
+    if fields.get("Type") != Some(&"Application") || fields.get("TryExec").is_some_and(|p| !installed(&unescape(p))) {
         return None;
     }
     let locales = locale_keys(locale);
@@ -212,19 +213,32 @@ fn parse(id: &str, text: &str, locale: &str) -> Option<Entry> {
     // `;`-separated lists, the last `;` optional.
     let list = |value: Option<String>| value.unwrap_or_default().split(';').map(str::trim).filter(|s| !s.is_empty()).map(String::from).collect();
     let generic_name = localised("GenericName").unwrap_or_default();
+    // Meant for another desktop: kept out of launchers, like `NoDisplay`, but still matched to its windows.
+    let shows_in = |key: &str| fields.get(key).map(|v| v.split(';').any(|d| !d.is_empty() && desktop.split(':').any(|c| c == d)));
+    let elsewhere = shows_in("OnlyShowIn") == Some(false) || shows_in("NotShowIn") == Some(true);
     Some(Entry::App(App {
         id: id.to_owned(),
         name: localised("Name")?,
         exec,
         icon: fields.get("Icon").map(|i| unescape(i)).unwrap_or_default(),
         wm_class: fields.get("StartupWMClass").map(|c| unescape(c)).filter(|c| !c.is_empty()),
-        no_display: flag("NoDisplay"),
+        no_display: flag("NoDisplay") || elsewhere,
         comment: localised("Comment").filter(|c| !c.is_empty()).unwrap_or_else(|| generic_name.clone()),
         generic_name,
         keywords: list(localised("Keywords")),
         categories: list(fields.get("Categories").map(|c| unescape(c))),
         path: PathBuf::new(),
     }))
+}
+
+/// Whether `program` (a path, or a name looked up on `$PATH`) is an executable file.
+fn installed(program: &str) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    let runs = |p: PathBuf| std::fs::metadata(p).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0);
+    if program.contains('/') {
+        return runs(PathBuf::from(program));
+    }
+    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| runs(dir.join(program))))
 }
 
 /// The desktop actions (`Actions=` and their `[Desktop Action …]` groups) of the app with desktop-file id `id`:
@@ -280,11 +294,12 @@ pub struct Apps {
 impl Apps {
     /// Scans `applications/` in every data dir (~10 ms for a few hundred files: run it off the frame thread).
     pub fn load() -> Self {
-        Self::scan(&data_dirs().iter().map(|d| d.join("applications")).collect::<Vec<_>>(), &locale())
+        let desktop = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default();
+        Self::scan(&data_dirs().iter().map(|d| d.join("applications")).collect::<Vec<_>>(), &locale(), &desktop)
     }
 
     /// The first file of an id wins, so `~/.local/share` overrides `/usr/share`, and a `Hidden` copy removes it.
-    fn scan(dirs: &[PathBuf], locale: &str) -> Self {
+    fn scan(dirs: &[PathBuf], locale: &str, desktop: &str) -> Self {
         let mut seen = std::collections::HashSet::new();
         let mut apps = Vec::new();
         for dir in dirs {
@@ -299,7 +314,7 @@ impl Apps {
                 if !seen.insert(id.clone()) {
                     continue;
                 }
-                if let Some(Entry::App(app)) = std::fs::read_to_string(&path).ok().and_then(|t| parse(&id, &t, locale)) {
+                if let Some(Entry::App(app)) = std::fs::read_to_string(&path).ok().and_then(|t| parse(&id, &t, locale, desktop)) {
                     apps.push(App { path, ..app });
                 }
             }
@@ -478,7 +493,7 @@ mod tests {
     use super::*;
 
     fn app(text: &str) -> Option<Entry> {
-        parse("test", text, "de_DE.UTF-8")
+        parse("test", text, "de_DE.UTF-8", "noobsbot-desktop:GNOME")
     }
 
     fn exec(exec: &str) -> Vec<String> {
@@ -522,6 +537,15 @@ mod tests {
         assert_eq!(app(&format!("{base}Hidden=true\n")), Some(Entry::Hidden));
         assert_eq!(app("[Desktop Entry]\nType=Link\nName=x\nExec=x\n"), None);
         assert_eq!(app("[Desktop Entry]\nType=Application\nName=x\n"), None, "no Exec");
+        // Meant for another desktop: out of launchers, still an app (its windows get matched).
+        let shown = |line: &str| matches!(app(&format!("{base}{line}\n")), Some(Entry::App(App { no_display: false, .. })));
+        assert!(shown("OnlyShowIn=KDE;GNOME;"));
+        assert!(!shown("OnlyShowIn=KDE;"));
+        assert!(shown("NotShowIn=KDE;"));
+        assert!(!shown("NotShowIn=KDE;noobsbot-desktop;"));
+        assert!(matches!(app(&format!("{base}NotShowIn=KDE;noobsbot-desktop;\n")), Some(Entry::App(_))));
+        assert!(shown("TryExec=sh"), "on PATH");
+        assert_eq!(app(&format!("{base}TryExec=/nowhere/such-program\n")), None, "not installed");
         // Keys of other groups (actions) never leak into the main entry.
         let Some(Entry::App(a)) = app("[Desktop Entry]\nType=Application\nName=A\nExec=a\n[Desktop Action new]\nName=New\nExec=a --new\n") else { panic!() };
         assert_eq!((a.name.as_str(), a.exec.as_str()), ("A", "a"));
@@ -579,7 +603,7 @@ mod tests {
         write(&system, "org.kde.dolphin.desktop", &entry("Dolphin", "dolphin", ""));
         write(&system, "kde/term.desktop", &entry("Term", "/usr/bin/noobsbot", "StartupWMClass=Noobsbot\n"));
         write(&system, "nautilus.desktop", &entry("Files", "nautilus", ""));
-        let apps = Apps::scan(&[user, system], "");
+        let apps = Apps::scan(&[user, system], "", "");
         let ids: Vec<&str> = apps.list().iter().map(|a| a.id.as_str()).collect();
         assert_eq!(ids, ["nautilus", "org.kde.kate", "org.kde.dolphin", "kde-term"], "sorted by name, gone hidden");
         assert_eq!(apps.find("org.kde.dolphin").map(|a| a.name.as_str()), Some("My Dolphin"));
