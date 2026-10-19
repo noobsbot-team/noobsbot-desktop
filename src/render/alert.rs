@@ -30,6 +30,17 @@ const BUTTON_H: i32 = 28;
 const BUTTON_GAP: i32 = 8;
 const RADIUS: f64 = 12.0;
 const FIELD_H: i32 = 22;
+const TITLE_LINES: u8 = 2;
+const BODY_LINE: i32 = 16;
+/// The sheet keeps this far from the screen's top and bottom.
+const MARGIN: i32 = 40;
+
+/// Body lines that leave the buttons on a screen `output_h` tall, under a `title_h`-tall title (and a field):
+/// the text is ellipsised past that.
+fn body_lines(output_h: i32, title_h: i32, field_h: i32) -> u8 {
+    let fixed = 2 * MARGIN + PAD + ICON + 12 + title_h + 8 + field_h + PAD + BUTTON_H + PAD;
+    ((output_h - fixed) / BODY_LINE).clamp(1, i32::from(u8::MAX)) as u8
+}
 
 /// What the glass depends on: sheet and confirm-button rects, dark, accent, opacity, scale.
 type Key = (Rect, Rect, bool, [u8; 3], u32, u64);
@@ -79,12 +90,13 @@ impl AlertSheet {
         let label = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
         let title2 = Style { size: 17, line_height: 22, weight: 600, color: label, tabular: false };
         let body = Style { size: 13, line_height: 16, weight: 400, color: label, tabular: false };
-        let title = text.paragraph(&alert.title(), title2, INNER as u32, scale);
-        let words = text.paragraph(&alert.body(Instant::now()), body, INNER as u32, scale);
         let logical = |px: u32| (f64::from(px) / scale).round() as i32;
-        let (title_h, body_h) = (logical(title.height), logical(words.height));
-
         let field_h = if alert.field().is_some() { 12 + FIELD_H } else { 0 };
+        let title = text.centred(&alert.title(), title2, INNER as u32, TITLE_LINES, scale);
+        let title_h = logical(title.height);
+        let words = text.centred(&alert.body(Instant::now()), body, INNER as u32, body_lines(output.h, title_h, field_h), scale);
+        let body_h = logical(words.height);
+
         let height = PAD + ICON + 12 + title_h + 8 + body_h + field_h + PAD + BUTTON_H + PAD;
         let x = (output.w - WIDTH) / 2;
         let y = ((output.h - height) / 2).max(0);
@@ -154,5 +166,21 @@ impl AlertSheet {
         }
         self.layout = Some((rect, [cancel, confirm]));
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_body_gives_up_lines_before_the_buttons_leave_the_screen() {
+        // A 768 px screen, two title lines, no field: as many lines as leave the sheet inside its margins.
+        let lines = body_lines(768, 44, 0);
+        let fixed = 2 * MARGIN + PAD + ICON + 12 + 44 + 8 + PAD + BUTTON_H + PAD;
+        assert!(fixed + i32::from(lines) * BODY_LINE <= 768 && fixed + i32::from(lines + 1) * BODY_LINE > 768);
+        assert!(body_lines(768, 44, 12 + FIELD_H) < lines, "a field costs lines");
+        assert_eq!(body_lines(200, 44, 0), 1, "never no lines at all");
+        assert!(body_lines(2160, 22, 0) > 100, "a tall screen hardly limits it");
     }
 }
