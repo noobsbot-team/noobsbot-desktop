@@ -112,13 +112,24 @@ impl State {
             let views = self.backend.as_mut()?;
             // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
             let mut elements = if locked {
-                vec![views.wallpaper.element(&views.shaders, geo.size, dark)]
+                vec![views.wallpaper.element(&views.shaders, geo.size, scale, dark)]
             } else {
                 // Its own ghosts of closing and minimising windows, in front of the windows.
-                let now = Instant::now();
+                let now = self.frame_time;
                 views.ghosts.retain(|g| !g.anim.done(now));
                 let ghosts = views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, now, scale)).collect();
-                render::scene(renderer, &views.shaders, &mut views.wallpaper, &mut self.text, &self.space, output, &self.config.appearance, ghosts, None)
+                render::scene(
+                    renderer,
+                    &views.shaders,
+                    &mut views.wallpaper,
+                    &mut self.text,
+                    &self.space,
+                    output,
+                    &self.config.appearance,
+                    ghosts,
+                    None,
+                    self.frame_time,
+                )
             };
             if let Some(alpha) = idle_shade {
                 elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
@@ -153,7 +164,7 @@ impl State {
         let dock_layout = dock_frame.layout.clone();
         let held_at = self.dock_ui.dragged().and(self.seat.get_pointer()).map(|p| self.to_output(p.current_location()));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
-        let now = Instant::now();
+        let now = self.frame_time;
         self.launchpad_frame(now);
         let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
         let dock_menu =
@@ -343,9 +354,19 @@ impl State {
         let active = self.popup.and_then(Popup::item);
         // Launchpad covers the menu bar.
         let strip = match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
-            Some(content) => {
-                menu_bar.elements(renderer, shaders, &mut self.text, &mut self.symbols, content, active, width, dark, appearance.glass_opacity, scale)
-            }
+            Some(content) => menu_bar.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                &mut self.icons,
+                content,
+                active,
+                width,
+                dark,
+                appearance.glass_opacity,
+                scale,
+            ),
             None => {
                 menu_bar.hide();
                 Vec::new()
@@ -493,7 +514,7 @@ impl State {
             (None, None) if pad.is_some() => Some(Vec::new()),
             (None, None) => None,
         };
-        let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows);
+        let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows, now);
         if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
             let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
             // Above the wallpaper (the last element), below every window.
@@ -531,7 +552,7 @@ impl State {
                     lock_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, &content, geo.size, dark, accent, appearance.glass_opacity, scale)
                 }
             };
-            elements.push(wallpaper.element(shaders, geo.size, dark));
+            elements.push(wallpaper.element(shaders, geo.size, scale, dark));
         }
         // Idle (E6.5): dimmed, or black while the screen is off.
         if let (Some(alpha), Some(geo)) = (idle_shade, self.space.output_geometry(output)) {
@@ -558,6 +579,7 @@ impl State {
         let benchmark = self.backend.as_ref().is_some_and(|v| v.gallery.is_some());
         let animating;
         let started = Instant::now();
+        self.frame_time = clock.target().unwrap_or(started);
         let age = backend.buffer_age().unwrap_or(0);
         let (damage, elements) = match backend.bind() {
             Ok((renderer, mut framebuffer)) => {

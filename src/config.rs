@@ -7,7 +7,7 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::mpsc,
+    sync::{Mutex, OnceLock, mpsc},
     time::Duration,
 };
 
@@ -759,7 +759,9 @@ pub fn set_section(text: &str, table: &str, section: &str) -> String {
 
 /// Sets one key in the user's file (through a dotfiles symlink, so the live reload agrees) and logs a failure.
 pub fn save_key(table: &str, key: &str, value: &str) {
-    save_edit(|text| set_key(text, table, key, value));
+    let (table, key, value) = (table.to_owned(), key.to_owned(), value.to_owned());
+    let path = self::path();
+    save_later(fs::canonicalize(&path).unwrap_or(path), move |text| set_key(if text.is_empty() { DEFAULT_TOML } else { text }, &table, &key, &value));
 }
 
 /// Rewrites the user's file as `edit` makes it (through a dotfiles symlink, so the live reload agrees); logs a
@@ -769,6 +771,55 @@ pub fn save_edit(edit: impl FnOnce(&str) -> String) -> bool {
     let path = fs::canonicalize(&path).unwrap_or(path);
     let text = fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_TOML.to_owned());
     save_atomic(&path, &edit(&text)).inspect_err(|err| tracing::warn!("{}: {err}", path.display())).is_ok()
+}
+
+type Edit = Box<dyn FnOnce(&str) -> String + Send>;
+
+/// Rewrites `path` with `edit(current text)` on the `config-save` thread, so a save (a sync and two renames, tens of
+/// ms on a slow disk) never stalls a frame. Edits of one file within `DEBOUNCE` of each other are applied in order
+/// and written once: Ctrl+scrolling the dock's icon size saves at the end, not per notch. A missing file reads as "".
+// ponytail: an edit queued in the last 300 ms before exit is lost; flush on quit if that ever matters.
+pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'static) {
+    static QUEUE: OnceLock<Mutex<mpsc::Sender<(PathBuf, Edit)>>> = OnceLock::new();
+    let queue = QUEUE.get_or_init(|| {
+        let (tx, rx) = mpsc::channel::<(PathBuf, Edit)>();
+        let spawned = std::thread::Builder::new().name("config-save".into()).spawn(move || {
+            while let Ok(first) = rx.recv() {
+                let mut edits = vec![first];
+                while let Ok(next) = rx.recv_timeout(DEBOUNCE) {
+                    edits.push(next);
+                }
+                let mut files: Vec<(PathBuf, Vec<Edit>)> = Vec::new();
+                for (path, edit) in edits {
+                    match files.iter_mut().find(|(p, _)| *p == path) {
+                        Some((_, edits)) => edits.push(edit),
+                        None => files.push((path, vec![edit])),
+                    }
+                }
+                for (path, edits) in files {
+                    let mut text = fs::read_to_string(&path).unwrap_or_default();
+                    for edit in edits {
+                        text = edit(&text);
+                    }
+                    if let Err(err) = save_atomic(&path, &text) {
+                        tracing::warn!("{}: {err}", path.display());
+                    }
+                }
+            }
+        });
+        if let Err(err) = spawned {
+            tracing::warn!("saving settings on the main thread: {err}");
+        }
+        Mutex::new(tx)
+    });
+    let edit: Edit = Box::new(edit);
+    if let Err(mpsc::SendError((path, edit))) = queue.lock().unwrap_or_else(|e| e.into_inner()).send((path, edit)) {
+        // The thread never started: do it here rather than lose the save.
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        if let Err(err) = save_atomic(&path, &edit(&text)) {
+            tracing::warn!("{}: {err}", path.display());
+        }
+    }
 }
 
 /// Live reload on a worker thread. Watches the file's directory (editors replace the file by renaming), waits for
@@ -949,6 +1000,22 @@ mod tests {
         save_atomic(&path, "[windows]\nsnapping = false\n").unwrap();
         assert!(!load(&path).windows.snapping);
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "no temp file left behind");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn later_saves_coalesce_in_order() {
+        let dir = temp_dir("later");
+        let path = dir.join("config.toml");
+        save_later(path.clone(), |text| set_key(text, "dock", "icon_size", "40"));
+        save_later(path.clone(), |text| set_key(text, "dock", "icon_size", "48"));
+        save_later(dir.join("other.txt"), |_| "other\n".into());
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !path.is_file() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(fs::read_to_string(&path).unwrap(), "[dock]\nicon_size = 48\n", "the second edit saw the first");
+        assert_eq!(fs::read_to_string(dir.join("other.txt")).unwrap(), "other\n");
         fs::remove_dir_all(dir).unwrap();
     }
 

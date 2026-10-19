@@ -1,11 +1,11 @@
 //! Phosphor symbols (Part D: menu bar 16 px, Control Center 18–20, OSD 24), bundled in the binary and rasterised by
 //! resvg on first use. Phosphor draws in `currentColor`, so one coverage mask is tinted to any colour.
 
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use resvg::{tiny_skia, usvg};
 
-use crate::text::Rendered;
+use crate::text::{Lru, Rendered};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Weight {
@@ -128,19 +128,28 @@ symbols! {
 
 type Key = (Symbol, Weight, u16, u64, [u8; 4]);
 
-/// Rasterised symbols by symbol, weight, logical size, scale and colour.
-// ponytail: never evicts; the key space is a few dozen symbols in a handful of sizes and colours. Add the text cache's
-// LRU if sizes or themes multiply.
-#[derive(Default)]
+/// Rasterised symbols by symbol, weight, logical size, scale and colour; the least recently used go once the caps are
+/// reached, so a theme change or a run of accent colours can't grow it without end (C29).
 pub struct Symbols {
-    cache: HashMap<Key, Arc<Rendered>>,
+    cache: Lru<Key>,
+}
+
+impl Default for Symbols {
+    fn default() -> Self {
+        Self { cache: Lru::new(512, 8 << 20) }
+    }
 }
 
 impl Symbols {
     /// A `size`×`size` logical px symbol in straight RGBA `color`; draw it with `text::to_buffer`.
     pub fn get(&mut self, symbol: Symbol, weight: Weight, size: u16, scale: f64, color: [u8; 4]) -> Arc<Rendered> {
         let key = (symbol, weight, size, scale.to_bits(), color);
-        self.cache.entry(key).or_insert_with(|| Arc::new(rasterise(symbol.svg(weight), size, scale, color))).clone()
+        if let Some(rendered) = self.cache.get(&key) {
+            return rendered;
+        }
+        let rendered = Arc::new(rasterise(symbol.svg(weight), size, scale, color));
+        self.cache.insert(key, rendered.clone());
+        rendered
     }
 }
 

@@ -14,12 +14,13 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
+    apps::Icons,
     services::{
         bluetooth::Bluetooth,
         network::{Link, Network},
         power::Battery,
         sound::Sound,
-        tray::{self, Image},
+        tray::Image,
     },
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
@@ -149,8 +150,6 @@ pub struct MenuBar {
     glass: Option<(GlassKey, Vec<PixelShaderElement>)>,
     labels: Vec<Label>,
     names: HashMap<String, String>,
-    /// Tray icons as drawn, by their images and scale.
-    icons: Vec<(Arc<Vec<Image>>, u64, Arc<Rendered>)>,
     /// Each item's area from the last frame; empty while the bar is hidden.
     hits: Vec<(BarItem, Rect)>,
     /// The pressed pill behind the item whose popup is open, and what it was made for.
@@ -192,6 +191,7 @@ impl MenuBar {
         shaders: &Shaders,
         text: &mut Text,
         symbols: &mut Symbols,
+        icons: &mut Icons,
         content: &Content,
         active: Option<BarItem>,
         width: i32,
@@ -216,18 +216,9 @@ impl MenuBar {
         // laid out first: the app's name takes what is left of the bar, or goes when that is too little.
         let mut right = Vec::new();
         let px = (f64::from(SYMBOL) * scale).round() as u32;
-        let icons: Vec<_> = content
-            .tray
-            .iter()
-            .map(|images| match self.icons.iter().find(|(i, s, _)| i == images && *s == scale.to_bits()) {
-                Some(drawn) => drawn.clone(),
-                None => (images.clone(), scale.to_bits(), Arc::new(tray::render(images, px))),
-            })
-            .collect();
-        for (i, (_, _, icon)) in icons.iter().enumerate() {
-            right.push((icon.clone(), GAP, BarItem::Tray(i)));
+        for (i, images) in content.tray.iter().enumerate() {
+            right.push((icons.tray(images, px), GAP, BarItem::Tray(i)));
         }
-        self.icons = icons;
         if let Some(code) = &content.input {
             right.push((text.label(code, Style { weight: 600, ..body }, 100, scale), GAP, BarItem::Input));
         }

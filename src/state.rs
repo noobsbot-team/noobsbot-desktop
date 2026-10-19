@@ -13,7 +13,7 @@ use smithay::{
     input::{Seat, SeatHandler, SeatState, keyboard::Keycode, pointer::Focus},
     reexports::{
         calloop::{
-            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, channel,
+            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken, channel,
             generic::Generic,
             timer::{TimeoutAction, Timer},
         },
@@ -73,6 +73,8 @@ pub(crate) fn ruled(window: &Window) -> Option<Actions> {
 
 pub struct State {
     pub start_time: Instant,
+    /// When the frame being drawn will be seen (the clock's target vblank), for animations to sample (C32).
+    pub frame_time: Instant,
     pub socket_name: OsString,
     pub display_handle: DisplayHandle,
     pub loop_signal: LoopSignal,
@@ -103,6 +105,8 @@ pub struct State {
     pub bindings: Vec<(Binding, Action)>,
     /// Keys whose press was a shortcut; their release is kept from the app too, so nothing sticks.
     pub suppressed: Vec<Keycode>,
+    /// The key a shell surface is seeing held down (D14), and the timer repeating it.
+    pub key_repeat: Option<(Keycode, RegistrationToken)>,
     /// Minimised and hidden windows with where they were.
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
     /// The pid of the `noobsbot --quake` the quake action started; its window gets `rules::QUAKE_ID`.
@@ -249,10 +253,11 @@ impl State {
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
         let keyboard = config.keyboard.resolved();
-        if let Err(err) = seat.add_keyboard(crate::input::xkb(&keyboard), 500, 30) {
+        let (delay, rate) = (crate::input::REPEAT_DELAY.as_millis() as i32, 1000 / crate::input::REPEAT_RATE.as_millis() as i32);
+        if let Err(err) = seat.add_keyboard(crate::input::xkb(&keyboard), delay, rate) {
             // A typo in the layout must not stop the desktop: fall back to xkb's default (us).
             tracing::warn!(?keyboard, "keyboard layout: {err}");
-            seat.add_keyboard(Default::default(), 500, 30)?;
+            seat.add_keyboard(Default::default(), delay, rate)?;
         }
         seat.add_pointer();
 
@@ -295,6 +300,14 @@ impl State {
         handle.insert_source(text_rx, |event, _, state| {
             if let channel::Event::Msg(text) = event {
                 state.text = text;
+                state.schedule_redraw();
+            }
+        })?;
+        // App and tray icons are rasterised on their own thread too (C6): each one landing asks for a frame.
+        let (icons_tx, icons_rx) = channel::channel();
+        handle.insert_source(icons_rx, |event, _, state| {
+            if let channel::Event::Msg(done) = event {
+                state.icons.receive(done);
                 state.schedule_redraw();
             }
         })?;
@@ -362,7 +375,7 @@ impl State {
                 state.apps = apps;
                 state.apps_epoch += 1;
                 // An install brings icons along; a cached miss (or an old look) would stick until a restart.
-                state.icons = Default::default();
+                state.icons.clear();
                 state.schedule_redraw();
             }
         })?;
@@ -383,6 +396,7 @@ impl State {
 
         Ok(Self {
             start_time: Instant::now(),
+            frame_time: Instant::now(),
             socket_name,
             loop_signal: event_loop.get_signal(),
             loop_handle: handle.clone(),
@@ -406,6 +420,7 @@ impl State {
             bindings: shortcuts::from_config(&config),
             config,
             suppressed: Vec::new(),
+            key_repeat: None,
             hidden: Vec::new(),
             quake: None,
             zones: Default::default(),
@@ -449,7 +464,7 @@ impl State {
             display_revert: None,
             apps: Default::default(),
             apps_epoch: 0,
-            icons: Default::default(),
+            icons: crate::apps::Icons::new(icons_tx),
             dock_reveal: false,
             dock_pointer: None,
             dock_fx: Default::default(),

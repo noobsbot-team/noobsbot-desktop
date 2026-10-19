@@ -376,7 +376,7 @@ pub fn render(images: &[Image], px: u32) -> Rendered {
             tiny_skia::IntSize::from_wh(*width, *height).and_then(|s| tiny_skia::Pixmap::from_vec(premultiply(pixels), s))
         }
         Some(Image::Png { bytes, .. }) => tiny_skia::Pixmap::decode_png(bytes).ok(),
-        Some(Image::Svg(bytes)) => usvg::Tree::from_data(bytes, &usvg::Options::default()).ok().and_then(|tree| {
+        Some(Image::Svg(bytes)) => usvg::Tree::from_data(bytes, &crate::apps::svg_options()).ok().and_then(|tree| {
             let mut pixmap = tiny_skia::Pixmap::new(px, px)?;
             let fit = px as f32 / tree.size().width().max(tree.size().height());
             resvg::render(&tree, tiny_skia::Transform::from_scale(fit, fit), &mut pixmap.as_mut());

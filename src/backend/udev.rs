@@ -369,6 +369,7 @@ impl State {
             return;
         }
         let started = Instant::now();
+        self.frame_time = screen.clock.target().unwrap_or(started);
         let renderer = match card.render == primary {
             true => udev.gpus.single_renderer(&primary),
             false => udev.gpus.renderer(&primary, &card.render, screen.compositor.format()),
