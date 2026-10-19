@@ -223,8 +223,8 @@ fn status(ui: &mut Ui, rect: Rect, keyboard: &str, battery: Option<Battery>) {
 /// The user's picture (AccountsService's, else `~/.face`), cut to a `AVATAR` px circle at `scale`.
 fn avatar(login: &str, home: &std::path::Path, scale: f64) -> Option<Arc<Rendered>> {
     let paths = [std::path::PathBuf::from("/var/lib/AccountsService/icons").join(login), home.join(".face"), home.join(".face.icon")];
-    let image = paths.iter().find_map(|p| super::wallpaper::decode(p).ok())?;
     let px = (f64::from(AVATAR) * scale).round() as u32;
+    let image = paths.iter().find_map(|p| super::wallpaper::decode(p, (px as i32, px as i32).into()).ok())?;
     Some(Arc::new(round(&image.rgbx, image.size.w as u32, image.size.h as u32, px)))
 }
 

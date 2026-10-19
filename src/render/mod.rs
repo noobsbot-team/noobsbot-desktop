@@ -565,7 +565,7 @@ pub fn scene(
         }
     }
     out.extend(layer_elements(renderer, lower));
-    out.push(wallpaper.element(shaders, output_geo.size, dark));
+    out.push(wallpaper.element(shaders, output_geo.size, scale, dark));
     out
 }
 

@@ -112,7 +112,7 @@ impl State {
             let views = self.backend.as_mut()?;
             // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
             let mut elements = if locked {
-                vec![views.wallpaper.element(&views.shaders, geo.size, dark)]
+                vec![views.wallpaper.element(&views.shaders, geo.size, scale, dark)]
             } else {
                 render::scene(renderer, &views.shaders, &mut views.wallpaper, &mut self.text, &self.space, output, &self.config.appearance, Vec::new(), None)
             };
@@ -537,7 +537,7 @@ impl State {
                     lock_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, &content, geo.size, dark, accent, appearance.glass_opacity, scale)
                 }
             };
-            elements.push(wallpaper.element(shaders, geo.size, dark));
+            elements.push(wallpaper.element(shaders, geo.size, scale, dark));
         }
         // Idle (E6.5): dimmed, or black while the screen is off.
         if let (Some(alpha), Some(geo)) = (idle_shade, self.space.output_geometry(output)) {
