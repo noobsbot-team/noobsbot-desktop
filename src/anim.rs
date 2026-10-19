@@ -222,9 +222,10 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// After a frame: is another one needed for an animation?
+    /// After a frame: is another one needed for an animation? Judged at the time the frame is seen, like the
+    /// animations themselves.
     pub fn animating(&mut self) -> bool {
-        self.anim_until = self.anim_until.filter(|t| *t > Instant::now());
+        self.anim_until = self.anim_until.filter(|t| *t > self.frame_time);
         self.anim_until.is_some()
     }
 

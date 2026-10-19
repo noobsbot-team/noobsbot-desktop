@@ -56,6 +56,12 @@ impl FrameClock {
         (next - self.render_estimate() - MARGIN).saturating_duration_since(now)
     }
 
+    /// The vblank the frame being drawn aims for, once `delay` picked one: animations sample it (C32), so a frame
+    /// shows where things are when it is seen, not when it was drawn.
+    pub fn target(&self) -> Option<Instant> {
+        self.target
+    }
+
     /// A frame reached the screen at `at` (the vblank) after `render_time` of drawing.
     pub fn presented(&mut self, at: Instant, render_time: Duration) {
         if self.render_times.len() == SAMPLES {
@@ -90,6 +96,7 @@ mod tests {
         // 3 ms after a vblank: the next is at 16.67 ms, drawing (2 ms) + margin (1 ms) starts at 13.67 ms.
         let delay = clock.delay(t0 + Duration::from_millis(3));
         assert_eq!(delay, HZ60 - Duration::from_millis(3) - Duration::from_millis(3));
+        assert_eq!(clock.target(), Some(t0 + HZ60), "the frame is sampled at the vblank it aims for");
         // Past that point: draw at once, for the vblank after.
         assert_eq!(clock.delay(t0 + Duration::from_millis(15)), Duration::ZERO);
     }

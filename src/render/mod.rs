@@ -523,6 +523,7 @@ pub fn scene(
     appearance: &Appearance,
     bar: Vec<SceneElement>,
     windows: Option<Vec<SceneElement>>,
+    now: std::time::Instant,
 ) -> Vec<SceneElement> {
     let Some(output_geo) = space.output_geometry(output) else { return Vec::new() };
     let scale = output.current_scale().fractional_scale();
@@ -544,7 +545,6 @@ pub fn scene(
         Some(windows) => out.extend(windows),
         // Hidden Spaces are not drawn (E5.1).
         None => {
-            let now = std::time::Instant::now();
             for window in space.elements().rev().filter(|w| space.element_location(w).is_some_and(|l| crate::spaces::row_at(l.y, output_geo.loc.y) == 0)) {
                 let motion =
                     motion::current(window, now).zip(motion::window_frame(space, window, output_geo.loc)).map(|(m, frame)| (frame, m.look(frame, now)));

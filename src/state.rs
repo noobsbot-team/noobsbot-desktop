@@ -73,6 +73,8 @@ pub(crate) fn ruled(window: &Window) -> Option<Actions> {
 
 pub struct State {
     pub start_time: Instant,
+    /// When the frame being drawn will be seen (the clock's target vblank), for animations to sample (C32).
+    pub frame_time: Instant,
     pub socket_name: OsString,
     pub display_handle: DisplayHandle,
     pub loop_signal: LoopSignal,
@@ -360,6 +362,7 @@ impl State {
 
         Ok(Self {
             start_time: Instant::now(),
+            frame_time: Instant::now(),
             socket_name,
             loop_signal: event_loop.get_signal(),
             loop_handle: handle.clone(),

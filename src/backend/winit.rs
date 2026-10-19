@@ -114,7 +114,18 @@ impl State {
             let mut elements = if locked {
                 vec![views.wallpaper.element(&views.shaders, geo.size, scale, dark)]
             } else {
-                render::scene(renderer, &views.shaders, &mut views.wallpaper, &mut self.text, &self.space, output, &self.config.appearance, Vec::new(), None)
+                render::scene(
+                    renderer,
+                    &views.shaders,
+                    &mut views.wallpaper,
+                    &mut self.text,
+                    &self.space,
+                    output,
+                    &self.config.appearance,
+                    Vec::new(),
+                    None,
+                    self.frame_time,
+                )
             };
             if let Some(alpha) = idle_shade {
                 elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
@@ -149,7 +160,7 @@ impl State {
         let dock_layout = dock_frame.layout.clone();
         let held_at = self.dock_ui.dragged().and(self.seat.get_pointer()).map(|p| self.to_output(p.current_location()));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
-        let now = Instant::now();
+        let now = self.frame_time;
         self.launchpad_frame(now);
         let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
         let dock_menu =
@@ -499,7 +510,7 @@ impl State {
             (None, None) if pad.is_some() => Some(Vec::new()),
             (None, None) => None,
         };
-        let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows);
+        let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows, now);
         if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
             let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
             // Above the wallpaper (the last element), below every window.
@@ -564,6 +575,7 @@ impl State {
         let benchmark = self.backend.as_ref().is_some_and(|v| v.gallery.is_some());
         let animating;
         let started = Instant::now();
+        self.frame_time = clock.target().unwrap_or(started);
         let age = backend.buffer_age().unwrap_or(0);
         let (damage, elements) = match backend.bind() {
             Ok((renderer, mut framebuffer)) => {
