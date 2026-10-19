@@ -86,6 +86,9 @@ pub struct MenuRow {
 }
 
 /// The watcher we host: item ids are `<bus name><object path>`, as KDE's.
+/// Items any app may register: a spammer stops here instead of in our memory.
+const MAX_ITEMS: usize = 64;
+
 #[derive(Default)]
 struct Watcher {
     items: Vec<String>,
@@ -99,7 +102,8 @@ impl Watcher {
             s if s.contains('/') => s.to_owned(),
             s => format!("{s}/StatusNotifierItem"),
         };
-        (!self.items.contains(&id)).then(|| {
+        // ponytail: one cap for all; the sender isn't in a bus-name id, so no per-app count.
+        (!self.items.contains(&id) && self.items.len() < MAX_ITEMS).then(|| {
             self.items.push(id.clone());
             id
         })
@@ -506,6 +510,11 @@ mod tests {
         assert_eq!(watcher.vanished(":1.7"), vec![":1.7/org/ayatana/NotificationItem/app".to_owned()]);
         assert_eq!(watcher.vanished("org.kde.StatusNotifierItem-5-1").len(), 1);
         assert!(watcher.items.is_empty());
+        for i in 0..MAX_ITEMS {
+            watcher.register(":1.9", &format!("/item/{i}"));
+        }
+        assert_eq!(watcher.items.len(), MAX_ITEMS);
+        assert_eq!(watcher.register(":1.9", "/item/more"), None, "full: no more items");
     }
 
     #[test]
