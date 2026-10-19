@@ -7,15 +7,15 @@ use std::{
     ptr,
 };
 
-/// Our service; `login` when it isn't installed, so the screen can still be unlocked.
+/// Our service; `system-auth` (what ours includes) when it isn't installed, so the screen can still be unlocked.
+/// Not `login`: that stack can carry pam_securetty, which refuses without a tty.
 const SERVICE: &str = "noobsbot-desktop";
-const FALLBACK: &str = "login";
+const FALLBACK: &str = "system-auth";
 
 const PAM_SUCCESS: c_int = 0;
 const PAM_BUF_ERR: c_int = 5;
 const PAM_CONV_ERR: c_int = 19;
 const PAM_PROMPT_ECHO_OFF: c_int = 1;
-const PAM_PROMPT_ECHO_ON: c_int = 2;
 
 #[repr(C)]
 struct Message {
@@ -45,8 +45,9 @@ unsafe extern "C" {
     fn pam_end(handle: *mut c_void, status: c_int) -> c_int;
 }
 
-/// Answers every prompt with the password (`appdata`, a NUL-terminated string); info and error messages get none.
-/// The responses are malloc'd: PAM frees them.
+/// Answers every hidden prompt with the password (`appdata`, a NUL-terminated string); echoed prompts (a user name),
+/// info and error messages get none, so the password never goes where a name is asked. The responses are malloc'd:
+/// PAM frees them.
 unsafe extern "C" fn conversation(n: c_int, msgs: *mut *const Message, out: *mut *mut Response, appdata: *mut c_void) -> c_int {
     let Ok(count) = usize::try_from(n) else { return PAM_CONV_ERR };
     if count == 0 || msgs.is_null() || out.is_null() {
@@ -60,7 +61,7 @@ unsafe extern "C" fn conversation(n: c_int, msgs: *mut *const Message, out: *mut
         }
         for i in 0..count {
             let msg = *msgs.add(i);
-            if !msg.is_null() && matches!((*msg).style, PAM_PROMPT_ECHO_OFF | PAM_PROMPT_ECHO_ON) {
+            if !msg.is_null() && (*msg).style == PAM_PROMPT_ECHO_OFF {
                 (*responses.add(i)).resp = libc::strdup(appdata.cast::<c_char>());
             }
         }
@@ -71,6 +72,10 @@ unsafe extern "C" fn conversation(n: c_int, msgs: *mut *const Message, out: *mut
 
 /// Whether `password` is `user`'s, by PAM's auth and account stacks.
 pub fn authenticate(user: &str, password: &str) -> bool {
+    // An empty name makes PAM ask for one, and nothing here may answer that.
+    if user.is_empty() {
+        return false;
+    }
     let service = if std::path::Path::new("/etc/pam.d").join(SERVICE).exists() { SERVICE } else { FALLBACK };
     let (Ok(service), Ok(user), Ok(secret)) = (CString::new(service), CString::new(user), CString::new(password)) else { return false };
     let mut secret = secret.into_bytes_with_nul();
@@ -117,6 +122,7 @@ mod tests {
     fn unknown_user_is_refused() {
         assert!(!authenticate("noobsbot-no-such-user", "bogus"));
         assert!(!authenticate("nul\0user", "x"), "an interior NUL never reaches PAM");
+        assert!(!authenticate("", "root"), "no name: PAM must not be asked, it would prompt for one");
     }
 
     #[test]
