@@ -703,12 +703,13 @@ impl State {
         }
     }
 
-    /// Scrolling over the list: `dy` px (a wheel step counts as most of a row). `true`: taken.
-    pub fn drawer_scroll(&mut self, location: Point<f64, Logical>, dy: f64, wheel: bool) -> bool {
+    /// Scrolling over the list: `dy` px, or `wheel` notches in v120 units (one is a row). `true`: taken.
+    pub fn drawer_scroll(&mut self, location: Point<f64, Logical>, dy: f64, wheel: f64) -> bool {
         let Some(l) = self.drawer_layout().filter(|l| l.rect.to_f64().contains(location)) else { return false };
         let count = self.drawer_apps().len();
         let Some(d) = self.drawer.as_mut() else { return false };
-        d.scroll_px += if wheel { dy * 3.0 } else { dy };
+        // A wheel notch (120 in v120 units) is one row; a finger moves by pixels.
+        d.scroll_px += if wheel != 0.0 { wheel / 120.0 * f64::from(layout::ROW) } else { dy };
         let rows = (d.scroll_px / f64::from(layout::ROW)).trunc();
         if rows != 0.0 {
             d.scroll_px -= rows * f64::from(layout::ROW);
