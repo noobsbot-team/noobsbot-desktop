@@ -173,6 +173,8 @@ pub struct State {
     pub osd_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Installed apps (E2.1); empty until the first scan lands.
     pub apps: crate::apps::Apps,
+    /// Bumped with every `apps` load, so what windows cached against the last one (`dock_key`) is looked up again.
+    pub apps_epoch: u64,
     pub icons: crate::apps::Icons,
     /// The pointer touched the bottom edge: the dock shows over the focused window until the pointer leaves it.
     pub dock_reveal: bool,
@@ -220,6 +222,20 @@ pub struct State {
     pub screenshots: crate::shell::screenshot::Screenshots,
     /// wlr-screencopy for other programs (E6.8, E6.11).
     pub capture: crate::capture::Capture,
+}
+
+/// A window's program name, kept on it (`State::app_id`'s fallback, asked for on every pointer motion over the dock).
+struct Process(Option<String>);
+
+/// The file name of what `pid` runs: its `exe` link, else the first word of its command line (`comm` would cut
+/// `gnome-system-monitor` at 15 chars).
+pub fn program_name(pid: i32) -> Option<String> {
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok().and_then(|p| Some(p.file_name()?.to_str()?.trim_end_matches(" (deleted)").to_owned()));
+    let argv0 = || {
+        let cmdline = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+        Some(std::str::from_utf8(cmdline.split(|b| *b == 0).next()?).ok()?.rsplit('/').next()?.to_owned())
+    };
+    exe.or_else(argv0).filter(|n| !n.is_empty())
 }
 
 impl State {
@@ -340,6 +356,7 @@ impl State {
         handle.insert_source(apps_rx, |event, _, state| {
             if let channel::Event::Msg(apps) = event {
                 state.apps = apps;
+                state.apps_epoch += 1;
                 state.schedule_redraw();
             }
         })?;
@@ -415,6 +432,7 @@ impl State {
             shell_drag: None,
             osd_timer: None,
             apps: Default::default(),
+            apps_epoch: 0,
             icons: Default::default(),
             dock_reveal: false,
             dock_pointer: None,
@@ -499,14 +517,11 @@ impl State {
         })
     }
 
-    /// The window's app id; noobsbot and others set none, so then the process name.
+    /// The window's app id; noobsbot and others set none, so then its program's name, read once per window.
     pub fn app_id(&self, window: &Window) -> Option<String> {
         let t = window.toplevel()?;
         let id = with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.app_id.clone()));
-        id.filter(|id| !id.is_empty()).or_else(|| {
-            let pid = self.pid(window)?;
-            Some(std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim().to_owned())
-        })
+        id.filter(|id| !id.is_empty()).or_else(|| window.user_data().get_or_insert(|| Process(self.pid(window).and_then(program_name))).0.clone())
     }
 
     /// The process behind a window, from its Wayland connection.

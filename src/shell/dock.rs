@@ -4,6 +4,7 @@
 //! function (Plank's geometry) so drawing and clicks share it.
 
 use std::{
+    cell::RefCell,
     io::Read,
     os::fd::AsFd,
     sync::{
@@ -15,7 +16,7 @@ use std::{
 
 use smithay::{
     desktop::Window,
-    reexports::wayland_server::{Resource, protocol::wl_data_source::WlDataSource},
+    reexports::wayland_server::protocol::wl_data_source::WlDataSource,
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::{compositor::with_states, selection::data_device::with_source_metadata, shell::xdg::XdgToplevelSurfaceData},
 };
@@ -238,15 +239,33 @@ const BTN_RIGHT: u32 = 0x111;
 /// Plank's LONG_PRESS_TIME: a press held this long without moving clicks nothing.
 const LONG_PRESS: Duration = Duration::from_millis(750);
 
+/// What a window resolved to under one `Apps` load (`State::apps_epoch`): its `app_key`, the item key and the app.
+#[derive(Default)]
+struct Resolved {
+    epoch: u64,
+    raw: String,
+    key: String,
+    app: Option<App>,
+}
+
 impl State {
-    /// The app a window belongs to: its app id, else (noobsbot and others set none) its process name.
+    /// The app a window belongs to: its app id, else (noobsbot and others set none) its program's name.
     pub fn app_key(&self, window: &Window) -> Option<String> {
-        let toplevel = window.toplevel()?;
-        let id = with_states(toplevel.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.app_id.clone()));
-        id.filter(|id| !id.is_empty()).or_else(|| {
-            let pid = toplevel.wl_surface().client()?.get_credentials(&self.display_handle).ok()?.pid;
-            Some(std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim().to_owned())
-        })
+        self.app_id(window)
+    }
+
+    /// The dock item a window belongs to: its `app_key` resolved by `Apps::find` (the app's id, else the key as it
+    /// is), kept on the window for one `Apps` load, since every pointer motion over the dock asks.
+    pub fn dock_key(&self, window: &Window) -> Option<(String, Option<App>)> {
+        let raw = self.app_key(window)?;
+        let cache: &RefCell<Resolved> = window.user_data().get_or_insert(Default::default);
+        let mut r = cache.borrow_mut();
+        if (r.epoch, &r.raw) != (self.apps_epoch, &raw) || r.raw.is_empty() {
+            let app = self.apps.find(&raw).cloned();
+            let key = app.as_ref().map_or_else(|| raw.clone(), |a| a.id.clone());
+            *r = Resolved { epoch: self.apps_epoch, raw, key, app };
+        }
+        Some((r.key.clone(), r.app.clone()))
     }
 
     /// Whether `window` is on the current Space (shown, or minimised from it).
@@ -271,12 +290,10 @@ impl State {
         windows.retain(|w| !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w)));
         windows.sort_by_key(seen);
         for window in windows {
-            let Some(raw) = self.app_key(&window) else { continue };
-            let app = self.apps.find(&raw);
-            let key = app.map_or(raw, |a| a.id.clone());
+            let Some((key, app)) = self.dock_key(&window) else { continue };
             match items.iter_mut().find(|i| i.key == key) {
                 Some(item) => item.windows.push(window),
-                None if !dock.pinned_only => items.push(Item { key, app: app.cloned(), windows: vec![window] }),
+                None if !dock.pinned_only => items.push(Item { key, app, windows: vec![window] }),
                 None => {}
             }
         }
@@ -1028,6 +1045,14 @@ mod tests {
         let config = config::parse(&set_items(config::DEFAULT_TOML, &names)).unwrap();
         assert_eq!(config.dock.items, names);
         assert_eq!(uri_list("# c\r\nfile:///a.desktop\r\n\r\nfile:///b\n"), ["file:///a.desktop", "file:///b"]);
+    }
+
+    #[test]
+    fn program_names_are_not_cut_short() {
+        // This test binary's own name is longer than comm's 15 chars.
+        let exe = std::env::current_exe().unwrap().file_name().unwrap().to_str().unwrap().to_owned();
+        assert_eq!(crate::state::program_name(std::process::id() as i32).as_deref(), Some(exe.as_str()));
+        assert_eq!(crate::state::program_name(i32::MAX), None);
     }
 
     #[test]
