@@ -64,8 +64,8 @@ type Identity = (String, HashMap<String, OwnedValue>);
 struct Agent {
     updates: Sender<Update>,
     answer: Answer<Reply>,
-    /// The cookie polkitd took back while its password was being checked.
-    cancelled: Mutex<Option<String>>,
+    /// The request being asked about; a cancel for any other cookie is ignored.
+    current: Mutex<Option<String>>,
     socket: PathBuf,
     helper: PathBuf,
 }
@@ -87,8 +87,8 @@ impl Agent {
         if users.is_empty() {
             return Err(PolkitError::Failed("no user to authenticate as".into()));
         }
-        if let Ok(mut c) = self.cancelled.lock() {
-            c.take();
+        if let Ok(mut c) = self.current.lock() {
+            *c = Some(cookie.clone());
         }
         let mut rx = self.answer.wait();
         let _ = self.updates.send(Update::Polkit(Event::Ask(Auth { cookie: cookie.clone(), message, users })));
@@ -96,7 +96,8 @@ impl Agent {
             let Ok(Some((user, password))) = rx.recv().await else { break };
             let (socket, helper, c) = (self.socket.clone(), self.helper.clone(), cookie.clone());
             let ok = blocking(move || check(&socket, &helper, &user, &c, password)).await;
-            if self.cancelled.lock().is_ok_and(|c| c.as_deref() == Some(cookie.as_str())) {
+            // Cancelled, or a newer request took over.
+            if self.current.lock().is_ok_and(|c| c.as_deref() != Some(cookie.as_str())) {
                 break;
             }
             if ok {
@@ -111,8 +112,8 @@ impl Agent {
     }
 
     fn cancel_authentication(&self, cookie: String) {
-        if let Ok(mut c) = self.cancelled.lock() {
-            *c = Some(cookie.clone());
+        if !self.current.lock().is_ok_and(|mut c| c.take_if(|c| *c == cookie).is_some()) {
+            return;
         }
         self.answer.cancel();
         let _ = self.updates.send(Update::Polkit(Event::Done(cookie)));
@@ -141,7 +142,7 @@ pub async fn serve(bus: &Connection, updates: &Sender<Update>, answer: &Answer<R
 
 async fn serve_with(bus: &Connection, updates: &Sender<Update>, answer: &Answer<Reply>, socket: PathBuf, helper: PathBuf) -> bool {
     let result = async {
-        let agent = Agent { updates: updates.clone(), answer: answer.clone(), cancelled: Mutex::default(), socket, helper };
+        let agent = Agent { updates: updates.clone(), answer: answer.clone(), current: Mutex::default(), socket, helper };
         bus.object_server().at(PATH, agent).await?;
         // pam_systemd sets it; logind's "auto" session is the caller's own otherwise.
         let session = match std::env::var("XDG_SESSION_ID") {
@@ -172,8 +173,10 @@ pub fn fallback() {
 /// The unix-user identities' login names, `me` first (polkitd has already expanded admin groups to users).
 fn users(identities: &[Identity], me: u32) -> Vec<String> {
     let mut uids: Vec<u32> = identities.iter().filter(|(kind, _)| kind == "unix-user").filter_map(|(_, d)| d.get("uid")?.downcast_ref::<u32>().ok()).collect();
-    uids.sort_by_key(|&uid| uid != me);
+    // Duplicates are only adjacent once sorted; the partial sort after that is stable.
+    uids.sort_unstable();
     uids.dedup();
+    uids.sort_by_key(|&uid| uid != me);
     uids.into_iter().filter_map(user_name).collect()
 }
 
@@ -310,6 +313,7 @@ mod tests {
         let want = if me == 0 { vec![login] } else { vec![login, "root".to_string()] };
         assert_eq!(users(&[user(0), group, user(me), user(0)], me), want);
         assert!(users(&[user(u32::MAX - 7)], me).is_empty(), "an unknown uid is left out");
+        assert_eq!(users(&[user(me), user(0), user(me)], me).len(), 2, "a duplicate that isn't adjacent is dropped too");
     }
 
     /// The interface on a private dbus-daemon, with a mock Authority: registration, a wrong then a right
