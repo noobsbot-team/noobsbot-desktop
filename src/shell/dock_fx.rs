@@ -486,7 +486,11 @@ impl State {
     pub fn dock_update_hide(&mut self, layout: &Layout) -> bool {
         let now = Instant::now();
         let focused = self.focused_window();
-        let fullscreen = focused.and_then(|w| w.toplevel().cloned()).is_some_and(|t| t.current_state().states.contains(xdg_toplevel::State::Fullscreen));
+        // Fullscreen on another output (the shell is drawn on the first) leaves the dock alone.
+        let fullscreen = focused.is_some_and(|w| {
+            w.toplevel().is_some_and(|t| t.current_state().states.contains(xdg_toplevel::State::Fullscreen))
+                && self.space.outputs().next().is_some_and(|o| self.space.outputs_for_element(&w).contains(o))
+        });
         let menu = self.popup == Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock));
         // Plank shows the dock while its menu is open or an icon is dragged; Launchpad and fullscreen are ours.
         let (want, settle) = if self.launchpad.is_some() || menu || self.dock_ui.dragging() {
