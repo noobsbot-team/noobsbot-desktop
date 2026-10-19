@@ -719,14 +719,39 @@ pub fn set_array(text: &str, section: &str, key: &str, items: &[String]) -> Stri
     lines.concat()
 }
 
+/// `text` with its `[table]` section (the table and every `[table.…]` and `[[table.…]]` under it) replaced by
+/// `section` (TOML of its own, empty to drop it), keeping every other line and comment.
+pub fn set_section(text: &str, table: &str, section: &str) -> String {
+    let ours = |l: &str| l.trim_start().trim_start_matches('[').strip_prefix(table).is_some_and(|r| r.starts_with(']') || r.starts_with('.'));
+    let mut skip = false;
+    let mut kept: String = text
+        .split_inclusive('\n')
+        .filter(|l| {
+            if l.trim_start().starts_with('[') {
+                skip = ours(l);
+            }
+            !skip
+        })
+        .collect();
+    if !kept.is_empty() && !kept.ends_with('\n') {
+        kept.push('\n');
+    }
+    let gap = if kept.is_empty() || section.is_empty() { "" } else { "\n" };
+    format!("{kept}{gap}{section}")
+}
+
 /// Sets one key in the user's file (through a dotfiles symlink, so the live reload agrees) and logs a failure.
 pub fn save_key(table: &str, key: &str, value: &str) {
+    save_edit(|text| set_key(text, table, key, value));
+}
+
+/// Rewrites the user's file as `edit` makes it (through a dotfiles symlink, so the live reload agrees); logs a
+/// failure and tells whether it was written.
+pub fn save_edit(edit: impl FnOnce(&str) -> String) -> bool {
     let path = self::path();
     let path = fs::canonicalize(&path).unwrap_or(path);
     let text = fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_TOML.to_owned());
-    if let Err(err) = save_atomic(&path, &set_key(&text, table, key, value)) {
-        tracing::warn!("{}: {err}", path.display());
-    }
+    save_atomic(&path, &edit(&text)).inspect_err(|err| tracing::warn!("{}: {err}", path.display())).is_ok()
 }
 
 /// Live reload on a worker thread. Watches the file's directory (editors replace the file by renaming), waits for
@@ -886,6 +911,17 @@ mod tests {
         assert_eq!(set_key("version = 1\n", "appearance", "mode", "\"dark\""), "version = 1\n\n[appearance]\nmode = \"dark\"\n");
         let config = parse(&set_key(DEFAULT_TOML, "appearance", "mode", "\"dark\"")).unwrap();
         assert_eq!(config.appearance.mode, Mode::Dark);
+    }
+
+    #[test]
+    fn set_whole_section() {
+        let text = "[keyboard]\nlayout = \"us\"\n\n# displays\n[display]\nscale = 2.0\n\n[[display.outputs]]\nname = \"eDP-1\"\nscale = 1.5\n\n[clock]\ntimezone = \"UTC\"\n";
+        let previous = "[display]\nscale = 1.0\n";
+        assert_eq!(set_section(text, "display", previous), format!("[keyboard]\nlayout = \"us\"\n\n# displays\n[clock]\ntimezone = \"UTC\"\n\n{previous}"));
+        assert_eq!(set_section(text, "display", ""), "[keyboard]\nlayout = \"us\"\n\n# displays\n[clock]\ntimezone = \"UTC\"\n");
+        assert_eq!(set_section("[displays]\nx = 1", "display", previous), format!("[displays]\nx = 1\n\n{previous}"), "another table");
+        assert_eq!(set_section("", "display", previous), previous);
+        assert_eq!(parse(&set_section(DEFAULT_TOML, "display", previous)).unwrap().display.scale, 1.0);
     }
 
     #[test]

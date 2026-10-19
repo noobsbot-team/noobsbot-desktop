@@ -152,6 +152,11 @@ impl State {
         self.window_row(window) == 0
     }
 
+    /// On the first output, whose Spaces these are: windows on another output stay put when Spaces switch.
+    fn on_active_output(&self, window: &Window) -> bool {
+        self.window_output(window).is_none_or(|o| self.space.outputs().next() == Some(&o))
+    }
+
     /// The frontmost window of the shown Space.
     pub fn top_window(&self) -> Option<Window> {
         self.space.elements().rev().find(|w| self.on_current(w)).cloned()
@@ -170,6 +175,7 @@ impl State {
         let moves: Vec<(Window, Point<i32, Logical>)> = self
             .space
             .elements()
+            .filter(|w| self.on_active_output(w))
             .filter_map(|w| {
                 let loc = self.space.element_location(w)?;
                 let row = row_at(loc.y, top);
@@ -353,6 +359,7 @@ impl State {
             .space
             .elements()
             .rev()
+            .filter(|w| self.on_active_output(w))
             .filter_map(|w| {
                 let row = self.window_row(w);
                 let by = match row {

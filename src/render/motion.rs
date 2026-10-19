@@ -15,6 +15,7 @@ use smithay::{
         },
     },
     desktop::{Space, Window},
+    output::Output,
     utils::{Logical, Physical, Point, Rectangle, Size, Transform},
 };
 
@@ -261,6 +262,8 @@ pub fn appear(entrance: Option<Entrance>, renderer: &mut GlesRenderer, bar: &mut
 /// What a window looked like, to animate after it is gone.
 pub struct Ghost {
     pub window: Window,
+    /// The display it was on: `frame` is relative to it, and it is drawn there.
+    pub output: Output,
     shot: Shot,
     frame: Rectangle<f64, Logical>,
     pub from: Look,
@@ -269,23 +272,24 @@ pub struct Ghost {
 }
 
 impl Ghost {
-    /// Snapshots `window` as it is drawn now; `from`/`to`/`anim` are set by the caller.
-    #[expect(clippy::too_many_arguments, reason = "what drawing a window takes")]
+    /// Snapshots `window` as it is drawn now on `output`; `from`/`to`/`anim` are set by the caller.
     pub fn capture(
         renderer: &mut GlesRenderer,
         shaders: &Shaders,
         text: &mut Text,
         space: &Space<Window>,
         window: &Window,
-        output_loc: Point<i32, Logical>,
-        scale: f64,
+        output: &Output,
         dark: bool,
     ) -> Option<Ghost> {
+        let output_loc = space.output_geometry(output)?.loc;
+        let scale = output.current_scale().fractional_scale();
         let frame = window_frame(space, window, output_loc)?;
         let elements = window_elements(renderer, shaders, text, space, window, output_loc, scale, dark);
         let shot = snapshot(renderer, &elements, area(frame).to_physical_precise_round(scale), scale)?;
         let look = Look::at(frame);
-        Some(Ghost { window: window.clone(), shot, frame, from: look, to: look, anim: Anim::new(crate::anim::Curve::Ease(crate::anim::FADE_OUT)) })
+        let anim = Anim::new(crate::anim::Curve::Ease(crate::anim::FADE_OUT));
+        Some(Ghost { window: window.clone(), output: output.clone(), shot, frame, from: look, to: look, anim })
     }
 
     pub fn frame(&self) -> Rectangle<f64, Logical> {

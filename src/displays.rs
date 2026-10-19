@@ -3,17 +3,23 @@
 //! to `displays.json` for System Settings.
 
 use smithay::{
-    desktop::layer_map_for_output,
+    desktop::{Window, layer_map_for_output},
     output::{Output, Scale},
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::Transform,
+    reexports::{
+        calloop::timer::{TimeoutAction, Timer},
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_server::protocol::wl_surface::WlSurface,
+    },
+    utils::{Logical, Rectangle, Transform},
     wayland::{
         compositor::{SurfaceData, send_surface_state},
         fractional_scale::with_fractional_scale,
+        shell::xdg::ToplevelSurface,
     },
 };
 
 use crate::{
+    arrange::{Area, snap},
     backend::Device,
     config::{Displays, OutputSettings},
     display_info::{self, Display, Mode},
@@ -32,7 +38,8 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays) -> Vec<Display> {
         d.mode = configured_mode(&d.modes, &e).or_else(|| pick_mode(&d.modes).map(|i| d.modes[i])).unwrap_or(d.mode);
         d.rotation = if [0, 90, 180, 270].contains(&e.rotation) { e.rotation } else { 0 };
         d.auto_scale = pick_scale((d.mode.width, d.mode.height), (d.width_mm, d.height_mm), d.built_in);
-        d.scale = [e.scale, config.scale].into_iter().find(|s| *s > 0.0).map_or(d.auto_scale, |s| s.clamp(1.0, 3.0));
+        // In 1/120 steps, the granularity of wp_fractional_scale, so what apps are told is what we draw at.
+        d.scale = [e.scale, config.scale].into_iter().find(|s| *s > 0.0).map_or(d.auto_scale, |s| (s.clamp(1.0, 3.0) * 120.0).round() / 120.0);
         let (w, h) = if d.rotation % 180 == 90 { (d.mode.height, d.mode.width) } else { (d.mode.width, d.mode.height) };
         // As smithay's `Space::output_geometry` rounds, so neighbours meet exactly.
         (d.width, d.height) = ((f64::from(w) / d.scale).ceil() as i32, (f64::from(h) / d.scale).ceil() as i32);
@@ -55,6 +62,15 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays) -> Vec<Display> {
     for d in displays.iter_mut().filter(|d| d.enabled && entry(&d.name).position.is_none()) {
         (d.x, d.y) = (right, 0);
         right += d.width;
+    }
+    // Saved positions were for the sizes of their day: a scale, mode or rotation change leaves overlaps or gaps,
+    // where the pointer gets trapped. Each display is re-snapped edge to edge onto the ones before it.
+    let mut placed: Vec<Area> = Vec::new();
+    for d in displays.iter_mut().filter(|d| d.enabled) {
+        if !placed.is_empty() {
+            (d.x, d.y) = snap(Area::of(d), &placed, 0);
+        }
+        placed.push(Area::of(d));
     }
     let primary = displays.iter().position(|d| d.enabled && entry(&d.name).primary).or_else(|| displays.iter().position(|d| d.enabled));
     if let Some(i) = primary {
@@ -132,8 +148,7 @@ impl State {
     /// Applies the display settings to every display, live: lights, darkens and modesets them (real screen), sets
     /// scale, rotation and position, puts the primary first (the shell draws on the first output), tells every
     /// window and panel its new scale, and rewrites `displays.json`. At start, on hotplug and on config reload.
-    // ponytail: windows keep their logical size (maximised ones aren't refitted), and every surface gets the primary
-    // display's scale; per-window scale when displays with different scales are both in use.
+    // ponytail: windows keep their logical size; zoomed ones on another output too, as `work_area` is the first's.
     pub fn apply_displays(&mut self) {
         let shown = match &self.device {
             Some(Device::Udev(_)) => self.udev_displays(),
@@ -165,21 +180,114 @@ impl State {
             self.space.map_output(output, (d.x, d.y));
             layer_map_for_output(output).arrange();
         }
-        let scale = lit.first().map_or(1.0, |(d, _)| d.scale);
-        let tell = |surface: &WlSurface, states: &SurfaceData| {
-            with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale));
-            send_surface_state(surface, states, scale.ceil() as i32, Transform::Normal);
-        };
-        for window in self.space.elements() {
-            window.with_surfaces(tell);
-        }
-        for (_, output) in &lit {
-            for layer in layer_map_for_output(output).layers() {
-                layer.with_surfaces(tell);
+        // The pointer and windows of a display that went (unplugged, turned off) come onto the ones left.
+        let screens: Vec<Rectangle<i32, Logical>> = self.space.outputs().filter_map(|o| self.space.output_geometry(o)).collect();
+        if let Some(pointer) = self.seat.get_pointer() {
+            let at = pointer.current_location();
+            let kept = crate::backend::udev::clamp_pointer(&screens, at, at);
+            if kept != at {
+                pointer.set_location(kept);
             }
         }
+        let lost: Vec<Window> = self.space.elements().filter(|w| self.window_output(w).is_none()).cloned().collect();
+        for window in lost {
+            let (Some(frame), Some(area)) = (self.frame(&window), self.work_area()) else { continue };
+            let row = self.window_row(&window) * crate::spaces::STRIDE;
+            self.set_visible_loc(&window, crate::wm::place(area, frame.size) + smithay::utils::Point::from((0, row)));
+        }
+        // Zoomed and fullscreen windows on the first output fill its work area at the new scale or size.
+        let first = self.space.outputs().next().cloned();
+        let filled: Vec<(Window, ToplevelSurface)> = self
+            .space
+            .elements()
+            .filter(|w| first.is_some() && self.window_output(w) == first)
+            .filter_map(|w| {
+                let toplevel = w.toplevel()?;
+                let states = toplevel.current_state().states;
+                (states.contains(xdg_toplevel::State::Maximized) || states.contains(xdg_toplevel::State::Fullscreen)).then(|| (w.clone(), toplevel.clone()))
+            })
+            .collect();
+        if let Some(area) = self.work_area() {
+            for (window, toplevel) in filled {
+                let size = self.content_size(&window, area.size);
+                toplevel.with_pending_state(|s| s.size = Some(size));
+                toplevel.send_pending_configure();
+                let row = self.window_row(&window) * crate::spaces::STRIDE;
+                self.set_visible_loc(&window, area.loc + smithay::utils::Point::from((0, row)));
+            }
+        }
+        self.send_scales();
         write_info(&shown.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>());
         self.schedule_redraw();
+    }
+
+    /// The output `window` is mostly on (its hidden-Space row folded away); `None` when it is on no output.
+    pub fn window_output(&self, window: &Window) -> Option<Output> {
+        let mut frame = self.space.element_geometry(window)?;
+        frame.loc.y -= self.window_row(window) * crate::spaces::STRIDE;
+        mostly_on(frame, self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.clone()))))
+    }
+
+    /// Tells every window the scale of the output it is mostly on (the first output's when it is on none) and every
+    /// panel its output's: after each frame, as windows move, and when displays change. Nothing is sent twice.
+    pub fn send_scales(&self) {
+        let tell = |scale: f64| {
+            move |surface: &WlSurface, states: &SurfaceData| {
+                with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale));
+                send_surface_state(surface, states, scale.ceil() as i32, Transform::Normal);
+            }
+        };
+        let first = self.space.outputs().next().cloned();
+        for window in self.space.elements() {
+            let scale = self.window_output(window).or_else(|| first.clone()).map_or(1.0, |o| o.current_scale().fractional_scale());
+            window.with_surfaces(tell(scale));
+        }
+        for output in self.space.outputs() {
+            let scale = output.current_scale().fractional_scale();
+            for layer in layer_map_for_output(output).layers() {
+                layer.with_surfaces(tell(scale));
+            }
+        }
+    }
+}
+
+/// Of `outputs`, the one `frame` overlaps most, if any.
+pub fn mostly_on<T>(frame: Rectangle<i32, Logical>, outputs: impl Iterator<Item = (Rectangle<i32, Logical>, T)>) -> Option<T> {
+    outputs
+        .filter_map(|(geo, output)| frame.intersection(geo).map(|i| (i64::from(i.size.w) * i64::from(i.size.h), output)))
+        .filter(|(area, _)| *area > 0)
+        .max_by_key(|(area, _)| *area)
+        .map(|(_, output)| output)
+}
+
+impl State {
+    /// The settings file was written: with a `display.previous` set aside by System Settings, the `[display]` from
+    /// before goes back in `KEEP_FOR` unless Settings deletes it first ("Keep Changes"). Here rather than in
+    /// Settings, so a mode the user cannot see is undone even when Settings is gone by then.
+    pub fn arm_display_revert(&mut self) {
+        if let Some(token) = self.display_revert.take() {
+            self.loop_handle.remove(token);
+        }
+        if !display_info::previous_path().is_some_and(|p| p.exists()) {
+            return;
+        }
+        let timer = self.loop_handle.insert_source(Timer::from_duration(display_info::KEEP_FOR), |_, _, state| {
+            state.display_revert = None;
+            revert_displays();
+            TimeoutAction::Drop
+        });
+        self.display_revert = timer.inspect_err(|err| tracing::warn!("display revert timer: {err}")).ok();
+    }
+}
+
+/// Puts the `[display]` section in `display.previous` (if any) back into the settings file, which the live reload
+/// then applies; the rest of the file stays as it is.
+pub fn revert_displays() {
+    let Some(path) = display_info::previous_path() else { return };
+    let Ok(previous) = std::fs::read_to_string(&path) else { return };
+    tracing::info!("display settings not kept: putting the previous ones back");
+    if crate::config::save_edit(|text| crate::config::set_section(text, "display", &previous)) {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -300,6 +408,9 @@ mod tests {
         let p = plan(laptop_and_monitor(), &config);
         assert_eq!((p[0].mode.width, p[0].rotation, p[0].scale), (1920, 0, 3.0), "unknown mode: preferred; scale clamped");
         assert_eq!(p[1].mode.refresh, 144_000);
+        let odd = Displays { scale: 1.3333, ..Default::default() };
+        let p = plan(laptop_and_monitor(), &odd);
+        assert_eq!((p[0].scale, p[0].width), (160.0 / 120.0, 1440), "rounded to a 1/120 step");
     }
 
     #[test]
@@ -323,6 +434,35 @@ mod tests {
         let config = Displays { outputs: vec![OutputSettings { position: Some([-1536, 100]), ..output("eDP-1") }], ..Default::default() };
         let p = plan(laptop_and_monitor(), &config);
         assert_eq!((p[0].x, p[0].y, p[1].x), (-1536, 100, 0));
+    }
+
+    #[test]
+    fn saved_positions_are_resnapped_after_a_size_change() {
+        // Saved with the laptop at 125% (1536 wide); now at 100% it is 1920 wide and the monitor would overlap it.
+        let outputs = |laptop_scale| {
+            vec![
+                OutputSettings { scale: laptop_scale, position: Some([0, 0]), ..output("eDP-1") },
+                OutputSettings { position: Some([1536, 0]), ..output("HDMI-A-1") },
+            ]
+        };
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.0), ..Default::default() });
+        assert_eq!((p[0].width, p[1].x, p[1].y), (1920, 1920, 0), "pushed out to the edge");
+        // At 150% it is 1280 wide: the gap closes.
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.5), ..Default::default() });
+        assert_eq!((p[0].width, p[1].x), (1280, 1280));
+        // Still touching: nothing moves.
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.25), ..Default::default() });
+        assert_eq!((p[0].x, p[0].y, p[1].x, p[1].y), (0, 0, 1536, 0));
+    }
+
+    #[test]
+    fn a_window_belongs_to_the_output_it_overlaps_most() {
+        let rect = |x, y, w, h| Rectangle::<i32, Logical>::new((x, y).into(), (w, h).into());
+        let outputs = || [(rect(0, 0, 1536, 960), 1.25), (rect(1536, 0, 2560, 1440), 1.0)].into_iter();
+        assert_eq!(mostly_on(rect(100, 100, 800, 600), outputs()), Some(1.25));
+        assert_eq!(mostly_on(rect(1400, 100, 800, 600), outputs()), Some(1.0), "more of it on the monitor");
+        assert_eq!(mostly_on(rect(1536, 0, 800, 600), outputs()), Some(1.0), "touching the laptop's edge is not on it");
+        assert_eq!(mostly_on(rect(5000, 5000, 800, 600), outputs()), None, "on no output");
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 mod anim;
 mod apps;
+mod arrange;
 mod backend;
 mod calendar;
 mod capture;
@@ -125,6 +126,8 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     if !greeter {
         shell::plank::first_run(&config_path);
     }
+    // A display change the last run never got to keep or revert (it crashed on it, say).
+    displays::revert_displays();
     let mut state = State::new(&mut event_loop, display, nested, config::load(&config_path))?;
     let codes = state.config.keyboard.resolved().layout;
     state.read_layouts(&codes);
@@ -164,6 +167,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             if displays {
                 state.apply_displays();
             }
+            state.arm_display_revert();
             state.calendar_watch();
             state.desktop_start();
         }

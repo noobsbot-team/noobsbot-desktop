@@ -146,6 +146,20 @@ pub fn corner_at(p: Point<f64, Logical>, size: Size<i32, Logical>) -> Option<Cor
     }
 }
 
+/// A corner of the display at `geo` no other display touches: where one does, the pointer just crosses over (macOS
+/// fires no hot corner there either).
+pub fn open_corner(corner: Corner, geo: Rect, others: &[Rect]) -> bool {
+    let (right, bottom) = (geo.loc.x + geo.size.w - 1, geo.loc.y + geo.size.h - 1);
+    // The corner pixel and the way out of it.
+    let (x, y, dx, dy) = match corner {
+        Corner::TopLeft => (geo.loc.x, geo.loc.y, -1, -1),
+        Corner::TopRight => (right, geo.loc.y, 1, -1),
+        Corner::BottomLeft => (geo.loc.x, bottom, -1, 1),
+        Corner::BottomRight => (right, bottom, 1, 1),
+    };
+    ![(x + dx, y), (x, y + dy)].into_iter().any(|p| others.iter().any(|o| o.contains(Point::from(p))))
+}
+
 /// Hot corner state: the corner the pointer rests in and since when.
 #[derive(Default)]
 pub struct Corners {
@@ -261,8 +275,9 @@ impl State {
 
     /// The pointer moved to `at` (output-relative): resting in an active corner for `DELAY` triggers it.
     pub fn hot_corner_motion(&mut self, at: Point<f64, Logical>) {
-        let Some(size) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size) else { return };
-        let corner = corner_at(at, size).filter(|c| self.corner_action(*c).is_some());
+        let Some(geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
+        let others: Vec<Rect> = self.space.outputs().skip(1).filter_map(|o| self.space.output_geometry(o)).collect();
+        let corner = corner_at(at, geo.size).filter(|c| open_corner(*c, geo, &others) && self.corner_action(*c).is_some());
         let dragging = self.dragging();
         let entered = self.corners.motion(corner, dragging, Instant::now());
         // Left the corner (or entered another): its pending trigger goes.
@@ -391,6 +406,25 @@ mod tests {
         assert_eq!(corner_at((1919.0, 1078.0).into(), size), Some(Corner::BottomRight));
         assert_eq!(corner_at((0.0, 500.0).into(), size), None);
         assert_eq!(corner_at((10.0, 0.0).into(), size), None);
+    }
+
+    #[test]
+    fn corners_meeting_another_display_are_closed() {
+        let laptop = Rect::new((0, 0).into(), (1536, 960).into());
+        // A taller monitor on the right, tops aligned: both right corners lead onto it.
+        let monitor = Rect::new((1536, 0).into(), (2560, 1440).into());
+        assert!(open_corner(Corner::TopLeft, laptop, &[monitor]));
+        assert!(open_corner(Corner::BottomLeft, laptop, &[monitor]));
+        assert!(!open_corner(Corner::TopRight, laptop, &[monitor]));
+        assert!(!open_corner(Corner::BottomRight, laptop, &[monitor]));
+        // A shorter one, bottoms aligned: the top right corner is open again.
+        let short = Rect::new((1536, 460).into(), (800, 500).into());
+        assert!(open_corner(Corner::TopRight, laptop, &[short]));
+        assert!(!open_corner(Corner::BottomRight, laptop, &[short]));
+        // One above: the top corners are closed.
+        let above = Rect::new((0, -1000).into(), (1536, 1000).into());
+        assert!(!open_corner(Corner::TopLeft, laptop, &[above]) && !open_corner(Corner::TopRight, laptop, &[above]));
+        assert!(open_corner(Corner::TopRight, laptop, &[]));
     }
 
     #[test]

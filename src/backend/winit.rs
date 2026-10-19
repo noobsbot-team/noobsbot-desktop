@@ -114,7 +114,11 @@ impl State {
             let mut elements = if locked {
                 vec![views.wallpaper.element(&views.shaders, geo.size, dark)]
             } else {
-                render::scene(renderer, &views.shaders, &mut views.wallpaper, &mut self.text, &self.space, output, &self.config.appearance, Vec::new(), None)
+                // Its own ghosts of closing and minimising windows, in front of the windows.
+                let now = Instant::now();
+                views.ghosts.retain(|g| !g.anim.done(now));
+                let ghosts = views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, now, scale)).collect();
+                render::scene(renderer, &views.shaders, &mut views.wallpaper, &mut self.text, &self.space, output, &self.config.appearance, ghosts, None)
             };
             if let Some(alpha) = idle_shade {
                 elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
@@ -475,7 +479,7 @@ impl State {
         }
         // Ghosts of closing and minimising windows: behind the dock, in front of windows.
         ghosts.retain(|g| !g.anim.done(now));
-        bar.extend(ghosts.iter().map(|g| g.element(renderer, now, scale)));
+        bar.extend(ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, now, scale)));
         if let (Some(components), Some(geo)) = (components.as_mut(), self.space.output_geometry(output)) {
             bar.extend(components.elements(renderer, shaders, &mut self.text, &mut self.symbols, geo.size, dark, accent, appearance.glass_opacity, scale));
         }
@@ -645,9 +649,10 @@ impl State {
         feedback
     }
 
-    /// After a frame: drop what closed and send the replies.
+    /// After a frame: drop what closed, tell moved windows their scale and send the replies.
     pub fn frame_done(&mut self) {
         self.space.refresh();
+        self.send_scales();
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();
     }
