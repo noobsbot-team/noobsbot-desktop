@@ -153,7 +153,7 @@ fn set_keys(text: &str, table: &str, keys: &[(&str, String)]) -> String {
                 let mut depth = 0i32;
                 let mut last = i;
                 for (j, l) in lines.iter().enumerate().skip(i) {
-                    depth += l.matches('[').count() as i32 - l.matches(']').count() as i32;
+                    depth += config::bracket_depth(l);
                     last = j;
                     if depth <= 0 {
                         break;
@@ -366,6 +366,9 @@ mod tests {
         assert_eq!(out, "[appearance]\nmode = \"dark\"\n\n[dock]\n# Pinned apps.\nitems = [\"kitty\"]\nicon_size = 84\nzoom = true\n\n[bindings]\nx = \"y\"\n");
         // No [dock] table: added at the end.
         assert_eq!(set_keys("version = 1\n", "dock", &keys[1..2]), "version = 1\n\n[dock]\nicon_size = 84\n");
+        // Brackets in a quoted name or a comment don't end the array early.
+        let text = "[dock]\nitems = [\n  \"a]\", # ] not yet\n  'b[',\n]\nzoom = true\n";
+        assert_eq!(set_keys(text, "dock", &keys[..1]), "[dock]\nitems = [\"kitty\"]\nzoom = true\n");
         // The shipped defaults take it and still parse to the imported values.
         let out = set_keys(config::DEFAULT_TOML, "dock", &dock_keys(&parse_dump(DUMP), &launchers(), &[]));
         let parsed = config::parse(&out).expect("parses");

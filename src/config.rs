@@ -681,9 +681,27 @@ pub fn set_key(text: &str, table: &str, key: &str, value: &str) -> String {
     lines.concat()
 }
 
+/// How many `[` a TOML line opens minus the `]` it closes, brackets inside quotes or a comment not counted.
+pub fn bracket_depth(line: &str) -> i32 {
+    let (mut depth, mut quote, mut escaped) = (0, None, false);
+    for c in line.chars() {
+        match (quote, c) {
+            (Some(_), _) if escaped => escaped = false,
+            (Some('"'), '\\') => escaped = true,
+            (Some(q), c) if c == q => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(c),
+            (None, '#') => break,
+            (None, '[') => depth += 1,
+            (None, ']') => depth -= 1,
+            _ => {}
+        }
+    }
+    depth
+}
+
 /// `text` with `key = [items]` set in `[section]`, keeping every other line and comment; adds the section or the
 /// key when missing, and replaces a multi-line array whole.
-// ponytail: brackets inside quoted names or comments of a multi-line array would confuse the line scan.
 pub fn set_array(text: &str, section: &str, key: &str, items: &[String]) -> String {
     let quoted: Vec<String> = items.iter().map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))).collect();
     let value = format!("{key} = [{}]\n", quoted.join(", "));
@@ -705,8 +723,7 @@ pub fn set_array(text: &str, section: &str, key: &str, items: &[String]) -> Stri
             let mut depth = 0;
             let mut last = start;
             for (i, line) in lines.iter().enumerate().skip(start) {
-                let code = line.split('#').next().unwrap_or("");
-                depth += code.matches('[').count() as i32 - code.matches(']').count() as i32;
+                depth += bracket_depth(line);
                 last = i;
                 if depth <= 0 {
                     break;

@@ -1073,6 +1073,9 @@ mod tests {
         assert_eq!(set_items(text, &names), "# top\n[dock]\n# pinned\nitems = [\"kate\", \"say \\\"hi\\\"\"]\nzoom = true\n\n[bindings]\nitems = 1\n");
         assert_eq!(set_items("[dock]\nzoom = false", &names[..1]), "[dock]\nitems = [\"kate\"]\nzoom = false\n");
         assert_eq!(set_items("version = 1\n", &names[..1]), "version = 1\n\n[dock]\nitems = [\"kate\"]\n");
+        let tricky = "[dock]\nitems = [\n  \"a]\", # ] not yet\n  \"b\\\"[\",\n]\nzoom = true\n";
+        assert_eq!(set_items(tricky, &names[..1]), "[dock]\nitems = [\"kate\"]\nzoom = true\n", "brackets in quotes or comments");
+        assert_eq!(config::bracket_depth(r#"x = ["a]", 'b[', "\\"]"] # ]"#), 0);
         // The written file reads back as the new list.
         let config = config::parse(&set_items(config::DEFAULT_TOML, &names)).unwrap();
         assert_eq!(config.dock.items, names);
