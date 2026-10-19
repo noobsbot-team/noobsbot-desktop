@@ -633,6 +633,16 @@ pub fn repin(items: &[String], shown: &[usize], name: &str, from: Option<usize>,
     list.into_iter().map(|(s, _)| s).collect()
 }
 
+/// What releasing a dragged icon at `slot` does: `Some(Some(slot))` pins it there, `Some(None)` unpins it (dropped off
+/// the dock), `None` nothing. A builtin is never unpinned that way: nothing would bring it back.
+pub fn dropped(slot: Option<usize>, pinned: bool, pinnable: bool, builtin: bool) -> Option<Option<usize>> {
+    match slot {
+        Some(to) if pinnable => Some(Some(to)),
+        None if pinned && !builtin => Some(None),
+        _ => None,
+    }
+}
+
 /// `text` (a config.toml) with `[dock] items` set to `items`; every other line, comments included, is kept.
 pub fn set_items(text: &str, items: &[String]) -> String {
     config::set_array(text, "dock", "items", items)
@@ -805,13 +815,12 @@ impl State {
             return self.schedule_redraw();
         }
         let pinned = self.dock_pinned().iter().any(|(_, id)| *id == item.key);
-        match drag.slot {
-            Some(to) if item.app.is_some() || Builtin::of(&item.key).is_some() => self.dock_repin(&item.key, Some(to)),
-            None if pinned => {
-                self.dock_repin(&item.key, None);
+        let builtin = Builtin::of(&item.key).is_some();
+        if let Some(to) = dropped(drag.slot, pinned, item.app.is_some() || builtin, builtin) {
+            self.dock_repin(&item.key, to);
+            if to.is_none() {
                 self.dock_fx.poof(location);
             }
-            _ => {}
         }
         self.schedule_redraw();
     }
@@ -1022,6 +1031,15 @@ mod tests {
         let items = v(&["launchpad", "kate", "screenshot"]);
         assert_eq!(repin(&items, &[0, 1, 2], "helium", None, Some(3)), v(&["launchpad", "kate", "screenshot", "helium"]));
         assert_eq!(repin(&items, &[0, 1, 2], "helium", None, Some(1)), v(&["launchpad", "helium", "kate", "screenshot"]));
+    }
+
+    #[test]
+    fn dropping_off_the_dock_unpins_apps_only() {
+        assert_eq!(dropped(None, true, true, false), Some(None), "an app dragged off");
+        assert_eq!(dropped(None, true, true, true), None, "a builtin stays");
+        assert_eq!(dropped(None, false, true, false), None, "a running, unpinned app");
+        assert_eq!(dropped(Some(2), false, true, true), Some(Some(2)), "builtins still move");
+        assert_eq!(dropped(Some(0), false, false, false), None, "an uninstalled app can't be pinned");
     }
 
     #[test]
