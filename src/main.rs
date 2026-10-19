@@ -134,6 +134,10 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     config::watch(&config_path, move |config| tx.send(config).is_ok());
     event_loop.handle().insert_source(rx, |event, _, state| {
         if let channel::Event::Msg(config) = event {
+            // Our own saves (dock pins, icon size, appearance mode) come back through the watcher already applied.
+            if config == state.config {
+                return;
+            }
             tracing::info!("settings reloaded");
             if config.keyboard != state.config.keyboard
                 && let Some(keyboard) = state.seat.get_keyboard()
