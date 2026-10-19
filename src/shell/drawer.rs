@@ -11,6 +11,7 @@ use std::{
 
 use smithay::{
     input::keyboard::Keysym,
+    reexports::calloop::timer::{TimeoutAction, Timer},
     utils::{Logical, Point, Rectangle, Size},
 };
 
@@ -356,7 +357,13 @@ pub struct Drawer {
     pub menu: Option<(String, Point<i32, Logical>)>,
     /// Touchpad scrolling that hasn't made a whole row yet, in px.
     pub scroll_px: f64,
+    /// The category the pointer rests on, and since when: shown after `HOVER_DELAY` (crossing the sidebar on the
+    /// way to the list shouldn't flip through every one).
+    pub pending: Option<(Category, Instant)>,
 }
+
+/// How long the pointer rests on a category before it shows.
+pub const HOVER_DELAY: Duration = Duration::from_millis(150);
 
 /// What a key did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -383,6 +390,7 @@ impl Drawer {
             hover: None,
             menu: None,
             scroll_px: 0.0,
+            pending: None,
         }
     }
 
@@ -392,8 +400,26 @@ impl Drawer {
 
     /// Shows `category` from its top.
     pub fn show(&mut self, category: Category) {
-        (self.category, self.selected, self.scroll, self.scroll_px) = (category, 0, 0, 0.0);
+        (self.category, self.selected, self.scroll, self.scroll_px, self.pending) = (category, 0, 0, 0.0, None);
         self.field = TextField::default();
+    }
+
+    /// The pointer is over `category` at `now`: shown once it has rested there; `true` when it did.
+    pub fn rest_on(&mut self, category: Category, now: Instant) -> bool {
+        if category == self.category {
+            self.pending = None;
+            return false;
+        }
+        let since = match self.pending {
+            Some((c, since)) if c == category => since,
+            _ => now,
+        };
+        if now.duration_since(since) >= HOVER_DELAY {
+            self.show(category);
+            return true;
+        }
+        self.pending = Some((category, since));
+        false
     }
 
     /// Keeps the selection in view with `rows` rows showing.
@@ -698,18 +724,36 @@ impl State {
         let Some(d) = self.drawer.as_mut() else { return };
         let before = d.clone();
         d.hover = l.hit(to);
+        let mut arm = false;
         match d.hover {
             Some(Target::Row(i)) => {
-                (d.selected, d.sidebar) = (d.scroll + i, false);
+                (d.selected, d.sidebar, d.pending) = (d.scroll + i, false, None);
             }
             Some(Target::Category(i)) if !d.searching() => {
-                if let Some(&c) = shown.get(i).filter(|c| **c != d.category) {
-                    d.show(c);
+                if let Some(&c) = shown.get(i) {
+                    arm = !d.rest_on(c, Instant::now()) && d.pending.is_some();
                 }
             }
-            _ => {}
+            _ => d.pending = None,
+        }
+        if arm {
+            // Shows the category if the pointer stays put (no motion event would come to do it).
+            let _ = self.loop_handle.insert_source(Timer::from_duration(HOVER_DELAY), |_, _, state| {
+                state.drawer_settle();
+                TimeoutAction::Drop
+            });
         }
         if *d != before {
+            self.schedule_redraw();
+        }
+    }
+
+    /// The hover delay passed: shows the category the pointer still rests on.
+    fn drawer_settle(&mut self) {
+        let Some(d) = self.drawer.as_mut() else { return };
+        if let Some((c, _)) = d.pending
+            && d.rest_on(c, Instant::now())
+        {
             self.schedule_redraw();
         }
     }
@@ -883,6 +927,18 @@ mod tests {
         assert_eq!(load(&path).len(), 3, "a damaged line doesn't empty the list");
         assert_eq!(load(&recent_path), ["c", "a", "b"]);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn categories_show_after_resting() {
+        let mut d = Drawer::new(Anchor::Corner, Vec::new(), Vec::new());
+        let t0 = Instant::now();
+        assert!(!d.rest_on(Category::Games, t0), "not yet");
+        assert!(!d.rest_on(Category::Office, t0 + Duration::from_millis(100)), "moved on: the clock restarts");
+        assert!(!d.rest_on(Category::Office, t0 + Duration::from_millis(200)));
+        assert!(d.rest_on(Category::Office, t0 + Duration::from_millis(260)));
+        assert_eq!((d.category, d.pending), (Category::Office, None));
+        assert!(!d.rest_on(Category::Office, t0 + Duration::from_millis(500)), "already shown");
     }
 
     #[test]
