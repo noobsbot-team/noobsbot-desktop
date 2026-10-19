@@ -7,10 +7,14 @@ use smithay::{
     },
     desktop::{Window, WindowSurfaceType},
     input::{
-        keyboard::{FilterResult, Keysym, XkbConfig},
+        keyboard::{FilterResult, Keycode, Keysym, ModifiersState, XkbConfig},
         pointer::{self as ptr, AxisFrame, ButtonEvent, CursorIcon, GrabStartData},
     },
-    reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface},
+    reexports::{
+        calloop::timer::{TimeoutAction, Timer},
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_server::protocol::wl_surface::WlSurface,
+    },
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 
@@ -21,6 +25,15 @@ use crate::{
     state::State,
     wm::{self, Edges},
 };
+
+/// Key repeat, ours and the one apps are told: held this long, then once a `REPEAT_RATE`.
+pub const REPEAT_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
+pub const REPEAT_RATE: std::time::Duration = std::time::Duration::from_millis(33);
+
+/// Whether a key repeats while held: not a modifier, nor one whose repeat would act again (Return, Escape, Tab).
+pub fn repeats(sym: Keysym) -> bool {
+    !sym.is_modifier_key() && !matches!(sym, Keysym::Return | Keysym::KP_Enter | Keysym::Escape | Keysym::Tab | Keysym::ISO_Left_Tab)
+}
 
 /// Linux input code of the left mouse button.
 pub const BTN_LEFT: u32 = 0x110;
@@ -58,6 +71,66 @@ pub fn resize_icon(edges: Edges) -> CursorIcon {
 }
 
 impl State {
+    /// A key one of our surfaces takes before any app: the lock screen (every key while locked), an alert, the
+    /// screenshot overlay, the switcher, Force Quit, Mission Control, Spotlight, the emoji picker, an open popup's
+    /// Esc, the app drawer, Launchpad, a desktop icon's name. Overlays that take every key still let desktop
+    /// shortcuts through. True when the key was used.
+    fn shell_key(&mut self, sym: Keysym, raw: Keysym, mods: &ModifiersState) -> bool {
+        if self.locked() {
+            return self.lock_key(sym, mods.ctrl);
+        }
+        if self.alert_key(sym, mods.ctrl) {
+            return true;
+        }
+        let unbound = shortcuts::lookup(&self.bindings, mods, raw, self.nested).is_none();
+        if (self.screenshots.shot.is_some() && unbound && self.shot_key(sym))
+            || self.switcher_key(raw, mods)
+            || self.force_quit_key(sym)
+            || self.mission_key(sym)
+            || self.spotlight_key(sym, raw, mods)
+            || self.emoji_key(sym, raw, mods)
+            || (sym == Keysym::Escape && self.close_popup())
+        {
+            return true;
+        }
+        if self.drawer_open() && unbound {
+            self.drawer_key(sym, mods.ctrl);
+            return true;
+        }
+        if self.launchpad_open() && unbound {
+            self.launchpad_key(sym, mods.ctrl);
+            return true;
+        }
+        self.desktop_key(sym, mods.ctrl)
+    }
+
+    /// Repeats `sym` into the shell surface that took it while `code` stays down (D14), at the rate apps get; it
+    /// stops when the key goes up, another is pressed, or nothing of ours takes it any more.
+    fn start_repeat(&mut self, code: Keycode, sym: Keysym, raw: Keysym, mods: ModifiersState) {
+        if !repeats(sym) {
+            return;
+        }
+        let timer = Timer::from_duration(REPEAT_DELAY);
+        let token = self.loop_handle.insert_source(timer, move |_, _, state| {
+            if state.key_repeat.as_ref().is_some_and(|(c, _)| *c == code) && state.shell_key(sym, raw, &mods) {
+                state.schedule_redraw();
+                return TimeoutAction::ToDuration(REPEAT_RATE);
+            }
+            state.key_repeat = None;
+            TimeoutAction::Drop
+        });
+        match token {
+            Ok(token) => self.key_repeat = Some((code, token)),
+            Err(err) => tracing::warn!("key repeat: {err}"),
+        }
+    }
+
+    pub fn stop_repeat(&mut self) {
+        if let Some((_, token)) = self.key_repeat.take() {
+            self.loop_handle.remove(token);
+        }
+    }
+
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         self.idle_activity();
         // Clicks, scrolls and gestures with Super held aren't a Super tap; moving the pointer is fine.
@@ -75,6 +148,9 @@ impl State {
                     let logo = matches!(key.modified_sym(), Keysym::Super_L | Keysym::Super_R);
                     state.super_tap.key(logo, key_state == KeyState::Pressed, !mods.ctrl && !mods.alt && !mods.shift, std::time::Instant::now());
                     if key_state == KeyState::Released {
+                        if state.key_repeat.as_ref().is_some_and(|(c, _)| *c == code) {
+                            state.stop_repeat();
+                        }
                         state.switcher_release(mods);
                         // The release of a shortcut key never reaches the app, which never saw the press.
                         return match state.suppressed.iter().position(|c| *c == code) {
@@ -85,58 +161,22 @@ impl State {
                             None => FilterResult::Forward,
                         };
                     }
+                    // A new press ends the repeat of the last one, as on the app side.
+                    state.stop_repeat();
                     // Ctrl+Alt+F1…F12 on the real screen switch virtual terminals, whatever is open.
                     if state.switch_vt(key.modified_sym()) {
                         state.suppressed.push(code);
                         return FilterResult::Intercept(None);
                     }
-                    // Locked: the lock screen takes every key (or its client's lock surface gets them).
-                    if state.locked() {
-                        if state.lock_key(key.modified_sym(), mods.ctrl) {
-                            state.suppressed.push(code);
-                            return FilterResult::Intercept(None);
-                        }
-                        return FilterResult::Forward;
-                    }
-                    // An alert answers first (its field takes every key); then Esc closes an open menu-bar popup.
-                    if state.alert_key(key.modified_sym(), mods.ctrl) {
-                        state.suppressed.push(code);
-                        return FilterResult::Intercept(None);
-                    }
-                    // The app switcher takes every key while it's up; the Force Quit window its few.
                     let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
-                    // The screenshot overlay takes every key but desktop shortcuts (Super+Shift+5 closes it).
-                    let shot = state.screenshots.shot.is_some() && shortcuts::lookup(&state.bindings, mods, raw, state.nested).is_none();
-                    if (shot && state.shot_key(key.modified_sym()))
-                        || state.switcher_key(raw, mods)
-                        || state.force_quit_key(key.modified_sym())
-                        || state.mission_key(key.modified_sym())
-                        || state.spotlight_key(key.modified_sym(), raw, mods)
-                        || state.emoji_key(key.modified_sym(), raw, mods)
-                    {
+                    if state.shell_key(key.modified_sym(), raw, mods) {
                         state.suppressed.push(code);
+                        state.start_repeat(code, key.modified_sym(), raw, *mods);
                         return FilterResult::Intercept(None);
                     }
-                    if key.modified_sym() == Keysym::Escape && state.close_popup() {
-                        state.suppressed.push(code);
-                        return FilterResult::Intercept(None);
-                    }
-                    // So does the app drawer.
-                    if state.drawer_open() && shortcuts::lookup(&state.bindings, mods, raw, state.nested).is_none() {
-                        state.drawer_key(key.modified_sym(), mods.ctrl);
-                        state.suppressed.push(code);
-                        return FilterResult::Intercept(None);
-                    }
-                    // Launchpad takes every key but desktop shortcuts (its own binding closes it).
-                    if state.launchpad_open() && shortcuts::lookup(&state.bindings, mods, raw, state.nested).is_none() {
-                        state.launchpad_key(key.modified_sym(), mods.ctrl);
-                        state.suppressed.push(code);
-                        return FilterResult::Intercept(None);
-                    }
-                    // A desktop icon's name being edited takes every key; Return with no window focused renames.
-                    if state.desktop_key(key.modified_sym(), mods.ctrl) {
-                        state.suppressed.push(code);
-                        return FilterResult::Intercept(None);
+                    // Locked: the lock screen took every key, or its client's lock surface gets them.
+                    if state.locked() {
+                        return FilterResult::Forward;
                     }
                     // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
                     let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
@@ -406,5 +446,13 @@ mod tests {
         assert_eq!(e(true, false, true, false), CursorIcon::NwseResize);
         assert_eq!(e(false, true, false, true), CursorIcon::NwseResize);
         assert_eq!(e(false, true, true, false), CursorIcon::NeswResize);
+    }
+
+    #[test]
+    fn letters_arrows_and_backspace_repeat_modifiers_and_return_dont() {
+        assert!([Keysym::a, Keysym::Down, Keysym::BackSpace, Keysym::space, Keysym::Delete].into_iter().all(repeats));
+        assert!(![Keysym::Shift_L, Keysym::Control_R, Keysym::Super_L, Keysym::Return, Keysym::KP_Enter, Keysym::Escape, Keysym::Tab].into_iter().any(repeats));
+        // Delay then rate, as told to apps: 500 ms, 30/s.
+        assert_eq!((REPEAT_DELAY.as_millis(), 1000 / REPEAT_RATE.as_millis()), (500, 30));
     }
 }
