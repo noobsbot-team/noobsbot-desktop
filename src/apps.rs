@@ -279,6 +279,8 @@ pub fn data_dirs() -> Vec<PathBuf> {
 #[derive(Debug, Default)]
 pub struct Apps {
     apps: Vec<App>,
+    /// Lower-cased lookup keys → (how specific the key is, index into `apps`); built once so `find` is one hash probe.
+    index: HashMap<String, (u8, usize)>,
 }
 
 impl Apps {
@@ -309,7 +311,19 @@ impl Apps {
             }
         }
         apps.sort_by_cached_key(|a| a.name.to_lowercase());
-        Self { apps }
+        let mut index = HashMap::new();
+        for (i, a) in apps.iter().enumerate() {
+            let program = split_exec(&a.exec).first().map(|p| p.rsplit('/').next().unwrap_or(p).to_owned()).unwrap_or_default();
+            let keys = [Some(a.id.as_str()), a.wm_class.as_deref(), a.id.rsplit('.').next(), Some(program.as_str())];
+            for (tier, key) in keys.into_iter().enumerate() {
+                let Some(key) = key.filter(|k| !k.is_empty()) else { continue };
+                let entry = index.entry(key.to_ascii_lowercase()).or_insert((tier as u8, i));
+                if tier < usize::from(entry.0) {
+                    *entry = (tier as u8, i);
+                }
+            }
+        }
+        Self { apps, index }
     }
 
     /// Every app, by name; launchers skip `no_display` ones.
@@ -321,15 +335,7 @@ impl Apps {
     /// last part of a reverse-DNS id (`kate` → `org.kde.kate`), or the program `Exec` runs. Case-insensitive.
     pub fn find(&self, key: &str) -> Option<&App> {
         let key = key.strip_suffix(".desktop").unwrap_or(key);
-        let is = |s: &str| s.eq_ignore_ascii_case(key);
-        let program = |a: &App| split_exec(&a.exec).first().map(|p| p.rsplit('/').next().unwrap_or(p).to_owned()).unwrap_or_default();
-        self.apps
-            .iter()
-            .find(|a| a.id == key)
-            .or_else(|| self.apps.iter().find(|a| is(&a.id)))
-            .or_else(|| self.apps.iter().find(|a| a.wm_class.as_deref().is_some_and(is)))
-            .or_else(|| self.apps.iter().find(|a| a.id.rsplit('.').next().is_some_and(is)))
-            .or_else(|| self.apps.iter().find(|a| is(&program(a))))
+        self.index.get(&key.to_ascii_lowercase()).map(|&(_, i)| &self.apps[i])
     }
 }
 
@@ -730,9 +736,12 @@ mod tests {
         write(&user, "org.kde.dolphin.desktop", &entry("My Dolphin", "dolphin", ""));
         write(&system, "org.kde.dolphin.desktop", &entry("Dolphin", "dolphin", ""));
         write(&system, "kde/term.desktop", &entry("Term", "/usr/bin/noobsbot", "StartupWMClass=Noobsbot\n"));
+        write(&system, "a-wrapper.desktop", &entry("A wrapper", "kate --wrapped", ""));
         let apps = Apps::scan(&[user, system], "");
         let ids: Vec<&str> = apps.list().iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, ["org.kde.kate", "org.kde.dolphin", "kde-term"], "sorted by name, gone hidden");
+        assert_eq!(ids, ["a-wrapper", "org.kde.kate", "org.kde.dolphin", "kde-term"], "sorted by name, gone hidden");
+        assert_eq!(apps.find("KATE").map(|a| a.id.as_str()), Some("org.kde.kate"), "an id's last segment beats a program, whatever the sort order");
+        assert_eq!(apps.index.len(), 7, "one key per distinct id, wm class, id tail and program");
         assert_eq!(apps.find("org.kde.dolphin").map(|a| a.name.as_str()), Some("My Dolphin"));
         assert_eq!(apps.find("org.kde.kate.desktop").map(|a| a.id.as_str()), Some("org.kde.kate"));
         assert_eq!(apps.find("kate").map(|a| a.id.as_str()), Some("org.kde.kate"));
