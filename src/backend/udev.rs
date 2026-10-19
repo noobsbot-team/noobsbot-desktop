@@ -359,6 +359,16 @@ impl State {
         if !udev.session.is_active() {
             return;
         }
+        // The screen is "off": DPMS off and every plane cleared instead of a black frame; the next frame (input woke
+        // us) lights it up again. Black is as good as the lock's frame, so sleep need not wait for one.
+        if self.idle.stage >= crate::idle::Stage::Off {
+            if let Err(err) = screen.compositor.clear() {
+                tracing::warn!("{}: screen off: {err}", screen.output.name());
+            }
+            self.lock_frame_shown();
+            self.frame_done();
+            return;
+        }
         let started = Instant::now();
         let renderer = match card.render == primary {
             true => udev.gpus.single_renderer(&primary),

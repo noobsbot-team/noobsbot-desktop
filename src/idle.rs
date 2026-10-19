@@ -133,8 +133,9 @@ impl State {
         self.idle_arm();
     }
 
-    /// How dark the idle shade over everything is: dimmed, or black while the screen is "off".
-    /// ponytail: drawn, not the backlight or DPMS; the udev backend turns the panel off for real (M6).
+    /// How dark the idle shade over everything is: dimmed, or black while the screen is "off". On a real screen the
+    /// udev backend turns the panel off (DPMS) at `Off` instead of drawing the black; nested, the black stands in.
+    /// ponytail: `Dim` is drawn, not the backlight; wire it to brightness when the panel's dim looks wrong.
     pub fn idle_shade(&self) -> Option<f32> {
         match self.idle.stage {
             Stage::Active => None,
