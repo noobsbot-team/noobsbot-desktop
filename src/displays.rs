@@ -3,10 +3,10 @@
 //! to `displays.json` for System Settings.
 
 use smithay::{
-    desktop::layer_map_for_output,
+    desktop::{Window, layer_map_for_output},
     output::{Output, Scale},
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::Transform,
+    utils::{Logical, Rectangle, Transform},
     wayland::{
         compositor::{SurfaceData, send_surface_state},
         fractional_scale::with_fractional_scale,
@@ -142,8 +142,7 @@ impl State {
     /// Applies the display settings to every display, live: lights, darkens and modesets them (real screen), sets
     /// scale, rotation and position, puts the primary first (the shell draws on the first output), tells every
     /// window and panel its new scale, and rewrites `displays.json`. At start, on hotplug and on config reload.
-    // ponytail: windows keep their logical size (maximised ones aren't refitted), and every surface gets the primary
-    // display's scale; per-window scale when displays with different scales are both in use.
+    // ponytail: windows keep their logical size (maximised ones aren't refitted).
     pub fn apply_displays(&mut self) {
         let shown = match &self.device {
             Some(Device::Udev(_)) => self.udev_displays(),
@@ -175,22 +174,48 @@ impl State {
             self.space.map_output(output, (d.x, d.y));
             layer_map_for_output(output).arrange();
         }
-        let scale = lit.first().map_or(1.0, |(d, _)| d.scale);
-        let tell = |surface: &WlSurface, states: &SurfaceData| {
-            with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale));
-            send_surface_state(surface, states, scale.ceil() as i32, Transform::Normal);
-        };
-        for window in self.space.elements() {
-            window.with_surfaces(tell);
-        }
-        for (_, output) in &lit {
-            for layer in layer_map_for_output(output).layers() {
-                layer.with_surfaces(tell);
-            }
-        }
+        self.send_scales();
         write_info(&shown.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>());
         self.schedule_redraw();
     }
+
+    /// The output `window` is mostly on (its hidden-Space row folded away); `None` when it is on no output.
+    pub fn window_output(&self, window: &Window) -> Option<Output> {
+        let mut frame = self.space.element_geometry(window)?;
+        frame.loc.y -= self.window_row(window) * crate::spaces::STRIDE;
+        mostly_on(frame, self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.clone()))))
+    }
+
+    /// Tells every window the scale of the output it is mostly on (the first output's when it is on none) and every
+    /// panel its output's: after each frame, as windows move, and when displays change. Nothing is sent twice.
+    pub fn send_scales(&self) {
+        let tell = |scale: f64| {
+            move |surface: &WlSurface, states: &SurfaceData| {
+                with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale));
+                send_surface_state(surface, states, scale.ceil() as i32, Transform::Normal);
+            }
+        };
+        let first = self.space.outputs().next().cloned();
+        for window in self.space.elements() {
+            let scale = self.window_output(window).or_else(|| first.clone()).map_or(1.0, |o| o.current_scale().fractional_scale());
+            window.with_surfaces(tell(scale));
+        }
+        for output in self.space.outputs() {
+            let scale = output.current_scale().fractional_scale();
+            for layer in layer_map_for_output(output).layers() {
+                layer.with_surfaces(tell(scale));
+            }
+        }
+    }
+}
+
+/// Of `outputs`, the one `frame` overlaps most, if any.
+pub fn mostly_on<T>(frame: Rectangle<i32, Logical>, outputs: impl Iterator<Item = (Rectangle<i32, Logical>, T)>) -> Option<T> {
+    outputs
+        .filter_map(|(geo, output)| frame.intersection(geo).map(|i| (i64::from(i.size.w) * i64::from(i.size.h), output)))
+        .filter(|(area, _)| *area > 0)
+        .max_by_key(|(area, _)| *area)
+        .map(|(_, output)| output)
 }
 
 /// Rewrites `displays.json` when it changed.
@@ -352,6 +377,16 @@ mod tests {
         // Still touching: nothing moves.
         let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.25), ..Default::default() });
         assert_eq!((p[0].x, p[0].y, p[1].x, p[1].y), (0, 0, 1536, 0));
+    }
+
+    #[test]
+    fn a_window_belongs_to_the_output_it_overlaps_most() {
+        let rect = |x, y, w, h| Rectangle::<i32, Logical>::new((x, y).into(), (w, h).into());
+        let outputs = || [(rect(0, 0, 1536, 960), 1.25), (rect(1536, 0, 2560, 1440), 1.0)].into_iter();
+        assert_eq!(mostly_on(rect(100, 100, 800, 600), outputs()), Some(1.25));
+        assert_eq!(mostly_on(rect(1400, 100, 800, 600), outputs()), Some(1.0), "more of it on the monitor");
+        assert_eq!(mostly_on(rect(1536, 0, 800, 600), outputs()), Some(1.0), "touching the laptop's edge is not on it");
+        assert_eq!(mostly_on(rect(5000, 5000, 800, 600), outputs()), None, "on no output");
     }
 
     #[test]

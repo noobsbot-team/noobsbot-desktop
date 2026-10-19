@@ -645,9 +645,10 @@ impl State {
         feedback
     }
 
-    /// After a frame: drop what closed and send the replies.
+    /// After a frame: drop what closed, tell moved windows their scale and send the replies.
     pub fn frame_done(&mut self) {
         self.space.refresh();
+        self.send_scales();
         self.popups.cleanup();
         let _ = self.display_handle.flush_clients();
     }

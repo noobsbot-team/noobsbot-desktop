@@ -285,7 +285,7 @@ impl WlrLayerShellHandler for State {
 }
 
 impl FractionalScaleHandler for State {
-    /// ponytail: every surface gets the first output's scale (1.0 nested); per-output scales come with multi-monitor (M6).
+    /// The first output's scale to begin with; `send_scales` corrects it to its own output's after the next frame.
     fn new_fractional_scale(&mut self, surface: WlSurface) {
         let scale = self.space.outputs().next().map_or(1.0, |o| o.current_scale().fractional_scale());
         with_states(&surface, |states| with_fractional_scale(states, |fractional| fractional.set_preferred_scale(scale)));
