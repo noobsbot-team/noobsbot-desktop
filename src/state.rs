@@ -347,7 +347,15 @@ impl State {
         })?;
         // The menu-bar clock (E2.4): one redraw per minute (second, with seconds on), on the boundary.
         let tick = |state: &Self| crate::clock::until_next_tick(&chrono::Local::now(), state.config.clock.format.seconds);
+        // It also moves `auto` dark mode between day and night, apps included.
+        let mut was_dark = crate::render::is_dark(&config.appearance);
         handle.insert_source(Timer::from_duration(crate::clock::until_next_tick(&chrono::Local::now(), config.clock.format.seconds)), move |_, _, state| {
+            let appearance = &state.config.appearance;
+            let dark = crate::render::is_dark(appearance);
+            if dark != was_dark && appearance.mode == crate::config::Mode::Auto && appearance.theme_apps {
+                crate::theme::write_in_background(appearance.clone(), !state.nested);
+            }
+            was_dark = dark;
             state.schedule_redraw();
             TimeoutAction::ToDuration(tick(state))
         })?;

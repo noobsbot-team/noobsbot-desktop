@@ -441,12 +441,13 @@ impl State {
             // ponytail: Do Not Disturb lives in memory until it has a schedule in System Settings.
             Control::Dnd => self.dnd = !self.dnd,
             Control::Dark => {
+                let nested = self.nested;
                 let appearance = &mut self.config.appearance;
                 appearance.mode = if crate::render::is_dark(appearance) { Mode::Light } else { Mode::Dark };
                 // Saved, so the next live reload (System Settings saving anything) keeps it.
                 crate::config::save_key("appearance", "mode", if appearance.mode == Mode::Dark { "\"dark\"" } else { "\"light\"" });
                 if appearance.theme_apps {
-                    crate::theme::write_in_background(appearance.clone());
+                    crate::theme::write_in_background(appearance.clone(), !nested);
                 }
             }
             Control::Brightness | Control::Volume => {

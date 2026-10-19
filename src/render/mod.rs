@@ -126,9 +126,19 @@ pub fn window_title(window: &Window) -> String {
     titlebar::title_of(window)
 }
 
-/// Dark mode on? ponytail: `auto` is light until the Settings schedule exists (M7).
+/// Dark mode on? `auto` follows the clock.
 pub fn is_dark(appearance: &Appearance) -> bool {
-    appearance.mode == Mode::Dark
+    dark_at(appearance.mode, chrono::Timelike::hour(&chrono::Local::now()))
+}
+
+/// `mode` at `hour` o'clock: `auto` is dark from 19:00 to 07:00.
+// ponytail: fixed schedule; sunset/sunrise needs geoclue (E2.6) and the hours a Settings page.
+pub fn dark_at(mode: Mode, hour: u32) -> bool {
+    match mode {
+        Mode::Dark => true,
+        Mode::Light => false,
+        Mode::Auto => !(7..19).contains(&hour),
+    }
 }
 
 /// The accent colour (Part D's macOS set) in light or dark mode.
@@ -572,6 +582,13 @@ pub fn scene(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn auto_is_dark_at_night() {
+        assert!([0, 6, 19, 23].iter().all(|&h| dark_at(Mode::Auto, h)));
+        assert!([7, 12, 18].iter().all(|&h| !dark_at(Mode::Auto, h)));
+        assert!(dark_at(Mode::Dark, 12) && !dark_at(Mode::Light, 0));
+    }
 
     #[test]
     fn elevation_scale_matches_d6() {
