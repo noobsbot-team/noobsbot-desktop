@@ -195,7 +195,7 @@ fn draw(ui: &mut Ui, icons: &mut Icons, f: &Frame) -> Vec<(Arc<Rendered>, Rect)>
             ui.shape(*row, [ar, ag, ab, 1.0], 9.0);
         }
         let icon = Rectangle::new((row.loc.x + 10, row.loc.y + (row.size.h - layout::ICON) / 2).into(), (layout::ICON, layout::ICON).into());
-        app_icons.extend(icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).map(|p| (p, icon)));
+        app_icons.push((icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| super::dock::placeholder(px)), icon));
         let (main, side) = if on { (WHITE, [255, 255, 255, 214]) } else { (ui.label(), ui.secondary()) };
         let x = icon.loc.x + layout::ICON + 12;
         let star = if *favorite && f.current != Some(crate::shell::drawer::Category::Favorites) { 20 } else { 0 };

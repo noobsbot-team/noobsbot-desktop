@@ -263,7 +263,7 @@ impl State {
                 }
                 if shell
                     && (self.emoji_scroll(pos, amount(Axis::Vertical))
-                        || self.drawer_scroll(pos, amount(Axis::Vertical), wheel != 0.0)
+                        || self.drawer_scroll(pos, amount(Axis::Vertical), wheel)
                         || self.control_scroll(pos, amount(Axis::Vertical))
                         || self.menu_scroll(pos, amount(Axis::Vertical)))
                 {

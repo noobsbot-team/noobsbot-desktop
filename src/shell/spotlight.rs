@@ -78,10 +78,40 @@ impl Hit {
     }
 }
 
-/// How well `query` (lower case) matches `name`; higher is better, `None` is no match. Exact > prefix > a word's
-/// prefix > substring > fuzzy (the letters in order, the first at a word start; gaps cost).
+/// `s` lower-cased with Latin diacritics stripped ("Café" → "cafe"), so a search ignores both.
+// ponytail: Latin only, by table (no unicode-normalization crate); an NFD pass if other scripts come up.
+pub fn fold(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars().flat_map(char::to_lowercase) {
+        match c {
+            'æ' => out.push_str("ae"),
+            'œ' => out.push_str("oe"),
+            'ß' => out.push_str("ss"),
+            'à'..='å' | 'ā' | 'ă' | 'ą' => out.push('a'),
+            'ç' | 'ć' | 'č' => out.push('c'),
+            'ď' | 'đ' => out.push('d'),
+            'è'..='ë' | 'ē' | 'ę' | 'ě' => out.push('e'),
+            'ğ' => out.push('g'),
+            'ì'..='ï' | 'ī' | 'ı' => out.push('i'),
+            'ł' => out.push('l'),
+            'ñ' | 'ń' | 'ň' => out.push('n'),
+            'ò'..='ö' | 'ø' | 'ō' | 'ő' => out.push('o'),
+            'ř' => out.push('r'),
+            'ś' | 'š' | 'ş' => out.push('s'),
+            'ť' | 'ţ' => out.push('t'),
+            'ù'..='ü' | 'ū' | 'ů' | 'ű' => out.push('u'),
+            'ý' | 'ÿ' => out.push('y'),
+            'ź' | 'ż' | 'ž' => out.push('z'),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// How well `query` (folded, see `fold`) matches `name`; higher is better, `None` is no match. Exact > prefix > a
+/// word's prefix > substring > fuzzy (the letters in order, the first at a word start; gaps cost).
 pub fn score(name: &str, query: &str) -> Option<i32> {
-    let name = name.to_lowercase();
+    let name = fold(name);
     if query.is_empty() {
         return None;
     }
@@ -117,8 +147,7 @@ pub fn score(name: &str, query: &str) -> Option<i32> {
 
 /// An app's best score over its name and its program (`dolphin`, `kate`): the program only by prefix.
 pub fn app_score(app: &App, query: &str) -> Option<i32> {
-    let program = app.command().first().map(|p| p.rsplit('/').next().unwrap_or(p).to_lowercase());
-    let by_program = program.filter(|p| p.starts_with(query)).map(|_| 600);
+    let by_program = app.program().to_lowercase().starts_with(query).then_some(600);
     score(&app.name, query).max(by_program)
 }
 
@@ -127,7 +156,7 @@ pub fn app_score(app: &App, query: &str) -> Option<i32> {
 // ponytail: one linear scan per keystroke (a few hundred apps, well under a millisecond); an incremental matcher
 // (nucleo) only if the index grows to thousands.
 pub fn results(apps: &[App], query: &str) -> Vec<Hit> {
-    let query = query.trim().to_lowercase();
+    let query = fold(query.trim());
     if query.is_empty() {
         return Vec::new();
     }
@@ -294,8 +323,9 @@ impl State {
         match hit {
             Hit::App(app) => {
                 tracing::info!(app = app.id, "spotlight: launch");
-                self.spawn(&app.command());
-                self.remember_launch(&app.id);
+                if self.launch(Some(&app)) {
+                    self.remember_launch(&app.id);
+                }
             }
             Hit::Answer(answer) => {
                 let seat = self.seat.clone();
@@ -342,6 +372,10 @@ mod tests {
         assert_eq!(score("Helium", "lm"), None, "fuzzy starts at a word start");
         assert_eq!(score("Helium", "hx"), None);
         assert_eq!(score("Helium", ""), None);
+        // Accents don't matter, either way round.
+        assert_eq!(score("Café", "cafe"), Some(1000));
+        assert_eq!(score("Cafe", &fold("CAFÉ")), Some(1000));
+        assert_eq!(fold("Œuvre Straße Łódź"), "oeuvre strasse lodz");
     }
 
     #[test]

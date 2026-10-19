@@ -11,6 +11,7 @@ use std::{
 
 use smithay::{
     input::keyboard::Keysym,
+    reexports::calloop::timer::{TimeoutAction, Timer},
     utils::{Logical, Point, Rectangle, Size},
 };
 
@@ -174,7 +175,7 @@ pub fn rank(app: &App, query: &str) -> Option<i32> {
 /// Every launchable app matching `query`, best first (shorter names win ties, as in Spotlight).
 // ponytail: a linear scan per keystroke, as Spotlight does (a few hundred apps, well under a millisecond).
 pub fn search<'a>(apps: &'a [App], query: &str) -> Vec<&'a App> {
-    let query = query.trim().to_lowercase();
+    let query = crate::shell::spotlight::fold(query.trim());
     if query.is_empty() {
         return Vec::new();
     }
@@ -192,7 +193,9 @@ pub fn state_file(name: &str) -> PathBuf {
 
 /// The ids in `path`; none when it is missing.
 pub fn load(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path).unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
+    // Lossy: a damaged line costs that entry, not the whole file (which would then be overwritten empty).
+    let text = std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+    text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
 }
 
 pub fn save(path: &Path, ids: &[String]) {
@@ -225,6 +228,7 @@ pub mod layout {
     pub const BUTTON: i32 = 32;
     pub const SIDEBAR: i32 = 192;
     pub const CATEGORY: i32 = 30;
+    pub const CATEGORY_MIN: i32 = 22;
     pub const HEADER: i32 = 30;
     pub const ROW: i32 = 52;
     pub const ICON: i32 = 36;
@@ -310,8 +314,10 @@ pub fn layout(anchor: Anchor, output: Size<i32, Logical>, dock: i32, categories:
     let logo = Rectangle::new((strip_x, y + PAD).into(), (BUTTON, BUTTON).into());
     let session = std::array::from_fn(|i| Rectangle::new((strip_x, end - (3 - i as i32) * (BUTTON + 8) + 8).into(), (BUTTON, BUTTON).into()));
     let body = y + PAD + FIELD + PAD;
-    let fit = ((end - body) / CATEGORY).max(0) as usize;
-    let categories = (0..categories.min(fit) as i32).map(|i| Rectangle::new((left, body + i * CATEGORY).into(), (SIDEBAR - 12, CATEGORY).into())).collect();
+    // Short screen: the sidebar rows tighten (to the text's height) before any category is left out.
+    let row = ((end - body) / categories.max(1) as i32).clamp(CATEGORY_MIN, CATEGORY);
+    let fit = ((end - body) / row).max(0) as usize;
+    let categories = (0..categories.min(fit) as i32).map(|i| Rectangle::new((left, body + i * row).into(), (SIDEBAR - 12, row).into())).collect();
     let divider = Rectangle::new((left + SIDEBAR - 1, body).into(), (1, end - body).into());
     let list_x = left + SIDEBAR + 8;
     let list_w = x + w - PAD - list_x;
@@ -351,7 +357,13 @@ pub struct Drawer {
     pub menu: Option<(String, Point<i32, Logical>)>,
     /// Touchpad scrolling that hasn't made a whole row yet, in px.
     pub scroll_px: f64,
+    /// The category the pointer rests on, and since when: shown after `HOVER_DELAY` (crossing the sidebar on the
+    /// way to the list shouldn't flip through every one).
+    pub pending: Option<(Category, Instant)>,
 }
+
+/// How long the pointer rests on a category before it shows.
+pub const HOVER_DELAY: Duration = Duration::from_millis(150);
 
 /// What a key did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -378,6 +390,7 @@ impl Drawer {
             hover: None,
             menu: None,
             scroll_px: 0.0,
+            pending: None,
         }
     }
 
@@ -387,8 +400,26 @@ impl Drawer {
 
     /// Shows `category` from its top.
     pub fn show(&mut self, category: Category) {
-        (self.category, self.selected, self.scroll, self.scroll_px) = (category, 0, 0, 0.0);
+        (self.category, self.selected, self.scroll, self.scroll_px, self.pending) = (category, 0, 0, 0.0, None);
         self.field = TextField::default();
+    }
+
+    /// The pointer is over `category` at `now`: shown once it has rested there; `true` when it did.
+    pub fn rest_on(&mut self, category: Category, now: Instant) -> bool {
+        if category == self.category {
+            self.pending = None;
+            return false;
+        }
+        let since = match self.pending {
+            Some((c, since)) if c == category => since,
+            _ => now,
+        };
+        if now.duration_since(since) >= HOVER_DELAY {
+            self.show(category);
+            return true;
+        }
+        self.pending = Some((category, since));
+        false
     }
 
     /// Keeps the selection in view with `rows` rows showing.
@@ -538,6 +569,9 @@ impl State {
         self.close_spotlight();
         self.close_launchpad();
         self.emoji = None;
+        // With the dock hidden there's nothing to sit above: the corner is the screen's.
+        let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.h);
+        let anchor = if anchor == Anchor::Corner && !self.dock_shown() { Anchor::Dock((0, height).into()) } else { anchor };
         self.drawer = Some(Drawer::new(anchor, load(&state_file("favorites")), load(&state_file("recent-apps"))));
         self.schedule_redraw();
     }
@@ -571,8 +605,10 @@ impl State {
         let d = self.drawer.as_ref()?;
         let layout = self.drawer_layout()?;
         let apps = self.drawer_apps();
-        let rows: Vec<(App, bool)> = apps.iter().skip(d.scroll).take(layout.rows.len()).map(|a| ((*a).clone(), d.favorites.contains(&a.id))).collect();
-        let selected = d.selected.checked_sub(d.scroll).filter(|i| *i < rows.len() && !d.sidebar);
+        // The list may have shrunk under the scroll (an app uninstalled, a favorite removed): never past its end.
+        let first = d.scroll.min(apps.len().saturating_sub(layout.rows.len()));
+        let rows: Vec<(App, bool)> = apps.iter().skip(first).take(layout.rows.len()).map(|a| ((*a).clone(), d.favorites.contains(&a.id))).collect();
+        let selected = d.selected.checked_sub(first).filter(|i| *i < rows.len() && !d.sidebar);
         let empty = match (d.searching(), d.category) {
             (true, _) => "No Results",
             (false, Category::Favorites) => "Right-click an app to add it to Favorites",
@@ -586,7 +622,7 @@ impl State {
             field: d.field.clone(),
             hover: d.hover,
             count: apps.len(),
-            first: d.scroll,
+            first,
             rows,
             selected,
             empty,
@@ -619,8 +655,9 @@ impl State {
         self.close_drawer();
         if let Some(app) = app {
             tracing::info!(app = app.id, "app drawer: launch");
-            self.launch(Some(&app));
-            self.remember_launch(&app.id);
+            if self.launch(Some(&app)) {
+                self.remember_launch(&app.id);
+            }
         }
     }
 
@@ -687,28 +724,47 @@ impl State {
         let Some(d) = self.drawer.as_mut() else { return };
         let before = d.clone();
         d.hover = l.hit(to);
+        let mut arm = false;
         match d.hover {
             Some(Target::Row(i)) => {
-                (d.selected, d.sidebar) = (d.scroll + i, false);
+                (d.selected, d.sidebar, d.pending) = (d.scroll + i, false, None);
             }
             Some(Target::Category(i)) if !d.searching() => {
-                if let Some(&c) = shown.get(i).filter(|c| **c != d.category) {
-                    d.show(c);
+                if let Some(&c) = shown.get(i) {
+                    arm = !d.rest_on(c, Instant::now()) && d.pending.is_some();
                 }
             }
-            _ => {}
+            _ => d.pending = None,
+        }
+        if arm {
+            // Shows the category if the pointer stays put (no motion event would come to do it).
+            let _ = self.loop_handle.insert_source(Timer::from_duration(HOVER_DELAY), |_, _, state| {
+                state.drawer_settle();
+                TimeoutAction::Drop
+            });
         }
         if *d != before {
             self.schedule_redraw();
         }
     }
 
-    /// Scrolling over the list: `dy` px (a wheel step counts as most of a row). `true`: taken.
-    pub fn drawer_scroll(&mut self, location: Point<f64, Logical>, dy: f64, wheel: bool) -> bool {
+    /// The hover delay passed: shows the category the pointer still rests on.
+    fn drawer_settle(&mut self) {
+        let Some(d) = self.drawer.as_mut() else { return };
+        if let Some((c, _)) = d.pending
+            && d.rest_on(c, Instant::now())
+        {
+            self.schedule_redraw();
+        }
+    }
+
+    /// Scrolling over the list: `dy` px, or `wheel` notches in v120 units (one is a row). `true`: taken.
+    pub fn drawer_scroll(&mut self, location: Point<f64, Logical>, dy: f64, wheel: f64) -> bool {
         let Some(l) = self.drawer_layout().filter(|l| l.rect.to_f64().contains(location)) else { return false };
         let count = self.drawer_apps().len();
         let Some(d) = self.drawer.as_mut() else { return false };
-        d.scroll_px += if wheel { dy * 3.0 } else { dy };
+        // A wheel notch (120 in v120 units) is one row; a finger moves by pixels.
+        d.scroll_px += if wheel != 0.0 { wheel / 120.0 * f64::from(layout::ROW) } else { dy };
         let rows = (d.scroll_px / f64::from(layout::ROW)).trunc();
         if rows != 0.0 {
             d.scroll_px -= rows * f64::from(layout::ROW);
@@ -728,7 +784,7 @@ impl State {
     }
 
     fn docked(&self, id: &str) -> bool {
-        self.config.dock.items.iter().any(|name| self.apps.find(name).is_some_and(|a| a.id == id))
+        self.dock_pinned().iter().any(|(_, key)| key == id)
     }
 
     /// The right-click menu's rows (empty without one).
@@ -757,17 +813,18 @@ impl State {
                 save(&state_file("favorites"), &d.favorites);
             }
             Command::Dock => {
-                let to = (!self.docked(&app.id)).then(|| self.config.dock.items.iter().filter(|n| self.apps.find(n).is_some()).count());
+                let to = (!self.docked(&app.id)).then(|| self.dock_pinned().len());
                 self.dock_repin(&app.id, to);
             }
             Command::Desktop => {
                 let Some(dir) = crate::shell::desktop::user_dir() else { return };
                 let Some(name) = app.path.file_name() else { return };
                 let to = dir.join(name);
-                // Executable: file managers only run launchers their owner marked trusted.
-                let copied = std::fs::copy(&app.path, &to).and_then(|_| {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755))
+                // Executable: file managers only run launchers their owner marked trusted. Never over something
+                // already there (the owner's own edited copy).
+                let copied = std::fs::read(&app.path).and_then(|bytes| {
+                    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+                    std::fs::File::options().write(true).create_new(true).mode(0o755).open(&to)?.write_all(&bytes)
                 });
                 if let Err(err) = copied {
                     tracing::warn!("app drawer: {} to {}: {err}", app.path.display(), to.display());
@@ -867,8 +924,22 @@ mod tests {
         save(&recent_path, &recent);
         std::fs::write(&path, "# comment\n\nkate\n  dolphin \n").unwrap();
         assert_eq!(load(&path), ["kate", "dolphin"]);
+        std::fs::write(&path, b"kate\n\xff\xfe\ndolphin\n").unwrap();
+        assert_eq!(load(&path).len(), 3, "a damaged line doesn't empty the list");
         assert_eq!(load(&recent_path), ["c", "a", "b"]);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn categories_show_after_resting() {
+        let mut d = Drawer::new(Anchor::Corner, Vec::new(), Vec::new());
+        let t0 = Instant::now();
+        assert!(!d.rest_on(Category::Games, t0), "not yet");
+        assert!(!d.rest_on(Category::Office, t0 + Duration::from_millis(100)), "moved on: the clock restarts");
+        assert!(!d.rest_on(Category::Office, t0 + Duration::from_millis(200)));
+        assert!(d.rest_on(Category::Office, t0 + Duration::from_millis(260)));
+        assert_eq!((d.category, d.pending), (Category::Office, None));
+        assert!(!d.rest_on(Category::Office, t0 + Duration::from_millis(500)), "already shown");
     }
 
     #[test]
@@ -976,11 +1047,27 @@ mod tests {
         assert_eq!((at.rect.loc.x, at.rect.loc.y + at.rect.size.h), (960 - 360, 982));
         assert_eq!(layout(Anchor::Dock((30, 990).into()), size, 101, 12).rect.loc.x, 8);
         assert_eq!(layout(Anchor::Dock((1900, 990).into()), size, 101, 12).rect.loc.x, 1920 - 8 - 720);
-        // A short screen: it shrinks below the menu bar, with fewer rows and categories.
+        // The dock hidden (`open_drawer` anchors at the screen's corner): down to the edge, the dock's height not kept.
+        let hidden = layout(Anchor::Dock((0, 1080).into()), size, 101, 12);
+        assert_eq!((hidden.rect.loc.x, hidden.rect.loc.y + hidden.rect.size.h), (8, 1080 - 8));
+        // A laptop screen: every category gets a row in the sidebar.
+        for (size, dock) in [((1366, 768), 101), ((1280, 720), 150)] {
+            let l = layout(Anchor::Corner, Size::from(size), dock, Category::ALL.len());
+            assert_eq!(l.categories.len(), Category::ALL.len(), "{size:?}");
+            assert!(
+                l.categories
+                    .iter()
+                    .all(|c| l.rect.contains_rect(*c) && c.loc.x + c.size.w <= l.divider.loc.x && c.loc.y + c.size.h <= l.divider.loc.y + l.divider.size.h)
+            );
+        }
+        // A short screen: it shrinks below the menu bar, with fewer rows and tighter categories; shorter still, fewer.
         let short = layout(Anchor::Corner, Size::from((1280, 600)), 101, 15);
         assert_eq!(short.rect.loc.y, menubar::HEIGHT + layout::GAP);
-        assert!(short.rows.len() < 8 && short.categories.len() < 15);
+        assert!(short.rows.len() < 8 && short.categories.len() == 15 && short.categories[0].size.h < layout::CATEGORY);
         assert!(short.categories.iter().chain(&short.rows).all(|r| short.rect.contains_rect(*r)));
+        let tiny = layout(Anchor::Corner, Size::from((1280, 400)), 101, 15);
+        assert!(tiny.categories.len() < 15 && tiny.categories[0].size.h == layout::CATEGORY_MIN);
+        assert!(tiny.categories.iter().all(|r| tiny.rect.contains_rect(*r)));
         // A narrow screen: as wide as fits.
         assert_eq!(layout(Anchor::Corner, Size::from((640, 800)), 101, 3).rect.size.w, 624);
     }

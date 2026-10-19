@@ -4,6 +4,7 @@
 //! function (Plank's geometry) so drawing and clicks share it.
 
 use std::{
+    cell::RefCell,
     io::Read,
     os::fd::AsFd,
     sync::{
@@ -15,7 +16,7 @@ use std::{
 
 use smithay::{
     desktop::Window,
-    reexports::wayland_server::{Resource, protocol::wl_data_source::WlDataSource},
+    reexports::wayland_server::protocol::wl_data_source::WlDataSource,
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::{compositor::with_states, selection::data_device::with_source_metadata, shell::xdg::XdgToplevelSurfaceData},
 };
@@ -32,7 +33,7 @@ use crate::{
 /// Icons never shrink below this to fit the screen (D13).
 pub const MIN_ICON: i32 = 32;
 /// Plank's largest icon size (Ctrl+scroll stops there).
-const MAX_ICON: i32 = 128;
+pub const MAX_ICON: i32 = 128;
 /// The bar stands behind the lower half of the icons only; the top half rises above it (our look).
 const BAR_COVER: f64 = 0.5;
 
@@ -101,7 +102,8 @@ pub fn layout(n: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, progre
             }
         }
         let size = (scale * s).round();
-        icons.push(Rectangle::new((centre - size / 2.0, h - bottom - size).into(), (size, size).into()));
+        // Whole pixels: an icon drawn at a fractional x is resampled blurry; its column keeps the exact centre.
+        icons.push(Rectangle::new(((centre - size / 2.0).round(), h - bottom - size).into(), (size, size).into()));
         columns.push((centre - (size + pad) / 2.0, centre + (size + pad) / 2.0));
     }
     let (start, end) = (columns.first().map_or(left, |c| c.0), columns.last().map_or(left, |c| c.1));
@@ -238,15 +240,33 @@ const BTN_RIGHT: u32 = 0x111;
 /// Plank's LONG_PRESS_TIME: a press held this long without moving clicks nothing.
 const LONG_PRESS: Duration = Duration::from_millis(750);
 
+/// What a window resolved to under one `Apps` load (`State::apps_epoch`): its `app_key`, the item key and the app.
+#[derive(Default)]
+struct Resolved {
+    epoch: u64,
+    raw: String,
+    key: String,
+    app: Option<App>,
+}
+
 impl State {
-    /// The app a window belongs to: its app id, else (noobsbot and others set none) its process name.
+    /// The app a window belongs to: its app id, else (noobsbot and others set none) its program's name.
     pub fn app_key(&self, window: &Window) -> Option<String> {
-        let toplevel = window.toplevel()?;
-        let id = with_states(toplevel.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.app_id.clone()));
-        id.filter(|id| !id.is_empty()).or_else(|| {
-            let pid = toplevel.wl_surface().client()?.get_credentials(&self.display_handle).ok()?.pid;
-            Some(std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?.trim().to_owned())
-        })
+        self.app_id(window)
+    }
+
+    /// The dock item a window belongs to: its `app_key` resolved by `Apps::find` (the app's id, else the key as it
+    /// is), kept on the window for one `Apps` load, since every pointer motion over the dock asks.
+    pub fn dock_key(&self, window: &Window) -> Option<(String, Option<App>)> {
+        let raw = self.app_key(window)?;
+        let cache: &RefCell<Resolved> = window.user_data().get_or_insert(Default::default);
+        let mut r = cache.borrow_mut();
+        if (r.epoch, &r.raw) != (self.apps_epoch, &raw) || r.raw.is_empty() {
+            let app = self.apps.find(&raw).cloned();
+            let key = app.as_ref().map_or_else(|| raw.clone(), |a| a.id.clone());
+            *r = Resolved { epoch: self.apps_epoch, raw, key, app };
+        }
+        Some((r.key.clone(), r.app.clone()))
     }
 
     /// Whether `window` is on the current Space (shown, or minimised from it).
@@ -271,12 +291,10 @@ impl State {
         windows.retain(|w| !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w)));
         windows.sort_by_key(seen);
         for window in windows {
-            let Some(raw) = self.app_key(&window) else { continue };
-            let app = self.apps.find(&raw);
-            let key = app.map_or(raw, |a| a.id.clone());
+            let Some((key, app)) = self.dock_key(&window) else { continue };
             match items.iter_mut().find(|i| i.key == key) {
                 Some(item) => item.windows.push(window),
-                None if !dock.pinned_only => items.push(Item { key, app: app.cloned(), windows: vec![window] }),
+                None if !dock.pinned_only => items.push(Item { key, app, windows: vec![window] }),
                 None => {}
             }
         }
@@ -365,7 +383,8 @@ impl State {
             return self.dock_builtin(builtin, &item.key);
         }
         if new || item.windows.is_empty() {
-            return self.launch(item.app.as_ref());
+            self.launch(item.app.as_ref());
+            return;
         }
         self.dock_fx.clicked(item.key.clone());
         self.dock_activate(item);
@@ -419,15 +438,18 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// Starts `app` from its `Exec` line, with Plank's launch bounce.
-    // ponytail: Terminal=true apps start without a terminal.
-    pub fn launch(&mut self, app: Option<&App>) {
-        let Some(app) = app else { return };
+    /// Starts `app` from its `Exec` line, with Plank's launch bounce. `false`: it didn't start (no bounce either).
+    // ponytail: Terminal=true apps start without a terminal (noobsbot terminal has no `-e`; wrap once it does).
+    pub fn launch(&mut self, app: Option<&App>) -> bool {
+        let Some(app) = app else { return false };
         tracing::info!(app = app.id, "dock: launch");
-        self.dock_fx.launched(app.id.clone());
         self.dock_fx.tip_hidden = true;
         self.schedule_redraw();
-        self.spawn(&app.command());
+        let started = self.spawn(&app.command()).is_some();
+        if started {
+            self.dock_fx.launched(app.id.clone());
+        }
+        started
     }
 
     /// A wheel step over the dock (`dir` > 0: down or right, < 0: up or left, 0: touchpad scrolling, swallowed):
@@ -602,18 +624,25 @@ pub fn slot(layout: &Layout, x: f64, max: usize) -> usize {
 }
 
 /// `[dock] items` after moving `name` to shown slot `to` (`None`: unpinning it). `shown[i]` is the index in `items` of
-/// the i-th pinned icon on the dock, `from` the dragged icon's slot if it is pinned. Entries for apps that aren't
-/// installed keep their place.
-pub fn repin(items: &[String], shown: &[usize], name: &str, from: Option<usize>, to: Option<usize>) -> Vec<String> {
-    let mut list: Vec<(String, bool)> = items.iter().enumerate().map(|(i, s)| (s.clone(), shown.contains(&i))).collect();
-    if let Some(at) = from.and_then(|f| shown.get(f)) {
-        list.remove(*at);
-    }
+/// the i-th pinned icon on the dock, `drop` the indices of every entry naming the moved icon (`kate` and
+/// `org.kde.kate` both). Entries for apps that aren't installed keep their place.
+pub fn repin(items: &[String], shown: &[usize], name: &str, drop: &[usize], to: Option<usize>) -> Vec<String> {
+    let mut list: Vec<(String, bool)> = items.iter().enumerate().filter(|(i, _)| !drop.contains(i)).map(|(i, s)| (s.clone(), shown.contains(&i))).collect();
     if let Some(to) = to {
         let at = list.iter().enumerate().filter(|(_, (_, shown))| *shown).nth(to).map_or(list.len(), |(i, _)| i);
         list.insert(at, (name.to_owned(), true));
     }
     list.into_iter().map(|(s, _)| s).collect()
+}
+
+/// What releasing a dragged icon at `slot` does: `Some(Some(slot))` pins it there, `Some(None)` unpins it (dropped off
+/// the dock), `None` nothing. A builtin is never unpinned that way: nothing would bring it back.
+pub fn dropped(slot: Option<usize>, pinned: bool, pinnable: bool, builtin: bool) -> Option<Option<usize>> {
+    match slot {
+        Some(to) if pinnable => Some(Some(to)),
+        None if pinned && !builtin => Some(None),
+        _ => None,
+    }
 }
 
 /// `text` (a config.toml) with `[dock] items` set to `items`; every other line, comments included, is kept.
@@ -627,12 +656,16 @@ pub fn uri_list(text: &str) -> Vec<String> {
 }
 
 impl State {
+    /// The item key a `[dock] items` entry pins: a builtin, or the app it names (`None`: not installed).
+    fn pin_key(&self, name: &str) -> Option<String> {
+        if Builtin::of(name).is_some() { Some(name.to_owned()) } else { self.apps.find(name).map(|a| a.id.clone()) }
+    }
+
     /// The pinned icons on the dock: (index in `[dock] items`, item key), left to right.
-    fn dock_pinned(&self) -> Vec<(usize, String)> {
+    pub(crate) fn dock_pinned(&self) -> Vec<(usize, String)> {
         let mut pinned: Vec<(usize, String)> = Vec::new();
         for (i, name) in self.config.dock.items.iter().enumerate() {
-            let key = if Builtin::of(name).is_some() { Some(name.clone()) } else { self.apps.find(name).map(|a| a.id.clone()) };
-            if let Some(key) = key.filter(|k| !pinned.iter().any(|(_, p)| p == k)) {
+            if let Some(key) = self.pin_key(name).filter(|k| !pinned.iter().any(|(_, p)| p == k)) {
                 pinned.push((i, key));
             }
         }
@@ -737,10 +770,9 @@ impl State {
 
     /// Moves `key` to pinned slot `to`, or unpins it, and saves `[dock] items`.
     pub fn dock_repin(&mut self, key: &str, to: Option<usize>) {
-        let pinned = self.dock_pinned();
-        let shown: Vec<usize> = pinned.iter().map(|(i, _)| *i).collect();
-        let from = pinned.iter().position(|(_, id)| id == key);
-        let items = repin(&self.config.dock.items, &shown, key, from, to);
+        let shown: Vec<usize> = self.dock_pinned().iter().map(|(i, _)| *i).collect();
+        let drop: Vec<usize> = self.config.dock.items.iter().enumerate().filter(|(_, n)| self.pin_key(n).as_deref() == Some(key)).map(|(i, _)| i).collect();
+        let items = repin(&self.config.dock.items, &shown, key, &drop, to);
         if items == self.config.dock.items {
             return;
         }
@@ -788,13 +820,12 @@ impl State {
             return self.schedule_redraw();
         }
         let pinned = self.dock_pinned().iter().any(|(_, id)| *id == item.key);
-        match drag.slot {
-            Some(to) if item.app.is_some() || Builtin::of(&item.key).is_some() => self.dock_repin(&item.key, Some(to)),
-            None if pinned => {
-                self.dock_repin(&item.key, None);
+        let builtin = Builtin::of(&item.key).is_some();
+        if let Some(to) = dropped(drag.slot, pinned, item.app.is_some() || builtin, builtin) {
+            self.dock_repin(&item.key, to);
+            if to.is_none() {
                 self.dock_fx.poof(location);
             }
-            _ => {}
         }
         self.schedule_redraw();
     }
@@ -890,7 +921,8 @@ mod tests {
         let f: f64 = 88.0 / 126.0;
         assert_eq!(l.icons[4].size.w, (84.0 * (1.0 + (1.0 - f * f) * 0.5)).round());
         let shift = 88.0 * 0.5 * (1.0 - f / 3.0);
-        assert!((l.icons[4].loc.x + l.icons[4].size.w / 2.0 - (1004.0 + shift)).abs() < 1e-9);
+        assert!((l.icons[4].loc.x + l.icons[4].size.w / 2.0 - (1004.0 + shift)).abs() <= 0.5, "placed on a whole pixel");
+        assert_eq!(l.icons[4].loc.x.fract(), 0.0);
         // Out of reach (126 px): unzoomed, pushed aside by 126 × 0.5 × 2/3 = 42 px.
         assert_eq!(l.icons[7].size.w, 84.0);
         assert_eq!(l.icons[7].loc.x, flat.icons[7].loc.x + 42.0);
@@ -995,12 +1027,29 @@ mod tests {
         // chrome and vscode aren't installed: shown slots 0, 1, 2 are kate, dolphin, kitty.
         let shown = [1, 3, 4];
         let v = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(repin(&items, &shown, "kitty", Some(2), Some(0)), v(&["chrome", "kitty", "kate", "vscode", "dolphin"]));
-        assert_eq!(repin(&items, &shown, "kate", Some(0), Some(2)), v(&["chrome", "vscode", "dolphin", "kitty", "kate"]));
-        assert_eq!(repin(&items, &shown, "dolphin", Some(1), None), v(&["chrome", "kate", "vscode", "kitty"]));
+        assert_eq!(repin(&items, &shown, "kitty", &[4], Some(0)), v(&["chrome", "kitty", "kate", "vscode", "dolphin"]));
+        assert_eq!(repin(&items, &shown, "kate", &[1], Some(2)), v(&["chrome", "vscode", "dolphin", "kitty", "kate"]));
+        assert_eq!(repin(&items, &shown, "dolphin", &[3], None), v(&["chrome", "kate", "vscode", "kitty"]));
         // A running app pinned between kate and dolphin.
-        assert_eq!(repin(&items, &shown, "helium", None, Some(1)), v(&["chrome", "kate", "vscode", "helium", "dolphin", "kitty"]));
-        assert_eq!(repin(&items, &shown, "helium", None, Some(3)), v(&["chrome", "kate", "vscode", "dolphin", "kitty", "helium"]));
+        assert_eq!(repin(&items, &shown, "helium", &[], Some(1)), v(&["chrome", "kate", "vscode", "helium", "dolphin", "kitty"]));
+        assert_eq!(repin(&items, &shown, "helium", &[], Some(3)), v(&["chrome", "kate", "vscode", "dolphin", "kitty", "helium"]));
+        // "Add to Dock": the slot after every pinned icon, builtins counted (counting apps alone landed before them).
+        let items = v(&["launchpad", "kate", "screenshot"]);
+        assert_eq!(repin(&items, &[0, 1, 2], "helium", &[], Some(3)), v(&["launchpad", "kate", "screenshot", "helium"]));
+        assert_eq!(repin(&items, &[0, 1, 2], "helium", &[], Some(1)), v(&["launchpad", "helium", "kate", "screenshot"]));
+        // Two entries naming one app (only the first is shown): unpinning drops both, else the other took its place.
+        let items = v(&["kate", "org.kde.kate", "dolphin"]);
+        assert_eq!(repin(&items, &[0, 2], "org.kde.kate", &[0, 1], None), v(&["dolphin"]));
+        assert_eq!(repin(&items, &[0, 2], "org.kde.kate", &[0, 1], Some(1)), v(&["dolphin", "org.kde.kate"]));
+    }
+
+    #[test]
+    fn dropping_off_the_dock_unpins_apps_only() {
+        assert_eq!(dropped(None, true, true, false), Some(None), "an app dragged off");
+        assert_eq!(dropped(None, true, true, true), None, "a builtin stays");
+        assert_eq!(dropped(None, false, true, false), None, "a running, unpinned app");
+        assert_eq!(dropped(Some(2), false, true, true), Some(Some(2)), "builtins still move");
+        assert_eq!(dropped(Some(0), false, false, false), None, "an uninstalled app can't be pinned");
     }
 
     #[test]
@@ -1024,10 +1073,21 @@ mod tests {
         assert_eq!(set_items(text, &names), "# top\n[dock]\n# pinned\nitems = [\"kate\", \"say \\\"hi\\\"\"]\nzoom = true\n\n[bindings]\nitems = 1\n");
         assert_eq!(set_items("[dock]\nzoom = false", &names[..1]), "[dock]\nitems = [\"kate\"]\nzoom = false\n");
         assert_eq!(set_items("version = 1\n", &names[..1]), "version = 1\n\n[dock]\nitems = [\"kate\"]\n");
+        let tricky = "[dock]\nitems = [\n  \"a]\", # ] not yet\n  \"b\\\"[\",\n]\nzoom = true\n";
+        assert_eq!(set_items(tricky, &names[..1]), "[dock]\nitems = [\"kate\"]\nzoom = true\n", "brackets in quotes or comments");
+        assert_eq!(config::bracket_depth(r#"x = ["a]", 'b[', "\\"]"] # ]"#), 0);
         // The written file reads back as the new list.
         let config = config::parse(&set_items(config::DEFAULT_TOML, &names)).unwrap();
         assert_eq!(config.dock.items, names);
         assert_eq!(uri_list("# c\r\nfile:///a.desktop\r\n\r\nfile:///b\n"), ["file:///a.desktop", "file:///b"]);
+    }
+
+    #[test]
+    fn program_names_are_not_cut_short() {
+        // This test binary's own name is longer than comm's 15 chars.
+        let exe = std::env::current_exe().unwrap().file_name().unwrap().to_str().unwrap().to_owned();
+        assert_eq!(crate::state::program_name(std::process::id() as i32).as_deref(), Some(exe.as_str()));
+        assert_eq!(crate::state::program_name(i32::MAX), None);
     }
 
     #[test]

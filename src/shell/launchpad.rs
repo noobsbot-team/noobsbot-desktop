@@ -285,8 +285,9 @@ impl State {
     fn launchpad_launch(&mut self, app: Option<App>) {
         if let Some(app) = app {
             tracing::info!(app = app.id, "launchpad: launch");
-            self.launch(Some(&app));
-            self.remember_launch(&app.id);
+            if self.launch(Some(&app)) {
+                self.remember_launch(&app.id);
+            }
         }
         self.close_launchpad();
     }

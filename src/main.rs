@@ -123,7 +123,8 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;
     let config_path = config::path();
-    if !greeter {
+    // Not nested: a test run never writes the owner's config.
+    if !greeter && !nested {
         shell::plank::first_run(&config_path);
     }
     // A display change the last run never got to keep or revert (it crashed on it, say).
