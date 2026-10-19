@@ -31,6 +31,31 @@ const BOTTOM: f32 = 80.0 / 255.0;
 /// Drawn when an app's icon isn't in any theme.
 const FALLBACK_ICON: &str = "application-x-executable";
 
+/// A grey rounded square, `px` wide, for when the theme has no `FALLBACK_ICON` either: an app is never iconless.
+pub fn placeholder(px: u32) -> Arc<Rendered> {
+    // ponytail: a few sizes ever get asked for (one per zoom level and scale), so a list stands in for a map.
+    static CACHE: std::sync::Mutex<Vec<(u32, Arc<Rendered>)>> = std::sync::Mutex::new(Vec::new());
+    let mut cache = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((_, r)) = cache.iter().find(|(p, _)| *p == px) {
+        return r.clone();
+    }
+    let (size, radius) = (px as f64, px as f64 * 0.22);
+    let mut pixels = Vec::with_capacity((px * px * 4) as usize);
+    for y in 0..px {
+        for x in 0..px {
+            let (cx, cy) = (f64::from(x) + 0.5, f64::from(y) + 0.5);
+            // Distance past the corner circle's centre, 0 along the edges.
+            let dx = (radius - cx).max(cx - (size - radius)).max(0.0);
+            let dy = (radius - cy).max(cy - (size - radius)).max(0.0);
+            let a = ((radius + 0.5 - dx.hypot(dy)).clamp(0.0, 1.0) * 255.0).round() as u8;
+            pixels.extend([(u16::from(a) * 128 / 255) as u8, (u16::from(a) * 128 / 255) as u8, (u16::from(a) * 128 / 255) as u8, a]);
+        }
+    }
+    let r = Arc::new(Rendered { pixels, width: px, height: px, baseline: px, truncated: false });
+    cache.push((px, r.clone()));
+    r
+}
+
 /// What one icon needs from the dock's items.
 pub struct Icon<'a> {
     pub name: &'a str,
@@ -174,30 +199,29 @@ impl DockView {
         px: u32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let plain: Vec<_> = items.iter().map(|i| icons.get(i.name, px).or_else(|| icons.get(FALLBACK_ICON, px))).collect();
+        let plain: Vec<_> = items.iter().map(|i| icons.get(i.name, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| placeholder(px))).collect();
         // Hovered icons lighten, clicked ones darken (Plank's lighten and darken effects), from cached copies.
         let old = std::mem::take(&mut self.shaded);
         let rendered: Vec<_> = plain
             .into_iter()
             .zip(items)
             .map(|(icon, item)| {
-                let icon = icon?;
                 let steps = |v: f32| (v.clamp(0.0, 1.0) * 20.0).round() as u8;
                 let (l, d) = (steps(item.shade.lighten), steps(item.shade.darken));
                 if (l, d) == (0, 0) {
-                    return Some(icon);
+                    return icon;
                 }
                 let key = (Arc::as_ptr(&icon) as usize, px, l, d);
                 let copy = old.get(&key).cloned().unwrap_or_else(|| Arc::new(shade(&icon, f32::from(l) / 20.0, f32::from(d) / 20.0)));
                 self.shaded.insert(key, copy.clone());
-                Some(copy)
+                copy
             })
             .collect();
-        self.icons = keep_buffers(&self.icons, rendered.iter().flatten().cloned());
+        self.icons = keep_buffers(&self.icons, rendered.iter().cloned());
         let mut buffers = self.icons.iter();
         let mut out = Vec::new();
-        for ((icon, rect), item) in rendered.iter().zip(&layout.icons).zip(items) {
-            let Some((pixels, Some(buffer))) = icon.as_ref().and_then(|_| buffers.next()) else { continue };
+        for (rect, item) in layout.icons.iter().zip(items) {
+            let Some((pixels, Some(buffer))) = buffers.next() else { continue };
             if item.shade.alpha <= 0.0 {
                 continue;
             }
@@ -283,5 +307,16 @@ mod tests {
         let icon = Rendered { pixels: vec![100, 200, 50, 200, 0, 0, 0, 0], width: 2, height: 1, baseline: 1, truncated: false };
         assert_eq!(shade(&icon, 0.2, 0.0).pixels, [120, 200, 60, 200, 0, 0, 0, 0]);
         assert_eq!(shade(&icon, 0.0, 0.5).pixels, [50, 100, 25, 200, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn placeholder_is_a_rounded_grey_square() {
+        let p = placeholder(32);
+        let at = |x: usize, y: usize| &p.pixels[(y * 32 + x) * 4..][..4];
+        assert_eq!((p.width, p.height, p.pixels.len()), (32, 32, 32 * 32 * 4));
+        assert_eq!(at(16, 16), [128, 128, 128, 255]);
+        assert_eq!(at(16, 0), [128, 128, 128, 255], "the edge midpoint is inside");
+        assert_eq!(at(0, 0), [0, 0, 0, 0], "the corner is cut");
+        assert!(Arc::ptr_eq(&p, &placeholder(32)), "cached");
     }
 }
