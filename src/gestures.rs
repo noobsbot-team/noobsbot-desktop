@@ -189,6 +189,11 @@ pub fn ripple(corner: Corner, size: Size<i32, Logical>, t: f64) -> (Rect, f32) {
 impl State {
     /// libinput's swipe/pinch began: ours (see `Tracker::begin`) or the app's. `true`: ours.
     pub fn gesture_begin(&mut self, kind: Kind, fingers: u32, time: u32) -> bool {
+        // Locked (E6.4): no system gesture, and none reaches an app either.
+        if self.locked() {
+            self.gesture = None;
+            return true;
+        }
         let touchpad = &self.config.touchpad;
         self.gesture = Tracker::begin(kind, fingers, touchpad.swipe_fingers, touchpad.gesture_sensitivity, time);
         self.gesture.is_some()
@@ -196,6 +201,9 @@ impl State {
 
     /// An update of our gesture; `false`: not ours, forward it. While Launchpad is open its pages follow the fingers.
     pub fn gesture_update(&mut self, time: u32, delta: Point<f64, Logical>, scale: f64) -> bool {
+        if self.locked() {
+            return true;
+        }
         let Some(tracker) = self.gesture.as_mut() else { return false };
         tracker.update(time, delta.x, delta.y, scale);
         if tracker.kind == Kind::Swipe {
@@ -207,6 +215,9 @@ impl State {
 
     /// The end of our gesture: its action; `false`: not ours, forward it.
     pub fn gesture_end(&mut self, time: u32, cancelled: bool) -> bool {
+        if self.locked() {
+            return true;
+        }
         let Some(tracker) = self.gesture.take() else { return false };
         if tracker.kind == Kind::Swipe && self.launchpad_scroll(0.0, 0.0, 0.0, true) {
             return true;

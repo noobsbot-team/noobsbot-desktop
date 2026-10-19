@@ -247,6 +247,8 @@ impl State {
                 if self.lock.as_ref().is_some_and(|l| l.client_surface().is_none()) {
                     return;
                 }
+                // A client's lock surface (E6.4) gets the scroll as it is: none of the shell's handlers below.
+                let shell = !self.locked();
                 // Notification Center scrolls; a banner swipes away.
                 let amount = |axis| event.amount(axis).unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0);
                 let pos = self.to_output(pointer.current_location());
@@ -256,13 +258,13 @@ impl State {
                 let page_wheel = if wheel != 0.0 { wheel } else { event.amount_v120(Axis::Horizontal).unwrap_or(0.0) };
                 let lifted = source == AxisSource::Finger && event.amount(Axis::Horizontal) == Some(0.0);
                 let swipe = if page_wheel == 0.0 { amount(Axis::Horizontal) } else { 0.0 };
-                if self.launchpad_scroll(swipe, amount(Axis::Vertical), page_wheel, lifted) {
+                if shell && self.launchpad_scroll(swipe, amount(Axis::Vertical), page_wheel, lifted) {
                     return;
                 }
-                if self.emoji_scroll(pos, amount(Axis::Vertical)) || self.drawer_scroll(pos, amount(Axis::Vertical), wheel != 0.0) {
+                if shell && (self.emoji_scroll(pos, amount(Axis::Vertical)) || self.drawer_scroll(pos, amount(Axis::Vertical), wheel != 0.0)) {
                     return;
                 }
-                if self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, page_wheel) {
+                if shell && (self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, page_wheel)) {
                     return;
                 }
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);

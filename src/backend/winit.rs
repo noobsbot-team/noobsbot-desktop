@@ -105,10 +105,21 @@ impl State {
     // output; a bar and dock per display (E6.2) needs a `Views` per output.
     pub fn frame_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
         if self.space.outputs().next() != Some(output) {
+            let geo = self.space.output_geometry(output)?;
+            let scale = output.current_scale().fractional_scale();
+            let dark = render::is_dark(&self.config.appearance);
+            let (locked, idle_shade, animating) = (self.lock.is_some(), self.idle_shade(), self.animating());
             let views = self.backend.as_mut()?;
-            let elements =
-                render::scene(renderer, &views.shaders, &mut views.wallpaper, &mut self.text, &self.space, output, &self.config.appearance, Vec::new(), None);
-            return Some((elements, false));
+            // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
+            let mut elements = if locked {
+                vec![views.wallpaper.element(&views.shaders, geo.size, dark)]
+            } else {
+                render::scene(renderer, &views.shaders, &mut views.wallpaper, &mut self.text, &self.space, output, &self.config.appearance, Vec::new(), None)
+            };
+            if let Some(alpha) = idle_shade {
+                elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
+            }
+            return Some((elements, animating));
         }
         self.capture_ask();
         let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);

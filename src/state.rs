@@ -948,6 +948,11 @@ impl XdgShellHandler for State {
         let kind = PopupKind::Xdg(surface);
         let Ok(root) = find_popup_root_surface(&kind) else { return };
         let Ok(mut grab) = self.popups.grab_popup(root, kind, &seat, serial) else { return };
+        // Locked (E6.4): no popup takes the keyboard from the lock screen.
+        if self.locked() {
+            grab.ungrab(PopupUngrabStrategy::All);
+            return;
+        }
 
         if let Some(keyboard) = seat.get_keyboard() {
             if keyboard.is_grabbed() && !(keyboard.has_grab(serial) || keyboard.has_grab(grab.previous_serial().unwrap_or(serial))) {

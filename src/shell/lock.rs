@@ -10,7 +10,8 @@ use smithay::{
     input::keyboard::Keysym,
     reexports::{
         calloop::{RegistrationToken, channel},
-        wayland_server::protocol::wl_output::WlOutput,
+        wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1,
+        wayland_server::{Resource, protocol::wl_output::WlOutput},
     },
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::session_lock::{LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker},
@@ -61,6 +62,8 @@ pub struct Lock {
     pub keyboard: String,
     /// Taken by an ext-session-lock client: `unlock` comes from it, not from PAM.
     pub client: bool,
+    /// That client's confirmed lock object: only its `unlock_and_destroy` unlocks.
+    pub locker: Option<ExtSessionLockV1>,
     /// The client's surfaces, drawn instead of ours while one is alive.
     pub surfaces: Vec<LockSurface>,
     /// Greeter mode (E7.2): users, sessions, greetd's last error.
@@ -202,10 +205,13 @@ impl State {
         let keyboard = layout.split(',').next().unwrap_or_default().to_uppercase();
         self.lock = Some(Lock { keyboard, ..Lock::new() });
         let serial = SERIAL_COUNTER.next_serial();
+        // Grabs go too: a popup's, or an input method's, which would otherwise see the password typed.
         if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.unset_grab(self);
             keyboard.set_focus(self, None, serial);
         }
         if let Some(pointer) = self.seat.get_pointer() {
+            pointer.unset_grab(self, serial, 0);
             let location = pointer.current_location();
             pointer.motion(self, None, &smithay::input::pointer::MotionEvent { location, serial, time: 0 });
             pointer.frame(self);
@@ -369,24 +375,35 @@ impl SessionLockHandler for State {
         &mut self.idle.session_lock
     }
 
-    /// A locker client asks to lock. Refused (dropping `confirmation` says so) while another client holds the lock.
+    /// A locker client asks to lock. Refused (dropping `confirmation` says so) while any lock is up: ours, or
+    /// another client's whose surfaces are alive. Otherwise a client could lock over our screen and then unlock the
+    /// session. A locker that died (no surfaces left) can be replaced.
     /// ponytail: confirmed at once, not after the first frame with its surface is presented; nothing of the apps is
     /// drawn from this point on anyway.
     fn lock(&mut self, confirmation: SessionLocker) {
-        if self.lock.as_ref().is_some_and(|l| l.client && l.client_surface().is_some()) {
+        if self.lock.as_ref().is_some_and(|l| !l.client || l.client_surface().is_some()) {
             return;
         }
         self.lock_screen();
         if let Some(lock) = self.lock.as_mut() {
             lock.client = true;
+            lock.locker = Some(confirmation.ext_session_lock().clone());
         }
         confirmation.lock();
     }
 
+    /// `unlock_and_destroy`. smithay calls this for any client's lock object, confirmed or not (an unconfirmed one
+    /// gets a protocol error as well), and doesn't say whose. So the unlock waits a loop turn: by then the confirmed
+    /// object is gone if it was the one destroyed, and still alive if another client asked.
     fn unlock(&mut self) {
-        if self.lock.as_ref().is_some_and(|l| l.client) {
-            self.unlock_screen();
+        if !self.lock.as_ref().is_some_and(|l| l.client) {
+            return;
         }
+        self.loop_handle.insert_idle(|state| {
+            if state.lock.as_ref().is_some_and(|l| l.client && l.locker.as_ref().is_none_or(|lock| !lock.is_alive())) {
+                state.unlock_screen();
+            }
+        });
     }
 
     /// ponytail: one output; every lock surface gets its size.
