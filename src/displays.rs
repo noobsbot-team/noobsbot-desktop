@@ -5,11 +5,12 @@
 use smithay::{
     desktop::{Window, layer_map_for_output},
     output::{Output, Scale},
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface},
     utils::{Logical, Rectangle, Transform},
     wayland::{
         compositor::{SurfaceData, send_surface_state},
         fractional_scale::with_fractional_scale,
+        shell::xdg::ToplevelSurface,
     },
 };
 
@@ -142,7 +143,7 @@ impl State {
     /// Applies the display settings to every display, live: lights, darkens and modesets them (real screen), sets
     /// scale, rotation and position, puts the primary first (the shell draws on the first output), tells every
     /// window and panel its new scale, and rewrites `displays.json`. At start, on hotplug and on config reload.
-    // ponytail: windows keep their logical size (maximised ones aren't refitted).
+    // ponytail: windows keep their logical size; zoomed ones on another output too, as `work_area` is the first's.
     pub fn apply_displays(&mut self) {
         let shown = match &self.device {
             Some(Device::Udev(_)) => self.udev_displays(),
@@ -188,6 +189,27 @@ impl State {
             let (Some(frame), Some(area)) = (self.frame(&window), self.work_area()) else { continue };
             let row = self.window_row(&window) * crate::spaces::STRIDE;
             self.set_visible_loc(&window, crate::wm::place(area, frame.size) + smithay::utils::Point::from((0, row)));
+        }
+        // Zoomed and fullscreen windows on the first output fill its work area at the new scale or size.
+        let first = self.space.outputs().next().cloned();
+        let filled: Vec<(Window, ToplevelSurface)> = self
+            .space
+            .elements()
+            .filter(|w| first.is_some() && self.window_output(w) == first)
+            .filter_map(|w| {
+                let toplevel = w.toplevel()?;
+                let states = toplevel.current_state().states;
+                (states.contains(xdg_toplevel::State::Maximized) || states.contains(xdg_toplevel::State::Fullscreen)).then(|| (w.clone(), toplevel.clone()))
+            })
+            .collect();
+        if let Some(area) = self.work_area() {
+            for (window, toplevel) in filled {
+                let size = self.content_size(&window, area.size);
+                toplevel.with_pending_state(|s| s.size = Some(size));
+                toplevel.send_pending_configure();
+                let row = self.window_row(&window) * crate::spaces::STRIDE;
+                self.set_visible_loc(&window, area.loc + smithay::utils::Point::from((0, row)));
+            }
         }
         self.send_scales();
         write_info(&shown.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>());
