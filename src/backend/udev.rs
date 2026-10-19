@@ -247,7 +247,7 @@ impl State {
         Ok(node)
     }
 
-    /// A GPU went away (an eGPU unplugged): its displays go dark; their windows stay where they are.
+    /// A GPU went away (an eGPU unplugged): its displays go dark; `apply_displays` brings their windows over.
     fn card_removed(&mut self, node: DrmNode) {
         let Some(udev) = self.udev() else { return };
         let Some(card) = udev.cards.remove(&node) else { return };
@@ -261,8 +261,7 @@ impl State {
     }
 
     /// Reads which displays are connected and drops unplugged ones (E6.2 hotplug); `apply_displays` lights the new.
-    // ponytail: no remembered layouts per monitor set, no 500 ms settle for docks, no clamshell; windows of an
-    // unplugged display stay at their place (clamp them onto a remaining output when that matters).
+    // ponytail: no remembered layouts per monitor set, no 500 ms settle for docks, no clamshell.
     fn scan_connectors(&mut self, node: DrmNode) {
         let Some(Device::Udev(udev)) = self.device.as_mut() else { return };
         let Some(card) = udev.cards.get_mut(&node) else { return };
@@ -668,13 +667,21 @@ fn pick_gpu(configured: &str, boot_vga: Option<PathBuf>, all: &[PathBuf]) -> Opt
     all.iter().find(|p| !configured.is_empty() && p.as_path() == Path::new(configured)).cloned().or(boot_vga).or_else(|| all.first().cloned())
 }
 
-/// `to`, if it is on a display; else `to` held inside the display the pointer is on (or the first).
-fn clamp_pointer(screens: &[Rectangle<i32, Logical>], from: Point<f64, Logical>, to: Point<f64, Logical>) -> Point<f64, Logical> {
+/// `to`, if it is on a display; else `to` held inside the display the pointer is on (or, off every display after an
+/// unplug, the nearest one).
+pub(crate) fn clamp_pointer(screens: &[Rectangle<i32, Logical>], from: Point<f64, Logical>, to: Point<f64, Logical>) -> Point<f64, Logical> {
     if screens.iter().any(|g| g.to_f64().contains(to)) {
         return to;
     }
-    let Some(g) = screens.iter().find(|g| g.to_f64().contains(from)).or(screens.first()).map(|g| g.to_f64()) else { return to };
-    (to.x.clamp(g.loc.x, g.loc.x + g.size.w - 1.0), to.y.clamp(g.loc.y, g.loc.y + g.size.h - 1.0)).into()
+    let held = |g: &Rectangle<f64, Logical>| {
+        Point::<f64, Logical>::from((to.x.clamp(g.loc.x, g.loc.x + g.size.w - 1.0), to.y.clamp(g.loc.y, g.loc.y + g.size.h - 1.0)))
+    };
+    let distance = |g: &Rectangle<f64, Logical>| {
+        let p = held(g) - to;
+        (p.x * p.x + p.y * p.y) as i64
+    };
+    let on = screens.iter().map(|g| g.to_f64()).find(|g| g.contains(from));
+    on.or_else(|| screens.iter().map(|g| g.to_f64()).min_by_key(distance)).map_or(to, |g| held(&g))
 }
 
 /// The VT of an XF86Switch_VT_<n> keysym.
@@ -760,6 +767,9 @@ mod tests {
         assert_eq!(clamp_pointer(&screens, p(100.0, 790.0), p(100.0, 900.0)), p(100.0, 799.0), "the first is shorter");
         assert_eq!(clamp_pointer(&screens, p(5.0, 5.0), p(-20.0, -3.0)), p(0.0, 0.0));
         assert_eq!(clamp_pointer(&[], p(5.0, 5.0), p(-20.0, -3.0)), p(-20.0, -3.0));
+        // Off every display (the one it was on got unplugged): onto the nearest one.
+        assert_eq!(clamp_pointer(&screens, p(3300.0, 900.0), p(3300.0, 900.0)), p(3199.0, 900.0));
+        assert_eq!(clamp_pointer(&screens[1..], p(100.0, 100.0), p(100.0, 100.0)), p(1280.0, 100.0));
     }
 
     #[test]

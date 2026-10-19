@@ -174,6 +174,21 @@ impl State {
             self.space.map_output(output, (d.x, d.y));
             layer_map_for_output(output).arrange();
         }
+        // The pointer and windows of a display that went (unplugged, turned off) come onto the ones left.
+        let screens: Vec<Rectangle<i32, Logical>> = self.space.outputs().filter_map(|o| self.space.output_geometry(o)).collect();
+        if let Some(pointer) = self.seat.get_pointer() {
+            let at = pointer.current_location();
+            let kept = crate::backend::udev::clamp_pointer(&screens, at, at);
+            if kept != at {
+                pointer.set_location(kept);
+            }
+        }
+        let lost: Vec<Window> = self.space.elements().filter(|w| self.window_output(w).is_none()).cloned().collect();
+        for window in lost {
+            let (Some(frame), Some(area)) = (self.frame(&window), self.work_area()) else { continue };
+            let row = self.window_row(&window) * crate::spaces::STRIDE;
+            self.set_visible_loc(&window, crate::wm::place(area, frame.size) + smithay::utils::Point::from((0, row)));
+        }
         self.send_scales();
         write_info(&shown.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>());
         self.schedule_redraw();
