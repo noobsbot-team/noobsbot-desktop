@@ -314,10 +314,13 @@ impl Apps {
     }
 
     /// The app a key names: a desktop-file id (with or without `.desktop`), a window's app id or `StartupWMClass`, the
-    /// last part of a reverse-DNS id (`kate` → `org.kde.kate`), or the program `Exec` runs. Case-insensitive.
+    /// last part of a reverse-DNS id either way (`kate` → `org.kde.kate`, `org.gnome.Nautilus` → `nautilus`), or the
+    /// program `Exec` runs. Case-insensitive.
     pub fn find(&self, key: &str) -> Option<&App> {
         let key = key.strip_suffix(".desktop").unwrap_or(key);
         let is = |s: &str| s.eq_ignore_ascii_case(key);
+        let last = key.rsplit('.').next().unwrap_or(key);
+        let is_last = |s: &str| s.eq_ignore_ascii_case(last);
         let program = |a: &App| split_exec(&a.exec).first().map(|p| p.rsplit('/').next().unwrap_or(p).to_owned()).unwrap_or_default();
         self.apps
             .iter()
@@ -325,6 +328,7 @@ impl Apps {
             .or_else(|| self.apps.iter().find(|a| is(&a.id)))
             .or_else(|| self.apps.iter().find(|a| a.wm_class.as_deref().is_some_and(is)))
             .or_else(|| self.apps.iter().find(|a| a.id.rsplit('.').next().is_some_and(is)))
+            .or_else(|| self.apps.iter().find(|a| is_last(&a.id) || a.wm_class.as_deref().is_some_and(is_last)))
             .or_else(|| self.apps.iter().find(|a| is(&program(a))))
     }
 }
@@ -574,14 +578,21 @@ mod tests {
         write(&user, "org.kde.dolphin.desktop", &entry("My Dolphin", "dolphin", ""));
         write(&system, "org.kde.dolphin.desktop", &entry("Dolphin", "dolphin", ""));
         write(&system, "kde/term.desktop", &entry("Term", "/usr/bin/noobsbot", "StartupWMClass=Noobsbot\n"));
+        write(&system, "nautilus.desktop", &entry("Files", "nautilus", ""));
         let apps = Apps::scan(&[user, system], "");
         let ids: Vec<&str> = apps.list().iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, ["org.kde.kate", "org.kde.dolphin", "kde-term"], "sorted by name, gone hidden");
+        assert_eq!(ids, ["nautilus", "org.kde.kate", "org.kde.dolphin", "kde-term"], "sorted by name, gone hidden");
         assert_eq!(apps.find("org.kde.dolphin").map(|a| a.name.as_str()), Some("My Dolphin"));
         assert_eq!(apps.find("org.kde.kate.desktop").map(|a| a.id.as_str()), Some("org.kde.kate"));
         assert_eq!(apps.find("kate").map(|a| a.id.as_str()), Some("org.kde.kate"));
         assert_eq!(apps.find("noobsbot").map(|a| a.id.as_str()), Some("kde-term"), "by StartupWMClass, any case");
         assert_eq!(apps.find("gone"), None);
+        // A window's app id and the pinned name land on one dock item: the same app either way round.
+        let id = |key: &str| apps.find(key).map(|a| a.id.as_str());
+        assert_eq!(id("org.gnome.Nautilus"), Some("nautilus"), "a reverse-DNS app id for a plain desktop file");
+        assert_eq!(id("org.gnome.Nautilus"), id("nautilus"));
+        assert_eq!(id("io.github.Noobsbot"), id("Noobsbot"), "by the last part against StartupWMClass");
+        assert_eq!(id("org.kde.kate"), id("Kate"));
         let _ = std::fs::remove_dir_all(root);
     }
 
