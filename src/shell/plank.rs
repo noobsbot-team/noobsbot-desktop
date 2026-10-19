@@ -106,7 +106,10 @@ fn dock_keys(dump: &Dump, launchers: &HashMap<String, String>, kept: &[String]) 
     }
     let items: Vec<String> = items.iter().map(|id| format!("{id:?}")).collect();
     let mut keys = vec![("items", format!("[{}]", items.join(", ")))];
-    let number = |plank: &str, ours: &'static str| get(plank).and_then(|v| v.parse::<u32>().ok()).map(|n| (ours, n.to_string()));
+    // dconf writes Plank's unsigned keys as `uint32 300`.
+    let number = |plank: &str, ours: &'static str| {
+        get(plank).and_then(|v| v.trim_start_matches("uint32 ").trim_start_matches("int32 ").parse::<u32>().ok()).map(|n| (ours, n.to_string()))
+    };
     let flag = |plank: &str, ours: &'static str| get(plank).filter(|v| matches!(*v, "true" | "false")).map(|v| (ours, v.to_owned()));
     keys.extend(number("icon-size", "icon_size"));
     keys.extend(flag("zoom-enabled", "zoom"));
@@ -295,7 +298,7 @@ mod tests {
 
     #[test]
     fn every_hide_mode_and_behaviour_key_carries_over() {
-        let dump = "[docks/dock1]\nhide-mode='none'\nhide-delay=300\nunhide-delay=100\nlock-items=true\npinned-only=true\ncurrent-workspace-only=true\ntooltips-enabled=false\n";
+        let dump = "[docks/dock1]\nhide-mode='none'\nhide-delay=uint32 300\nunhide-delay=100\nlock-items=true\npinned-only=true\ncurrent-workspace-only=true\ntooltips-enabled=false\n";
         let keys = dock_keys(&parse_dump(dump), &HashMap::new(), &[]);
         let get = |k: &str| keys.iter().find(|(key, _)| *key == k).map(|(_, v)| v.as_str());
         assert_eq!(get("hide"), Some(r#""never""#));

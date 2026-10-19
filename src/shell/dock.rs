@@ -130,6 +130,10 @@ pub fn cycle(n: usize, active: Option<usize>, forward: bool) -> usize {
 /// "App: title".
 pub fn short_title(title: &str, app: &str) -> String {
     let lower = title.to_lowercase();
+    // The byte offsets below come from `lower`: a title whose lowercase has another length (İ) is kept whole.
+    if lower.len() != title.len() {
+        return title.to_owned();
+    }
     let mut names: Vec<String> = vec![app.to_lowercase()];
     names.extend(app.split([' ', '-', '–']).filter(|w| w.chars().count() >= 3).map(str::to_lowercase));
     for name in &names {
@@ -722,6 +726,10 @@ impl State {
         let path = config::path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
         let text = std::fs::read_to_string(&path).unwrap_or_else(|_| config::DEFAULT_TOML.to_owned());
+        // A file that doesn't parse left `self.config` at the defaults: an edit from those would write over the user's pins.
+        if let Err(err) = config::parse(&text) {
+            return tracing::warn!("{}: {err}; the dock isn't saved over a config that doesn't parse", path.display());
+        }
         if let Err(err) = config::save_atomic(&path, &edit(&text)) {
             tracing::warn!("{}: {err}", path.display());
         }
@@ -930,6 +938,8 @@ mod tests {
         assert_eq!(short_title("New Tab - Google Chrome", "Google Chrome"), "New Tab");
         assert_eq!(short_title("Inbox - Chrome", "Google Chrome"), "Inbox", "a word of the name");
         assert_eq!(short_title("VS Code: main.rs", "VS Code"), "main.rs");
+        // Lowercasing "İ" is longer by a byte: the offsets would split a char.
+        assert_eq!(short_title("İstanbul - Kate", "Kate"), "İstanbul - Kate");
         assert_eq!(short_title("Kate", "Kate"), "Kate");
         assert_eq!(short_title("~/src", "noobsbot"), "~/src");
     }
