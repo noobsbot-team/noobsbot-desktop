@@ -281,7 +281,7 @@ pub fn login(stream: &mut (impl Read + Write), user: &str, password: &str, cmd: 
             Reply::Auth { answer: true, .. } => {
                 let mut json = format!(r#"{{"type":"post_auth_message_response","response":{}}}"#, quote(password)).into_bytes();
                 let sent = send(stream, &json);
-                json.fill(0);
+                crate::pam::zero(&mut json);
                 sent?;
                 answered = true;
             }
@@ -309,7 +309,11 @@ fn login_greetd(user: &str, password: &str, session: &Session) -> Outcome {
     let Some(path) = std::env::var_os("GREETD_SOCK") else { return Outcome::Failed("greetd isn't running (no GREETD_SOCK)".into()) };
     let env = ["XDG_SESSION_TYPE=wayland".to_owned(), format!("XDG_SESSION_DESKTOP={}", session.id)];
     UnixStream::connect(path)
-        .and_then(|mut stream| login(&mut stream, user, password, &session.cmd, &env))
+        .and_then(|mut stream| {
+            // greetd answers within its PAM stack's time; a stuck one shouldn't hold the login screen for good.
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
+            login(&mut stream, user, password, &session.cmd, &env)
+        })
         .unwrap_or_else(|err| Outcome::Failed(format!("greetd: {err}")))
 }
 
@@ -399,7 +403,7 @@ impl State {
         let spawned = std::thread::Builder::new().name("greetd".into()).spawn(move || {
             let mut password = password.into_bytes();
             let outcome = login_greetd(&user, &String::from_utf8_lossy(&password), &session);
-            password.fill(0);
+            crate::pam::zero(&mut password);
             let _ = tx.send(outcome);
         });
         match spawned {

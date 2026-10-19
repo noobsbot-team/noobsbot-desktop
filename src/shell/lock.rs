@@ -9,7 +9,10 @@ use smithay::{
     delegate_session_lock,
     input::keyboard::Keysym,
     reexports::{
-        calloop::{RegistrationToken, channel},
+        calloop::{
+            RegistrationToken, channel,
+            timer::{TimeoutAction, Timer},
+        },
         wayland_protocols::ext::session_lock::v1::server::ext_session_lock_v1::ExtSessionLockV1,
         wayland_server::{Resource, protocol::wl_output::WlOutput},
     },
@@ -23,6 +26,9 @@ use crate::{
     ui::field::{Edit, TextField},
     wm::Rect,
 };
+
+/// How long PAM may take before the attempt counts as wrong.
+const PAM_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// How long a wrong password shakes the field.
 pub const SHAKE: Duration = Duration::from_millis(400);
@@ -71,12 +77,23 @@ pub struct Lock {
 }
 
 /// What a key did on the lock screen.
-#[derive(Debug, PartialEq)]
+#[derive(PartialEq)]
 pub enum Key {
     /// Check this password.
     Submit(String),
     Redraw,
     Nothing,
+}
+
+/// Not derived: the password stays out of logs and assertion messages.
+impl std::fmt::Debug for Key {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Key::Submit(_) => "Submit(…)",
+            Key::Redraw => "Redraw",
+            Key::Nothing => "Nothing",
+        })
+    }
 }
 
 impl Lock {
@@ -133,7 +150,7 @@ impl Lock {
 /// Overwrites a password before it is dropped.
 pub fn wipe(field: &mut TextField) {
     let mut bytes = std::mem::take(&mut field.text).into_bytes();
-    bytes.fill(0);
+    crate::pam::zero(&mut bytes);
     *field = TextField::secure();
 }
 
@@ -273,7 +290,7 @@ impl State {
         let spawned = std::thread::Builder::new().name("pam".into()).spawn(move || {
             let mut password = password.into_bytes();
             let ok = crate::pam::authenticate(&user, &String::from_utf8_lossy(&password));
-            password.fill(0);
+            crate::pam::zero(&mut password);
             let _ = tx.send(ok);
         });
         match spawned {
@@ -281,6 +298,17 @@ impl State {
                 if let Some(lock) = self.lock.as_mut() {
                     lock.checking = Some(token);
                 }
+                // A PAM module waiting on a server that's gone would keep the field locked for good: after
+                // PAM_TIMEOUT the attempt counts as wrong and its late answer is dropped.
+                let timeout = Timer::from_duration(PAM_TIMEOUT);
+                let _ = self.loop_handle.insert_source(timeout, move |_, _, state| {
+                    if state.lock.as_mut().is_some_and(|l| l.checking.take_if(|t| *t == token).is_some()) {
+                        state.loop_handle.remove(token);
+                        tracing::warn!("lock screen: no answer from PAM in {PAM_TIMEOUT:?}");
+                        state.lock_checked(false);
+                    }
+                    TimeoutAction::Drop
+                });
             }
             Err(err) => {
                 tracing::warn!("lock screen: {err}");

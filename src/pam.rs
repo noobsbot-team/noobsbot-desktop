@@ -93,8 +93,16 @@ pub fn authenticate(user: &str, password: &str) -> bool {
         }
         status == PAM_SUCCESS
     };
-    secret.fill(0);
+    zero(&mut secret);
     ok
+}
+
+/// Overwrites a password's bytes; volatile, so a write just before the drop isn't optimised away.
+pub fn zero(bytes: &mut [u8]) {
+    for b in bytes {
+        // SAFETY: `b` is a valid, exclusive reference.
+        unsafe { ptr::write_volatile(b, 0) };
+    }
 }
 
 /// The user running the desktop: login name and full name (the GECOS field up to its first comma, else the login).
