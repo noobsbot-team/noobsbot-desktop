@@ -621,8 +621,9 @@ impl State {
         self.close_drawer();
         if let Some(app) = app {
             tracing::info!(app = app.id, "app drawer: launch");
-            self.launch(Some(&app));
-            self.remember_launch(&app.id);
+            if self.launch(Some(&app)) {
+                self.remember_launch(&app.id);
+            }
         }
     }
 

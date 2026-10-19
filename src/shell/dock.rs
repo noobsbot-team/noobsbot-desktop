@@ -382,7 +382,8 @@ impl State {
             return self.dock_builtin(builtin, &item.key);
         }
         if new || item.windows.is_empty() {
-            return self.launch(item.app.as_ref());
+            self.launch(item.app.as_ref());
+            return;
         }
         self.dock_fx.clicked(item.key.clone());
         self.dock_activate(item);
@@ -436,15 +437,18 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// Starts `app` from its `Exec` line, with Plank's launch bounce.
+    /// Starts `app` from its `Exec` line, with Plank's launch bounce. `false`: it didn't start (no bounce either).
     // ponytail: Terminal=true apps start without a terminal.
-    pub fn launch(&mut self, app: Option<&App>) {
-        let Some(app) = app else { return };
+    pub fn launch(&mut self, app: Option<&App>) -> bool {
+        let Some(app) = app else { return false };
         tracing::info!(app = app.id, "dock: launch");
-        self.dock_fx.launched(app.id.clone());
         self.dock_fx.tip_hidden = true;
         self.schedule_redraw();
-        self.spawn(&app.command());
+        let started = self.spawn(&app.command()).is_some();
+        if started {
+            self.dock_fx.launched(app.id.clone());
+        }
+        started
     }
 
     /// A wheel step over the dock (`dir` > 0: down or right, < 0: up or left, 0: touchpad scrolling, swallowed):
