@@ -289,7 +289,9 @@ fn from_props(service: &str, path: &str, props: &HashMap<String, OwnedValue>) ->
 /// A pixmap whose size matches its data.
 fn argb(width: i32, height: i32, pixels: Vec<u8>) -> Option<Image> {
     let (width, height) = (u32::try_from(width).ok()?, u32::try_from(height).ok()?);
-    (width > 0 && height > 0 && pixels.len() == (width * height * 4) as usize).then_some(Image::Argb { width, height, pixels })
+    // Checked: the app's width × height can overflow.
+    let expected = (width as usize).checked_mul(height as usize).and_then(|n| n.checked_mul(4));
+    (width > 0 && height > 0 && expected == Some(pixels.len())).then_some(Image::Argb { width, height, pixels })
 }
 
 /// `name` in the first place that has it: IconThemePath, then each theme (every size it has), then pixmaps/. An
@@ -327,6 +329,10 @@ fn search(dir: &Path, name: &str, depth: u32) -> Vec<Image> {
 
 /// A PNG (its size from the header) or an SVG.
 fn load(path: &Path) -> Option<Image> {
+    // The app names the path: a regular file of a sane size only (not /dev/zero, not a FIFO, which blocks on open).
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= 4 << 20) {
+        return None;
+    }
     let bytes = std::fs::read(path).ok()?;
     if bytes.starts_with(b"\x89PNG") {
         let size = u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?);

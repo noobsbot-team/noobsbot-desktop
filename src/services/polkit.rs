@@ -226,6 +226,10 @@ fn check(socket: &Path, helper: &Path, user: &str, cookie: &str, password: Strin
 // ponytail: every prompt is answered with the password (as the lock screen does); a second factor that asks for
 // something else fails, which shows as a wrong password.
 fn converse(lines: impl BufRead, mut out: impl Write, password: &[u8]) -> bool {
+    // The helper reads a line per prompt: a newline inside the password would answer the next one.
+    if password.contains(&b'\n') {
+        return false;
+    }
     for line in lines.lines() {
         let Ok(line) = line else { return false };
         if line.starts_with("PAM_PROMPT_ECHO_OFF") || line.starts_with("PAM_PROMPT_ECHO_ON") {

@@ -84,7 +84,9 @@ impl Server {
         hints: HashMap<String, OwnedValue>,
         expire_timeout: i32,
     ) -> u32 {
-        let id = if replaces_id != 0 {
+        // Ids from NOTICE_ID up are the desktop's own (the update notice, whose `install` action the compositor
+        // runs): an app can't replace those.
+        let id = if replaces_id != 0 && replaces_id < super::update::NOTICE_ID {
             replaces_id
         } else {
             let id = self.next;
@@ -233,8 +235,15 @@ pub fn load_icon(name: &str) -> Option<Rendered> {
     crate::apps::find_icon(name).and_then(|path| decode(&path))
 }
 
+/// The most an app's image file may be: any app names the path, and `/dev/zero` must not be read to the end.
+const MAX_IMAGE_BYTES: u64 = 4 << 20;
+
 /// SVG, PNG or JPEG, scaled to fit `ICON_PX`.
 fn decode(path: &std::path::Path) -> Option<Rendered> {
+    // A regular file only: a FIFO would block the services thread (stat first, since opening one blocks too).
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= MAX_IMAGE_BYTES) {
+        return None;
+    }
     let bytes = std::fs::read(path).ok()?;
     if path.extension().is_some_and(|e| e == "svg" || e == "svgz") {
         return crate::apps::rasterise(path, ICON_PX);
@@ -249,7 +258,8 @@ fn decode(path: &std::path::Path) -> Option<Rendered> {
         (info.width as usize, info.height as usize, channels, pixels)
     } else {
         use zune_jpeg::zune_core::{bytestream::ZCursor, colorspace::ColorSpace, options::DecoderOptions};
-        let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA);
+        // 4096²: a small JPEG can decode to a gigabyte otherwise.
+        let options = DecoderOptions::default().jpeg_set_out_colorspace(ColorSpace::RGBA).set_max_width(4096).set_max_height(4096);
         let mut decoder = zune_jpeg::JpegDecoder::new_with_options(ZCursor::new(&bytes), options);
         let pixels = decoder.decode().ok()?;
         let (width, height) = decoder.dimensions()?;
