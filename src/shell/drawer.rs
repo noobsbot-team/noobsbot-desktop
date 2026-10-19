@@ -227,6 +227,7 @@ pub mod layout {
     pub const BUTTON: i32 = 32;
     pub const SIDEBAR: i32 = 192;
     pub const CATEGORY: i32 = 30;
+    pub const CATEGORY_MIN: i32 = 22;
     pub const HEADER: i32 = 30;
     pub const ROW: i32 = 52;
     pub const ICON: i32 = 36;
@@ -312,8 +313,10 @@ pub fn layout(anchor: Anchor, output: Size<i32, Logical>, dock: i32, categories:
     let logo = Rectangle::new((strip_x, y + PAD).into(), (BUTTON, BUTTON).into());
     let session = std::array::from_fn(|i| Rectangle::new((strip_x, end - (3 - i as i32) * (BUTTON + 8) + 8).into(), (BUTTON, BUTTON).into()));
     let body = y + PAD + FIELD + PAD;
-    let fit = ((end - body) / CATEGORY).max(0) as usize;
-    let categories = (0..categories.min(fit) as i32).map(|i| Rectangle::new((left, body + i * CATEGORY).into(), (SIDEBAR - 12, CATEGORY).into())).collect();
+    // Short screen: the sidebar rows tighten (to the text's height) before any category is left out.
+    let row = ((end - body) / categories.max(1) as i32).clamp(CATEGORY_MIN, CATEGORY);
+    let fit = ((end - body) / row).max(0) as usize;
+    let categories = (0..categories.min(fit) as i32).map(|i| Rectangle::new((left, body + i * row).into(), (SIDEBAR - 12, row).into())).collect();
     let divider = Rectangle::new((left + SIDEBAR - 1, body).into(), (1, end - body).into());
     let list_x = left + SIDEBAR + 8;
     let list_w = x + w - PAD - list_x;
@@ -982,11 +985,24 @@ mod tests {
         assert_eq!((at.rect.loc.x, at.rect.loc.y + at.rect.size.h), (960 - 360, 982));
         assert_eq!(layout(Anchor::Dock((30, 990).into()), size, 101, 12).rect.loc.x, 8);
         assert_eq!(layout(Anchor::Dock((1900, 990).into()), size, 101, 12).rect.loc.x, 1920 - 8 - 720);
-        // A short screen: it shrinks below the menu bar, with fewer rows and categories.
+        // A laptop screen: every category gets a row in the sidebar.
+        for (size, dock) in [((1366, 768), 101), ((1280, 720), 150)] {
+            let l = layout(Anchor::Corner, Size::from(size), dock, Category::ALL.len());
+            assert_eq!(l.categories.len(), Category::ALL.len(), "{size:?}");
+            assert!(
+                l.categories
+                    .iter()
+                    .all(|c| l.rect.contains_rect(*c) && c.loc.x + c.size.w <= l.divider.loc.x && c.loc.y + c.size.h <= l.divider.loc.y + l.divider.size.h)
+            );
+        }
+        // A short screen: it shrinks below the menu bar, with fewer rows and tighter categories; shorter still, fewer.
         let short = layout(Anchor::Corner, Size::from((1280, 600)), 101, 15);
         assert_eq!(short.rect.loc.y, menubar::HEIGHT + layout::GAP);
-        assert!(short.rows.len() < 8 && short.categories.len() < 15);
+        assert!(short.rows.len() < 8 && short.categories.len() == 15 && short.categories[0].size.h < layout::CATEGORY);
         assert!(short.categories.iter().chain(&short.rows).all(|r| short.rect.contains_rect(*r)));
+        let tiny = layout(Anchor::Corner, Size::from((1280, 400)), 101, 15);
+        assert!(tiny.categories.len() < 15 && tiny.categories[0].size.h == layout::CATEGORY_MIN);
+        assert!(tiny.categories.iter().all(|r| tiny.rect.contains_rect(*r)));
         // A narrow screen: as wide as fits.
         assert_eq!(layout(Anchor::Corner, Size::from((640, 800)), 101, 3).rect.size.w, 624);
     }
