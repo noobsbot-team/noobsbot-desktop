@@ -134,6 +134,10 @@ impl Server {
         if name.is_empty() {
             return None;
         }
+        // Names come from any app: a fresh one per notification would grow the map without end.
+        if self.icons.len() >= MAX_ICONS && !self.icons.contains_key(name) {
+            self.icons.clear();
+        }
         self.icons.entry(name.to_owned()).or_insert_with(|| load_icon(name).map(Arc::new)).clone()
     }
 }
@@ -237,6 +241,8 @@ pub fn load_icon(name: &str) -> Option<Rendered> {
 
 /// The most an app's image file may be: any app names the path, and `/dev/zero` must not be read to the end.
 const MAX_IMAGE_BYTES: u64 = 4 << 20;
+/// Decoded icons kept per name; cleared, not evicted one by one, once full.
+const MAX_ICONS: usize = 64;
 
 /// SVG, PNG or JPEG, scaled to fit `ICON_PX`.
 fn decode(path: &std::path::Path) -> Option<Rendered> {
