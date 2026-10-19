@@ -543,6 +543,9 @@ impl State {
         self.close_spotlight();
         self.close_launchpad();
         self.emoji = None;
+        // With the dock hidden there's nothing to sit above: the corner is the screen's.
+        let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.h);
+        let anchor = if anchor == Anchor::Corner && !self.dock_shown() { Anchor::Dock((0, height).into()) } else { anchor };
         self.drawer = Some(Drawer::new(anchor, load(&state_file("favorites")), load(&state_file("recent-apps"))));
         self.schedule_redraw();
     }
@@ -985,6 +988,9 @@ mod tests {
         assert_eq!((at.rect.loc.x, at.rect.loc.y + at.rect.size.h), (960 - 360, 982));
         assert_eq!(layout(Anchor::Dock((30, 990).into()), size, 101, 12).rect.loc.x, 8);
         assert_eq!(layout(Anchor::Dock((1900, 990).into()), size, 101, 12).rect.loc.x, 1920 - 8 - 720);
+        // The dock hidden (`open_drawer` anchors at the screen's corner): down to the edge, the dock's height not kept.
+        let hidden = layout(Anchor::Dock((0, 1080).into()), size, 101, 12);
+        assert_eq!((hidden.rect.loc.x, hidden.rect.loc.y + hidden.rect.size.h), (8, 1080 - 8));
         // A laptop screen: every category gets a row in the sidebar.
         for (size, dock) in [((1366, 768), 101), ((1280, 720), 150)] {
             let l = layout(Anchor::Corner, Size::from(size), dock, Category::ALL.len());
