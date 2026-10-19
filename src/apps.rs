@@ -35,6 +35,8 @@ pub struct App {
     pub keywords: Vec<String>,
     /// `Categories` (freedesktop: `Development`, `AudioVideo`, …).
     pub categories: Vec<String>,
+    /// `Path`: the directory to run in.
+    pub working_dir: Option<PathBuf>,
     /// The `.desktop` file it came from (empty when built in code).
     pub path: PathBuf,
 }
@@ -45,10 +47,16 @@ impl App {
         self.command_with(&[])
     }
 
+    /// The file name of the program `Exec` runs (`kate`).
+    pub fn program(&self) -> String {
+        split_exec(&self.exec).first().map(|p| p.rsplit('/').next().unwrap_or(p).to_owned()).unwrap_or_default()
+    }
+
     /// The argv that opens `uris` (dropped on the dock): `%u`/`%U` get the URIs, `%f`/`%F` their local paths.
     pub fn command_with(&self, uris: &[String]) -> Vec<String> {
         let paths: Vec<String> = uris.iter().filter_map(|u| file_path(u)).collect();
-        let mut argv = Vec::new();
+        // ponytail: `Path=` through coreutils' env, since the launcher takes an argv; a cwd on `spawn` if env goes away.
+        let mut argv: Vec<String> = self.working_dir.iter().flat_map(|d| ["env".to_owned(), format!("--chdir={}", d.display())]).collect();
         for word in split_exec(&self.exec) {
             match word.as_str() {
                 "%u" => argv.extend(uris.first().cloned()),
@@ -234,6 +242,7 @@ fn parse(id: &str, text: &str, locale: &str, desktop: &str) -> Option<Entry> {
         generic_name,
         keywords,
         categories: list(fields.get("Categories").map(|c| unescape(c))),
+        working_dir: fields.get("Path").map(|p| unescape(p)).filter(|p| !p.is_empty()).map(PathBuf::from),
         path: PathBuf::new(),
     }))
 }
@@ -343,7 +352,6 @@ impl Apps {
         let is = |s: &str| s.eq_ignore_ascii_case(key);
         let last = key.rsplit('.').next().unwrap_or(key);
         let is_last = |s: &str| s.eq_ignore_ascii_case(last);
-        let program = |a: &App| split_exec(&a.exec).first().map(|p| p.rsplit('/').next().unwrap_or(p).to_owned()).unwrap_or_default();
         self.apps
             .iter()
             .find(|a| a.id == key)
@@ -351,7 +359,7 @@ impl Apps {
             .or_else(|| self.apps.iter().find(|a| a.wm_class.as_deref().is_some_and(is)))
             .or_else(|| self.apps.iter().find(|a| a.id.rsplit('.').next().is_some_and(is)))
             .or_else(|| self.apps.iter().find(|a| is_last(&a.id) || a.wm_class.as_deref().is_some_and(is_last)))
-            .or_else(|| self.apps.iter().find(|a| is(&program(a))))
+            .or_else(|| self.apps.iter().find(|a| is(&a.program())))
     }
 }
 
@@ -518,6 +526,9 @@ mod tests {
                 .command_with(&uris)
         };
         let two = ["file:///home/a/My%20File.txt", "file://localhost/tmp/b"];
+        let Some(Entry::App(cd)) = app("[Desktop Entry]\nType=Application\nName=A\nExec=a %u\nPath=/opt/a\n") else { panic!() };
+        assert_eq!(cd.command(), ["env", "--chdir=/opt/a", "a"], "Path= runs it there");
+        assert_eq!(cd.program(), "a");
         assert_eq!(kate("kate -b %F", &two), ["kate", "-b", "/home/a/My File.txt", "/tmp/b"]);
         assert_eq!(kate("kate %f", &two), ["kate", "/home/a/My File.txt"]);
         assert_eq!(kate("helium %U", &two), ["helium", two[0], two[1]]);

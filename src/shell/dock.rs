@@ -438,7 +438,7 @@ impl State {
     }
 
     /// Starts `app` from its `Exec` line, with Plank's launch bounce. `false`: it didn't start (no bounce either).
-    // ponytail: Terminal=true apps start without a terminal.
+    // ponytail: Terminal=true apps start without a terminal (noobsbot terminal has no `-e`; wrap once it does).
     pub fn launch(&mut self, app: Option<&App>) -> bool {
         let Some(app) = app else { return false };
         tracing::info!(app = app.id, "dock: launch");
