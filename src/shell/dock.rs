@@ -102,7 +102,8 @@ pub fn layout(n: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, progre
             }
         }
         let size = (scale * s).round();
-        icons.push(Rectangle::new((centre - size / 2.0, h - bottom - size).into(), (size, size).into()));
+        // Whole pixels: an icon drawn at a fractional x is resampled blurry; its column keeps the exact centre.
+        icons.push(Rectangle::new(((centre - size / 2.0).round(), h - bottom - size).into(), (size, size).into()));
         columns.push((centre - (size + pad) / 2.0, centre + (size + pad) / 2.0));
     }
     let (start, end) = (columns.first().map_or(left, |c| c.0), columns.last().map_or(left, |c| c.1));
@@ -920,7 +921,8 @@ mod tests {
         let f: f64 = 88.0 / 126.0;
         assert_eq!(l.icons[4].size.w, (84.0 * (1.0 + (1.0 - f * f) * 0.5)).round());
         let shift = 88.0 * 0.5 * (1.0 - f / 3.0);
-        assert!((l.icons[4].loc.x + l.icons[4].size.w / 2.0 - (1004.0 + shift)).abs() < 1e-9);
+        assert!((l.icons[4].loc.x + l.icons[4].size.w / 2.0 - (1004.0 + shift)).abs() <= 0.5, "placed on a whole pixel");
+        assert_eq!(l.icons[4].loc.x.fract(), 0.0);
         // Out of reach (126 px): unzoomed, pushed aside by 126 × 0.5 × 2/3 = 42 px.
         assert_eq!(l.icons[7].size.w, 84.0);
         assert_eq!(l.icons[7].loc.x, flat.icons[7].loc.x + 42.0);
