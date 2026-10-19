@@ -98,9 +98,8 @@ impl LaunchpadView {
                 if icon.loc.x + icon.size.w < 0 || icon.loc.x > output.w {
                     continue;
                 }
-                if let Some(image) = icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)) {
-                    pieces.push((image, icon, true, alpha));
-                }
+                let image = icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| super::dock::placeholder(px));
+                pieces.push((image, icon, true, alpha));
                 let name_rect = shift(grid.name_rect(i));
                 let name = text.label(&app.name, CALLOUT, grid.name_rect(i).size.w as u32, scale);
                 pieces.push((name, name_rect, false, alpha));

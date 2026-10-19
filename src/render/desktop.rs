@@ -61,9 +61,8 @@ impl DesktopView {
         for (i, (entry, cell)) in frame.icons.iter().enumerate() {
             let selected = frame.selected == Some(i);
             let label = label_rect(*cell);
-            if let Some(image) = icons.get(&entry.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)) {
-                images.push((image, icon_rect(*cell), true));
-            }
+            let image = icons.get(&entry.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| super::dock::placeholder(px));
+            images.push((image, icon_rect(*cell), true));
             if selected {
                 shapes.push((Rectangle::new(icon_rect(*cell).loc - Point::from((4, 4)), (ICON + 8, ICON + 8).into()), [0, 0, 0, 64], 6));
             }

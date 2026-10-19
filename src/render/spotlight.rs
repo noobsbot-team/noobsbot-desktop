@@ -81,7 +81,8 @@ impl SpotlightPanel {
                 let icon = Rectangle::new((row.loc.x + 8, row.loc.y + (row.size.h - layout::ICON) / 2).into(), (layout::ICON, layout::ICON).into());
                 let (main, side) = if on { ([255; 4], [255, 255, 255, 204]) } else { (ui.label(), ui.secondary()) };
                 match hit {
-                    Hit::App(app) => app_icons.extend(icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).map(|p| (p, icon))),
+                    Hit::App(app) => app_icons
+                        .push((icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| super::dock::placeholder(px)), icon)),
                     Hit::Answer(_) => ui.symbol(Symbol::Calculator, Weight::Regular, 24, icon, main),
                 }
                 let x = icon.loc.x + layout::ICON + 8;
