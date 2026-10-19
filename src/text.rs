@@ -138,6 +138,15 @@ impl Text {
 
     /// `wrap`: `None` one line, else (at most n lines, 0 = any; centred).
     fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<(u8, bool)>, emoji: bool) -> Arc<Rendered> {
+        // A one-line label that fits is the same pixels whatever the limit was: it lives under one key (C19), so a
+        // dock tooltip or menu title isn't rendered again for every width it is asked at.
+        let fits = (text.to_owned(), style, u32::MAX, scale.to_bits(), wrap, emoji);
+        if wrap.is_none()
+            && let Some(rendered) = self.cache.get(&fits)
+            && f64::from(rendered.width) <= f64::from(max_width) * scale
+        {
+            return rendered;
+        }
         let key = (text.to_owned(), style, max_width, scale.to_bits(), wrap, emoji);
         if let Some(rendered) = self.cache.get(&key) {
             return rendered;
@@ -146,7 +155,7 @@ impl Text {
             Some((lines, centre)) => self.rasterise_wrapped(text, style, max_width, lines, centre, scale),
             None => self.rasterise(text, style, max_width, scale, emoji),
         });
-        self.cache.insert(key, rendered.clone());
+        self.cache.insert(if wrap.is_none() && !rendered.truncated { fits } else { key }, rendered.clone());
         rendered
     }
 
@@ -410,6 +419,17 @@ mod tests {
         assert_eq!((lru.get(&1).is_some(), lru.get(&2).is_some(), lru.len(), lru.bytes), (true, false, 2, 80));
         lru.insert(1, small(10));
         assert_eq!((lru.len(), lru.bytes), (2, 50), "a replaced entry's bytes are dropped");
+    }
+
+    #[test]
+    fn a_label_that_fits_is_cached_once_for_every_width() {
+        let Some(mut text) = text() else { return };
+        let wide = text.label("Finder", HEADLINE, 300, 1.0);
+        let wider = text.label("Finder", HEADLINE, 400, 1.0);
+        assert!(Arc::ptr_eq(&wide, &wider) && text.cache.len() == 1);
+        let cut = text.label("Finder", HEADLINE, 10, 1.0);
+        assert!(cut.truncated && text.cache.len() == 2, "a cut one is its own entry");
+        assert!(Arc::ptr_eq(&wide, &text.label("Finder", HEADLINE, 300, 1.0)));
     }
 
     #[test]
