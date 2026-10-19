@@ -2,9 +2,12 @@
 //! desktop rewrites it whenever they change; System Settings watches it and writes `[[display.outputs]]` in
 //! `config.toml` back. Shared by both crates (`#[path]` in settings), so the two ends always agree.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use serde::{Deserialize, Serialize};
+
+/// How long "Keep these display settings?" waits before the desktop puts the old ones back.
+pub const KEEP_FOR: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -51,6 +54,14 @@ pub struct Mode {
 pub fn path() -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR")?);
     dir.is_absolute().then(|| dir.join("noobsbot-desktop").join("displays.json"))
+}
+
+/// `$XDG_RUNTIME_DIR/noobsbot-desktop/display.previous`: the `[display]` section from before a display change that
+/// is not kept yet. System Settings writes it before the change and deletes it on "Keep Changes"; the desktop puts
+/// it back into `config.toml` `KEEP_FOR` after the change (or at its next start), so a bad mode never sticks even
+/// when Settings is gone by then.
+pub fn previous_path() -> Option<PathBuf> {
+    Some(path()?.with_file_name("display.previous"))
 }
 
 /// A laptop's own panel, by its connector name.

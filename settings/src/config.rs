@@ -118,15 +118,33 @@ impl Config {
         save_atomic(&self.path, &self.doc.to_string())
     }
 
-    /// The whole file as it stands, for `restore`.
-    pub fn text(&self) -> String {
-        self.doc.to_string()
+    /// The `[display]` section as it stands (with its `[[display.outputs]]`), for `restore_display` and the desktop's
+    /// `display.previous`; empty without one.
+    pub fn display_text(&self) -> String {
+        let mut doc = DocumentMut::new();
+        if let Some(display) = self.doc.get("display") {
+            doc.insert("display", display.clone());
+        }
+        doc.to_string()
     }
 
-    /// Writes back a `text` taken earlier (the display settings' "Revert").
-    pub fn restore(&mut self, text: String) -> io::Result<()> {
-        self.doc = text.parse().map_err(io::Error::other)?;
-        save_atomic(&self.path, &text)
+    /// Puts a `[display]` section taken earlier back (the display settings' "Revert"); the rest stays as it is.
+    pub fn restore_display(&mut self, text: &str) -> io::Result<()> {
+        let previous: DocumentMut = text.parse().map_err(io::Error::other)?;
+        // Where `[display]` is in the file now, so it does not move.
+        let position = self.doc.get("display").and_then(Item::as_table).and_then(toml_edit::Table::position);
+        match previous.get("display").cloned() {
+            Some(mut display) => {
+                if let (Some(table), Some(at)) = (display.as_table_mut(), position) {
+                    table.set_position(Some(at));
+                }
+                self.doc.insert("display", display);
+            }
+            None => {
+                self.doc.remove("display");
+            }
+        }
+        save_atomic(&self.path, &self.doc.to_string())
     }
 }
 
@@ -275,7 +293,8 @@ mod tests {
     fn display_outputs_by_name() {
         let path = temp("outputs", Some(DEFAULT_TOML));
         let (mut config, _) = Config::load(path.clone());
-        let before = config.text();
+        let before = config.display_text();
+        let whole = fs::read_to_string(&path).unwrap();
         config
             .set_outputs(vec![("eDP-1".into(), "scale", 1.25.into()), ("HDMI-A-1".into(), "position", Value::Array([1536i64, 0].into_iter().collect()))])
             .unwrap();
@@ -289,10 +308,12 @@ mod tests {
         assert_eq!(config.output("eDP-1").unwrap()["rotation"].as_integer(), Some(90));
         assert_eq!(config.output("HDMI-A-1").unwrap()["position"].as_array().map(|a| a.len()), Some(2));
         assert!(config.output("DP-1").is_none());
-        // Revert: the file as it was.
-        config.restore(before.clone()).unwrap();
-        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        // Revert: only `[display]` goes back; a change elsewhere meanwhile stays.
+        config.set("appearance.mode", "dark").unwrap();
+        config.restore_display(&before).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), whole.replace("mode = \"light\"", "mode = \"dark\""));
         assert!(config.output("eDP-1").is_none());
+        assert!(config.display_text().trim_start().starts_with("[display]\n#"), "{}", config.display_text());
     }
 
     #[test]

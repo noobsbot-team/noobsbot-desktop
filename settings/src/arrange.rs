@@ -23,10 +23,10 @@ pub fn normalise(places: &mut [(String, i32, i32)]) {
     }
 }
 
-/// How long "Keep these display settings?" waits before putting the old ones back.
-pub const KEEP_FOR: Duration = Duration::from_secs(15);
+/// How long "Keep these display settings?" waits before the desktop puts the old ones back.
+pub use crate::display_info::KEEP_FOR;
 
-/// A display change waiting to be kept: the whole config file from before it, and when it was made.
+/// A display change waiting to be kept: the `[display]` section from before it, and when it was made.
 #[derive(Debug, Clone)]
 pub struct Keep {
     pub previous: String,

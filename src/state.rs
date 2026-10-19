@@ -171,6 +171,8 @@ pub struct State {
     pub shell_drag: Option<crate::shell::control::Control>,
     /// Hides the OSD; replaced on every key press.
     pub osd_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// Puts the display settings back unless they are kept in time (`arm_display_revert`).
+    pub display_revert: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Installed apps (E2.1); empty until the first scan lands.
     pub apps: crate::apps::Apps,
     pub icons: crate::apps::Icons,
@@ -414,6 +416,7 @@ impl State {
             expanded: None,
             shell_drag: None,
             osd_timer: None,
+            display_revert: None,
             apps: Default::default(),
             icons: Default::default(),
             dock_reveal: false,

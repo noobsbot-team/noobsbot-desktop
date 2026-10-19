@@ -230,11 +230,12 @@ impl App {
                 let changes = self.displays.iter().map(|d| (d.name.clone(), "primary", (d.name == name).into())).collect();
                 self.change_outputs(changes, false);
             }
-            Message::Keep => self.keep = None,
+            Message::Keep => self.keep(),
             Message::Revert => self.revert(),
+            // Ran out: the desktop is putting the settings back; the sheet just goes.
             Message::Tick => {
                 if self.keep.as_ref().is_some_and(|k| k.expired(Instant::now())) {
-                    self.revert();
+                    self.keep = None;
                 }
             }
             Message::TypeAhead(text) => {
@@ -267,26 +268,36 @@ impl App {
         chosen.or_else(|| self.displays.iter().find(|d| d.primary)).or(self.displays.first())
     }
 
-    /// Writes display settings; `ask`: then "Keep these display settings?" counts down to putting the file back as
-    /// it was before the first unkept change.
+    /// Writes display settings; `ask`: then "Keep these display settings?" counts down, and the desktop puts
+    /// `[display]` back as it was before the first unkept change (from `display.previous`, set aside here first so
+    /// it does so even if we are gone by then).
     fn change_outputs(&mut self, changes: Vec<(String, &'static str, toml_edit::Value)>, ask: bool) {
-        let before = self.config.text();
-        match self.config.set_outputs(changes) {
-            Ok(()) => {
-                self.error = None;
-                if ask {
-                    let previous = self.keep.take().map_or(before, |k| k.previous);
-                    self.keep = Some(arrange::Keep { previous, since: Instant::now() });
-                }
+        if ask {
+            let previous = self.keep.take().map_or_else(|| self.config.display_text(), |k| k.previous);
+            let set_aside = display_info::previous_path().ok_or_else(|| std::io::Error::other("no XDG_RUNTIME_DIR")).and_then(|p| std::fs::write(p, &previous));
+            if let Err(err) = set_aside {
+                self.error = Some(format!("Couldn't set the display settings aside: {err}"));
+                return;
             }
+            self.keep = Some(arrange::Keep { previous, since: Instant::now() });
+        }
+        match self.config.set_outputs(changes) {
+            Ok(()) => self.error = None,
             Err(err) => self.error = Some(format!("Couldn't save the display settings: {err}")),
         }
     }
 
-    /// "Revert", or the countdown ran out: the display settings from before go back.
+    /// "Keep Changes": the desktop has nothing to put back.
+    fn keep(&mut self) {
+        self.keep = None;
+        let _ = display_info::previous_path().map(std::fs::remove_file);
+    }
+
+    /// "Revert": the display settings from before go back now (and the desktop's countdown has nothing left to do).
     fn revert(&mut self) {
         let Some(keep) = self.keep.take() else { return };
-        self.error = self.config.restore(keep.previous).err().map(|err| format!("Couldn't put the display settings back: {err}"));
+        self.error = self.config.restore_display(&keep.previous).err().map(|err| format!("Couldn't put the display settings back: {err}"));
+        let _ = display_info::previous_path().map(std::fs::remove_file);
     }
 
     fn sidebar(&self) -> Element<'_, Message> {

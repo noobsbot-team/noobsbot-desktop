@@ -5,7 +5,11 @@
 use smithay::{
     desktop::{Window, layer_map_for_output},
     output::{Output, Scale},
-    reexports::{wayland_protocols::xdg::shell::server::xdg_toplevel, wayland_server::protocol::wl_surface::WlSurface},
+    reexports::{
+        calloop::timer::{TimeoutAction, Timer},
+        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_server::protocol::wl_surface::WlSurface,
+    },
     utils::{Logical, Rectangle, Transform},
     wayland::{
         compositor::{SurfaceData, send_surface_state},
@@ -254,6 +258,37 @@ pub fn mostly_on<T>(frame: Rectangle<i32, Logical>, outputs: impl Iterator<Item 
         .filter(|(area, _)| *area > 0)
         .max_by_key(|(area, _)| *area)
         .map(|(_, output)| output)
+}
+
+impl State {
+    /// The settings file was written: with a `display.previous` set aside by System Settings, the `[display]` from
+    /// before goes back in `KEEP_FOR` unless Settings deletes it first ("Keep Changes"). Here rather than in
+    /// Settings, so a mode the user cannot see is undone even when Settings is gone by then.
+    pub fn arm_display_revert(&mut self) {
+        if let Some(token) = self.display_revert.take() {
+            self.loop_handle.remove(token);
+        }
+        if !display_info::previous_path().is_some_and(|p| p.exists()) {
+            return;
+        }
+        let timer = self.loop_handle.insert_source(Timer::from_duration(display_info::KEEP_FOR), |_, _, state| {
+            state.display_revert = None;
+            revert_displays();
+            TimeoutAction::Drop
+        });
+        self.display_revert = timer.inspect_err(|err| tracing::warn!("display revert timer: {err}")).ok();
+    }
+}
+
+/// Puts the `[display]` section in `display.previous` (if any) back into the settings file, which the live reload
+/// then applies; the rest of the file stays as it is.
+pub fn revert_displays() {
+    let Some(path) = display_info::previous_path() else { return };
+    let Ok(previous) = std::fs::read_to_string(&path) else { return };
+    tracing::info!("display settings not kept: putting the previous ones back");
+    if crate::config::save_edit(|text| crate::config::set_section(text, "display", &previous)) {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// Rewrites `displays.json` when it changed.
