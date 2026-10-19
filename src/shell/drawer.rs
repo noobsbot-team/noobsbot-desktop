@@ -728,7 +728,7 @@ impl State {
     }
 
     fn docked(&self, id: &str) -> bool {
-        self.config.dock.items.iter().any(|name| self.apps.find(name).is_some_and(|a| a.id == id))
+        self.dock_pinned().iter().any(|(_, key)| key == id)
     }
 
     /// The right-click menu's rows (empty without one).
@@ -757,7 +757,7 @@ impl State {
                 save(&state_file("favorites"), &d.favorites);
             }
             Command::Dock => {
-                let to = (!self.docked(&app.id)).then(|| self.config.dock.items.iter().filter(|n| self.apps.find(n).is_some()).count());
+                let to = (!self.docked(&app.id)).then(|| self.dock_pinned().len());
                 self.dock_repin(&app.id, to);
             }
             Command::Desktop => {

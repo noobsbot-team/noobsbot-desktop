@@ -645,7 +645,7 @@ pub fn uri_list(text: &str) -> Vec<String> {
 
 impl State {
     /// The pinned icons on the dock: (index in `[dock] items`, item key), left to right.
-    fn dock_pinned(&self) -> Vec<(usize, String)> {
+    pub(crate) fn dock_pinned(&self) -> Vec<(usize, String)> {
         let mut pinned: Vec<(usize, String)> = Vec::new();
         for (i, name) in self.config.dock.items.iter().enumerate() {
             let key = if Builtin::of(name).is_some() { Some(name.clone()) } else { self.apps.find(name).map(|a| a.id.clone()) };
@@ -1018,6 +1018,10 @@ mod tests {
         // A running app pinned between kate and dolphin.
         assert_eq!(repin(&items, &shown, "helium", None, Some(1)), v(&["chrome", "kate", "vscode", "helium", "dolphin", "kitty"]));
         assert_eq!(repin(&items, &shown, "helium", None, Some(3)), v(&["chrome", "kate", "vscode", "dolphin", "kitty", "helium"]));
+        // "Add to Dock": the slot after every pinned icon, builtins counted (counting apps alone landed before them).
+        let items = v(&["launchpad", "kate", "screenshot"]);
+        assert_eq!(repin(&items, &[0, 1, 2], "helium", None, Some(3)), v(&["launchpad", "kate", "screenshot", "helium"]));
+        assert_eq!(repin(&items, &[0, 1, 2], "helium", None, Some(1)), v(&["launchpad", "helium", "kate", "screenshot"]));
     }
 
     #[test]
