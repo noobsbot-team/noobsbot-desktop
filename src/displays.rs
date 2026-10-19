@@ -34,7 +34,8 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays) -> Vec<Display> {
         d.mode = configured_mode(&d.modes, &e).or_else(|| pick_mode(&d.modes).map(|i| d.modes[i])).unwrap_or(d.mode);
         d.rotation = if [0, 90, 180, 270].contains(&e.rotation) { e.rotation } else { 0 };
         d.auto_scale = pick_scale((d.mode.width, d.mode.height), (d.width_mm, d.height_mm), d.built_in);
-        d.scale = [e.scale, config.scale].into_iter().find(|s| *s > 0.0).map_or(d.auto_scale, |s| s.clamp(1.0, 3.0));
+        // In 1/120 steps, the granularity of wp_fractional_scale, so what apps are told is what we draw at.
+        d.scale = [e.scale, config.scale].into_iter().find(|s| *s > 0.0).map_or(d.auto_scale, |s| (s.clamp(1.0, 3.0) * 120.0).round() / 120.0);
         let (w, h) = if d.rotation % 180 == 90 { (d.mode.height, d.mode.width) } else { (d.mode.width, d.mode.height) };
         // As smithay's `Space::output_geometry` rounds, so neighbours meet exactly.
         (d.width, d.height) = ((f64::from(w) / d.scale).ceil() as i32, (f64::from(h) / d.scale).ceil() as i32);
@@ -372,6 +373,9 @@ mod tests {
         let p = plan(laptop_and_monitor(), &config);
         assert_eq!((p[0].mode.width, p[0].rotation, p[0].scale), (1920, 0, 3.0), "unknown mode: preferred; scale clamped");
         assert_eq!(p[1].mode.refresh, 144_000);
+        let odd = Displays { scale: 1.3333, ..Default::default() };
+        let p = plan(laptop_and_monitor(), &odd);
+        assert_eq!((p[0].scale, p[0].width), (160.0 / 120.0, 1440), "rounded to a 1/120 step");
     }
 
     #[test]
