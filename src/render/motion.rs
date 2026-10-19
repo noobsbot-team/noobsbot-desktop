@@ -10,7 +10,7 @@ use smithay::{
         renderer::{
             Bind, Color32F, Frame, Offscreen, Renderer,
             element::{Element, Id, Kind, RenderElement, texture::TextureRenderElement},
-            gles::{GlesRenderer, GlesTexture},
+            gles::{GlesRenderer, GlesTexture, ffi},
             utils::CommitCounter,
         },
     },
@@ -67,7 +67,11 @@ struct Shot {
 /// corner of `area`, keeping `area`'s on-output part. Drawn in place, so elements that clip to output coordinates
 /// (rounded windows) still line up. ponytail: parts left of or above the output are cut off.
 fn snapshot(renderer: &mut GlesRenderer, elements: &[SceneElement], area: Rectangle<i32, Physical>, scale: f64) -> Option<Shot> {
-    let size = Size::from((area.loc.x + area.size.w, area.loc.y + area.size.h));
+    // A window dragged far right or down would ask for a texture past GL_MAX_TEXTURE_SIZE (GL_INVALID_VALUE);
+    // the part beyond it is cut off like the part before the output. ponytail: one texture per animating
+    // window per frame; a pool needs the Rc count smithay's texture doesn't expose.
+    let max = max_texture_size(renderer);
+    let size = Size::from(((area.loc.x + area.size.w).min(max), (area.loc.y + area.size.h).min(max)));
     let src = area.intersection(Rectangle::from_size(size))?;
     let mut texture: GlesTexture = renderer.create_buffer(Fourcc::Abgr8888, (size.w, size.h).into()).ok()?;
     {
@@ -84,6 +88,19 @@ fn snapshot(renderer: &mut GlesRenderer, elements: &[SceneElement], area: Rectan
         let _ = frame.finish().ok()?;
     }
     Some(Shot { texture, src })
+}
+
+/// `GL_MAX_TEXTURE_SIZE`, asked once per renderer thread (2048 if the query fails: the GLES 3 minimum).
+fn max_texture_size(renderer: &mut GlesRenderer) -> i32 {
+    thread_local!(static MAX: std::cell::Cell<i32> = const { std::cell::Cell::new(0) });
+    MAX.with(|max| {
+        if max.get() == 0 {
+            let mut value = 0;
+            let _ = renderer.with_context(|gl| unsafe { gl.GetIntegerv(ffi::MAX_TEXTURE_SIZE, &mut value) });
+            max.set(if value > 0 { value } else { 2048 });
+        }
+        max.get()
+    })
 }
 
 /// The shot drawn so `frame` (logical, output-relative) lands on `look`.
