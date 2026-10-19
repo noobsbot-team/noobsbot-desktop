@@ -619,13 +619,10 @@ pub fn slot(layout: &Layout, x: f64, max: usize) -> usize {
 }
 
 /// `[dock] items` after moving `name` to shown slot `to` (`None`: unpinning it). `shown[i]` is the index in `items` of
-/// the i-th pinned icon on the dock, `from` the dragged icon's slot if it is pinned. Entries for apps that aren't
-/// installed keep their place.
-pub fn repin(items: &[String], shown: &[usize], name: &str, from: Option<usize>, to: Option<usize>) -> Vec<String> {
-    let mut list: Vec<(String, bool)> = items.iter().enumerate().map(|(i, s)| (s.clone(), shown.contains(&i))).collect();
-    if let Some(at) = from.and_then(|f| shown.get(f)) {
-        list.remove(*at);
-    }
+/// the i-th pinned icon on the dock, `drop` the indices of every entry naming the moved icon (`kate` and
+/// `org.kde.kate` both). Entries for apps that aren't installed keep their place.
+pub fn repin(items: &[String], shown: &[usize], name: &str, drop: &[usize], to: Option<usize>) -> Vec<String> {
+    let mut list: Vec<(String, bool)> = items.iter().enumerate().filter(|(i, _)| !drop.contains(i)).map(|(i, s)| (s.clone(), shown.contains(&i))).collect();
     if let Some(to) = to {
         let at = list.iter().enumerate().filter(|(_, (_, shown))| *shown).nth(to).map_or(list.len(), |(i, _)| i);
         list.insert(at, (name.to_owned(), true));
@@ -654,12 +651,16 @@ pub fn uri_list(text: &str) -> Vec<String> {
 }
 
 impl State {
+    /// The item key a `[dock] items` entry pins: a builtin, or the app it names (`None`: not installed).
+    fn pin_key(&self, name: &str) -> Option<String> {
+        if Builtin::of(name).is_some() { Some(name.to_owned()) } else { self.apps.find(name).map(|a| a.id.clone()) }
+    }
+
     /// The pinned icons on the dock: (index in `[dock] items`, item key), left to right.
     pub(crate) fn dock_pinned(&self) -> Vec<(usize, String)> {
         let mut pinned: Vec<(usize, String)> = Vec::new();
         for (i, name) in self.config.dock.items.iter().enumerate() {
-            let key = if Builtin::of(name).is_some() { Some(name.clone()) } else { self.apps.find(name).map(|a| a.id.clone()) };
-            if let Some(key) = key.filter(|k| !pinned.iter().any(|(_, p)| p == k)) {
+            if let Some(key) = self.pin_key(name).filter(|k| !pinned.iter().any(|(_, p)| p == k)) {
                 pinned.push((i, key));
             }
         }
@@ -764,10 +765,9 @@ impl State {
 
     /// Moves `key` to pinned slot `to`, or unpins it, and saves `[dock] items`.
     pub fn dock_repin(&mut self, key: &str, to: Option<usize>) {
-        let pinned = self.dock_pinned();
-        let shown: Vec<usize> = pinned.iter().map(|(i, _)| *i).collect();
-        let from = pinned.iter().position(|(_, id)| id == key);
-        let items = repin(&self.config.dock.items, &shown, key, from, to);
+        let shown: Vec<usize> = self.dock_pinned().iter().map(|(i, _)| *i).collect();
+        let drop: Vec<usize> = self.config.dock.items.iter().enumerate().filter(|(_, n)| self.pin_key(n).as_deref() == Some(key)).map(|(i, _)| i).collect();
+        let items = repin(&self.config.dock.items, &shown, key, &drop, to);
         if items == self.config.dock.items {
             return;
         }
@@ -1021,16 +1021,20 @@ mod tests {
         // chrome and vscode aren't installed: shown slots 0, 1, 2 are kate, dolphin, kitty.
         let shown = [1, 3, 4];
         let v = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        assert_eq!(repin(&items, &shown, "kitty", Some(2), Some(0)), v(&["chrome", "kitty", "kate", "vscode", "dolphin"]));
-        assert_eq!(repin(&items, &shown, "kate", Some(0), Some(2)), v(&["chrome", "vscode", "dolphin", "kitty", "kate"]));
-        assert_eq!(repin(&items, &shown, "dolphin", Some(1), None), v(&["chrome", "kate", "vscode", "kitty"]));
+        assert_eq!(repin(&items, &shown, "kitty", &[4], Some(0)), v(&["chrome", "kitty", "kate", "vscode", "dolphin"]));
+        assert_eq!(repin(&items, &shown, "kate", &[1], Some(2)), v(&["chrome", "vscode", "dolphin", "kitty", "kate"]));
+        assert_eq!(repin(&items, &shown, "dolphin", &[3], None), v(&["chrome", "kate", "vscode", "kitty"]));
         // A running app pinned between kate and dolphin.
-        assert_eq!(repin(&items, &shown, "helium", None, Some(1)), v(&["chrome", "kate", "vscode", "helium", "dolphin", "kitty"]));
-        assert_eq!(repin(&items, &shown, "helium", None, Some(3)), v(&["chrome", "kate", "vscode", "dolphin", "kitty", "helium"]));
+        assert_eq!(repin(&items, &shown, "helium", &[], Some(1)), v(&["chrome", "kate", "vscode", "helium", "dolphin", "kitty"]));
+        assert_eq!(repin(&items, &shown, "helium", &[], Some(3)), v(&["chrome", "kate", "vscode", "dolphin", "kitty", "helium"]));
         // "Add to Dock": the slot after every pinned icon, builtins counted (counting apps alone landed before them).
         let items = v(&["launchpad", "kate", "screenshot"]);
-        assert_eq!(repin(&items, &[0, 1, 2], "helium", None, Some(3)), v(&["launchpad", "kate", "screenshot", "helium"]));
-        assert_eq!(repin(&items, &[0, 1, 2], "helium", None, Some(1)), v(&["launchpad", "helium", "kate", "screenshot"]));
+        assert_eq!(repin(&items, &[0, 1, 2], "helium", &[], Some(3)), v(&["launchpad", "kate", "screenshot", "helium"]));
+        assert_eq!(repin(&items, &[0, 1, 2], "helium", &[], Some(1)), v(&["launchpad", "helium", "kate", "screenshot"]));
+        // Two entries naming one app (only the first is shown): unpinning drops both, else the other took its place.
+        let items = v(&["kate", "org.kde.kate", "dolphin"]);
+        assert_eq!(repin(&items, &[0, 2], "org.kde.kate", &[0, 1], None), v(&["dolphin"]));
+        assert_eq!(repin(&items, &[0, 2], "org.kde.kate", &[0, 1], Some(1)), v(&["dolphin", "org.kde.kate"]));
     }
 
     #[test]
