@@ -20,7 +20,7 @@ use smithay::{
             compositor::{DrmCompositor, FrameFlags},
             exporter::gbm::GbmFramebufferExporter,
         },
-        input::{Event, InputEvent, PointerMotionEvent},
+        input::{AbsolutePositionEvent, Event, InputEvent, PointerMotionEvent},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             ImportDma, RendererSuper,
@@ -534,14 +534,16 @@ impl State {
         match event {
             InputEvent::DeviceAdded { mut device } => configure(&mut device, &self.config.touchpad),
             InputEvent::PointerMotion { event } => self.relative_motion(event.delta(), event.time()),
-            event => {
-                let moved = matches!(event, InputEvent::PointerMotionAbsolute { .. });
-                self.process_input_event(event);
+            // A touchscreen or tablet maps onto its own display, not the first.
+            InputEvent::PointerMotionAbsolute { event } => {
+                let outputs: Vec<(String, Rectangle<i32, Logical>)> =
+                    self.space.outputs().filter_map(|o| Some((o.name(), self.space.output_geometry(o)?))).collect();
+                let Some(geo) = absolute_output(event.device().output_name(), &outputs) else { return };
+                self.pointer_motion(event.position_transformed(geo.size) + geo.loc.to_f64(), event.time());
                 // The pointer is ours to draw.
-                if moved {
-                    self.schedule_redraw();
-                }
+                self.schedule_redraw();
             }
+            event => self.process_input_event(event),
         }
     }
 
@@ -684,6 +686,13 @@ pub(crate) fn clamp_pointer(screens: &[Rectangle<i32, Logical>], from: Point<f64
     on.or_else(|| screens.iter().map(|g| g.to_f64()).min_by_key(distance)).map_or(to, |g| held(&g))
 }
 
+/// The display an absolute device (touchscreen, tablet) covers: the one libinput names for it (udev's `WL_OUTPUT`),
+/// else a laptop's own panel (where its touchscreen is), else the first.
+fn absolute_output(name: Option<&str>, outputs: &[(String, Rectangle<i32, Logical>)]) -> Option<Rectangle<i32, Logical>> {
+    let named = outputs.iter().find(|(n, _)| Some(n.as_str()) == name);
+    named.or_else(|| outputs.iter().find(|(n, _)| display_info::built_in(n))).or(outputs.first()).map(|(_, geo)| *geo)
+}
+
 /// The VT of an XF86Switch_VT_<n> keysym.
 fn vt_of(sym: Keysym) -> Option<i32> {
     let first = Keysym::XF86_Switch_VT_1.raw();
@@ -770,6 +779,16 @@ mod tests {
         // Off every display (the one it was on got unplugged): onto the nearest one.
         assert_eq!(clamp_pointer(&screens, p(3300.0, 900.0), p(3300.0, 900.0)), p(3199.0, 900.0));
         assert_eq!(clamp_pointer(&screens[1..], p(100.0, 100.0), p(100.0, 100.0)), p(1280.0, 100.0));
+    }
+
+    #[test]
+    fn absolute_devices_map_onto_their_display() {
+        let geo = |x| Rectangle::<i32, Logical>::new((x, 0).into(), (1000, 1000).into());
+        let outputs = [("HDMI-A-1".to_string(), geo(0)), ("eDP-1".to_string(), geo(1000)), ("DP-2".to_string(), geo(2000))];
+        assert_eq!(absolute_output(Some("DP-2"), &outputs), Some(geo(2000)), "named by udev");
+        assert_eq!(absolute_output(None, &outputs), Some(geo(1000)), "the laptop's own panel");
+        assert_eq!(absolute_output(Some("DP-9"), &outputs[..1]), Some(geo(0)), "else the first");
+        assert_eq!(absolute_output(None, &[]), None);
     }
 
     #[test]
