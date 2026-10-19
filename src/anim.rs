@@ -303,12 +303,10 @@ impl State {
         let dark = crate::render::is_dark(&self.config.appearance);
         let reduce = self.config.appearance.reduce_motion;
         let curve = self.curve(curve);
-        let Some(output) = self.space.outputs().next().cloned() else { return };
-        let output_loc = self.space.output_geometry(&output).map_or_else(Default::default, |g| g.loc);
-        let scale = output.current_scale().fractional_scale();
+        // On the display the window is on (the first when it is on none).
+        let Some(output) = self.window_output(window).or_else(|| self.space.outputs().next().cloned()) else { return };
         let (Some(backend), Some(renderer)) = (self.backend.as_mut(), self.device.as_mut().and_then(crate::backend::Device::renderer)) else { return };
-        let Some(mut ghost) = crate::render::motion::Ghost::capture(renderer, &backend.shaders, &mut self.text, &self.space, window, output_loc, scale, dark)
-        else {
+        let Some(mut ghost) = crate::render::motion::Ghost::capture(renderer, &backend.shaders, &mut self.text, &self.space, window, &output, dark) else {
             return;
         };
         backend.ghosts.retain(|g| g.window != *window);
