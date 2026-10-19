@@ -83,8 +83,9 @@ impl Tzif {
         let index_at = data + time * size;
         let types_at = index_at + time;
         let utoff = |i: usize| (i < types).then(|| be32(types_at + i * 6).map(|v| v as i32)).flatten();
-        let mut times = Vec::with_capacity(time);
-        let mut offsets = Vec::with_capacity(time);
+        // No capacity from the header: a forged count would allocate before the bounds checks below fail.
+        let mut times = Vec::new();
+        let mut offsets = Vec::new();
         for i in 0..time {
             let raw = b.get(data + i * size..data + (i + 1) * size)?;
             times.push(if wide { i64::from_be_bytes(raw.try_into().ok()?) } else { i64::from(i32::from_be_bytes(raw.try_into().ok()?)) });
@@ -214,17 +215,18 @@ impl Event {
 
     /// Alarm times in `from..=to` (unix seconds), with the occurrence each is for.
     pub fn alarms(&self, from: i64, to: i64) -> Vec<(i64, Occurrence<'_>)> {
+        // Saturating: a TRIGGER near i64's ends comes from a file, not a calendar.
         let lead = self.alarms.iter().map(|a| match a {
-            Trigger::Start(s) | Trigger::End(s) => s.abs(),
-            Trigger::At(t) => (t - self.zone.timestamp(self.start)).abs(),
+            Trigger::Start(s) | Trigger::End(s) => s.saturating_abs(),
+            Trigger::At(t) => t.saturating_sub(self.zone.timestamp(self.start)).saturating_abs(),
         });
-        let lead = lead.max().unwrap_or(0) + self.length.num_seconds().abs();
+        let lead = lead.max().unwrap_or(0).saturating_add(self.length.num_seconds().saturating_abs());
         let mut out = Vec::new();
-        for o in self.between(from - lead, to + lead + 1) {
+        for o in self.between(from.saturating_sub(lead), to.saturating_add(lead).saturating_add(1)) {
             for a in &self.alarms {
                 let at = match *a {
-                    Trigger::Start(s) => o.start + s,
-                    Trigger::End(s) => o.end + s,
+                    Trigger::Start(s) => o.start.saturating_add(s),
+                    Trigger::End(s) => o.end.saturating_add(s),
                     Trigger::At(t) => t,
                 };
                 if (from..=to).contains(&at) && !out.contains(&(at, o)) {
@@ -728,6 +730,9 @@ mod tests {
         assert_eq!(abs.alarms(utc("2026-10-19 00:00"), utc("2026-10-20 00:00"))[0].0, utc("2026-10-19 12:00"));
         // A TRIGGER outside a VALARM isn't an alarm.
         assert!(one("DTSTART:20261020T090000Z\r\nTRIGGER:-PT5M").alarms(0, i64::MAX / 2).is_empty());
+        // A trigger at the end of time saturates instead of overflowing.
+        let far = one("DTSTART:20261020T090000Z\r\nBEGIN:VALARM\r\nTRIGGER;VALUE=DATE-TIME:99991231T235959Z\r\nEND:VALARM");
+        assert!(far.alarms(i64::MIN / 2, i64::MAX / 2).len() <= 1);
     }
 
     #[test]
