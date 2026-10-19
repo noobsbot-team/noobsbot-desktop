@@ -166,7 +166,7 @@ impl Ease {
 pub struct Overlaps {
     /// Any window.
     pub any: bool,
-    /// A window of the focused app (same process).
+    /// A window of the focused app (same dock item).
     pub app: bool,
     /// The focused window.
     pub active: bool,
@@ -446,7 +446,8 @@ impl State {
     /// What the windows do under the dock's `zone` (output-relative), for the hide modes.
     pub fn dock_overlaps(&self, zone: Rect) -> Overlaps {
         let focused = self.focused_window();
-        let pid = focused.as_ref().and_then(|w| self.pid(w));
+        // By dock item, not process: every X11 window shares xwayland-satellite's pid.
+        let key = focused.as_ref().and_then(|w| self.dock_key(w)).map(|(k, _)| k);
         let origin = self.to_output((0.0, 0.0).into()).to_i32_round::<i32>();
         let mut o = Overlaps::default();
         for window in self.space.elements() {
@@ -455,7 +456,7 @@ impl State {
                 continue;
             }
             o.any = true;
-            if pid.is_none() || self.pid(window) != pid {
+            if key.is_none() || self.dock_key(window).map(|(k, _)| k) != key {
                 continue;
             }
             o.app = true;
