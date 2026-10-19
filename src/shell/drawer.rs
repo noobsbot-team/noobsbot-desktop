@@ -579,8 +579,10 @@ impl State {
         let d = self.drawer.as_ref()?;
         let layout = self.drawer_layout()?;
         let apps = self.drawer_apps();
-        let rows: Vec<(App, bool)> = apps.iter().skip(d.scroll).take(layout.rows.len()).map(|a| ((*a).clone(), d.favorites.contains(&a.id))).collect();
-        let selected = d.selected.checked_sub(d.scroll).filter(|i| *i < rows.len() && !d.sidebar);
+        // The list may have shrunk under the scroll (an app uninstalled, a favorite removed): never past its end.
+        let first = d.scroll.min(apps.len().saturating_sub(layout.rows.len()));
+        let rows: Vec<(App, bool)> = apps.iter().skip(first).take(layout.rows.len()).map(|a| ((*a).clone(), d.favorites.contains(&a.id))).collect();
+        let selected = d.selected.checked_sub(first).filter(|i| *i < rows.len() && !d.sidebar);
         let empty = match (d.searching(), d.category) {
             (true, _) => "No Results",
             (false, Category::Favorites) => "Right-click an app to add it to Favorites",
@@ -594,7 +596,7 @@ impl State {
             field: d.field.clone(),
             hover: d.hover,
             count: apps.len(),
-            first: d.scroll,
+            first,
             rows,
             selected,
             empty,
