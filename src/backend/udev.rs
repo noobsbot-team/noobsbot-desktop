@@ -638,7 +638,8 @@ fn light(
 
 /// The output's refresh period.
 fn refresh(output: &Output) -> Duration {
-    let mhz = output.current_mode().map_or(60_000, |m| m.refresh).max(1_000);
+    // A mode that reports no refresh (0 Hz on some connectors) counts as 60 Hz, not 1.
+    let mhz = output.current_mode().map(|m| m.refresh).filter(|r| *r >= 1_000).unwrap_or(60_000);
     Duration::from_nanos(1_000_000_000_000 / mhz as u64)
 }
 

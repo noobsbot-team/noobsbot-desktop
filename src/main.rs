@@ -56,7 +56,9 @@ fn version() -> String {
 }
 
 fn main() {
-    tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).init();
+    // Without `log_internal_errors(false)` a closed log pipe (the session's journal gone at SIGTERM) makes the
+    // subscriber eprintln!, which panics on EPIPE.
+    tracing_subscriber::fmt().with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))).log_internal_errors(false).init();
 
     // Crash → clean exit (E1.11): the panic and its backtrace reach the log before `panic = "abort"` ends the process.
     let default_hook = std::panic::take_hook();

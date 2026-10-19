@@ -289,7 +289,7 @@ impl Apps {
         let mut apps = Vec::new();
         for dir in dirs {
             let mut files = Vec::new();
-            walk(dir, &mut files);
+            walk(dir, &mut files, 0);
             files.sort();
             for path in files {
                 let Some(id) = path.strip_prefix(dir).ok().and_then(|p| p.to_str()).and_then(|p| p.strip_suffix(".desktop")).map(|p| p.replace('/', "-"))
@@ -329,13 +329,17 @@ impl Apps {
     }
 }
 
-/// Every `.desktop` file under `dir`.
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+/// Every `.desktop` file under `dir`, at most `MAX_DEPTH` levels down. Symlinked dirs aren't followed (`file_type`
+/// doesn't): a link loop would otherwise recurse until the stack is gone.
+fn walk(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
+    const MAX_DEPTH: u8 = 8;
     let Ok(entries) = std::fs::read_dir(dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.is_dir() {
-            walk(&path, out);
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            if depth < MAX_DEPTH {
+                walk(&path, out, depth + 1);
+            }
         } else if path.extension().is_some_and(|e| e == "desktop") {
             out.push(path);
         }

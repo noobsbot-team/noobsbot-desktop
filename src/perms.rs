@@ -99,6 +99,7 @@ impl State {
 
     /// The user's answer for `client`: remembered for this connection and, by program path, in `[privacy]`.
     pub fn recording_answer(&mut self, client: ClientId, exe: String, allow: bool) {
+        self.capture.prune(&self.display_handle);
         self.capture.verdicts.insert(client.clone(), allow);
         if !allow {
             self.capture.fail_client(&client);

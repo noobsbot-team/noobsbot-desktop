@@ -154,6 +154,13 @@ impl Capture {
         });
     }
 
+    /// Forgets clients that are gone: both sets are per connection and would grow for the session otherwise.
+    pub fn prune(&mut self, dh: &DisplayHandle) {
+        let alive = |id: &ClientId| dh.backend_handle().get_client_data(id.clone()).is_ok();
+        self.served.retain(alive);
+        self.verdicts.retain(|id, _| alive(id));
+    }
+
     /// Fills every allowed copy of `output` that this frame satisfies; `now`: the frame's presentation time (monotonic).
     pub fn deliver(&mut self, output: &Output, pixels: &Pixels, damaged: bool, now: Duration, allowed: impl Fn(&ClientId) -> bool) {
         let waiting = std::mem::take(&mut self.waiting);
