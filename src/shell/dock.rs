@@ -464,7 +464,7 @@ impl State {
         }
         if self.modifiers().ctrl {
             let size = (i32::from(self.config.dock.icon_size) + if dir < 0.0 { 2 } else { -2 }).clamp(MIN_ICON, MAX_ICON);
-            self.dock_save(|text| config::set_key(text, "dock", "icon_size", &size.to_string()));
+            self.dock_save(move |text| config::set_key(text, "dock", "icon_size", &size.to_string()));
             self.config.dock.icon_size = size as u16;
             self.schedule_redraw();
             return true;
@@ -755,17 +755,21 @@ impl State {
 
     /// Rewrites config.toml with `edit`, in the file the user edits (through a dotfiles symlink), so the live
     /// reload agrees.
-    fn dock_save(&mut self, edit: impl FnOnce(&str) -> String) {
+    fn dock_save(&mut self, edit: impl FnOnce(&str) -> String + Send + 'static) {
         let path = config::path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let text = std::fs::read_to_string(&path).unwrap_or_else(|_| config::DEFAULT_TOML.to_owned());
-        // A file that doesn't parse left `self.config` at the defaults: an edit from those would write over the user's pins.
-        if let Err(err) = config::parse(&text) {
-            return tracing::warn!("{}: {err}; the dock isn't saved over a config that doesn't parse", path.display());
-        }
-        if let Err(err) = config::save_atomic(&path, &edit(&text)) {
-            tracing::warn!("{}: {err}", path.display());
-        }
+        // Saved later and coalesced: a Ctrl+scroll writes once at the end, not per notch. A file that doesn't parse
+        // left `self.config` at the defaults: an edit from those would write over the user's pins.
+        config::save_later(path.clone(), move |text| {
+            let text = if text.is_empty() { config::DEFAULT_TOML } else { text };
+            match config::parse(text) {
+                Ok(_) => edit(text),
+                Err(err) => {
+                    tracing::warn!("{}: {err}; the dock isn't saved over a config that doesn't parse", path.display());
+                    text.to_owned()
+                }
+            }
+        });
     }
 
     /// Moves `key` to pinned slot `to`, or unpins it, and saves `[dock] items`.
@@ -776,7 +780,8 @@ impl State {
         if items == self.config.dock.items {
             return;
         }
-        self.dock_save(|text| set_items(text, &items));
+        let saved = items.clone();
+        self.dock_save(move |text| set_items(text, &saved));
         self.config.dock.items = items;
         self.schedule_redraw();
     }

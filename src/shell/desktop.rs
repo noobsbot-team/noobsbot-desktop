@@ -491,10 +491,11 @@ impl State {
 
     fn desktop_save(&self) {
         let store = &self.desktop.store;
-        let saved = store.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| crate::config::save_atomic(store, &format_store(&self.desktop.saved)));
-        if let Err(err) = saved {
-            tracing::warn!("desktop icons: {}: {err}", store.display());
+        if let Err(err) = store.parent().map_or(Ok(()), std::fs::create_dir_all) {
+            return tracing::warn!("desktop icons: {}: {err}", store.display());
         }
+        let text = format_store(&self.desktop.saved);
+        crate::config::save_later(store.clone(), move |_| text);
     }
 
     /// Keys with no window focused: the name being edited takes them all; Return renames the selected icon.

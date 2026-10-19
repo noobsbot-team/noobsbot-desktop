@@ -200,9 +200,8 @@ pub fn load(path: &Path) -> Vec<String> {
 
 pub fn save(path: &Path, ids: &[String]) {
     let text: String = ids.iter().map(|id| format!("{id}\n")).collect();
-    if let Err(err) = crate::config::save_atomic(path, &text) {
-        tracing::warn!("app drawer: saving {}: {err}", path.display());
-    }
+    // Off the main loop: a launch shouldn't wait for the sync.
+    crate::config::save_later(path.to_owned(), move |_| text);
 }
 
 /// `list` with `id` added at the end, or taken out if it is in.
@@ -910,7 +909,15 @@ mod tests {
         assert!(load(&path).is_empty(), "missing: none");
         let favs = toggle(&toggle(&[], "org.kde.kate"), "helium");
         assert_eq!(favs, ["org.kde.kate", "helium"]);
+        // Saves land on the config-save thread after its quiet time.
+        let written = |p: &Path| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while !p.is_file() && std::time::Instant::now() < deadline {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        };
         save(&path, &favs);
+        written(&path);
         assert_eq!(load(&path), favs);
         assert_eq!(toggle(&load(&path), "org.kde.kate"), ["helium"], "toggling again removes");
         let mut recent = Vec::new();
@@ -922,6 +929,7 @@ mod tests {
         assert_eq!((many.len(), many[0].as_str()), (RECENT, "16"));
         let recent_path = dir.join("noobsbot-desktop/recent-apps");
         save(&recent_path, &recent);
+        written(&recent_path);
         std::fs::write(&path, "# comment\n\nkate\n  dolphin \n").unwrap();
         assert_eq!(load(&path), ["kate", "dolphin"]);
         std::fs::write(&path, b"kate\n\xff\xfe\ndolphin\n").unwrap();
