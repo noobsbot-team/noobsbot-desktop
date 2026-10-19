@@ -357,6 +357,8 @@ impl State {
             if let channel::Event::Msg(apps) = event {
                 state.apps = apps;
                 state.apps_epoch += 1;
+                // An install brings icons along; a cached miss (or an old look) would stick until a restart.
+                state.icons = Default::default();
                 state.schedule_redraw();
             }
         })?;
