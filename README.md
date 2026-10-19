@@ -173,13 +173,16 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
 - **Notification Center:** click the clock or press Super+N. Banners are grouped by app, plus Up Next (your calendar
   events), the month calendar, the weather (if you turn it on) and battery levels.
 - **Dock:** pinned apps and running apps, with dots for open apps, badges, magnification under the pointer and
-  right-click menus. It hides when a window covers it; touch the bottom edge to bring it back.
+  right-click menus. By default it hides when a window of the app you're using overlaps it (Plank's "intelligent"
+  mode); touch the bottom edge to bring it back, or pick another mode with `[dock] hide`. On first start your Plank
+  dock is imported; `noobsbot-desktop dock --import-plank` does it again later.
 - **Spotlight (Super+Space):** apps and a calculator. Arrow keys select, Return opens, Esc closes.
 - **Launchpad:** every app in a grid, with search. Open it from the dock or with a four-finger pinch.
 - **App drawer (Super+A, or tap Super alone):** apps by category, like the Cinnamon menu, with search, Favorites and
   Recent; right-click an app to favorite it or add it to the dock or desktop. Lock, Log Out and Shut Down sit in its
   left strip. Turn the Super tap off with `[app_drawer] super_tap = false`; add `"app-drawer"` to `[dock] items` for a
-  dock icon.
+  dock icon. Favorites and Recent live in `~/.local/state/noobsbot-desktop/favorites` and `recent-apps`, one desktop
+  file id per line.
 - **Spaces and Mission Control:** Super+Left/Right or a three-finger swipe switches Space. Super+Up (or swipe up)
   shows every window and the Spaces bar, where + adds a Space. Super+Down (or swipe down) shows the current app's
   windows.
