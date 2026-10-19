@@ -181,8 +181,8 @@ impl Text {
             }
         }
         let lines = buffer.layout_runs().count() as u32;
-        let width = limit.floor() as u32;
-        let height = if text.is_empty() { 0 } else { lines * metrics.line_height.ceil() as u32 };
+        let width = whole(limit.floor() as u32, scale);
+        let height = if text.is_empty() { 0 } else { whole(lines * metrics.line_height.ceil() as u32, scale) };
         let baseline = buffer.layout_runs().next().map_or(0.0, |run| run.line_y);
         let pixels = draw(&mut buffer, swash, style.color, width, height);
         Rendered { pixels, width, height, baseline: baseline.round() as u32, truncated: false }
@@ -217,11 +217,20 @@ impl Text {
             buffer.set_size(Some(limit), None);
         }
         let (line_w, baseline) = buffer.layout_runs().next().map_or((0.0, 0.0), |run| (run.line_w, run.line_y));
-        let width = (line_w.ceil() as u32).min(limit.floor() as u32);
-        let height = if width == 0 { 0 } else { metrics.line_height.ceil() as u32 };
+        let width = whole((line_w.ceil() as u32).min(limit.floor() as u32), scale);
+        let height = if width == 0 { 0 } else { whole(metrics.line_height.ceil() as u32, scale) };
         let pixels = draw(&mut buffer, swash, [r, g, b, a], width, height);
         Rendered { pixels, width, height, baseline: baseline.round() as u32, truncated }
     }
+}
+
+/// `px` padded up to a size that is whole in logical px at `scale` (a multiple of 1/120, as wp_fractional_scale
+/// gives it): 5 px steps at 125%, 3 at 150%, 7 at 175%. Drawn at `round(px / scale)` logical px, any other size
+/// is resampled to a pixel more or less, and the text goes soft (C7).
+fn whole(px: u32, scale: f32) -> u32 {
+    let n = (scale * 120.0).round().max(1.0) as u32;
+    let step = (1..=n).find(|k| k * 120 % n == 0).unwrap_or(1);
+    px.div_ceil(step) * step
 }
 
 /// Rasterises a laid-out buffer into `width` × `height` premultiplied RGBA in `color`.
@@ -272,6 +281,22 @@ mod tests {
             return None;
         }
         Some(text)
+    }
+
+    #[test]
+    fn sizes_are_whole_logical_px_at_fractional_scales() {
+        assert_eq!(whole(101, 1.0), 101);
+        assert_eq!(whole(101, 1.25), 105);
+        assert_eq!(whole(16, 1.5), 18);
+        assert_eq!(whole(7, 2.0), 8);
+        assert_eq!(whole(0, 1.75), 0);
+        for scale in [1.25, 1.5, 1.75, 2.25] {
+            let px = whole(101, scale);
+            assert_eq!((f64::from(px) / f64::from(scale)).fract(), 0.0, "{px} px at {scale}");
+        }
+        let Some(mut text) = text() else { return };
+        let label = text.label("Window", HEADLINE, 200, 1.25);
+        assert_eq!((label.width % 5, label.height), (0, 20), "{} x {}", label.width, label.height);
     }
 
     #[test]
