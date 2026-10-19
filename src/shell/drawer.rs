@@ -192,7 +192,9 @@ pub fn state_file(name: &str) -> PathBuf {
 
 /// The ids in `path`; none when it is missing.
 pub fn load(path: &Path) -> Vec<String> {
-    std::fs::read_to_string(path).unwrap_or_default().lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
+    // Lossy: a damaged line costs that entry, not the whole file (which would then be overwritten empty).
+    let text = std::fs::read(path).map(|b| String::from_utf8_lossy(&b).into_owned()).unwrap_or_default();
+    text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
 }
 
 pub fn save(path: &Path, ids: &[String]) {
@@ -868,6 +870,8 @@ mod tests {
         save(&recent_path, &recent);
         std::fs::write(&path, "# comment\n\nkate\n  dolphin \n").unwrap();
         assert_eq!(load(&path), ["kate", "dolphin"]);
+        std::fs::write(&path, b"kate\n\xff\xfe\ndolphin\n").unwrap();
+        assert_eq!(load(&path).len(), 3, "a damaged line doesn't empty the list");
         assert_eq!(load(&recent_path), ["c", "a", "b"]);
         let _ = std::fs::remove_dir_all(dir);
     }
