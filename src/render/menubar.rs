@@ -35,6 +35,16 @@ const LOGO_GAP: i32 = 18;
 /// Between a battery's percentage and its symbol.
 const TIGHT: i32 = 4;
 const SYMBOL: u16 = 16;
+/// The app's name is ellipsised past this, and dropped when less than `MIN_APP` is free.
+const APP_WIDTH: i32 = 300;
+const MIN_APP: i32 = 40;
+
+/// The width left for the app's name between the logo and the right group on a `width`-wide bar.
+// ponytail: only the left side gives way; a right group wider than the bar (portrait, many tray icons) still
+// overflows. Drop tray icons next if that shows up.
+pub fn app_room(width: i32, logo: i32, right: i32) -> i32 {
+    width - 2 * EDGE - logo - LOGO_GAP - GAP - right
+}
 
 /// What the bar shows; `State::menu_bar` builds it from the service states.
 #[derive(Debug, Default, PartialEq)]
@@ -202,12 +212,8 @@ impl MenuBar {
         let color = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
         let body = Style { size: 13, line_height: 16, weight: 400, color, tabular: true };
         let symbol = |symbols: &mut Symbols, s: Symbol| symbols.get(s, Weight::Regular, SYMBOL, scale, color);
-        // (piece, gap after it, item); left pieces then right ones, each list in reading order.
-        let mut left = vec![(symbols.get(Symbol::Logo, Weight::Regular, SYMBOL, scale, color), LOGO_GAP, BarItem::Logo)];
-        if let Some(app) = &content.app {
-            let name = self.names.entry(app.clone()).or_insert_with(|| app_name(app));
-            left.push((text.label(name, Style { weight: 600, tabular: false, ..body }, 300, scale), 0, BarItem::App));
-        }
+        // (piece, gap after it, item); left pieces then right ones, each list in reading order. The right group is
+        // laid out first: the app's name takes what is left of the bar, or goes when that is too little.
         let mut right = Vec::new();
         let px = (f64::from(SYMBOL) * scale).round() as u32;
         let icons: Vec<_> = content
@@ -235,13 +241,20 @@ impl MenuBar {
         right.push((text.label(&content.clock, body, 300, scale), 0, BarItem::Clock));
 
         let logical = |r: &Rendered| (f64::from(r.width) / scale).round() as i32;
+        let total: i32 = right.iter().map(|(piece, gap, _)| logical(piece) + gap).sum();
+        let logo = symbols.get(Symbol::Logo, Weight::Regular, SYMBOL, scale, color);
+        let room = app_room(width, logical(&logo), total);
+        let mut left = vec![(logo, LOGO_GAP, BarItem::Logo)];
+        if let Some(app) = content.app.as_ref().filter(|_| room >= MIN_APP) {
+            let name = self.names.entry(app.clone()).or_insert_with(|| app_name(app));
+            left.push((text.label(name, Style { weight: 600, tabular: false, ..body }, room.min(APP_WIDTH) as u32, scale), 0, BarItem::App));
+        }
         let mut rects = Vec::new();
         let mut x = EDGE;
         for (piece, gap, _) in &left {
             rects.push(Rectangle::new((x, 0).into(), (logical(piece), HEIGHT).into()));
             x += logical(piece) + gap;
         }
-        let total: i32 = right.iter().map(|(piece, gap, _)| logical(piece) + gap).sum();
         let mut x = width - EDGE - total;
         for (piece, gap, _) in &right {
             rects.push(Rectangle::new((x, 0).into(), (logical(piece), HEIGHT).into()));
@@ -317,6 +330,18 @@ mod tests {
     #[test]
     fn app_names() {
         assert_eq!(app_name("org.example.no-such-app"), "No-such-app");
+    }
+
+    #[test]
+    fn the_app_name_gives_way_to_the_right_group() {
+        // 1280 wide with a usual right group: the full 300 px name fits.
+        assert!(app_room(1280, 16, 400) >= APP_WIDTH);
+        // 1024 wide with tray icons, a battery and a long clock: ellipsised to what is left, still clear of the group.
+        let room = app_room(1024, 16, 700);
+        assert!((MIN_APP..APP_WIDTH).contains(&room));
+        assert_eq!(EDGE + 16 + LOGO_GAP + room + GAP, 1024 - EDGE - 700);
+        // Portrait: the right group leaves nothing worth showing, so the name goes.
+        assert!(app_room(600, 16, 540) < MIN_APP);
     }
 
     #[test]

@@ -304,18 +304,29 @@ fn homes() -> (PathBuf, PathBuf) {
     (config::xdg_dir("XDG_CONFIG_HOME", ".config"), config::xdg_dir("XDG_DATA_HOME", ".local/share"))
 }
 
+/// `gsettings set org.gnome.desktop.interface key value`.
+fn gsettings_command([key, value]: [&str; 2]) -> std::process::Command {
+    let mut command = std::process::Command::new("gsettings");
+    command.args(["set", "org.gnome.desktop.interface", key, value]);
+    command
+}
+
 /// Rewrites the files for `appearance` on a worker thread, so the frame never waits; the newest request wins.
-/// gsettings stays a CLI step (`theme --write --gsettings`).
-pub fn write_in_background(appearance: Appearance) {
-    static WORKER: OnceLock<mpsc::Sender<Appearance>> = OnceLock::new();
+/// `gsettings`: also set the GTK colour scheme, so GTK4/libadwaita apps follow (a real session only, never nested:
+/// that is the host's setting). The other keys stay a CLI step (`theme --write --gsettings`).
+pub fn write_in_background(appearance: Appearance, gsettings: bool) {
+    static WORKER: OnceLock<mpsc::Sender<(Appearance, bool)>> = OnceLock::new();
     let tx = WORKER.get_or_init(|| {
-        let (tx, rx) = mpsc::channel::<Appearance>();
+        let (tx, rx) = mpsc::channel::<(Appearance, bool)>();
         let spawned = std::thread::Builder::new().name("theme-write".into()).spawn(move || {
             while let Ok(first) = rx.recv() {
-                let appearance = rx.try_iter().last().unwrap_or(first);
+                let (appearance, gsettings) = rx.try_iter().last().unwrap_or(first);
                 let (config_home, data_home) = homes();
                 if let Err(err) = write(&appearance, &config_home, &data_home) {
                     tracing::warn!("app theme: {err}");
+                }
+                if gsettings && !gsettings_command(self::gsettings(render::is_dark(&appearance))[0]).status().is_ok_and(|s| s.success()) {
+                    tracing::warn!("gsettings color-scheme: failed");
                 }
             }
         });
@@ -324,7 +335,7 @@ pub fn write_in_background(appearance: Appearance) {
         }
         tx
     });
-    let _ = tx.send(appearance);
+    let _ = tx.send((appearance, gsettings));
 }
 
 /// `noobsbot-desktop theme …`: the exit code.
@@ -362,12 +373,9 @@ pub fn cli(args: impl Iterator<Item = String>) -> i32 {
     }
     for [key, value] in gsettings(render::is_dark(&appearance)) {
         println!("gsettings set org.gnome.desktop.interface {key} '{value}'");
-        if run_gsettings {
-            let status = std::process::Command::new("gsettings").args(["set", "org.gnome.desktop.interface", key, value]).status();
-            if !status.is_ok_and(|s| s.success()) {
-                eprintln!("gsettings {key}: failed");
-                return 1;
-            }
+        if run_gsettings && !gsettings_command([key, value]).status().is_ok_and(|s| s.success()) {
+            eprintln!("gsettings {key}: failed");
+            return 1;
         }
     }
     0
@@ -376,6 +384,17 @@ pub fn cli(args: impl Iterator<Item = String>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_colour_scheme_command_is_what_the_worker_runs() {
+        // Built only: never run here, the host's GTK setting is not ours to touch.
+        for (dark, value) in [(true, "prefer-dark"), (false, "default")] {
+            let command = gsettings_command(gsettings(dark)[0]);
+            assert_eq!(command.get_program(), "gsettings");
+            let args: Vec<_> = command.get_args().collect();
+            assert_eq!(args, ["set", "org.gnome.desktop.interface", "color-scheme", value]);
+        }
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("noobsbot-desktop-test-{name}-{}", std::process::id()));

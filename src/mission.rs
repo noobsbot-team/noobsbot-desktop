@@ -54,12 +54,19 @@ pub struct Bar {
 
 /// The bar on an `output`-sized screen with `count` Spaces.
 pub fn bar(output: Size<i32, Logical>, count: usize, expanded: bool, dynamic: bool) -> Bar {
-    let size = if expanded { Size::from((THUMB_H * output.w / output.h.max(1), THUMB_H)) } else { Size::from(PILL) };
+    let mut size = if expanded { Size::from((THUMB_H * output.w / output.h.max(1), THUMB_H)) } else { Size::from(PILL) };
     let n = count as i32;
+    let side = if expanded { 40 } else { PILL.1 };
+    // Many Spaces on a narrow screen: the cells shrink (thumbnails keep their shape) so `+` stays clear of them.
+    // ponytail: past 24 px a cell the bar overflows anyway; nobody has 40 Spaces on a phone.
+    let room = output.w - 2 * (3 * BAR_GAP + side);
+    let fit = ((room - (n - 1).max(0) * BAR_GAP) / n.max(1)).max(24);
+    if fit < size.w {
+        size = Size::from((fit, if expanded { THUMB_H * fit / size.w } else { size.h }));
+    }
     let width = n * size.w + (n - 1).max(0) * BAR_GAP;
     let x = (output.w - width) / 2;
     let cells = (0..n).map(|i| Rectangle::new((x + i * (size.w + BAR_GAP), BAR_TOP + if expanded { 0 } else { 4 }).into(), size)).collect();
-    let side = if expanded { 40 } else { PILL.1 };
     let plus = dynamic.then(|| {
         Rectangle::new((output.w - 2 * BAR_GAP - side, BAR_TOP + (if expanded { THUMB_H } else { PILL.1 + 8 } - side) / 2).into(), (side, side).into())
     });
@@ -440,6 +447,24 @@ mod tests {
         assert!(expanded.cells.iter().all(|c| c.loc.y + c.size.h + 4 + NAME_H < AREA_TOP));
         assert!(expanded.plus.is_some_and(|p| expanded.cells.iter().all(|c| !c.overlaps(p))));
         assert_eq!(bar(output, 3, false, false).plus, None, "a fixed count has no +");
+    }
+
+    #[test]
+    fn crowded_bars_shrink_their_cells_and_keep_the_plus() {
+        for (output, count, expanded) in [((1024, 768), 9, true), ((1024, 768), 12, false), ((768, 1024), 8, true)] {
+            let output = Size::from(output);
+            let bar = bar(output, count, expanded, true);
+            let plus = bar.plus.unwrap();
+            let last = bar.cells[count - 1];
+            assert!(bar.cells[0].loc.x >= BAR_GAP && last.loc.x + last.size.w + BAR_GAP <= plus.loc.x, "{output:?} {count} {expanded}");
+            assert!(plus.loc.x + plus.size.w <= output.w);
+            assert!(bar.cells.windows(2).all(|c| !c[0].overlaps(c[1])));
+            if expanded {
+                let cell = bar.cells[0].size;
+                assert!(cell.h < THUMB_H && (cell.w * output.h - cell.h * output.w).abs() <= output.w, "thumbnails keep the screen's shape");
+            }
+        }
+        assert_eq!(bar(Size::from((1280, 800)), 3, true, true).cells[0].size, Size::from((153, THUMB_H)), "roomy bars are unchanged");
     }
 
     #[test]

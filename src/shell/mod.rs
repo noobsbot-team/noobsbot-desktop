@@ -20,7 +20,7 @@ pub mod spotlight;
 pub mod switcher;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
-use smithay::utils::{Logical, Point, Rectangle};
+use smithay::utils::{Logical, Point, Rectangle, Size};
 
 use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
@@ -181,23 +181,39 @@ pub mod menu {
     pub const MIN_WIDTH: i32 = 180;
 }
 
-/// A `width`-wide menu at `anchor`, kept on screen sideways; its rect and one rect per row.
-pub fn menu_layout(anchor: Anchor, output_width: i32, width: i32, rows: &[Option<Row>]) -> (Rect, Vec<Rect>) {
+/// A `width`-wide menu at `anchor`, kept on screen; its rect and one rect per row. A menu taller than the screen
+/// shows whole rows from the `scroll`th (clamped so the last row can show) and gives the rest zero-height rects,
+/// which are neither drawn nor hit.
+pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows: &[Option<Row>], scroll: usize) -> (Rect, Vec<Rect>) {
     use menu::*;
+    let row_h = |row: &Option<Row>| if row.is_some() { ROW } else { SEPARATOR };
     let height = menu_height(rows);
     let (left, top) = match anchor {
         Anchor::Below(x) => (x, menubar::HEIGHT + DROP),
         Anchor::Above(p) => (p.x - width / 2, p.y - DROP - height),
         Anchor::At(p) => (p.x, p.y),
     };
-    let x = left.min(output_width - MARGIN - width).max(MARGIN);
+    let x = left.min(output.w - MARGIN - width).max(MARGIN);
+    let top = top.min(output.h - MARGIN - height).max(menubar::HEIGHT + DROP);
+    let room = output.h - MARGIN - top - 2 * PAD;
+    // The first row that still lets the last one show.
+    let mut tail = 0;
+    let first = rows.iter().rposition(|row| {
+        tail += row_h(row);
+        tail > room
+    });
+    let scroll = scroll.min(first.map_or(0, |i| i + 1));
     let mut y = top + PAD;
     let rects = rows
         .iter()
-        .map(|row| {
-            let h = if row.is_some() { ROW } else { SEPARATOR };
-            let rect = Rectangle::new((x + PAD, y).into(), (width - 2 * PAD, h).into());
-            y += h;
+        .enumerate()
+        .map(|(i, row)| {
+            let h = row_h(row);
+            let shown = i >= scroll && y + h <= top + PAD + room;
+            let rect = Rectangle::new((x + PAD, y).into(), (width - 2 * PAD, if shown { h } else { 0 }).into());
+            if shown {
+                y += h;
+            }
             rect
         })
         .collect();
@@ -275,6 +291,17 @@ impl State {
     pub fn to_output(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
         let origin = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or((0, 0).into(), |g| g.loc);
         location - origin.to_f64()
+    }
+
+    /// The wheel over an open menu scrolls it when it is taller than the screen. `true`: the menu took it.
+    pub fn menu_scroll(&mut self, location: Point<f64, Logical>, dy: f64) -> bool {
+        if !matches!(self.popup, Some(Popup::Menu(_))) || !self.popup_rect().is_some_and(|r| r.to_f64().contains(location)) {
+            return false;
+        }
+        if self.backend.as_mut().is_some_and(|b| b.menu.scroll_by(dy)) {
+            self.schedule_redraw();
+        }
+        true
     }
 
     /// The open popup's area, output-relative.
@@ -487,18 +514,43 @@ mod tests {
     #[test]
     fn menus_stay_on_screen_and_stack_rows() {
         let rows = menu_rows(Menu::App, "Kate", &[], false);
-        let (rect, cells) = menu_layout(Anchor::Below(6), 1280, 200, &rows);
+        let output = Size::from((1280, 1200));
+        let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
         assert_eq!(rect, Rectangle::new((8, 28).into(), (200, 142).into()));
         assert_eq!(cells[0], Rectangle::new((13, 33).into(), (190, 22).into()));
         assert_eq!(cells[2].loc.y, 33 + 22 + 11);
         assert!(cells.iter().all(|c| rect.contains_rect(*c)));
         // Near the right edge it moves left to fit.
-        assert_eq!(menu_layout(Anchor::Below(1200), 1280, 200, &rows).0.loc.x, 1280 - 8 - 200);
+        assert_eq!(menu_layout(Anchor::Below(1200), output, 200, &rows, 0).0.loc.x, 1280 - 8 - 200);
         // Above a dock icon: centred on it, its bottom 4 px over the point.
-        let (above, _) = menu_layout(Anchor::Above((640, 1100).into()), 1280, 200, &rows);
+        let (above, _) = menu_layout(Anchor::Above((640, 1100).into()), output, 200, &rows, 0);
         assert_eq!(above, Rectangle::new((540, 1100 - 4 - 142).into(), (200, 142).into()));
         assert_eq!(rows[2].as_ref().map(|r| (r.label.as_str(), r.action.clone())), Some(("Hide Kate", Some(Action::Hide))));
+    }
+
+    #[test]
+    fn tall_menus_stay_on_screen_and_scroll_by_whole_rows() {
+        let rows: Vec<Option<Row>> = (0..40).map(|i| Some(Row { label: format!("Item {i}"), shortcut: "", action: None })).collect();
+        let output = Size::from((1280, 768));
+        let shown = |cells: &[Rect]| cells.iter().filter(|c| c.size.h > 0).count();
+        // Under the bar: clipped at the bottom margin, whole rows only.
+        let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
+        assert_eq!(rect.loc.y, 28);
+        assert!(rect.loc.y + rect.size.h <= 768 - 8 && rect.size.h > 700);
+        assert!(cells[0].size.h == 22 && shown(&cells) < 40 && cells.iter().all(|c| c.size.h == 0 || rect.contains_rect(*c)));
+        // Scrolled past the end: clamped so the last row is the last one shown.
+        let (_, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 100);
+        assert!(cells[39].size.h == 22 && cells[0].size.h == 0 && shown(&cells) == shown(&menu_layout(Anchor::Below(6), output, 200, &rows, 0).1));
+        // Scrolled one row: the first row goes, the next one shows up at the top.
+        let (_, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 1);
+        assert!(cells[0].size.h == 0 && cells[1].loc.y == 33);
+        // A dock menu taller than the screen moves down under the bar instead of off the top; a short one is unmoved.
+        assert_eq!(menu_layout(Anchor::Above((640, 740).into()), output, 200, &rows, 0).0.loc.y, 28);
+        assert_eq!(menu_layout(Anchor::Above((640, 740).into()), output, 200, &rows[..3], 0).0.loc.y, 740 - 4 - 76);
+        // A context menu near the bottom is pushed up to fit.
+        let (rect, _) = menu_layout(Anchor::At((100, 700).into()), output, 200, &rows[..5], 0);
+        assert_eq!(rect.loc.y + rect.size.h, 768 - 8);
     }
 
     #[test]
