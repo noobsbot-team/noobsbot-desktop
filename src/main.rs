@@ -2,6 +2,7 @@
 
 mod anim;
 mod apps;
+mod arrange;
 mod backend;
 mod calendar;
 mod capture;

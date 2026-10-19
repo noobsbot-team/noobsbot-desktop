@@ -14,6 +14,7 @@ use smithay::{
 };
 
 use crate::{
+    arrange::{Area, snap},
     backend::Device,
     config::{Displays, OutputSettings},
     display_info::{self, Display, Mode},
@@ -55,6 +56,15 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays) -> Vec<Display> {
     for d in displays.iter_mut().filter(|d| d.enabled && entry(&d.name).position.is_none()) {
         (d.x, d.y) = (right, 0);
         right += d.width;
+    }
+    // Saved positions were for the sizes of their day: a scale, mode or rotation change leaves overlaps or gaps,
+    // where the pointer gets trapped. Each display is re-snapped edge to edge onto the ones before it.
+    let mut placed: Vec<Area> = Vec::new();
+    for d in displays.iter_mut().filter(|d| d.enabled) {
+        if !placed.is_empty() {
+            (d.x, d.y) = snap(Area::of(d), &placed, 0);
+        }
+        placed.push(Area::of(d));
     }
     let primary = displays.iter().position(|d| d.enabled && entry(&d.name).primary).or_else(|| displays.iter().position(|d| d.enabled));
     if let Some(i) = primary {
@@ -323,6 +333,25 @@ mod tests {
         let config = Displays { outputs: vec![OutputSettings { position: Some([-1536, 100]), ..output("eDP-1") }], ..Default::default() };
         let p = plan(laptop_and_monitor(), &config);
         assert_eq!((p[0].x, p[0].y, p[1].x), (-1536, 100, 0));
+    }
+
+    #[test]
+    fn saved_positions_are_resnapped_after_a_size_change() {
+        // Saved with the laptop at 125% (1536 wide); now at 100% it is 1920 wide and the monitor would overlap it.
+        let outputs = |laptop_scale| {
+            vec![
+                OutputSettings { scale: laptop_scale, position: Some([0, 0]), ..output("eDP-1") },
+                OutputSettings { position: Some([1536, 0]), ..output("HDMI-A-1") },
+            ]
+        };
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.0), ..Default::default() });
+        assert_eq!((p[0].width, p[1].x, p[1].y), (1920, 1920, 0), "pushed out to the edge");
+        // At 150% it is 1280 wide: the gap closes.
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.5), ..Default::default() });
+        assert_eq!((p[0].width, p[1].x), (1280, 1280));
+        // Still touching: nothing moves.
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.25), ..Default::default() });
+        assert_eq!((p[0].x, p[0].y, p[1].x, p[1].y), (0, 0, 1536, 0));
     }
 
     #[test]
