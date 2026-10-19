@@ -397,7 +397,7 @@ impl State {
                         &mut self.text,
                         &mut self.symbols,
                         status,
-                        width,
+                        size,
                         dark,
                         accent,
                         appearance.glass_opacity,

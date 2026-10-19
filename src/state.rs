@@ -167,6 +167,8 @@ pub struct State {
     pub dnd: bool,
     /// The Control Center module showing its list.
     pub expanded: Option<crate::shell::control::Module>,
+    /// How far that list is scrolled, in logical px.
+    pub control_scroll: f64,
     /// The Control Center slider being dragged.
     pub shell_drag: Option<crate::shell::control::Control>,
     /// Hides the OSD; replaced on every key press.
@@ -412,6 +414,7 @@ impl State {
             alert_timer: None,
             dnd: false,
             expanded: None,
+            control_scroll: 0.0,
             shell_drag: None,
             osd_timer: None,
             apps: Default::default(),

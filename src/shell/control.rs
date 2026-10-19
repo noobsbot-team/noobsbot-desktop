@@ -2,9 +2,9 @@
 //! render/control.rs from the same layout.
 
 use crate::{services::network::Link, symbols::Symbol};
-use smithay::utils::{Logical, Point, Rectangle};
+use smithay::utils::{Logical, Point, Rectangle, Size};
 
-use super::{DROP, MARGIN};
+use super::{DROP, MARGIN, Popup};
 use crate::{config::Mode, render::menubar, services::Command, shortcuts::Action, state::State, wm::Rect};
 
 pub const WIDTH: i32 = 320;
@@ -44,6 +44,8 @@ pub struct Status {
     pub outputs: Vec<(u32, String, bool)>,
     /// The rows of an open Wi-Fi or Bluetooth list.
     pub rows: Vec<ListRow>,
+    /// The first row the list shows (scrolled past the ones above); `layout` clamps it.
+    pub scroll: usize,
     /// The module showing its list.
     pub expanded: Option<Module>,
 }
@@ -108,8 +110,10 @@ pub struct Layout {
     pub sound: Option<Rect>,
     /// The output rows of an open Sound module.
     pub outputs: Vec<Rect>,
-    /// The list under the top row while Wi-Fi or Bluetooth is open, and its rows.
+    /// The list under the top row while Wi-Fi or Bluetooth is open, and its rows: as many as fit above the
+    /// bottom of the screen, from `Status::rows[scroll]`.
     pub list: Option<(Rect, Vec<Rect>)>,
+    pub scroll: usize,
     pub media: Rect,
     pub power: Option<Rect>,
 }
@@ -150,8 +154,8 @@ pub fn media_buttons(card: Rect) -> [Rect; 3] {
     [at(0), at(1), at(2)]
 }
 
-pub fn layout(output_width: i32, status: &Status) -> Layout {
-    let x = (output_width - MARGIN - WIDTH).max(MARGIN);
+pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
+    let x = (output.w - MARGIN - WIDTH).max(MARGIN);
     let top = menubar::HEIGHT + DROP;
     let card = |dx: i32, y: i32, w: i32, h: i32| Rectangle::new((x + dx, y).into(), (w, h).into());
     let mut y = top + PAD;
@@ -180,13 +184,28 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
         Some(Module::Bluetooth) => on(&status.bluetooth),
         _ => false,
     };
+    let mut scroll = 0;
     let list = open.then(|| {
-        let rows = status.rows.len().max(1) as i32;
+        // The cards under it must stay on screen: the list shows the rows that fit and scrolls the rest.
+        let after: i32 = [
+            (status.brightness.is_some(), SLIDER_CARD),
+            (status.volume.is_some(), SLIDER_CARD),
+            (true, MEDIA_CARD),
+            (status.battery.is_some() || status.profile.is_some(), POWER_CARD),
+        ]
+        .into_iter()
+        .filter(|(shown, _)| *shown)
+        .map(|(_, h)| h + GAP)
+        .sum();
+        let fit = ((output.h - MARGIN - PAD - after - y - 2 * LIST_PAD) / LIST_ROW).max(1) as usize;
+        let shown = status.rows.len().clamp(1, fit);
+        scroll = status.scroll.min(status.rows.len().saturating_sub(shown));
+        let rows = shown as i32;
         let list = card(PAD, y, INNER, 2 * LIST_PAD + rows * LIST_ROW);
         let cells: Vec<Rect> = (0..rows)
             .map(|i| Rectangle::new((list.loc.x + LIST_PAD, list.loc.y + LIST_PAD + i * LIST_ROW).into(), (list.size.w - 2 * LIST_PAD, LIST_ROW).into()))
             .collect();
-        hits.extend(cells.iter().take(status.rows.len()).enumerate().map(|(i, r)| (Control::Row(i), *r)));
+        hits.extend(cells.iter().take(status.rows.len()).enumerate().map(|(i, r)| (Control::Row(scroll + i), *r)));
         cards.push(list);
         y += list.size.h + GAP;
         (list, cells)
@@ -245,6 +264,7 @@ pub fn layout(output_width: i32, status: &Status) -> Layout {
         sound,
         outputs,
         list,
+        scroll,
         media,
         power,
     }
@@ -373,13 +393,33 @@ impl State {
                 }),
                 _ => Vec::new(),
             },
+            scroll: (self.control_scroll / f64::from(LIST_ROW)).round() as usize,
             expanded: self.expanded,
         }
     }
 
     pub fn control_layout(&self) -> Layout {
-        let width = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.w);
-        layout(width, &self.control_status())
+        layout(self.output_size(), &self.control_status())
+    }
+
+    /// The wheel or a two-finger swipe over the panel scrolls its open list. `true`: the panel took it.
+    pub fn control_scroll(&mut self, location: Point<f64, Logical>, dy: f64) -> bool {
+        if self.popup != Some(Popup::Control) {
+            return false;
+        }
+        let status = self.control_status();
+        let layout = layout(self.output_size(), &status);
+        if !layout.rect.to_f64().contains(location) {
+            return false;
+        }
+        let Some((_, cells)) = &layout.list else { return true };
+        let max = f64::from(LIST_ROW) * status.rows.len().saturating_sub(cells.len()) as f64;
+        let scroll = (self.control_scroll + dy).clamp(0.0, max);
+        if scroll != self.control_scroll {
+            self.control_scroll = scroll;
+            self.schedule_redraw();
+        }
+        true
     }
 
     /// A press inside the panel. Each change shows at once; the service's echo confirms it.
@@ -428,11 +468,15 @@ impl State {
             Control::SoundMore => self.expanded = if self.expanded == Some(Module::Sound) { None } else { Some(Module::Sound) },
             Control::WifiMore => {
                 self.expanded = if self.expanded == Some(Module::Wifi) { None } else { Some(Module::Wifi) };
+                self.control_scroll = 0.0;
                 if self.expanded.is_some() {
                     self.services.send(Command::WifiScan);
                 }
             }
-            Control::BluetoothMore => self.expanded = if self.expanded == Some(Module::Bluetooth) { None } else { Some(Module::Bluetooth) },
+            Control::BluetoothMore => {
+                self.expanded = if self.expanded == Some(Module::Bluetooth) { None } else { Some(Module::Bluetooth) };
+                self.control_scroll = 0.0;
+            }
             // ponytail: no "Connecting…" state; the row flips when the service reports the change.
             Control::Row(i) => match self.expanded {
                 Some(Module::Bluetooth) => {
@@ -520,7 +564,7 @@ mod tests {
 
     #[test]
     fn modules_stack_inside_the_panel() {
-        let l = layout(1280, &full());
+        let l = layout((1280, 800).into(), &full());
         assert_eq!(l.rect.loc, (1280 - 8 - 320, 28).into());
         // 10 + 104 + 10 + 62 + 10 + 62 + 10 + 56 + 10 + 44 + 10
         assert_eq!(l.rect.size.h, 388);
@@ -533,7 +577,7 @@ mod tests {
 
     #[test]
     fn missing_services_drop_their_modules() {
-        let l = layout(1280, &Status::default());
+        let l = layout((1280, 800).into(), &Status::default());
         assert_eq!((l.display, l.sound, l.power), (None, None, None));
         // Top row + Now Playing: 10 + 104 + 10 + 56 + 10.
         assert_eq!(l.rect.size.h, 190);
@@ -543,7 +587,7 @@ mod tests {
 
     #[test]
     fn hits_find_their_control() {
-        let l = layout(1280, &full());
+        let l = layout((1280, 800).into(), &full());
         let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
         assert_eq!(l.hit(centre(toggle_in(l.network, 1))), Some(Control::Bluetooth));
         assert_eq!(l.hit(centre(l.dark)), Some(Control::Dark));
@@ -555,9 +599,9 @@ mod tests {
     fn open_sound_lists_outputs() {
         let mut status = full();
         status.outputs = vec![(51, "Speaker".into(), true), (52, "HDMI".into(), false)];
-        let closed = layout(1280, &status);
+        let closed = layout((1280, 800).into(), &status);
         status.expanded = Some(Module::Sound);
-        let open = layout(1280, &status);
+        let open = layout((1280, 800).into(), &status);
         assert_eq!(open.rect.size.h - closed.rect.size.h, 2 * LIST_PAD + 2 * LIST_ROW);
         assert_eq!(open.outputs.len(), 2);
         let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
@@ -572,7 +616,7 @@ mod tests {
         let row = |name: &str| ListRow { symbol: Symbol::Bluetooth, name: name.into(), detail: None, lock: false, on: false };
         status.rows = vec![row("AirPods"), row("Keyboard")];
         status.expanded = Some(Module::Bluetooth);
-        let l = layout(1280, &status);
+        let l = layout((1280, 800).into(), &status);
         let (list, rows) = l.list.clone().unwrap();
         assert_eq!(list.loc.y, l.network.loc.y + 104 + 10);
         assert_eq!(rows.len(), 2);
@@ -582,10 +626,30 @@ mod tests {
         assert_eq!(l.hit(centre(l.network) + Point::from((0.0, 30.0))), Some(Control::BluetoothMore));
         // Off: no list. Wi-Fi on with no networks: one empty row.
         status.bluetooth = Some((false, "Off".into()));
-        assert_eq!(layout(1280, &status).list, None);
+        assert_eq!(layout((1280, 800).into(), &status).list, None);
         status.expanded = Some(Module::Wifi);
         status.rows.clear();
-        assert_eq!(layout(1280, &status).list.unwrap().1.len(), 1);
+        assert_eq!(layout((1280, 800).into(), &status).list.unwrap().1.len(), 1);
+    }
+
+    #[test]
+    fn long_lists_fit_the_screen_and_scroll() {
+        let mut status = full();
+        status.rows = (0..20).map(|i| ListRow { symbol: Symbol::WifiHigh, name: format!("net {i}"), detail: None, lock: true, on: false }).collect();
+        status.expanded = Some(Module::Wifi);
+        let short = layout((1366, 768).into(), &status);
+        let (_, rows) = short.list.clone().unwrap();
+        assert!(short.rect.loc.y + short.rect.size.h <= 768 - 8, "the panel ends above the screen's bottom");
+        assert!(rows.len() < 20 && short.power.unwrap().loc.y > rows[rows.len() - 1].loc.y);
+        assert_eq!(short.scroll, 0);
+        // Scrolled past the end: held at the last page, rows hit by their index in `Status::rows`.
+        status.scroll = 100;
+        let scrolled = layout((1366, 768).into(), &status);
+        assert_eq!(scrolled.scroll, 20 - rows.len());
+        let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
+        assert_eq!(scrolled.hit(centre(rows[0])), Some(Control::Row(scrolled.scroll)));
+        // A tall screen shows them all.
+        assert_eq!(layout((1366, 1600).into(), &status).list.unwrap().1.len(), 20);
     }
 
     #[test]

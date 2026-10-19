@@ -3,7 +3,7 @@
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
-    utils::Rectangle,
+    utils::{Logical, Rectangle, Size},
 };
 
 use super::{
@@ -82,13 +82,13 @@ impl ControlCenter {
         text: &mut Text,
         symbols: &mut Symbols,
         status: &Status,
-        output_width: i32,
+        output: Size<i32, Logical>,
         dark: bool,
         accent: [u8; 3],
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let layout = control::layout(output_width, status);
+        let layout = control::layout(output, status);
         let key = (layout.rect, status.clone(), dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             self.glass = Some((key, glass(shaders, &layout, status, dark, accent, glass_opacity, scale)));
@@ -159,7 +159,7 @@ impl ControlCenter {
                     true,
                 );
             }
-            for (row, item) in rows.iter().zip(&status.rows) {
+            for (row, item) in rows.iter().zip(status.rows.iter().skip(layout.scroll)) {
                 let circle = Rectangle::new((row.loc.x + 3, row.loc.y + (LIST_ROW - DEVICE) / 2).into(), (DEVICE, DEVICE).into());
                 put(symbols.get(item.symbol, Weight::Fill, 12, scale, if item.on { white } else { label }), centred(circle, 12), false);
                 let x = circle.loc.x + DEVICE + 8;
@@ -282,7 +282,7 @@ fn glass(shaders: &Shaders, layout: &Layout, status: &Status, dark: bool, accent
         out.push(shaders.light(rect, if state { on } else { off }, false, scale));
     }
     if let Some((_, rows)) = &layout.list {
-        for (row, item) in rows.iter().zip(&status.rows) {
+        for (row, item) in rows.iter().zip(status.rows.iter().skip(layout.scroll)) {
             let circle = Rectangle::new((row.loc.x + 3, row.loc.y + (LIST_ROW - DEVICE) / 2).into(), (DEVICE, DEVICE).into());
             out.push(shaders.light(circle, if item.on { on } else { off }, false, scale));
         }
