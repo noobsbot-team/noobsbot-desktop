@@ -122,7 +122,8 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;
     let config_path = config::path();
-    if !greeter {
+    // Not nested: a test run never writes the owner's config.
+    if !greeter && !nested {
         shell::plank::first_run(&config_path);
     }
     let mut state = State::new(&mut event_loop, display, nested, config::load(&config_path))?;
