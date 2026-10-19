@@ -384,6 +384,8 @@ pub fn watch(mut send: impl FnMut(Apps) -> bool + Send + 'static) {
             Ok(w) => w,
             Err(err) => return tracing::warn!("app index: no live updates: {err}"),
         };
+        // The user's dir may not exist yet; watching only existing ones would miss the first app installed there.
+        let _ = std::fs::create_dir_all(data_home().join("applications"));
         for dir in data_dirs().iter().map(|d| d.join("applications")).filter(|d| d.is_dir()) {
             if let Err(err) = watcher.watch(&dir, RecursiveMode::Recursive) {
                 tracing::warn!("app index: {}: {err}", dir.display());
