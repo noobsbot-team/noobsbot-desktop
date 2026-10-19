@@ -820,10 +820,11 @@ impl State {
                 let Some(dir) = crate::shell::desktop::user_dir() else { return };
                 let Some(name) = app.path.file_name() else { return };
                 let to = dir.join(name);
-                // Executable: file managers only run launchers their owner marked trusted.
-                let copied = std::fs::copy(&app.path, &to).and_then(|_| {
-                    use std::os::unix::fs::PermissionsExt;
-                    std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755))
+                // Executable: file managers only run launchers their owner marked trusted. Never over something
+                // already there (the owner's own edited copy).
+                let copied = std::fs::read(&app.path).and_then(|bytes| {
+                    use std::{io::Write, os::unix::fs::OpenOptionsExt};
+                    std::fs::File::options().write(true).create_new(true).mode(0o755).open(&to)?.write_all(&bytes)
                 });
                 if let Err(err) = copied {
                     tracing::warn!("app drawer: {} to {}: {err}", app.path.display(), to.display());
