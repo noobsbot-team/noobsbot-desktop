@@ -131,8 +131,8 @@ pub fn label_rect(cell: Rect) -> Rect {
 }
 
 /// Cells for `names`: a saved one where it is on the grid and free, the rest in the first free cells, down each
-/// column, then leftwards.
-// ponytail: more icons than cells run off the left edge; macOS shrinks the grid. Add when a desktop gets that full.
+/// column, then leftwards; more icons than cells pile up in the last one rather than run off the screen.
+// ponytail: macOS shrinks the grid instead. Add when a desktop gets that full.
 pub fn place(names: &[&str], saved: &HashMap<String, Cell>, grid: &Grid) -> Vec<Cell> {
     let fits = |&(c, r): &Cell| (0..grid.cols).contains(&c) && (0..grid.rows).contains(&r);
     let mut taken = std::collections::HashSet::new();
@@ -142,7 +142,7 @@ pub fn place(names: &[&str], saved: &HashMap<String, Cell>, grid: &Grid) -> Vec<
         while taken.contains(&(next / grid.rows, next % grid.rows)) {
             next += 1;
         }
-        *cell = Some((next / grid.rows, next % grid.rows));
+        *cell = Some(if next < grid.rows * grid.cols { (next / grid.rows, next % grid.rows) } else { (grid.cols - 1, grid.rows - 1) });
         next += 1;
     }
     cells.into_iter().flatten().collect()
@@ -681,6 +681,13 @@ mod tests {
         let many: Vec<String> = (0..8).map(|i| i.to_string()).collect();
         let names: Vec<&str> = many.iter().map(String::as_str).collect();
         assert_eq!(place(&names, &HashMap::new(), &g)[6..], [(1, 0), (1, 1)]);
+        // A hundred icons on a 6×12 grid: the 73rd onwards share the last cell, none leaves the screen.
+        let many: Vec<String> = (0..100).map(|i| i.to_string()).collect();
+        let names: Vec<&str> = many.iter().map(String::as_str).collect();
+        let cells = place(&names, &HashMap::new(), &g);
+        assert!(cells.iter().all(|&(c, r)| (0..g.cols).contains(&c) && (0..g.rows).contains(&r)));
+        assert_eq!(cells[71], (11, 5));
+        assert!(cells[72..].iter().all(|&c| c == (11, 5)));
     }
 
     #[test]
