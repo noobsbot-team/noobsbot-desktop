@@ -30,6 +30,30 @@ fn parse_dump(text: &str) -> Dump {
     dump
 }
 
+/// Plank 0.10's keyfile (`plank/<dock>/settings`, before it moved to dconf) as a dump section: `IconSize=48` →
+/// `icon-size`, `HideMode=1` → its name, `DockItems=a.dockitem;;b.dockitem` → a list.
+fn keyfile_section(text: &str) -> HashMap<String, String> {
+    const MODES: [&str; 6] = ["none", "intelligent", "auto", "dodge-maximized", "window-dodge", "dodge-active"];
+    let mut out = HashMap::new();
+    for (key, value) in text.lines().filter(|l| !l.trim_start().starts_with('#')).filter_map(|l| l.split_once('=')) {
+        let mut kebab = String::new();
+        for c in key.trim().chars() {
+            if c.is_ascii_uppercase() && !kebab.is_empty() {
+                kebab.push('-');
+            }
+            kebab.push(c.to_ascii_lowercase());
+        }
+        let value = value.trim();
+        let value = match kebab.as_str() {
+            "hide-mode" => format!("'{}'", value.parse::<usize>().ok().and_then(|i| MODES.get(i)).unwrap_or(&"intelligent")),
+            "dock-items" => format!("[{}]", value.split(";;").filter(|s| !s.is_empty()).map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", ")),
+            _ => value.to_owned(),
+        };
+        out.insert(kebab, value);
+    }
+    out
+}
+
 /// The single-quoted strings in a GVariant value: `['a', 'b']` → a, b; `'center'` → center.
 fn strings(value: &str) -> Vec<String> {
     let (mut out, mut current, mut quoted, mut escaped) = (Vec::new(), String::new(), false, false);
@@ -188,11 +212,18 @@ fn import_into(text: &str, config_home: &Path) -> Result<(String, Keys, String),
     // A missing dconf or an empty dump leaves only the launcher files.
     let dump =
         Command::new("dconf").args(["dump", "/net/launchpad/plank/"]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
-    let dump = parse_dump(&dump);
+    let mut dump = parse_dump(&dump);
     let dock = first_dock(&dump);
+    let section = format!("docks/{dock}");
+    // Before dconf, Plank kept its settings in a keyfile next to the launchers.
+    if !dump.contains_key(&section)
+        && let Ok(text) = fs::read_to_string(config_home.join("plank").join(&dock).join("settings"))
+    {
+        dump.insert(section.clone(), keyfile_section(&text));
+    }
     let launchers = read_launchers(&config_home.join("plank").join(&dock).join("launchers"));
-    if launchers.is_empty() && !dump.contains_key(&format!("docks/{dock}")) {
-        return Err(format!("no Plank settings found (dconf /net/launchpad/plank/, ~/.config/plank/{dock}/launchers)"));
+    if launchers.is_empty() && !dump.contains_key(&section) {
+        return Err(format!("no Plank settings found (dconf /net/launchpad/plank/, ~/.config/plank/{dock}/settings or launchers)"));
     }
     let kept = config::parse(text).map(|c| c.dock.items).unwrap_or_default();
     let keys = dock_keys(&dump, &launchers, &kept);
@@ -319,6 +350,23 @@ mod tests {
             let keys = dock_keys(&parse_dump(&format!("[docks/dock1]\nhide-mode='{plank}'\n")), &HashMap::new(), &[]);
             assert_eq!(config::parse(&set_keys(config::DEFAULT_TOML, "dock", &keys)).expect("parses").dock.hide, ours, "{plank}");
         }
+    }
+
+    #[test]
+    fn the_old_keyfile_reads_like_a_dump() {
+        let text =
+            "[PlankDockPreferences]\n# Comment\nHideMode=3\nIconSize=48\nZoomEnabled=true\nDockItems=kitty.dockitem;;org.kde.kate.dockitem\nPosition=3\n";
+        let section = keyfile_section(text);
+        assert_eq!(section["hide-mode"], "'dodge-maximized'");
+        assert_eq!(section["dock-items"], "['kitty.dockitem', 'org.kde.kate.dockitem']");
+        assert_eq!((section["icon-size"].as_str(), section["zoom-enabled"].as_str()), ("48", "true"));
+        let mut dump = Dump::new();
+        dump.insert("docks/dock1".into(), section);
+        let config = config::parse(&set_keys(config::DEFAULT_TOML, "dock", &dock_keys(&dump, &launchers(), &[]))).expect("parses");
+        assert_eq!(
+            (config.dock.items.as_slice(), config.dock.icon_size, config.dock.hide),
+            (&["kitty".to_owned(), "org.kde.kate".to_owned()][..], 48, config::DockHide::DodgeMaximized)
+        );
     }
 
     /// The owner's dock: Plank's eight launchers, as files in a launchers folder.
