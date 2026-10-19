@@ -14,7 +14,8 @@ DESKTOP_REPO=anil0403/noobsbot-desktop
 TERMINAL_REPO=anil0403/noobsbot-terminal
 # --from-source builds these tags (override with the environment for testing a newer one).
 DESKTOP_TAG=${NOOBSBOT_DESKTOP_TAG:-v0.1.0}
-TERMINAL_TAG=${NOOBSBOT_TERMINAL_TAG:-v0.5.1}
+# v0.5.1, by commit: its installer runs here with curl | bash, and a tag can be moved while a commit can't.
+TERMINAL_TAG=${NOOBSBOT_TERMINAL_TAG:-a018abda96add824a72be95f3450de0998f71229}
 # The release signing key (E6.13); its private half lives only in the release CI secret.
 MINISIGN_PUBKEY="RWQgk/P2Bfb6JYQ3p8/ObaP2nG0S1gYPhE/KIJa7jYnCArCLukiRPTyR"
 CACHE=${XDG_CACHE_HOME:-$HOME/.cache}/noobsbot-desktop
@@ -164,7 +165,7 @@ install_desktop_release() {
     tag=$(curl -fsSL "https://api.github.com/repos/$DESKTOP_REPO/releases/latest" |
         sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1) || true
     ver=${tag#v}
-    [[ $ver =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || die "could not find the latest release of $DESKTOP_REPO (offline?)."
+    [[ $ver =~ ^[0-9]+(\.[0-9]+){2}$ ]] || die "could not find the latest release of $DESKTOP_REPO (offline?)."
     if [[ -x $LIB/versions/$ver/noobsbot-desktop && $(readlink /usr/bin/noobsbot-desktop) == "$LIB/versions/$ver/noobsbot-desktop" ]]; then
         say "Noobsbot Desktop $ver is already installed"
         return
@@ -181,7 +182,8 @@ install_desktop_release() {
     run bash -c 'cd "$1" && grep -E "^[0-9a-f]{64}  $2\$" SHA256SUMS | sha256sum -c --strict --quiet' _ "$dir" "$name" ||
         { run rm -rf "$dir"; die "the download doesn't match its signed checksum; nothing was installed."; }
     as_root mkdir -p "$LIB/versions/$ver"
-    as_root tar --zstd -xf "$dir/$name" -C "$LIB/versions/$ver" --strip-components=1
+    # --no-same-owner: root's tar would otherwise keep the archive's (the CI user's) uid on the installed files.
+    as_root tar --zstd --no-same-owner --no-same-permissions -xf "$dir/$name" -C "$LIB/versions/$ver" --strip-components=1
     use_version "$ver"
 }
 
