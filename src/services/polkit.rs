@@ -313,7 +313,7 @@ mod tests {
         let want = if me == 0 { vec![login] } else { vec![login, "root".to_string()] };
         assert_eq!(users(&[user(0), group, user(me), user(0)], me), want);
         assert!(users(&[user(u32::MAX - 7)], me).is_empty(), "an unknown uid is left out");
-        assert_eq!(users(&[user(me), user(0), user(me)], me).len(), 2, "a duplicate that isn't adjacent is dropped too");
+        assert_eq!(users(&[user(me), user(0), user(me)], me).len(), want.len(), "a duplicate that isn't adjacent is dropped too");
     }
 
     /// The interface on a private dbus-daemon, with a mock Authority: registration, a wrong then a right
