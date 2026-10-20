@@ -8,6 +8,108 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
+## [1.0.0-alpha.5](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.4...v1.0.0-alpha.5) - 2026-10-20
+
+### Added
+
+- *(settings)* Displays page with arrangement, per-display settings and keep-or-revert prompt
+- *(dock)* import Plank's dock on first start, with every hide mode and behaviour setting
+- *(dock)* draw Plank's hover lighten, click darken, two dots, tooltip, dragged icon and poof
+- *(dock)* behave like Plank
+- *(display)* per-display settings ([[display.outputs]]) applied live, displays.json for Settings
+- *(drawer)* track recent apps from Spotlight and Launchpad; README
+- *(drawer)* app drawer with categories, search, favorites, recent apps and session buttons
+- *(apps)* read Comment, GenericName, Keywords, Categories and the entry's path
+
+### Fixed
+
+- *(ui)* Launchpad, Spotlight and the desktop show the placeholder for an iconless app
+- *(dock)* README says what the dock does by default, how to re-import Plank, where the drawer's state lives
+- *(input)* repeat keys held in the lock screen, Spotlight, switcher and other shell surfaces
+- *(dock)* a nested run doesn't import Plank into the real config
+- *(dock)* import Plank's pre-dconf settings keyfile too
+- *(displays)* revert unkept display settings from the compositor
+- *(dock)* brackets inside quotes or comments don't end a multi-line items array
+- *(drawer)* "Add to Desktop" leaves an existing launcher alone
+- *(drawer)* a category shows once the pointer rests on it
+- *(drawer)* the scroll never runs past a list that shrank
+- *(drawer)* no gap for a hidden dock
+- *(drawer)* sidebar rows tighten on short screens before a category is dropped
+- *(dock)* zoomed icons sit on whole pixels
+- *(apps)* run an app in its Path= directory
+- *(displays)* round custom scales to 1/120 steps
+- *(idle)* turn real screens off at the Off stage
+- *(text)* pad labels to a whole logical size at fractional scales
+- *(dock)* no bounce or Recent entry when an app fails to start
+- *(theme)* let GTK follow dark mode and make auto follow the clock
+- *(drawer)* a non-UTF-8 byte in favorites or recent-apps no longer empties it
+- *(dock)* unpinning drops every entry naming the app
+- *(anim)* close and minimise ghosts on the window's own display
+- *(dock)* one icon size ceiling for config and Ctrl+scroll
+- *(ui)* keep overflowing desktop icons on the screen
+- *(apps)* watch ~/.local/share/applications before it exists
+- *(drawer)* search ignores accents and matches untranslated keywords too
+- *(ui)* cap alert text so the buttons stay on screen
+- *(gestures)* no hot corner where another display meets the screen
+- *(ui)* keep menus on screen and scroll ones taller than it
+- *(dock)* dragging a builtin off the dock no longer unpins it
+- *(input)* map touchscreens and tablets onto their own display
+- *(dock)* drop cached icons when the desktop files change
+- *(dock)* a grey placeholder when the theme has no fallback icon either
+- *(displays)* refit zoomed and fullscreen windows when displays change
+- *(drawer)* a wheel notch scrolls one row
+- *(displays)* bring the pointer and windows of a gone display onto the ones left
+- *(apps)* honour OnlyShowIn, NotShowIn and TryExec
+- *(ui)* shrink crowded Spaces bar cells so + stays visible
+- *(spaces)* switching Spaces moves only the active display's windows
+- *(drawer)* "Add to Dock" pins after every icon, builtins included
+- *(ui)* keep the menu bar's app name clear of the status items
+- *(displays)* each window gets the scale of the output it is on
+- *(dock)* a fullscreen window on another output no longer hides the dock
+- *(dock)* intellihide compares dock items, not pids
+- *(apps)* find a plain desktop file by a reverse-DNS app id
+- *(dock)* name windows after their program, resolve each window's item once per app load
+- *(ui)* cap Control Center lists to the screen and scroll them
+- *(displays)* re-snap saved positions after a scale, mode or rotation change
+- *(ical)* alarm math saturates, no allocation from the TZif header
+- *(tray)* cap registered items at 64
+- *(polkit)* cancel only the request it names, drop every duplicate user
+- *(lock)* passwords are wiped for real, PAM and greetd can't hold the field forever
+- *(notifications)* bound the icon cache
+- *(render)* cap the animation snapshot at GL_MAX_TEXTURE_SIZE
+- *(install)* pin the terminal installer by commit, root's tar drops the archive's owner
+- SIGTERM log panic, 0 Hz modes, symlink loops, capture sets
+- hostile calendar values and a CR in capped text no longer panic
+- *(dock)* keep pins when config.toml doesn't parse, titles with İ, Plank's uint32 values
+- *(services)* untrusted paths and ids from apps
+- *(pam)* answer hidden prompts only, refuse an empty user, fall back to system-auth
+- *(lock)* no client lock over ours, unlock only by the confirmed locker, every output covered
+- *(render)* give labels their whole buffer as source so fractional scales don't crop them
+- *(render)* labels, desktop names and the screenshot thumbnail drawn whole at fractional scales
+- *(spotlight)* allow the large App variant of Hit
+- *(apps)* allow the large App variant of Entry
+
+### Other
+
+- *(polkit)* the dedup case holds when the tests run as root
+- *(shell)* dock, drawer and desktop saves go through the config-save thread
+- Merge branch 'worktree-agent-a6aacb8353d78706c' into worktree-m1-compositor-core
+- Merge branch 'worktree-agent-ad18c34a38d2be719' into worktree-m1-compositor-core
+- Merge branch 'worktree-agent-a629462e06967ad2f' into worktree-m1-compositor-core
+- *(anim)* sample animations at the frame clock's target vblank
+- *(symbols)* evict rasterised symbols with the text cache's LRU
+- *(wallpaper)* decode no bigger than the largest output, refuse > 8192 px
+- ignore __pycache__
+- *(wallpaper)* one opal gradient per output size
+- *(text)* cache a label that fits under one key, whatever its width limit
+- *(config)* save settings on a worker, coalesced, and skip reloading our own writes
+- *(apps)* index lookup keys once per load
+- *(icons)* rasterise app and tray icons off the frame thread
+- ext-session-lock client against a nested desktop
+- Merge branch 'worktree-agent-a34439c8618597825' into worktree-m1-compositor-core
+- Merge branch 'worktree-agent-a2cb395c4642cd52c' into worktree-m1-compositor-core
+- *(readme)* per-display settings in the settings table
+
 ## [1.0.0-alpha.4](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.3...v1.0.0-alpha.4) - 2026-10-18
 
 ### Added
