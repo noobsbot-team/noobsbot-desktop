@@ -1011,7 +1011,8 @@ mod tests {
         save_later(path.clone(), |text| set_key(text, "dock", "icon_size", "48"));
         save_later(dir.join("other.txt"), |_| "other\n".into());
         let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        while !path.is_file() && std::time::Instant::now() < deadline {
+        // Both files: the thread writes them one after the other.
+        while !(path.is_file() && dir.join("other.txt").is_file()) && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), "[dock]\nicon_size = 48\n", "the second edit saw the first");
