@@ -2,7 +2,8 @@
 # Boots the test VM headless. GPU=gl (default: virtio-vga-gl + egl-headless, virgl) or GPU=nogl (plain virtio-vga,
 # the pixman fallback). ssh: ssh -p 2222 -i ~/.cache/noobsbot-vm/id_ed25519 tester@127.0.0.1
 # HEADS=2 gives the GPU a second output, unplugged until a VNC client sizes it: scripts/vm/head.py (gl only).
-# The GPU sits on a PCIe port with no-soft-reset so it keeps its framebuffers across S3 (suspend from the lock page).
+# Suspend from the lock page: the GPU sits on a no-soft-reset PCIe port so it keeps its framebuffers across S3, and
+# noreboot stops the chipset watchdog (restarted by the S3 wake) from resetting the guest a minute later.
 # Drive it with scripts/vm/qmp.py (screenshots, keys, mouse; under virgl screenshots come from the VNC socket). Writes qemu.pid; stop with scripts/vm/stop.sh.
 set -eu
 vm=$HOME/.cache/noobsbot-vm
@@ -17,7 +18,7 @@ else
     gpu="-device pcie-root-port,id=gpuport -device virtio-vga,bus=gpuport,x-pcie-pm-no-soft-reset=on,xres=1920,yres=1080 -display none"
 fi
 # shellcheck disable=SC2086 # $gpu is several words
-qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 4G -machine q35,vmport=off \
+qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 4G -machine q35,vmport=off -global ICH9-LPC.noreboot=on \
     -drive file=disk.qcow2,if=virtio,discard=unmap \
     $gpu \
     -device virtio-keyboard-pci -device virtio-tablet-pci \
