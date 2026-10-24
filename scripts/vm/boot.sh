@@ -16,7 +16,7 @@ else
     gpu="-device virtio-vga,xres=1920,yres=1080 -display none"
 fi
 # shellcheck disable=SC2086 # $gpu is several words
-qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 4G -machine q35 \
+qemu-system-x86_64 -enable-kvm -cpu host -smp 4 -m 4G -machine q35,vmport=off \
     -drive file=disk.qcow2,if=virtio,discard=unmap \
     $gpu \
     -device virtio-keyboard-pci -device virtio-tablet-pci \

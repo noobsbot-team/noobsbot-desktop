@@ -6,6 +6,8 @@
   qmp.py type <text>             types ASCII text (sendkey per character)
   qmp.py move <x> <y>            absolute pointer, in pixels of a 1920x1080 screen
   qmp.py click <x> <y> [right]   move + click
+  qmp.py rel <dx> <dy> [steps]   relative motion (the PS/2 mouse: crosses onto a second display, the tablet can't)
+  qmp.py button <down|up>        left button only, e.g. down, rel …, up to drag
   qmp.py burst <prefix> <n> [keys...]  keys, then n PPM screendumps (no virgl only)
   qmp.py hmp <command>           any HMP command
 """
@@ -93,6 +95,15 @@ def main():
         q.button(btn, True)
         time.sleep(0.08)
         q.button(btn, False)
+    elif a[0] == "rel":
+        steps = int(a[3]) if a[3:] else 1
+        for _ in range(steps):
+            q.cmd("input-send-event", events=[
+                {"type": "rel", "data": {"axis": "x", "value": int(float(a[1]) / steps)}},
+                {"type": "rel", "data": {"axis": "y", "value": int(float(a[2]) / steps)}}])
+            time.sleep(0.02)
+    elif a[0] == "button":
+        q.button("left", a[1] == "down")
     elif a[0] == "burst":
         # burst <prefix> <n> <keys...>: sends the keys, then n screendumps back to back (catches animations).
         for k in a[3:]:
