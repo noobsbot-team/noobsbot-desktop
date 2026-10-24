@@ -168,9 +168,14 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             let displays = config.display != state.config.display;
+            let idle = config.idle != state.config.idle;
             state.config = config;
             if displays {
                 state.apply_displays();
+            }
+            if idle {
+                // New times count from the last input, not from the next one.
+                state.idle_arm();
             }
             state.arm_display_revert();
             state.calendar_watch();
