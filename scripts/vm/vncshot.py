@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Screenshot of the test VM through QEMU's VNC unix socket: QMP screendump has no surface to read when the
-guest scans out through virgl (egl-headless), but egl-headless feeds the VNC server. Usage: vncshot.py <out.png>"""
+guest scans out through virgl (egl-headless), but egl-headless feeds the VNC server. Usage: vncshot.py <out.png> [socket] (the second head: ~/.cache/noobsbot-vm/vnc1.sock)"""
 import os
 import socket
 import struct
@@ -20,9 +20,10 @@ def recv(s, n):
     return b
 
 
-def main(out):
+def connect(path=SOCK):
+    """Handshake (no auth, shared); returns the socket and the framebuffer size."""
     s = socket.socket(socket.AF_UNIX)
-    s.connect(SOCK)
+    s.connect(path)
     s.sendall(recv(s, 12)[:12])  # echo the server's protocol version (RFB 003.008)
     types = recv(s, recv(s, 1)[0])
     if 1 not in types:
@@ -34,6 +35,11 @@ def main(out):
     w, h = struct.unpack(">HH", recv(s, 4))
     recv(s, 16)
     recv(s, struct.unpack(">I", recv(s, 4))[0])
+    return s, w, h
+
+
+def main(out, path=SOCK):
+    s, w, h = connect(path)
     # 32 bpp, depth 24, little endian, true colour, BGRX.
     s.sendall(struct.pack(">BxxxBBBBHHHBBBxxx", 0, 32, 24, 0, 1, 255, 255, 255, 16, 8, 0))
     s.sendall(struct.pack(">BxHI", 2, 1, 0))  # raw encoding only
@@ -68,4 +74,4 @@ def main(out):
 
 
 if __name__ == "__main__":
-    main(sys.argv[1])
+    main(*sys.argv[1:3])
