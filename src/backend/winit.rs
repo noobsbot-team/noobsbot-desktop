@@ -131,7 +131,9 @@ impl State {
                     self.frame_time,
                 )
             };
-            if let Some(alpha) = idle_shade {
+            // Locked, the wallpaper darkens as under the lock page (30%, 40% in light mode), so every display reads locked.
+            let lock_shade = locked.then_some(if dark { 0.3 } else { 0.4 });
+            if let Some(alpha) = idle_shade.into_iter().chain(lock_shade).reduce(f32::max) {
                 elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
             }
             return Some((elements, animating));
