@@ -189,7 +189,16 @@ impl State {
                 pointer.set_location(kept);
             }
         }
-        let lost: Vec<Window> = self.space.elements().filter(|w| self.window_output(w).is_none()).cloned().collect();
+        let lost: Vec<Window> = self
+            .space
+            .elements()
+            .filter(|w| {
+                let Some(mut frame) = self.space.element_geometry(w) else { return false };
+                frame.loc.y -= self.window_row(w) * crate::spaces::STRIDE;
+                stranded(frame, &screens)
+            })
+            .cloned()
+            .collect();
         for window in lost {
             let (Some(frame), Some(area)) = (self.frame(&window), self.work_area()) else { continue };
             let row = self.window_row(&window) * crate::spaces::STRIDE;
@@ -258,6 +267,14 @@ pub fn mostly_on<T>(frame: Rectangle<i32, Logical>, outputs: impl Iterator<Item 
         .filter(|(area, _)| *area > 0)
         .max_by_key(|(area, _)| *area)
         .map(|(_, output)| output)
+}
+
+/// Less than half of `frame` is on the displays: what a window left on an unplugged one keeps (a sliver over the
+/// edge of the one beside it is not enough to grab it back).
+pub fn stranded(frame: Rectangle<i32, Logical>, screens: &[Rectangle<i32, Logical>]) -> bool {
+    let area = |r: Rectangle<i32, Logical>| i64::from(r.size.w) * i64::from(r.size.h);
+    let seen: i64 = screens.iter().filter_map(|s| frame.intersection(*s)).map(area).sum();
+    seen * 2 < area(frame)
 }
 
 impl State {
@@ -463,6 +480,17 @@ mod tests {
         assert_eq!(mostly_on(rect(1400, 100, 800, 600), outputs()), Some(1.0), "more of it on the monitor");
         assert_eq!(mostly_on(rect(1536, 0, 800, 600), outputs()), Some(1.0), "touching the laptop's edge is not on it");
         assert_eq!(mostly_on(rect(5000, 5000, 800, 600), outputs()), None, "on no output");
+    }
+
+    #[test]
+    fn a_window_mostly_off_every_display_is_stranded() {
+        let rect = |x, y, w, h| Rectangle::<i32, Logical>::new((x, y).into(), (w, h).into());
+        let laptop = [rect(0, 0, 1920, 1080)];
+        // Left on the unplugged monitor to the right, 40 px over the laptop's edge (seen in the VM).
+        assert!(stranded(rect(1880, 80, 1400, 900), &laptop));
+        assert!(stranded(rect(5000, 0, 800, 600), &laptop), "on no display");
+        assert!(!stranded(rect(1400, 80, 800, 600), &laptop), "more than half still on it");
+        assert!(!stranded(rect(1400, 80, 800, 600), &[laptop[0], rect(1920, 0, 1280, 720)]), "the rest on the monitor");
     }
 
     #[test]
