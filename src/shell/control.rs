@@ -57,6 +57,10 @@ pub struct Status {
     pub awake: bool,
     /// Apps keeping the machine awake: who, and why (may be empty).
     pub blockers: Vec<(String, String)>,
+    /// Opened from its menu bar item: only this module, open, with its links under it, the panel's left edge at x.
+    pub bar: Option<(Module, i32)>,
+    /// The captive portal's check URL, which leads to the sign-in page.
+    pub portal: Option<String>,
 }
 
 /// A module that opens a list in place (one at a time).
@@ -123,6 +127,8 @@ pub enum Control {
     KeepAwake,
     /// The Keep Awake label: shows or hides the apps blocking sleep.
     AwakeMore,
+    /// A row of `links`, by its index.
+    Link(usize),
 }
 
 /// Every module's place, output-relative.
@@ -150,6 +156,8 @@ pub struct Layout {
     pub blockers: Vec<Rect>,
     pub media: Rect,
     pub power: Option<Rect>,
+    /// A bar module's `links` rows.
+    pub links: Vec<Rect>,
 }
 
 impl Layout {
@@ -222,30 +230,62 @@ pub fn media_buttons(card: Rect) -> [Rect; 3] {
     [at(0), at(1), at(2)]
 }
 
+/// The rows under a bar item's module: sign in behind a captive portal, then the module's Settings page.
+pub fn links(status: &Status) -> Vec<(&'static str, Action)> {
+    let settings = |label, page| (label, Action::Spawn(format!("noobsbot-desktop-settings --page {page}")));
+    match status.bar {
+        Some((Module::Wifi, _)) => {
+            let portal = status.portal.iter().map(|url| ("Sign in to network…", Action::Spawn(format!("xdg-open {url}"))));
+            portal.chain([settings("Wi-Fi Settings…", "wi-fi")]).collect()
+        }
+        Some((Module::Bluetooth, _)) => vec![settings("Bluetooth Settings…", "bluetooth")],
+        Some((Module::Sound, _)) => vec![settings("Sound Settings…", "sound")],
+        Some((Module::Awake, _)) | None => Vec::new(),
+    }
+}
+
+/// The whole panel at the top right, or with `Status::bar` one module under its bar item.
 pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
-    let x = (output.w - MARGIN - WIDTH).max(MARGIN);
+    let only = status.bar.map(|(module, _)| module);
+    let full = only.is_none();
+    let x = status.bar.map_or(output.w, |(_, left)| left).min(output.w - MARGIN - WIDTH).max(MARGIN);
     let top = menubar::height() + DROP;
     let card = |dx: i32, y: i32, w: i32, h: i32| Rectangle::new((x + dx, y).into(), (w, h).into());
     let mut y = top + PAD;
     let (top_h, list_row, awake_h, media_h, power_h) = (ts(TOP), ts(LIST_ROW), ts(AWAKE_CARD), ts(MEDIA_CARD), ts(POWER_CARD));
-    let network = card(PAD, y, HALF, top_h);
-    let small = (top_h - GAP) / 2;
-    let dnd = card(PAD + HALF + GAP, y, HALF, small);
-    let dark = card(PAD + HALF + GAP, y + small + GAP, HALF, small);
-    // Right of a toggle: its title and subtitle.
-    let label_of = |t: Rect| {
-        Rectangle::new((t.loc.x + TOGGLE + 4, t.loc.y + (TOGGLE - ts(36)) / 2).into(), (network.loc.x + network.size.w - t.loc.x - TOGGLE - 8, ts(36)).into())
-    };
-    let mut hits = vec![
-        (Control::Wifi, toggle_in(network, 0)),
-        (Control::WifiMore, label_of(toggle_in(network, 0))),
-        (Control::Bluetooth, toggle_in(network, 1)),
-        (Control::BluetoothMore, label_of(toggle_in(network, 1))),
-        (Control::Dnd, dnd),
-        (Control::Dark, dark),
-    ];
-    let mut cards = vec![network, dnd, dark];
-    y += top_h + GAP;
+    let (mut hits, mut cards) = (Vec::new(), Vec::new());
+    let (mut network, mut dnd, mut dark) = Default::default();
+    if full {
+        network = card(PAD, y, HALF, top_h);
+        let small = (top_h - GAP) / 2;
+        dnd = card(PAD + HALF + GAP, y, HALF, small);
+        dark = card(PAD + HALF + GAP, y + small + GAP, HALF, small);
+        // Right of a toggle: its title and subtitle.
+        let label_of = |t: Rect| {
+            Rectangle::new(
+                (t.loc.x + TOGGLE + 4, t.loc.y + (TOGGLE - ts(36)) / 2).into(),
+                (network.loc.x + network.size.w - t.loc.x - TOGGLE - 8, ts(36)).into(),
+            )
+        };
+        hits = vec![
+            (Control::Wifi, toggle_in(network, 0)),
+            (Control::WifiMore, label_of(toggle_in(network, 0))),
+            (Control::Bluetooth, toggle_in(network, 1)),
+            (Control::BluetoothMore, label_of(toggle_in(network, 1))),
+            (Control::Dnd, dnd),
+            (Control::Dark, dark),
+        ];
+        cards = vec![network, dnd, dark];
+        y += top_h + GAP;
+    } else if let Some(module @ (Module::Wifi | Module::Bluetooth)) = only {
+        // Its toggle alone, full width.
+        network = card(PAD, y, INNER, ts(24) + TOGGLE);
+        hits.push((if module == Module::Wifi { Control::Wifi } else { Control::Bluetooth }, toggle_in(network, 0)));
+        cards.push(network);
+        y += network.size.h + GAP;
+    }
+    let links_n = links(status).len() as i32;
+    let links_h = if links_n > 0 { 2 * LIST_PAD + links_n * list_row + GAP } else { 0 };
     // An open Wi-Fi or Bluetooth module lists its networks or devices full width under the top row; with none, one
     // empty row says so.
     let on = |module: &Option<(bool, String)>| module.as_ref().is_some_and(|m| m.0);
@@ -257,17 +297,18 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     let mut scroll = 0;
     let list = open.then(|| {
         // The cards under it must stay on screen: the list shows the rows that fit and scrolls the rest.
-        let after: i32 = [
-            (status.brightness.is_some(), slider_h()),
-            (status.volume.is_some(), slider_h() + sound_extra(status, status.expanded == Some(Module::Sound) && !status.outputs.is_empty())),
-            (true, awake_h),
-            (true, media_h),
-            (status.battery.is_some() || status.profile.is_some(), power_h),
-        ]
-        .into_iter()
-        .filter(|(shown, _)| *shown)
-        .map(|(_, h)| h + GAP)
-        .sum();
+        let after = links_h
+            + [
+                (status.brightness.is_some(), slider_h()),
+                (status.volume.is_some(), slider_h() + sound_extra(status, status.expanded == Some(Module::Sound) && !status.outputs.is_empty())),
+                (true, awake_h),
+                (true, media_h),
+                (status.battery.is_some() || status.profile.is_some(), power_h),
+            ]
+            .into_iter()
+            .filter(|(shown, _)| *shown && full)
+            .map(|(_, h)| h + GAP)
+            .sum::<i32>();
         let fit = ((output.h - MARGIN - PAD - after - y - 2 * LIST_PAD) / list_row).max(1) as usize;
         let shown = status.rows.len().clamp(1, fit);
         scroll = status.scroll.min(status.rows.len().saturating_sub(shown));
@@ -281,22 +322,25 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         y += list.size.h + GAP;
         (list, cells)
     });
-    let rows = if status.expanded == Some(Module::Awake) { status.blockers.len().max(1) as i32 } else { 0 };
-    let awake = card(PAD, y, INNER, awake_h + if rows > 0 { 2 * LIST_PAD + rows * list_row } else { 0 });
-    let blockers: Vec<Rect> = (0..rows)
-        .map(|i| {
-            Rectangle::new((awake.loc.x + LIST_PAD, awake.loc.y + awake_h + LIST_PAD + i * list_row).into(), (awake.size.w - 2 * LIST_PAD, list_row).into())
-        })
-        .collect();
-    let head = Rectangle::new(awake.loc, (awake.size.w, awake_h).into());
-    let toggle = tile_toggle(head);
-    let more = toggle.loc.x + TOGGLE + 4;
-    hits.extend([
-        (Control::KeepAwake, toggle),
-        (Control::AwakeMore, Rectangle::new((more, head.loc.y).into(), (head.loc.x + head.size.w - more, awake_h).into())),
-    ]);
-    cards.push(awake);
-    y += awake.size.h + GAP;
+    let (mut awake, mut blockers) = (Rect::default(), Vec::new());
+    if full {
+        let rows = if status.expanded == Some(Module::Awake) { status.blockers.len().max(1) as i32 } else { 0 };
+        awake = card(PAD, y, INNER, awake_h + if rows > 0 { 2 * LIST_PAD + rows * list_row } else { 0 });
+        blockers = (0..rows)
+            .map(|i| {
+                Rectangle::new((awake.loc.x + LIST_PAD, awake.loc.y + awake_h + LIST_PAD + i * list_row).into(), (awake.size.w - 2 * LIST_PAD, list_row).into())
+            })
+            .collect();
+        let head = Rectangle::new(awake.loc, (awake.size.w, awake_h).into());
+        let toggle = tile_toggle(head);
+        let more = toggle.loc.x + TOGGLE + 4;
+        hits.extend([
+            (Control::KeepAwake, toggle),
+            (Control::AwakeMore, Rectangle::new((more, head.loc.y).into(), (head.loc.x + head.size.w - more, awake_h).into())),
+        ]);
+        cards.push(awake);
+        y += awake.size.h + GAP;
+    }
     let mut slider = |control, present: bool, extra: i32, y: &mut i32| {
         present.then(|| {
             let c = card(PAD, *y, INNER, slider_h() + extra);
@@ -306,13 +350,15 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
             c
         })
     };
-    let display = slider(Control::Brightness, status.brightness.is_some(), 0, &mut y);
+    let display = slider(Control::Brightness, full && status.brightness.is_some(), 0, &mut y);
     let open = status.expanded == Some(Module::Sound) && !status.outputs.is_empty();
-    let sound = slider(Control::Volume, status.volume.is_some(), sound_extra(status, open), &mut y);
+    let sound = slider(Control::Volume, matches!(only, None | Some(Module::Sound)) && status.volume.is_some(), sound_extra(status, open), &mut y);
     hits.extend(display.map(|c| (Control::NightLight, night_toggle(c))));
     let (mut outputs, mut apps) = (Vec::new(), Vec::new());
     if let Some(c) = sound {
-        hits.push((Control::SoundMore, Rectangle::new(c.loc, (c.size.w, ts(28)).into())));
+        if full {
+            hits.push((Control::SoundMore, Rectangle::new(c.loc, (c.size.w, ts(28)).into())));
+        }
         for (i, app) in status.apps.iter().enumerate() {
             let row = Rectangle::new((c.loc.x + LIST_PAD, c.loc.y + slider_h() + i as i32 * app_row()).into(), (c.size.w - 2 * LIST_PAD, app_row()).into());
             hits.push((Control::AppVolume(app.id), app_track(row)));
@@ -327,13 +373,16 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
             }
         }
     }
-    let media = card(PAD, y, INNER, media_h);
-    cards.push(media);
-    if status.media.is_some() {
-        hits.extend([Control::Previous, Control::PlayPause, Control::Next].into_iter().zip(media_buttons(media)));
+    let mut media = Rect::default();
+    if full {
+        media = card(PAD, y, INNER, media_h);
+        cards.push(media);
+        if status.media.is_some() {
+            hits.extend([Control::Previous, Control::PlayPause, Control::Next].into_iter().zip(media_buttons(media)));
+        }
+        y += media_h + GAP;
     }
-    y += media_h + GAP;
-    let power = (status.battery.is_some() || status.profile.is_some()).then(|| {
+    let power = (full && (status.battery.is_some() || status.profile.is_some())).then(|| {
         let c = card(PAD, y, INNER, power_h);
         if status.profile.is_some() {
             hits.push((Control::Power, c));
@@ -342,6 +391,16 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         y += power_h + GAP;
         c
     });
+    let mut links = Vec::new();
+    if links_n > 0 {
+        let c = card(PAD, y, INNER, links_h - GAP);
+        links = (0..links_n)
+            .map(|i| Rectangle::new((c.loc.x + LIST_PAD, c.loc.y + LIST_PAD + i * list_row).into(), (c.size.w - 2 * LIST_PAD, list_row).into()))
+            .collect();
+        hits.extend(links.iter().enumerate().map(|(i, r)| (Control::Link(i), *r)));
+        cards.push(c);
+        y += links_h;
+    }
     // The last gap becomes the bottom padding.
     Layout {
         rect: Rectangle::new((x, top).into(), (WIDTH, y - GAP + PAD - top).into()),
@@ -360,6 +419,7 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         blockers,
         media,
         power,
+        links,
     }
 }
 
@@ -424,6 +484,15 @@ pub fn profile_name(profile: &str) -> &str {
 
 impl State {
     pub fn control_status(&self) -> Status {
+        // A bar item's module: always open, under its item.
+        let bar = match self.popup {
+            Some(Popup::Module(module, i)) => {
+                let pill = self.popup_output().and_then(|o| self.bar_view(&o)?.pill(menubar::BarItem::Status(i)));
+                Some((module, pill.map_or(0, |r| r.loc.x)))
+            }
+            _ => None,
+        };
+        let expanded = bar.map(|(module, _)| module).or(self.expanded);
         let wifi = self.network.as_ref().map(|n| {
             let name = match &n.link {
                 Link::Wifi { ssid, .. } => ssid.clone(),
@@ -468,7 +537,7 @@ impl State {
                     })
                     .collect()
             }),
-            rows: match self.expanded {
+            rows: match expanded {
                 Some(Module::Wifi) => self.network.as_ref().map_or_else(Vec::new, |n| {
                     let current = match &n.link {
                         Link::Wifi { ssid, .. } => Some(ssid.as_str()),
@@ -506,7 +575,9 @@ impl State {
                 _ => Vec::new(),
             },
             scroll: (self.control_scroll / f64::from(ts(LIST_ROW))).round() as usize,
-            expanded: self.expanded,
+            expanded,
+            bar,
+            portal: self.network.as_ref().and_then(|n| n.portal.clone()),
             awake: self.keep_awake,
             blockers: self
                 .idle_blockers()
@@ -523,7 +594,7 @@ impl State {
 
     /// The wheel or a two-finger swipe over the panel scrolls its open list. `true`: the panel took it.
     pub fn control_scroll(&mut self, location: Point<f64, Logical>, dy: f64) -> bool {
-        if self.popup != Some(Popup::Control) {
+        if !matches!(self.popup, Some(Popup::Control | Popup::Module(..))) {
             return false;
         }
         let status = self.control_status();
@@ -543,7 +614,8 @@ impl State {
 
     /// A press inside the panel. Each change shows at once; the service's echo confirms it.
     pub(crate) fn control_press(&mut self, location: Point<f64, Logical>) {
-        let Some(control) = self.control_layout().hit(location) else { return };
+        let status = self.control_status();
+        let Some(control) = layout(self.popup_size(), &status).hit(location) else { return };
         match control {
             Control::Wifi => {
                 if let Some(network) = self.network.as_mut() {
@@ -602,7 +674,7 @@ impl State {
                 self.control_scroll = 0.0;
             }
             // ponytail: no "Connecting…" state; the row flips when the service reports the change.
-            Control::Row(i) => match self.expanded {
+            Control::Row(i) => match status.expanded {
                 Some(Module::Bluetooth) => {
                     if let Some(device) = self.bluetooth.as_ref().and_then(|b| b.devices.get(i)) {
                         self.services.send(Command::BluetoothDevice { path: device.path.clone(), connect: !device.connected });
@@ -626,6 +698,12 @@ impl State {
                 }
                 _ => {}
             },
+            Control::Link(i) => {
+                if let Some((_, action)) = links(&status).into_iter().nth(i) {
+                    self.popup = None;
+                    self.run_action(action);
+                }
+            }
             Control::KeepAwake => self.set_keep_awake(!self.keep_awake),
             Control::AwakeMore => self.expanded = if self.expanded == Some(Module::Awake) { None } else { Some(Module::Awake) },
             Control::Output(id) => {
@@ -855,6 +933,41 @@ mod tests {
         // Nothing blocks: one row says so.
         status.blockers.clear();
         assert_eq!(layout((1280, 800).into(), &status).blockers.len(), 1);
+    }
+
+    #[test]
+    fn bar_modules_show_one_module_and_its_links() {
+        let row = |name: &str| ListRow { symbol: Symbol::WifiHigh, name: name.into(), detail: None, lock: true, on: false };
+        let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
+        let wifi = Status { bar: Some((Module::Wifi, 900)), expanded: Some(Module::Wifi), rows: vec![row("Home"), row("Cafe")], ..full() };
+        let l = layout((1280, 800).into(), &wifi);
+        assert_eq!(l.rect.loc.x, 900);
+        assert_eq!((l.display, l.sound, l.power, l.blockers.len()), (None, None, None, 0));
+        assert_eq!(l.hits.iter().map(|(c, _)| *c).collect::<Vec<_>>(), [Control::Wifi, Control::Row(0), Control::Row(1), Control::Link(0)]);
+        assert!(l.cards.iter().all(|c| l.rect.contains_rect(*c)));
+        assert_eq!(links(&wifi).iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["Wi-Fi Settings…"]);
+        // Behind a captive portal, signing in comes first.
+        let portal = Status { portal: Some("http://check.example/".into()), ..wifi.clone() };
+        assert_eq!(links(&portal)[0], ("Sign in to network…", Action::Spawn("xdg-open http://check.example/".into())));
+        assert_eq!(layout((1280, 800).into(), &portal).links.len(), 2);
+        // Near the right edge it stays on screen; Bluetooth's toggle hits as Bluetooth.
+        let bt = Status { bar: Some((Module::Bluetooth, 1200)), expanded: Some(Module::Bluetooth), ..full() };
+        let l = layout((1280, 800).into(), &bt);
+        assert_eq!(l.rect.loc.x, 1280 - 8 - WIDTH);
+        assert_eq!(l.hit(centre(toggle_in(l.network, 0))), Some(Control::Bluetooth));
+        assert_eq!(links(&bt)[0].1, Action::Spawn("noobsbot-desktop-settings --page bluetooth".into()));
+        // Sound: the slider with its outputs open, no title toggle.
+        let sound = Status {
+            bar: Some((Module::Sound, 900)),
+            expanded: Some(Module::Sound),
+            outputs: vec![(51, "Speaker".into(), true), (52, "HDMI".into(), false)],
+            ..full()
+        };
+        let l = layout((1280, 800).into(), &sound);
+        assert_eq!(l.outputs.len(), 2);
+        assert_eq!(l.hit(centre(track_in(l.sound.unwrap()))), Some(Control::Volume));
+        assert_eq!(l.hit(centre(l.links[0])), Some(Control::Link(0)));
+        assert!(l.rect_of(Control::SoundMore).is_none() && l.rect_of(Control::Wifi).is_none());
     }
 
     #[test]
