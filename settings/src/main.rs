@@ -452,12 +452,14 @@ impl App {
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Users(users) => self.users = Some(users),
             Message::PictureChooser => {
-                if self.texts.remove(users::PICTURE_FILE).is_none() {
-                    self.texts.insert(users::PICTURE_FILE.into(), String::new());
+                self.texts.remove(users::PICTURE_FILE);
+                if self.texts.remove(users::PICTURES).is_none() {
+                    self.texts.insert(users::PICTURES.into(), String::new());
                 }
             }
             Message::Picture(file) => {
                 let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
+                self.texts.remove(users::PICTURES);
                 self.texts.remove(users::PICTURE_FILE);
                 return Task::perform(users::set_picture(me.path.clone(), file), Message::UsersActed);
             }
