@@ -490,6 +490,8 @@ impl State {
     }
 
     /// Every Space as tiles, or back to the shown one's windows.
+    // ponytail: switching views snaps (no tween), and closing from it slides other Spaces' windows off below; tween
+    // between the two layouts if it looks rough.
     fn mission_all(&mut self) {
         if let Some(m) = self.mission.as_mut() {
             m.all = !m.all;
