@@ -1259,7 +1259,8 @@ impl State {
                     None => self.config.dock.assign.remove(&item.key),
                 };
                 let table = inline_table(&self.config.dock.assign);
-                self.dock_save(move |text| config::set_key(text, "dock", "assign", &table));
+                // A hand-written `[dock.assign]` table goes: the whole map is written as one line under `[dock]`.
+                self.dock_save(move |text| config::set_key(&config::set_section(text, "dock.assign", ""), "dock", "assign", &table));
             }
             Command::ToDisplay(to) => {
                 let outputs: Vec<_> = self.space.outputs().cloned().collect();
@@ -1715,6 +1716,12 @@ mod tests {
         assert_eq!(line, r#"{ "kitty" = "DP-1:2", "org.kde.kate" = "all" }"#);
         let back: toml::Table = toml::from_str(&format!("assign = {line}")).unwrap();
         assert_eq!(back["assign"]["org.kde.kate"].as_str(), Some("all"));
+        // A hand-written `[dock.assign]` table is replaced, not duplicated.
+        let text = "[dock]\nsize = 48\n\n[dock.assign]\nkitty = \"all\"\n\n[clock]\nhour24 = true\n";
+        let saved = config::set_key(&config::set_section(text, "dock.assign", ""), "dock", "assign", &line);
+        let saved: toml::Table = toml::from_str(&saved).unwrap();
+        assert_eq!(saved["dock"]["assign"]["kitty"].as_str(), Some("DP-1:2"));
+        assert_eq!(saved["clock"]["hour24"].as_bool(), Some(true));
     }
 
     #[test]
