@@ -135,6 +135,8 @@ pub struct State {
     /// Every changed `[weather]` goes to the weather thread.
     pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
     pub zones: crate::input::Zones,
+    /// Shake to find, dwell click, hold for secondary click (E8.6).
+    pub pointer_assist: crate::pointer_assist::Assist,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -440,6 +442,7 @@ impl State {
             hidden: Vec::new(),
             quake: None,
             zones: Default::default(),
+            pointer_assist: Default::default(),
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
             shm_state: ShmState::new::<Self>(&dh, vec![]),
