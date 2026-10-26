@@ -43,8 +43,17 @@ pub struct Wifi {
 #[derive(Clone, Debug)]
 pub struct Bluetooth {
     pub powered: bool,
-    /// Paired devices: name, connected.
-    pub devices: Vec<(String, bool)>,
+    /// Paired devices, and named unpaired ones seen nearby, by name.
+    pub devices: Vec<BtDevice>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtDevice {
+    /// BlueZ's object path.
+    pub path: String,
+    pub name: String,
+    pub paired: bool,
+    pub connected: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -57,7 +66,7 @@ pub struct Device {
 const NM: &str = "org.freedesktop.NetworkManager";
 
 pub async fn read() -> Status {
-    let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await.ok();
+    let system = system(2).await.ok();
     let (wifi, bluetooth) = match &system {
         Some(bus) => (wifi(bus).await, bluetooth(bus).await),
         None => (None, None),
@@ -66,13 +75,13 @@ pub async fn read() -> Status {
     Status { wifi, bluetooth, output: device(OUTPUT), input: device(INPUT), outputs: section(&pw, "Sinks:"), inputs: section(&pw, "Sources:") }
 }
 
-/// The desktop's connect (`src/services/mod.rs`): on this thread, not zbus's pool, whose idle thread wakes every
-/// 500 ms.
-async fn connect(variable: &str, fallback: String) -> zbus::Result<Connection> {
-    let address = std::env::var(variable).unwrap_or_default();
-    let path = address.strip_prefix("unix:path=").map_or(fallback.as_str(), |rest| rest.split(',').next().unwrap_or(rest));
+/// The system bus, as the desktop connects (`src/services/mod.rs`): on this thread, not zbus's pool, whose idle
+/// thread wakes every 500 ms. `timeout`: seconds a call may take.
+async fn system(timeout: u64) -> zbus::Result<Connection> {
+    let address = std::env::var("DBUS_SYSTEM_BUS_ADDRESS").unwrap_or_default();
+    let path = address.strip_prefix("unix:path=").map_or("/run/dbus/system_bus_socket", |rest| rest.split(',').next().unwrap_or(rest));
     let socket = UnixStream::connect(path)?;
-    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(Duration::from_secs(2)).build().await
+    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(Duration::from_secs(timeout)).build().await
 }
 
 async fn property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str) -> zbus::Result<OwnedValue> {
@@ -110,24 +119,25 @@ async fn bluetooth(bus: &Connection) -> Option<Bluetooth> {
     };
     let mut powered = None;
     let mut devices = Vec::new();
-    for interfaces in objects.values() {
+    for (path, interfaces) in &objects {
         if let Some(on) = field(interfaces, "org.bluez.Adapter1", "Powered") {
             powered = Some(powered.unwrap_or(false) | bool::try_from(on).unwrap_or(false));
         }
         let paired = field(interfaces, "org.bluez.Device1", "Paired").and_then(|v| bool::try_from(v).ok()).unwrap_or(false);
-        if paired {
+        // Unnamed ones nearby (an address only) are left out.
+        if paired || field(interfaces, "org.bluez.Device1", "Name").is_some() {
             let name = field(interfaces, "org.bluez.Device1", "Alias").and_then(|v| String::try_from(v).ok()).unwrap_or_default();
             let connected = field(interfaces, "org.bluez.Device1", "Connected").and_then(|v| bool::try_from(v).ok()).unwrap_or(false);
-            devices.push((name, connected));
+            devices.push(BtDevice { path: path.to_string(), name, paired, connected });
         }
     }
-    devices.sort();
+    devices.sort_by(|a, b| a.name.cmp(&b.name));
     Some(Bluetooth { powered: powered?, devices })
 }
 
 /// Wi-Fi on or off, then the new status.
 pub async fn set_wifi(on: bool) -> Status {
-    if let Ok(bus) = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await {
+    if let Ok(bus) = system(2).await {
         let _ = set_property(&bus, NM, "/org/freedesktop/NetworkManager", NM, "WirelessEnabled", on).await;
     }
     read().await
@@ -135,7 +145,7 @@ pub async fn set_wifi(on: bool) -> Status {
 
 /// Every adapter on or off, then the new status.
 pub async fn set_bluetooth(on: bool) -> Status {
-    if let Ok(bus) = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await
+    if let Ok(bus) = system(2).await
         && let Ok(manager) = async { ObjectManagerProxy::builder(&bus).destination("org.bluez")?.path("/")?.build().await }.await
     {
         for (path, interfaces) in manager.get_managed_objects().await.unwrap_or_default() {
@@ -145,6 +155,57 @@ pub async fn set_bluetooth(on: bool) -> Status {
         }
     }
     read().await
+}
+
+/// While the Bluetooth page shows: every adapter looks for nearby devices. Yields nothing; BlueZ stops a discovery
+/// when the connection that started it closes, which dropping the subscription does.
+pub fn discover() -> impl iced::futures::Stream<Item = ()> {
+    iced::stream::channel(1, async |_: iced::futures::channel::mpsc::Sender<()>| {
+        let bus = system(2).await.ok();
+        if let Some(bus) = &bus
+            && let Ok(manager) = async { ObjectManagerProxy::builder(bus).destination("org.bluez")?.path("/")?.build().await }.await
+        {
+            for (path, interfaces) in manager.get_managed_objects().await.unwrap_or_default() {
+                if interfaces.keys().any(|i| i.as_str() == "org.bluez.Adapter1") {
+                    let _ = bus.call_method(Some("org.bluez"), path.as_str(), Some("org.bluez.Adapter1"), "StartDiscovery", &()).await;
+                }
+            }
+        }
+        std::future::pending::<()>().await;
+        drop(bus);
+    })
+}
+
+/// Connects a device, pairing and trusting it first if need be (`on`), or disconnects it; then the new status and the
+/// error, if any. Pairing waits on the desktop's agent (its alert), so the calls get a minute.
+// ponytail: no "Connecting…" while it runs; the row changes when it is done.
+pub async fn connect_device(path: String, on: bool) -> (Status, Option<String>) {
+    let result = async {
+        let bus = system(60).await?;
+        let call = |method| bus.call_method(Some("org.bluez"), path.as_str(), Some("org.bluez.Device1"), method, &());
+        if !on {
+            return call("Disconnect").await.map(drop);
+        }
+        if !bool::try_from(property(&bus, "org.bluez", &path, "org.bluez.Device1", "Paired").await?)? {
+            call("Pair").await?;
+        }
+        set_property(&bus, "org.bluez", &path, "org.bluez.Device1", "Trusted", true).await?;
+        call("Connect").await.map(drop)
+    };
+    let error = result.await.err().map(|err| format!("Couldn't {}: {err}", if on { "connect" } else { "disconnect" }));
+    (read().await, error)
+}
+
+/// Removes a paired device from its adapter (the path's parent), then the new status and the error, if any.
+pub async fn forget(path: String) -> (Status, Option<String>) {
+    let result = async {
+        let bus = system(10).await?;
+        let adapter = path.rsplit_once('/').map_or("/", |(adapter, _)| adapter);
+        let device = zbus::zvariant::ObjectPath::try_from(path.as_str())?;
+        bus.call_method(Some("org.bluez"), adapter, Some("org.bluez.Adapter1"), "RemoveDevice", &(device,)).await.map(drop)
+    };
+    let error = result.await.err().map(|err| format!("Couldn't forget the device: {err}"));
+    (read().await, error)
 }
 
 const OUTPUT: &str = "@DEFAULT_AUDIO_SINK@";

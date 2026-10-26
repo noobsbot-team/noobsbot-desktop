@@ -492,9 +492,26 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         Page::Bluetooth => match &status.bluetooth {
             Some(bt) => {
                 let mut parts = vec![group(t, "", vec![line(t, "Bluetooth", "", toggle(t, bt.powered, Message::Bluetooth))])];
-                if bt.powered && !bt.devices.is_empty() {
-                    let rows = bt.devices.iter().map(|(name, on)| fact(t, name, if *on { "Connected" } else { "Not connected" }.into())).collect();
-                    parts.push(group(t, "My devices", rows));
+                if bt.powered {
+                    let push = |label: &'static str, message: Message| -> Element<'a, Message> {
+                        button(text(label).size(12)).padding([3, 10]).style(t.push(false)).on_press(message).into()
+                    };
+                    let (mine, nearby): (Vec<_>, Vec<_>) = bt.devices.iter().partition(|d| d.paired);
+                    if !mine.is_empty() {
+                        let rows = mine
+                            .into_iter()
+                            .map(|d| {
+                                let (state, action) = if d.connected { ("Connected", "Disconnect") } else { ("Not connected", "Connect") };
+                                let buttons =
+                                    row![push(action, Message::Device(d.path.clone(), !d.connected)), push("Forget", Message::Forget(d.path.clone()))];
+                                line(t, &d.name, state, buttons.spacing(8).into())
+                            })
+                            .collect();
+                        parts.push(group(t, "My Devices", rows));
+                    }
+                    let rows: Vec<_> = nearby.into_iter().map(|d| line(t, &d.name, "", push("Connect", Message::Device(d.path.clone(), true)))).collect();
+                    let rows = if rows.is_empty() { vec![fact(t, "Searching…", String::new())] } else { rows };
+                    parts.push(group(t, "Nearby Devices", rows));
                 }
                 parts
             }
