@@ -435,7 +435,7 @@ impl App {
                 if save {
                     self.save("sound.alert", name);
                 }
-                system::play(name);
+                system::play(name, self.config.num("sound.alert_volume").clamp(0.0, 100.0) as u8);
             }
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Users(users) => self.users = Some(users),
