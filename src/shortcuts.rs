@@ -51,6 +51,8 @@ pub enum Action {
     Quake,
     /// The default output's volume by one step; `true`: up (E2.7).
     Volume(bool),
+    /// A quarter step (Shift+Alt+volume keys).
+    VolumeFine(bool),
     /// Mutes or unmutes the default output.
     Mute,
     /// Mutes or unmutes the default microphone.
@@ -124,6 +126,8 @@ pub enum Action {
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
 const STEP: u8 = 6;
+/// About a quarter of `STEP`.
+const FINE_STEP: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
@@ -185,6 +189,8 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("quake", "") => Some(Action::Quake),
         ("volume", "up") => Some(Action::Volume(true)),
         ("volume", "down") => Some(Action::Volume(false)),
+        ("volume", "up-fine") => Some(Action::VolumeFine(true)),
+        ("volume", "down-fine") => Some(Action::VolumeFine(false)),
         ("mute", "") => Some(Action::Mute),
         ("mic-mute", "") => Some(Action::MicMute),
         ("brightness", "up") => Some(Action::Brightness(true)),
@@ -274,9 +280,9 @@ pub fn lookup<'a>(bindings: &'a [(Binding, Action)], mods: &ModifiersState, key:
     bindings.iter().find(|(b, _)| b.key == key && b.desktop == desktop && b.ctrl == mods.ctrl && b.shift == mods.shift && b.alt == alt).map(|(_, a)| a)
 }
 
-/// One key step from `percent`, within 0–100; a level already above 100 (PipeWire allows 150) is only turned down.
-fn step(percent: u8, up: bool) -> u8 {
-    if up { percent.saturating_add(STEP).min(percent.max(100)) } else { percent.saturating_sub(STEP) }
+/// One key step of `by` from `percent`, within 0–100; a level already above 100 (PipeWire allows 150) is only turned down.
+fn step(percent: u8, up: bool, by: u8) -> u8 {
+    if up { percent.saturating_add(by).min(percent.max(100)) } else { percent.saturating_sub(by) }
 }
 
 impl State {
@@ -341,14 +347,14 @@ impl State {
             Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
             // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
-            Action::Volume(up) => {
+            Action::Volume(up) | Action::VolumeFine(up) => {
                 let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
                 if up && output.muted {
                     // As on macOS: turning it up unmutes.
                     output.muted = false;
                     self.services.send(Command::Mute { output: true, muted: false });
                 }
-                output.volume = step(output.volume, up);
+                output.volume = step(output.volume, up, if matches!(action, Action::VolumeFine(_)) { FINE_STEP } else { STEP });
                 self.services.send(Command::Volume { output: true, percent: output.volume });
                 self.show_volume();
             }
@@ -369,7 +375,7 @@ impl State {
             Action::Brightness(up) => {
                 let Some(percent) = self.brightness.as_mut() else { return };
                 // Never to 0: a black screen leaves no way to see what happened.
-                *percent = step(*percent, up).max(1);
+                *percent = step(*percent, up, STEP).max(1);
                 let percent = *percent;
                 self.services.send(Command::Brightness(percent));
                 self.show_osd(Osd { symbol: Symbol::Sun, level: Some(percent), text: None });
@@ -582,11 +588,12 @@ mod tests {
 
     #[test]
     fn steps() {
-        assert_eq!(step(50, true), 56);
-        assert_eq!(step(98, true), 100);
-        assert_eq!(step(3, false), 0);
-        assert_eq!(step(130, true), 130, "above 100 only goes down");
-        assert_eq!(step(130, false), 124);
+        assert_eq!(step(50, true, STEP), 56);
+        assert_eq!(step(98, true, STEP), 100);
+        assert_eq!(step(3, false, STEP), 0);
+        assert_eq!(step(130, true, STEP), 130, "above 100 only goes down");
+        assert_eq!(step(130, false, STEP), 124);
+        assert_eq!(step(50, true, FINE_STEP), 52);
     }
 
     #[test]
@@ -600,6 +607,8 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioStop, false), Some(&Action::Media(MediaAction::Stop)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioRewind, false), Some(&Action::Media(MediaAction::Seek(false))));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Eject, false), Some(&Action::Eject));
+        let shift_alt = ModifiersState { alt: true, shift: true, ..Default::default() };
+        assert_eq!(lookup(&table, &shift_alt, Keysym::XF86_AudioLowerVolume, false), Some(&Action::VolumeFine(false)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }

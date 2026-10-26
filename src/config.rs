@@ -806,6 +806,8 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("F12", "quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),
+        ("Shift+Alt+XF86AudioRaiseVolume", "volume up-fine"),
+        ("Shift+Alt+XF86AudioLowerVolume", "volume down-fine"),
         ("XF86AudioMute", "mute"),
         ("XF86AudioMicMute", "mic-mute"),
         ("XF86MonBrightnessUp", "brightness up"),
