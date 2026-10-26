@@ -20,6 +20,8 @@ pub struct Spring {
 pub const SNAPPY: Spring = Spring { response: 0.25, damping: 0.90 };
 /// Windows, panels sliding, Spaces.
 pub const SMOOTH: Spring = Spring { response: 0.40, damping: 1.00 };
+/// Touchpad gestures let go: a spring from the fingers' position and speed (`Spring::release`).
+pub const GESTURE: Spring = Spring { response: 0.40, damping: 0.85 };
 /// Small UI bounces.
 #[cfg_attr(not(test), expect(dead_code, reason = "D10 preset, for the first small UI bounce"))]
 pub const BOUNCY: Spring = Spring { response: 0.35, damping: 0.70 };
@@ -34,19 +36,38 @@ impl Spring {
 
     /// Position at `t` seconds.
     pub fn value(self, t: f64) -> f64 {
+        1.0 - self.release(1.0, 0.0, t)
+    }
+
+    /// Let go `x` away from its target, moving at `v` per second: how far from the target it is at `t` seconds.
+    pub fn release(self, x: f64, v: f64, t: f64) -> f64 {
         let (w, z) = (self.omega(), self.damping);
         if z >= 1.0 {
-            return 1.0 - (1.0 + w * t) * (-w * t).exp();
+            return (x + (v + w * x) * t) * (-w * t).exp();
         }
         let wd = w * (1.0 - z * z).sqrt();
-        1.0 - (-z * w * t).exp() * ((wd * t).cos() + z * w / wd * (wd * t).sin())
+        (-z * w * t).exp() * (x * (wd * t).cos() + (v + z * w * x) / wd * (wd * t).sin())
     }
 
     /// When it stays within `EPS` of the target: where the decay envelope drops below it.
     pub fn settle(self) -> Duration {
+        self.settle_release(1.0, 0.0)
+    }
+
+    /// When a `release(x, v)` stays within `EPS` of its target.
+    pub fn settle_release(self, x: f64, v: f64) -> Duration {
         let (w, z) = (self.omega(), self.damping);
-        let envelope = |t: f64| if z >= 1.0 { (1.0 + w * t) * (-w * t).exp() } else { (-z * w * t).exp() / (1.0 - z * z).sqrt() };
-        let ms = (0u32..10_000).find(|ms| envelope(f64::from(*ms) / 1000.0) < EPS).unwrap_or(10_000);
+        let envelope = |t: f64| {
+            if z >= 1.0 {
+                (x.abs() + (v + w * x).abs() * t) * (-w * t).exp()
+            } else {
+                let wd = w * (1.0 - z * z).sqrt();
+                x.hypot((v + z * w * x) / wd) * (-z * w * t).exp()
+            }
+        };
+        // Searched from where the envelope peaks: it only falls after.
+        let peak = if z >= 1.0 && v + w * x != 0.0 { (1.0 / w - x.abs() / (v + w * x).abs()).max(0.0) } else { 0.0 };
+        let ms = ((peak * 1000.0) as u32..10_000).find(|ms| envelope(f64::from(*ms) / 1000.0) < EPS).unwrap_or(10_000);
         Duration::from_millis(ms.into())
     }
 }
@@ -511,6 +532,21 @@ mod tests {
         // Critically damped, it is monotonic.
         let v: Vec<f64> = (0..600).map(|ms| SMOOTH.value(f64::from(ms) / 1000.0)).collect();
         assert!(v.windows(2).all(|w| w[1] >= w[0]));
+    }
+
+    #[test]
+    fn released_springs_start_where_let_go_and_settle() {
+        for s in [SNAPPY, SMOOTH, BOUNCY, GESTURE] {
+            for (x, v) in [(-0.6, 0.0), (-0.6, 3.0), (0.2, -2.0), (0.0, 1.0)] {
+                assert!((s.release(x, v, 0.0) - x).abs() < 1e-9);
+                // Its starting speed is `v`.
+                assert!(((s.release(x, v, 1e-6) - x) / 1e-6 - v).abs() < 1e-3, "{s:?} {x} {v}");
+                let settle = s.settle_release(x, v).as_secs_f64();
+                assert!(settle < 2.0 && (0..1000).all(|ms| s.release(x, v, settle + f64::from(ms) / 1000.0).abs() < EPS));
+            }
+        }
+        // Critically damped and let go with no speed: never past the target.
+        assert!((0..1000).all(|ms| SMOOTH.release(-0.6, 0.0, f64::from(ms) / 1000.0) <= 0.0));
     }
 
     #[test]

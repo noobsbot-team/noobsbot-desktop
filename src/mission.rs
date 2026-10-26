@@ -277,6 +277,27 @@ impl State {
         self.schedule_redraw();
     }
 
+    /// A swipe up or down holds Mission Control at `p` (0 closed → 1 open), opening it first.
+    pub fn mission_hold(&mut self, p: f64) {
+        if self.mission.is_none() {
+            self.open_mission(None);
+        }
+        if let Some(m) = self.mission.as_mut() {
+            m.progress = Tween::hold(p.clamp(0.0, 1.0));
+        }
+        self.schedule_redraw();
+    }
+
+    /// The fingers lifted, moving at `v` per second: it springs open or closed from where they left it.
+    pub fn mission_let_go(&mut self, open: bool, v: f64) {
+        let Some(m) = self.mission.as_mut() else { return };
+        m.progress = Tween::fling(m.progress.value(Instant::now()), if open { 1.0 } else { 0.0 }, v);
+        if !open {
+            (m.press, m.space_press) = (None, None);
+        }
+        self.schedule_redraw();
+    }
+
     pub fn close_mission(&mut self) {
         if let Some(m) = self.mission.as_mut().filter(|m| m.progress.target() == 1.0) {
             m.progress = Tween::new(m.progress.value(Instant::now()), 0.0);
@@ -337,7 +358,8 @@ impl State {
     pub fn mission_frame(&mut self, output: &Output) -> Option<Overview> {
         let now = Instant::now();
         let mission = self.mission.as_ref()?;
-        let (progress, done) = (mission.progress.value(now), mission.progress.done(now));
+        // A fling's overshoot stops at open and closed.
+        let (progress, done) = (mission.progress.value(now).clamp(0.0, 1.0), mission.progress.done(now));
         if done && mission.progress.target() == 0.0 {
             self.mission = None;
             return None;

@@ -1,9 +1,8 @@
 //! Touchpad system gestures (E5.3) and hot corners (E5.4). The recogniser and the corner logic are pure; the `State`
 //! glue at the bottom feeds them libinput's events and the pointer.
 //!
-//! ponytail: a swipe triggers its action on release (past half way, or a flick) instead of moving the screen 1:1 with
-//! the fingers; Spaces and Mission Control animate with a fixed Tween. Drive `Slide`/`Mission` progress from the
-//! fingers once the anim.rs springs can start from a given position and velocity. Launchpad pages do follow 1:1.
+//! The Space slide follows a sideways swipe 1:1, and Mission Control a swipe up or down; both spring on from where the
+//! fingers let go (`Live`). Launchpad pages follow too. Reduce motion: the action happens on release instead.
 
 use std::time::{Duration, Instant};
 
@@ -36,8 +35,10 @@ pub enum Kind {
     Pinch,
 }
 
-/// Swipe travel (libinput touchpad units, about 1 px) of a whole swipe at sensitivity 1; half of it commits.
-const FULL: f64 = 300.0;
+/// Swipe travel (libinput touchpad units, about 1 px) of a whole swipe at sensitivity 1: Mission Control fully open.
+pub const FULL: f64 = 300.0;
+/// This much of a whole swipe commits on release.
+const COMMIT: f64 = 0.3;
 /// Shorter than this never triggers, however fast (a twitch).
 const MIN_TRAVEL: f64 = 20.0;
 /// A release at least this fast along the swipe (units per ms) commits: a flick.
@@ -46,11 +47,37 @@ const FLICK: f64 = 0.4;
 const STILL_MS: u32 = 50;
 /// Scale change of a whole pinch; half of it commits.
 const PINCH: f64 = 0.5;
+/// Past the first or last Space the screen gives at most this much of its width.
+const RUBBER: f64 = 0.1;
+
+/// Does a swipe let go `d` along its axis, of a whole swipe `full`, moving at `v` (units per ms) commit? Past
+/// `COMMIT` of the way or on a flick, unless heading back.
+pub fn commits(d: f64, full: f64, v: f64) -> bool {
+    let back = v * d < 0.0 && v.abs() > FLICK / 4.0;
+    !back && d.abs() >= MIN_TRAVEL && (v.abs() >= FLICK || d.abs() >= COMMIT * full)
+}
+
+/// `x` past an end, given back as a rubber band: a third as far at first, never more than `RUBBER`.
+pub fn rubber(x: f64) -> f64 {
+    RUBBER * x / (x.abs() + 3.0 * RUBBER)
+}
+
+/// What follows the fingers of a swipe.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Live {
+    /// The Spaces under this key, slid over a screen this wide.
+    Space(String, f64),
+    /// Mission Control opening, or (`true`) closing.
+    Mission(bool),
+}
 
 /// One system gesture in progress: begin → update* → end.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Tracker {
     pub kind: Kind,
+    pub live: Option<Live>,
+    /// Sideways (`true`) or up and down, once the fingers moved `MIN_TRAVEL`.
+    pub horizontal: Option<bool>,
     sensitivity: f64,
     dx: f64,
     dy: f64,
@@ -70,7 +97,18 @@ impl Tracker {
             Kind::Swipe => fingers == swipe,
             Kind::Pinch => fingers >= 4,
         };
-        ours.then_some(Self { kind, sensitivity: sensitivity.clamp(0.25, 4.0), dx: 0.0, dy: 0.0, scale: 1.0, vx: 0.0, vy: 0.0, last: time })
+        ours.then_some(Self {
+            kind,
+            horizontal: None,
+            live: None,
+            sensitivity: sensitivity.clamp(0.25, 4.0),
+            dx: 0.0,
+            dy: 0.0,
+            scale: 1.0,
+            vx: 0.0,
+            vy: 0.0,
+            last: time,
+        })
     }
 
     /// The fingers moved by `(dx, dy)`; `scale` is the pinch's absolute scale (1 for a swipe).
@@ -80,6 +118,14 @@ impl Tracker {
         self.vx = (self.vx + dx / dt) / 2.0;
         self.vy = (self.vy + dy / dt) / 2.0;
         (self.dx, self.dy, self.scale, self.last) = (self.dx + dx, self.dy + dy, scale, time);
+        if self.horizontal.is_none() && self.dx.hypot(self.dy) >= MIN_TRAVEL {
+            self.horizontal = Some(self.dx.abs() >= self.dy.abs());
+        }
+    }
+
+    /// The fingers' speed (units per ms) when let go at `time`: 0 if they had stopped.
+    pub fn speed(&self, time: u32) -> (f64, f64) {
+        if time.wrapping_sub(self.last) > STILL_MS { (0.0, 0.0) } else { (self.vx, self.vy) }
     }
 
     /// Swipe travel so far, scaled by sensitivity.
@@ -100,13 +146,10 @@ impl Tracker {
                 _ => None,
             };
         }
-        let horizontal = self.dx.abs() >= self.dy.abs();
-        let (d, v) = if horizontal { (self.dx, self.vx) } else { (self.dy, self.vy) };
-        let v = if time.wrapping_sub(self.last) > STILL_MS { 0.0 } else { v };
-        // Moving back towards the start when let go cancels; a flick or more than half way commits.
-        let back = v * d < 0.0 && v.abs() > FLICK / 4.0;
-        let go = !back && d.abs() >= MIN_TRAVEL && (v.abs() >= FLICK || d.abs() >= FULL / 2.0);
-        go.then_some(match (horizontal, d < 0.0) {
+        let horizontal = self.horizontal.unwrap_or(self.dx.abs() >= self.dy.abs());
+        let (vx, vy) = self.speed(time);
+        let (d, v) = if horizontal { (self.dx, vx) } else { (self.dy, vy) };
+        commits(d, FULL, v).then_some(match (horizontal, d < 0.0) {
             (true, true) => Gesture::Space(1),
             (true, false) => Gesture::Space(-1),
             (false, true) => Gesture::MissionControl,
@@ -219,20 +262,68 @@ impl State {
             return true;
         }
         let Some(tracker) = self.gesture.as_mut() else { return false };
+        let fresh = tracker.horizontal.is_none();
         tracker.update(time, delta.x, delta.y, scale);
-        if tracker.kind == Kind::Swipe {
-            // Fingers left = the next page, as with natural scrolling.
-            self.launchpad_scroll(-delta.x, -delta.y, 0.0, false);
+        let (kind, horizontal, (dx, dy)) = (tracker.kind, tracker.horizontal, tracker.delta());
+        // Fingers left = the next page, as with natural scrolling.
+        if kind != Kind::Swipe || self.launchpad_scroll(-delta.x, -delta.y, 0.0, false) {
+            return true;
+        }
+        if fresh && let Some(horizontal) = horizontal {
+            let live = self.live(horizontal, dy);
+            if let Some(tracker) = self.gesture.as_mut() {
+                tracker.live = live;
+            }
+        }
+        match self.gesture.as_ref().and_then(|t| t.live.clone()) {
+            Some(Live::Space(key, width)) => self.swipe_space(&key, -dx / width),
+            Some(Live::Mission(closing)) => self.mission_hold(f64::from(u8::from(closing)) - dy / FULL),
+            None => {}
         }
         true
     }
 
+    /// What follows a swipe that just turned out sideways (or up and down, `dy` so far): nothing under reduce motion.
+    fn live(&self, horizontal: bool, dy: f64) -> Option<Live> {
+        if self.config.appearance.reduce_motion {
+            return None;
+        }
+        // Under Mission Control the Space changes at once, on release.
+        if horizontal && self.mission.is_none() {
+            let output = self.pointer_output()?;
+            let width = self.space.output_geometry(&output)?.size.w;
+            return Some(Live::Space(self.output_key(&output), f64::from(width.max(1))));
+        }
+        // Up opens Mission Control, down closes it (or App Exposé); the rest acts on release.
+        match self.mission.as_ref().map(|m| m.progress.target() == 1.0) {
+            None if !horizontal && dy < 0.0 => Some(Live::Mission(false)),
+            Some(true) if !horizontal && dy > 0.0 => Some(Live::Mission(true)),
+            _ => None,
+        }
+    }
+
     /// The end of our gesture: its action; `false`: not ours, forward it.
     pub fn gesture_end(&mut self, time: u32, cancelled: bool) -> bool {
-        if self.locked() {
-            return true;
+        let locked = self.locked();
+        let Some(tracker) = self.gesture.take() else { return locked };
+        // Whatever followed the fingers springs on or back; locked meanwhile, back.
+        let cancelled = cancelled || locked;
+        let (dx, dy) = tracker.delta();
+        let (vx, vy) = tracker.speed(time);
+        match tracker.live {
+            Some(Live::Space(key, width)) => {
+                self.swipe_space_end(&key, -dx / width, -vx * 1000.0 / width, !cancelled && commits(dx, width, vx));
+                return true;
+            }
+            Some(Live::Mission(closing)) => {
+                // Only a swipe the way it started commits.
+                let commit = !cancelled && (dy < 0.0) != closing && commits(dy, FULL, vy);
+                self.mission_let_go(commit != closing, -vy * 1000.0 / FULL);
+                return true;
+            }
+            None if locked => return true,
+            None => {}
         }
-        let Some(tracker) = self.gesture.take() else { return false };
         if tracker.kind == Kind::Swipe && self.launchpad_scroll(0.0, 0.0, 0.0, true) {
             return true;
         }
@@ -335,14 +426,46 @@ mod tests {
     fn flick_commits_slow_drag_cancels() {
         // A quick flick: 60 units in 30 ms (2 units/ms) left.
         assert_eq!(swipe(3, 3, 3, 10, -20.0, 0.0, 5), Some(Gesture::Space(1)));
-        // The same 60 units dragged slowly and let go: not half way, cancelled.
+        // The same 60 units dragged slowly and let go: not 30% of the way, cancelled.
         assert_eq!(swipe(3, 3, 30, 50, -2.0, 0.0, 5), None);
         // Fast, then the fingers stop before lifting: no flick.
         assert_eq!(swipe(3, 3, 3, 10, -20.0, 0.0, 200), None);
-        // Slow but past half way commits.
-        assert_eq!(swipe(3, 3, 40, 50, 5.0, 0.0, 200), Some(Gesture::Space(-1)));
+        // Slow but past 30% of the way commits.
+        assert_eq!(swipe(3, 3, 20, 50, 5.0, 0.0, 200), Some(Gesture::Space(-1)));
         // A twitch never triggers.
         assert_eq!(swipe(3, 3, 1, 5, -5.0, 0.0, 1), None);
+    }
+
+    #[test]
+    fn release_commits_past_30_percent_or_on_a_flick() {
+        let width = 1000.0;
+        assert!(commits(-310.0, width, 0.0), "past 30%, let go still");
+        assert!(!commits(-290.0, width, 0.0), "short of 30%: back");
+        assert!(commits(-50.0, width, -0.5), "a flick from anywhere");
+        assert!(!commits(-500.0, width, 0.2), "past 30%, but heading back");
+        assert!(!commits(-10.0, width, -2.0), "a twitch");
+    }
+
+    #[test]
+    fn the_axis_locks_once_moved() {
+        let mut t = Tracker::begin(Kind::Swipe, 3, 3, 1.0, 0).unwrap();
+        t.update(10, -10.0, -5.0, 1.0);
+        assert_eq!(t.horizontal, None, "not far enough yet");
+        t.update(20, -15.0, 2.0, 1.0);
+        assert_eq!(t.horizontal, Some(true));
+        // Drifting up a lot later still swipes Spaces.
+        for i in 3..10 {
+            t.update(i * 10, 0.0, -20.0, 1.0);
+        }
+        assert_eq!(t.end(95, false), None, "sideways only 25 units: back, and never Mission Control");
+    }
+
+    #[test]
+    fn rubber_band_gives_a_little_and_never_much() {
+        assert_eq!(rubber(0.0), 0.0);
+        assert!((rubber(0.03) - 0.01).abs() < 0.002, "a third as far at first: {}", rubber(0.03));
+        assert!(rubber(0.5) < RUBBER && rubber(5.0) < RUBBER && rubber(5.0) > rubber(0.5));
+        assert_eq!(rubber(-0.4), -rubber(0.4));
     }
 
     #[test]

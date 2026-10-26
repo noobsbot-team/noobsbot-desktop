@@ -1615,7 +1615,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 | ~~Minimise from apps that draw their own title bar (GTK4, libadwaita) does nothing~~ | `src/state.rs` | Done: `minimize_request` calls `minimise` |
 | ~~Trackpad tap-to-click and natural scroll apply only when the device is re-plugged~~ | `src/backend/udev.rs` | Done: `configure_inputs` re-applies trackpad and mouse settings on reload |
 | ~~Green traffic light zooms; E5.1 says full screen (Alt = zoom)~~ | `src/decorations.rs` | Done: green is full screen, Alt+green zooms |
-| Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow | `src/gestures.rs` | drive the transitions from the gesture progress |
+| ~~Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow~~ | `src/gestures.rs` | Done: the slide and Mission Control follow the swipe, then a `gesture` spring from the fingers' speed; reduce motion acts on release |
 | ~~Logo menu "System Settings…" and "About This Computer" rows are disabled~~ | `src/shell/mod.rs` | Done: open Settings at Appearance / About |
 | ~~Do Not Disturb is lost on restart~~ | `src/shell/control.rs` | Done: saved as `[notifications] dnd` |
 | Dock, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |

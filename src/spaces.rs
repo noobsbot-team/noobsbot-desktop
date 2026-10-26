@@ -4,7 +4,10 @@
 //! output, so nothing on screen (drawing, hit tests, frame callbacks) sees them and their apps idle, while the dock,
 //! the switcher and Force Quit still find them. Row 0 is the shown Space; Space `d` lives in row `d + 1` while hidden.
 
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     desktop::Window,
@@ -16,14 +19,17 @@ use smithay::{
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 
-use crate::{rules, state::State, wm::Rect};
+use crate::{
+    anim::{GESTURE, SMOOTH, Spring},
+    rules,
+    state::State,
+    wm::Rect,
+};
 
 /// Rows between Spaces: far more than any window can hang off a screen edge.
 pub const STRIDE: i32 = 1 << 16;
 /// The Space indicator shows this long after a switch.
 const HUD_TIME: std::time::Duration = std::time::Duration::from_millis(800);
-/// D10 `smooth`.
-const SMOOTH: f64 = 0.4;
 /// A window held against a side this long during a move goes to the neighbouring Space (E8.7).
 pub const EDGE_HOLD: std::time::Duration = std::time::Duration::from_millis(700);
 
@@ -39,27 +45,53 @@ impl Desks {
     }
 }
 
-/// A value easing from `from` to `to`.
-/// ponytail: an ease-out cubic over `smooth`'s 0.4 s, not a spring; swap for the anim.rs springs when they land.
+/// A value springing from `from` to `to` (D10 `smooth`, or `gesture` once flung), or held where the fingers put it.
 #[derive(Debug, Clone, Copy)]
 pub struct Tween {
     from: f64,
     to: f64,
+    /// Speed when let go, per second.
+    v: f64,
+    spring: Spring,
     start: Instant,
+    /// Until it settles; `None`: held at `from`.
+    settle: Option<Duration>,
 }
+
+/// The fastest a fling starts (per second): bounds its overshoot to under 8%.
+const MAX_SPEED: f64 = 3.0;
 
 impl Tween {
     pub fn new(from: f64, to: f64) -> Self {
-        Self { from, to, start: Instant::now() }
+        Self::spring(from, to, 0.0, SMOOTH)
+    }
+
+    /// Let go at `from` moving at `v` per second.
+    pub fn fling(from: f64, to: f64, v: f64) -> Self {
+        Self::spring(from, to, v.clamp(-MAX_SPEED, MAX_SPEED), GESTURE)
+    }
+
+    fn spring(from: f64, to: f64, v: f64, spring: Spring) -> Self {
+        Self { from, to, v, spring, start: Instant::now(), settle: Some(spring.settle_release(from - to, v)) }
+    }
+
+    /// Held at `at` until let go: never done.
+    pub fn hold(at: f64) -> Self {
+        Self { from: at, to: at, v: 0.0, spring: SMOOTH, start: Instant::now(), settle: None }
     }
 
     pub fn value(&self, now: Instant) -> f64 {
-        let t = (now.saturating_duration_since(self.start).as_secs_f64() / SMOOTH).min(1.0);
-        self.from + (self.to - self.from) * (1.0 - (1.0 - t).powi(3))
+        if self.settle.is_none() {
+            return self.from;
+        }
+        if self.done(now) {
+            return self.to;
+        }
+        self.to + self.spring.release(self.from - self.to, self.v, now.saturating_duration_since(self.start).as_secs_f64())
     }
 
     pub fn done(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.start).as_secs_f64() >= SMOOTH
+        self.settle.is_some_and(|d| now.saturating_duration_since(self.start) >= d)
     }
 
     pub fn target(&self) -> f64 {
@@ -180,6 +212,19 @@ pub fn after_move(desk: usize, from: usize, to: usize) -> usize {
 pub fn step(current: usize, delta: i32, count: usize) -> Option<usize> {
     let to = current as i64 + i64::from(delta);
     (0..count as i64).contains(&to).then_some(to as usize).filter(|t| *t != current)
+}
+
+/// The slide a swipe `q` screen widths towards the next Space (negative: the previous) shows while `current` of
+/// `count` is shown: (from, to, progress), drawn as sliding back from the neighbour to `current`. With no neighbour
+/// that way `from == to` and the screen only gives a little; past the neighbour too.
+pub fn swipe_slide(current: usize, count: usize, q: f64) -> (usize, usize, f64) {
+    match step(current, if q > 0.0 { 1 } else { -1 }, count) {
+        Some(next) if q != 0.0 => {
+            let q = q.abs();
+            (next, current, 1.0 - if q > 1.0 { 1.0 + crate::gestures::rubber(q - 1.0) } else { q })
+        }
+        _ => (current, current, 1.0 + crate::gestures::rubber(q)),
+    }
 }
 
 /// Whose Spaces a display named `name` shows: its own, or (`""`) the one set every display shares.
@@ -402,6 +447,34 @@ impl State {
         if let Some(to) = step(d.current, delta, d.list.len()) {
             self.show_space_at(&key, to);
         }
+    }
+
+    /// A sideways swipe on the display under `key`: its shown Space and the neighbour follow the fingers, `q` screen
+    /// widths towards the next Space.
+    pub fn swipe_space(&mut self, key: &str, q: f64) {
+        let d = self.desks_at(key);
+        let (from, to, p) = swipe_slide(d.current, d.list.len(), q);
+        self.spaces.slide = Some(Slide { key: key.to_owned(), from, to, progress: Tween::hold(p) });
+        self.schedule_redraw();
+    }
+
+    /// The fingers lifted at `q` moving at `v` widths per second: on to the neighbour (`commit`) or back, springing
+    /// from there.
+    pub fn swipe_space_end(&mut self, key: &str, q: f64, v: f64, commit: bool) {
+        let d = self.desks_at(key);
+        let (next, current, p) = swipe_slide(d.current, d.list.len(), q);
+        // Towards the neighbour; rubber-banding, it just springs back.
+        let v = if next == current { 0.0 } else { v * q.signum() };
+        let progress = if commit && next != current {
+            self.show_space_at(key, next);
+            Tween::fling(1.0 - p, 1.0, v)
+        } else {
+            Tween::fling(p, 1.0, -v)
+        };
+        if let Some(slide) = self.spaces.slide.as_mut() {
+            slide.progress = progress;
+        }
+        self.schedule_redraw();
     }
 
     /// Super+Ctrl+1…9, or a Space clicked in Mission Control: on the display under the pointer.
@@ -826,12 +899,43 @@ mod tests {
     }
 
     #[test]
-    fn tween_eases_to_its_target() {
-        let tween = Tween { from: 0.0, to: 1.0, start: Instant::now() - std::time::Duration::from_millis(200) };
+    fn swipes_slide_one_to_one_and_rubber_band_at_the_ends() {
+        // Fingers 40% left on Space 1 of 3: Space 2 is 40% in, drawn as sliding back from it to 60%.
+        assert_eq!(swipe_slide(1, 3, 0.4), (2, 1, 0.6));
+        assert_eq!(swipe_slide(1, 3, -0.25), (0, 1, 0.75));
+        assert_eq!(swipe_slide(1, 3, 0.0), (1, 1, 1.0));
+        // On the last Space there is nothing to the right: it gives only a little.
+        let (from, to, p) = swipe_slide(2, 3, 0.8);
+        assert!(from == 2 && to == 2 && p > 1.0 && p < 1.1, "{p}");
+        let (_, _, back) = swipe_slide(0, 3, -0.8);
+        assert!(back < 1.0 && back > 0.9);
+        // Past the neighbour the same.
+        let (_, _, p) = swipe_slide(0, 3, 1.5);
+        assert!(p < 0.0 && p > -0.1);
+    }
+
+    #[test]
+    fn tween_springs_to_its_target() {
+        let tween = Tween { start: Instant::now() - Duration::from_millis(200), ..Tween::new(0.0, 1.0) };
         let mid = tween.value(Instant::now());
-        assert!(mid > 0.5 && mid < 1.0, "ease-out: past half way at half time, got {mid}");
-        let later = Instant::now() + std::time::Duration::from_secs(1);
+        assert!(mid > 0.5 && mid < 1.0, "past half way at 200 ms, got {mid}");
+        let later = Instant::now() + Duration::from_secs(1);
         assert_eq!(tween.value(later), 1.0);
         assert!(tween.done(later));
+        let held = Tween::hold(0.3);
+        assert!(!held.done(later) && held.value(later) == 0.3, "held until let go");
+    }
+
+    #[test]
+    fn flings_settle_without_overshooting_far() {
+        let t0 = Instant::now();
+        for from in [0.0, 0.3, 0.7, 1.0] {
+            for v in [0.0, 2.0, 10.0, 100.0] {
+                let tween = Tween { start: t0, ..Tween::fling(from, 1.0, v) };
+                let peak = (0..2000).map(|ms| tween.value(t0 + Duration::from_millis(ms))).fold(0.0, f64::max);
+                assert!(peak <= 1.08, "{from} at {v}/s peaks at {peak}");
+                assert!(tween.done(t0 + Duration::from_secs(2)) && tween.value(t0 + Duration::from_secs(2)) == 1.0);
+            }
+        }
     }
 }
