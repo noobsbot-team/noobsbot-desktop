@@ -1,9 +1,8 @@
 //! Touchpad system gestures (E5.3) and hot corners (E5.4). The recogniser and the corner logic are pure; the `State`
 //! glue at the bottom feeds them libinput's events and the pointer.
 //!
-//! ponytail: a swipe triggers its action on release (past half way, or a flick) instead of moving the screen 1:1 with
-//! the fingers; Spaces and Mission Control animate with a fixed Tween. Drive `Slide`/`Mission` progress from the
-//! fingers once the anim.rs springs can start from a given position and velocity. Launchpad pages do follow 1:1.
+//! The Space slide follows a sideways swipe 1:1 and springs on from where the fingers let go (`Live`); Launchpad pages
+//! follow too. Reduce motion: the action happens on release instead.
 
 use std::time::{Duration, Instant};
 
@@ -63,10 +62,18 @@ pub fn rubber(x: f64) -> f64 {
     RUBBER * x / (x.abs() + 3.0 * RUBBER)
 }
 
+/// What follows the fingers of a swipe.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Live {
+    /// The Spaces under this key, slid over a screen this wide.
+    Space(String, f64),
+}
+
 /// One system gesture in progress: begin → update* → end.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Tracker {
     pub kind: Kind,
+    pub live: Option<Live>,
     /// Sideways (`true`) or up and down, once the fingers moved `MIN_TRAVEL`.
     pub horizontal: Option<bool>,
     sensitivity: f64,
@@ -88,7 +95,18 @@ impl Tracker {
             Kind::Swipe => fingers == swipe,
             Kind::Pinch => fingers >= 4,
         };
-        ours.then_some(Self { kind, horizontal: None, sensitivity: sensitivity.clamp(0.25, 4.0), dx: 0.0, dy: 0.0, scale: 1.0, vx: 0.0, vy: 0.0, last: time })
+        ours.then_some(Self {
+            kind,
+            horizontal: None,
+            live: None,
+            sensitivity: sensitivity.clamp(0.25, 4.0),
+            dx: 0.0,
+            dy: 0.0,
+            scale: 1.0,
+            vx: 0.0,
+            vy: 0.0,
+            last: time,
+        })
     }
 
     /// The fingers moved by `(dx, dy)`; `scale` is the pinch's absolute scale (1 for a swipe).
@@ -242,20 +260,56 @@ impl State {
             return true;
         }
         let Some(tracker) = self.gesture.as_mut() else { return false };
+        let fresh = tracker.horizontal.is_none();
         tracker.update(time, delta.x, delta.y, scale);
-        if tracker.kind == Kind::Swipe {
-            // Fingers left = the next page, as with natural scrolling.
-            self.launchpad_scroll(-delta.x, -delta.y, 0.0, false);
+        let (kind, horizontal, (dx, dy)) = (tracker.kind, tracker.horizontal, tracker.delta());
+        // Fingers left = the next page, as with natural scrolling.
+        if kind != Kind::Swipe || self.launchpad_scroll(-delta.x, -delta.y, 0.0, false) {
+            return true;
+        }
+        if fresh && let Some(horizontal) = horizontal {
+            let live = self.live(horizontal, dy);
+            if let Some(tracker) = self.gesture.as_mut() {
+                tracker.live = live;
+            }
+        }
+        match self.gesture.as_ref().and_then(|t| t.live.clone()) {
+            Some(Live::Space(key, width)) => self.swipe_space(&key, -dx / width),
+            None => {}
         }
         true
     }
 
+    /// What follows a swipe that just turned out sideways (or up and down, `dy` so far): nothing under reduce motion.
+    fn live(&self, horizontal: bool, _dy: f64) -> Option<Live> {
+        if self.config.appearance.reduce_motion {
+            return None;
+        }
+        // Under Mission Control the Space changes at once, on release.
+        if horizontal && self.mission.is_none() {
+            let output = self.pointer_output()?;
+            let width = self.space.output_geometry(&output)?.size.w;
+            return Some(Live::Space(self.output_key(&output), f64::from(width.max(1))));
+        }
+        None
+    }
+
     /// The end of our gesture: its action; `false`: not ours, forward it.
     pub fn gesture_end(&mut self, time: u32, cancelled: bool) -> bool {
-        if self.locked() {
-            return true;
+        let locked = self.locked();
+        let Some(tracker) = self.gesture.take() else { return locked };
+        // Whatever followed the fingers springs on or back; locked meanwhile, back.
+        let cancelled = cancelled || locked;
+        let (dx, _) = tracker.delta();
+        let (vx, _) = tracker.speed(time);
+        match tracker.live {
+            Some(Live::Space(key, width)) => {
+                self.swipe_space_end(&key, -dx / width, -vx * 1000.0 / width, !cancelled && commits(dx, width, vx));
+                return true;
+            }
+            None if locked => return true,
+            None => {}
         }
-        let Some(tracker) = self.gesture.take() else { return false };
         if tracker.kind == Kind::Swipe && self.launchpad_scroll(0.0, 0.0, 0.0, true) {
             return true;
         }
