@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "Noobsbot Desktop System Settings"
-repository = "https://github.com/anil0403/noobsbot-desktop"
+repository = "https://github.com/noobsbot-team/noobsbot-desktop"
 publish = false
 
 [dependencies]

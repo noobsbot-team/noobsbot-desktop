@@ -31,13 +31,13 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 - *(vm)* relative mouse moves and drags across displays
 - *(vm)* a second display the tests can plug and unplug (HEADS=2, head.py)
 
-## [1.0.0-alpha.6](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.5...v1.0.0-alpha.6) - 2026-10-20
+## [1.0.0-alpha.6](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.5...v1.0.0-alpha.6) - 2026-10-20
 
 ### Other
 
 - *(config)* wait for both files the save thread writes
 
-## [1.0.0-alpha.5](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.4...v1.0.0-alpha.5) - 2026-10-20
+## [1.0.0-alpha.5](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.4...v1.0.0-alpha.5) - 2026-10-20
 
 ### Added
 
@@ -139,7 +139,7 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 - Merge branch 'worktree-agent-a2cb395c4642cd52c' into worktree-m1-compositor-core
 - *(readme)* per-display settings in the settings table
 
-## [1.0.0-alpha.4](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.3...v1.0.0-alpha.4) - 2026-10-18
+## [1.0.0-alpha.4](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.3...v1.0.0-alpha.4) - 2026-10-18
 
 ### Added
 
@@ -150,7 +150,7 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 - cargo fmt
 - README covering what it is, how it works and differs, install, use, settings, updates and development
 
-## [1.0.0-alpha.3](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.2...v1.0.0-alpha.3) - 2026-10-18
+## [1.0.0-alpha.3](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.2...v1.0.0-alpha.3) - 2026-10-18
 
 ### Fixed
 
@@ -163,7 +163,7 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 - *(vm)* scripts for a throwaway QEMU test VM (install.sh, greeter, polkit, Software Update)
 
-## [1.0.0-alpha.2](https://github.com/anil0403/noobsbot-desktop/compare/v1.0.0-alpha.1...v1.0.0-alpha.2) - 2026-10-18
+## [1.0.0-alpha.2](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.1...v1.0.0-alpha.2) - 2026-10-18
 
 ### Added
 
@@ -210,7 +210,7 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 - Merge branch 'worktree-agent-aa182b612f71235ff' into worktree-m1-compositor-core
 - Merge worktree-m1-compositor-core into the greeter branch
 
-## [1.0.0-alpha.1](https://github.com/anil0403/noobsbot-desktop/releases/tag/v1.0.0-alpha.1) - 2026-10-18
+## [1.0.0-alpha.1](https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/v1.0.0-alpha.1) - 2026-10-18
 
 ### Added
 
