@@ -46,6 +46,7 @@ pub struct Config {
     pub dock: Dock,
     pub idle: Idle,
     pub privacy: Privacy,
+    pub accessibility: Accessibility,
     pub weather: Weather,
     pub calendar: Calendar,
     pub update: Update,
@@ -422,6 +423,7 @@ impl Default for Config {
             dock: Dock::default(),
             idle: Idle::default(),
             privacy: Privacy::default(),
+            accessibility: Accessibility::default(),
             weather: Weather::default(),
             calendar: Calendar::default(),
             update: Update::default(),
@@ -614,6 +616,14 @@ impl Default for Calendar {
 pub struct Privacy {
     pub screen_recording: Vec<String>,
     pub screen_recording_denied: Vec<String>,
+}
+
+/// Accessibility (E8.6).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Accessibility {
+    /// Runs Orca while on (Super+Alt+F5).
+    pub screen_reader: bool,
 }
 
 /// Software Update (E6.13); read at start.

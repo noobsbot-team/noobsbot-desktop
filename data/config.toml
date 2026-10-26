@@ -211,6 +211,10 @@ lock_message = ""
 screen_recording = []
 screen_recording_denied = []
 
+[accessibility]
+# The Orca screen reader runs while this is on; Super+Alt+F5 toggles it.
+screen_reader = false
+
 [weather]
 # The Weather widget in Notification Center, from Open-Meteo (no account, no key). Off by default: while on, the
 # forecast for this one place is fetched every 30 minutes; your location is never looked up from your IP.

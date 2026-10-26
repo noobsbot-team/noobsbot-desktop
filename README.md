@@ -302,6 +302,7 @@ doesn't understand is skipped and reported in the journal.
 | `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions |
 | `[idle]` | when to dim, turn the screen off and sleep (battery and AC), locking |
 | `[privacy]` | which programs may record the screen |
+| `[accessibility]` | the Orca screen reader |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
