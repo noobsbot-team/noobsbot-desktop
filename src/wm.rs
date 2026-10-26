@@ -83,17 +83,27 @@ pub fn tile_at(p: Point<f64, Logical>, area: Rect) -> Option<Tile> {
     if !left && !right {
         return (p.y <= y + TILE_EDGE).then_some(Tile::Zoom);
     }
-    let (half_w, half_h) = (area.size.w / 2, area.size.h / 2);
-    let col = if left { area.loc.x } else { area.loc.x + half_w };
-    let width = if left { half_w } else { area.size.w - half_w };
-    let rect = if p.y < y + h / 4.0 {
-        Rect::new((col, area.loc.y).into(), (width, half_h).into())
-    } else if p.y > y + h * 3.0 / 4.0 {
-        Rect::new((col, area.loc.y + half_h).into(), (width, area.size.h - half_h).into())
-    } else {
-        Rect::new((col, area.loc.y).into(), (width, area.size.h).into())
+    let (top, bottom) = (p.y < y + h / 4.0, p.y > y + h * 3.0 / 4.0);
+    Some(Tile::Part(tile_part(area, Edges { left, right: !left, top, bottom })))
+}
+
+/// The part of the work area against `edges`: one side is a half, two a quarter; none (or opposite ones) the whole.
+pub fn tile_part(area: Rect, edges: Edges) -> Rect {
+    let span = |start: i32, len: i32, first: bool, second: bool| match (first, second) {
+        (true, false) => (start, len / 2),
+        (false, true) => (start + len / 2, len - len / 2),
+        _ => (start, len),
     };
-    Some(Tile::Part(rect))
+    let (x, w) = span(area.loc.x, area.size.w, edges.left, edges.right);
+    let (y, h) = span(area.loc.y, area.size.h, edges.top, edges.bottom);
+    Rect::new((x, y).into(), (w, h).into())
+}
+
+/// Window ▸ Center: the middle of the work area, never above or left of it.
+pub fn center(area: Rect, size: Size<i32, Logical>) -> Point<i32, Logical> {
+    let x = area.loc.x + (area.size.w - size.w) / 2;
+    let y = area.loc.y + (area.size.h - size.h) / 2;
+    (x.max(area.loc.x), y.max(area.loc.y)).into()
 }
 
 /// Which edges a resize drags.
@@ -240,6 +250,19 @@ mod tests {
         assert_eq!(at(999.0, 400.0), Some(Tile::Part(Rect::new((500, 24).into(), (500, 800).into()))));
         assert_eq!(at(0.0, 30.0), Some(Tile::Part(Rect::new((0, 24).into(), (500, 400).into()))));
         assert_eq!(at(999.0, 820.0), Some(Tile::Part(Rect::new((500, 424).into(), (500, 400).into()))));
+    }
+
+    #[test]
+    fn keyboard_tiles_and_centre() {
+        let area = rect(0, 24, 1001, 800);
+        let e = |left, right, top, bottom| tile_part(area, Edges { left, right, top, bottom });
+        assert_eq!(e(true, false, false, false), rect(0, 24, 500, 800));
+        assert_eq!(e(false, true, false, false), rect(500, 24, 501, 800), "the odd pixel goes right");
+        assert_eq!(e(false, false, true, false), rect(0, 24, 1001, 400));
+        assert_eq!(e(false, true, false, true), rect(500, 424, 501, 400));
+        assert_eq!(e(false, false, false, false), area);
+        assert_eq!(center(area, (401, 200).into()), (300, 324).into());
+        assert_eq!(center(area, (2000, 2000).into()), (0, 24).into(), "too big: the corner");
     }
 
     fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {

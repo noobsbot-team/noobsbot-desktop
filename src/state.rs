@@ -64,6 +64,15 @@ struct Placed;
 /// Where a zoomed or fullscreen window goes back to.
 struct Restore(std::sync::Mutex<Option<Rect>>);
 
+/// Keep on Top (window menu, `keep-on-top`): the window stays above normal windows.
+#[derive(Default)]
+struct OnTop(std::sync::atomic::AtomicBool);
+
+/// Is `window` kept on top?
+pub fn on_top(window: &Window) -> bool {
+    window.user_data().get::<OnTop>().is_some_and(|t| t.0.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// The window rules that matched this window.
 struct Ruled(std::sync::Mutex<Actions>);
 
@@ -662,6 +671,48 @@ impl State {
         Some(rect)
     }
 
+    /// Super+Ctrl+arrows, Window ▸ Move & Resize: tiles `window` against `edges` of the work area (none: Fill), the
+    /// same tile a drag gives, so dragging it away restores it. A zoomed window keeps its pre-zoom size to go back to.
+    /// ponytail: does nothing to a full-screen window.
+    pub fn tile_to(&mut self, window: &Window, edges: wm::Edges) {
+        let (Some(surface), Some(area)) = (window.toplevel().cloned(), self.work_area()) else { return };
+        if surface.with_pending_state(|s| s.states.contains(xdg_toplevel::State::Fullscreen)) {
+            return;
+        }
+        surface.with_pending_state(|s| s.states.unset(xdg_toplevel::State::Maximized));
+        self.tile(window, wm::Tile::Part(wm::tile_part(area, edges)));
+    }
+
+    /// Window ▸ Center: the middle of the work area, at the same size.
+    pub fn center(&mut self, window: &Window) {
+        let (Some(frame), Some(area)) = (self.frame(window), self.work_area()) else { return };
+        self.set_visible_loc(window, wm::center(area, frame.size));
+    }
+
+    /// Window ▸ Keep on Top, toggled.
+    pub fn keep_on_top(&mut self, window: &Window) {
+        let flag = &window.user_data().get_or_insert_threadsafe(OnTop::default).0;
+        flag.fetch_xor(true, std::sync::atomic::Ordering::Relaxed);
+        self.restack();
+        self.schedule_redraw();
+    }
+
+    /// Move to ▸ Display: the next (`delta` 1) or previous (-1) display, at the same place on it.
+    /// ponytail: the size is kept, so a zoomed or tiled window doesn't refit a display of another size.
+    pub fn move_to_display(&mut self, window: &Window, delta: i32) {
+        let outputs: Vec<_> = self.space.outputs().cloned().collect();
+        let Some(from) = self.window_output(window).and_then(|o| outputs.iter().position(|x| *x == o)) else { return };
+        let to = (from as i32 + delta).rem_euclid(outputs.len() as i32) as usize;
+        // The first display's area is below the menu bar; the others are whole.
+        let area = |i: usize| if i == 0 { self.work_area() } else { self.space.output_geometry(&outputs[i]) };
+        let (Some(a), Some(b), Some(frame)) = (area(from), area(to), self.frame(window)) else { return };
+        if to == from {
+            return;
+        }
+        let rect = Rect::new(b.loc + (frame.loc - a.loc), frame.size);
+        self.set_visible_loc(window, wm::move_to(rect, b, &[], false));
+    }
+
     /// Zoom (fill the work area) or fullscreen (fill the output), remembering where the window was.
     /// ponytail: one output and no menu bar or dock yet, so both fill the same area; refitting on output resize comes with udev (M6).
     pub fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
@@ -789,7 +840,8 @@ impl State {
         let is = |w: &Window, f: fn(&Actions) -> bool| ruled(w).is_some_and(|a| f(&a));
         let float = |a: &Actions| a.float_above == Some(true);
         let overlay = |a: &Actions| a.layer == Some(rules::Layer::Overlay);
-        let above: Vec<Window> = self.space.elements().filter(|w| is(w, float)).chain(self.space.elements().filter(|w| is(w, overlay))).cloned().collect();
+        let above: Vec<Window> =
+            self.space.elements().filter(|w| is(w, float) || on_top(w)).chain(self.space.elements().filter(|w| is(w, overlay))).cloned().collect();
         for window in above {
             self.space.raise_element(&window, false);
         }
