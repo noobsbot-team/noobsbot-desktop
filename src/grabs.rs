@@ -99,7 +99,8 @@ impl PointerGrab<State> for MoveGrab {
         self.started = true;
 
         let rect = Rect::new(self.start.loc + delta.to_i32_round(), self.start.size);
-        let others: Vec<Rect> = data.space.elements().filter(|w| **w != self.window).filter_map(|w| data.frame(w)).collect();
+        let others: Vec<Rect> =
+            data.space.elements().filter(|w| **w != self.window && data.sheet_parent(w).as_ref() != Some(&self.window)).filter_map(|w| data.frame(w)).collect();
         let Some(area) = data.work_area() else { return };
         let loc = wm::move_to(rect, area, &others, data.config.windows.magnetic_edges && !data.modifiers().ctrl);
         data.set_visible_loc(&self.window, loc);

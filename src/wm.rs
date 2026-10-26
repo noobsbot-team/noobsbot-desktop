@@ -242,6 +242,51 @@ pub fn nearest_corner(rect: Rect, p: Point<f64, Logical>) -> Edges {
     let top = p.y < f64::from(rect.loc.y) + f64::from(rect.size.h) / 2.0;
     Edges { left, right: !left, top, bottom: !top }
 }
+/// A sheet (a modal dialog, E8.5) hangs centred just under its parent's title bar: `parent` is the parent's frame,
+/// `bar` its title-bar height, `size` the sheet's frame size.
+pub fn sheet_loc(parent: Rect, bar: i32, size: Size<i32, Logical>) -> Point<i32, Logical> {
+    (parent.loc.x + (parent.size.w - size.w) / 2, parent.loc.y + bar).into()
+}
+
+/// The stacking order (bottom to top) with every sheet directly above its parent; `parent` gives a sheet's parent.
+pub fn sheets_above<T: Clone + PartialEq>(order: &[T], parent: impl Fn(&T) -> Option<T>) -> Vec<T> {
+    let mut out = Vec::with_capacity(order.len());
+    for root in order.iter().filter(|w| parent(w).is_none_or(|p| !order.contains(&p))) {
+        let mut stack = vec![root.clone()];
+        while let Some(w) = stack.pop() {
+            if out.contains(&w) {
+                continue;
+            }
+            stack.extend(order.iter().rev().filter(|s| parent(s).as_ref() == Some(&w)).cloned());
+            out.push(w);
+        }
+    }
+    out
+}
+
+/// Where an app's remembered frame (E8.5) opens on a display with work area `area`: as it was, kept reachable by the
+/// move rules; `None` when it no longer fits (then the window is placed as new).
+pub fn recall(saved: Rect, area: Rect) -> Option<Rect> {
+    (saved.size.w <= area.size.w && saved.size.h <= area.size.h && saved.size.w > 0 && saved.size.h > 0)
+        .then(|| Rect::new(move_to(saved, area, &[], false), saved.size))
+}
+
+/// The remembered-frames file: one `app-id<TAB>display<TAB>x y w h` per line.
+pub fn parse_frames(text: &str) -> Vec<(String, String, Rect)> {
+    text.lines()
+        .filter_map(|line| {
+            let mut parts = line.split('\t');
+            let (app, display, nums) = (parts.next()?, parts.next()?, parts.next()?);
+            let n: Vec<i32> = nums.split(' ').map(str::parse).collect::<Result<_, _>>().ok()?;
+            let [x, y, w, h] = n[..] else { return None };
+            Some((app.to_owned(), display.to_owned(), Rect::new((x, y).into(), (w, h).into())))
+        })
+        .collect()
+}
+
+pub fn format_frames(frames: &[(String, String, Rect)]) -> String {
+    frames.iter().map(|(app, display, r)| format!("{app}\t{display}\t{} {} {} {}\n", r.loc.x, r.loc.y, r.size.w, r.size.h)).collect()
+}
 
 #[cfg(test)]
 mod tests {
@@ -376,5 +421,39 @@ mod tests {
         let br = Edges { right: true, bottom: true, ..Default::default() };
         assert_eq!(grow_to(rect(100, 100, 400, 300), area, br), rect(100, 100, 900, 700));
         assert_eq!(grow_to(rect(-50, 100, 400, 300), area, left), rect(-50, 100, 400, 300), "never shrinks");
+    }
+
+    #[test]
+    fn sheet_hangs_centred_under_the_title_bar() {
+        let p = sheet_loc(rect(100, 50, 800, 600), 28, (400, 200).into());
+        assert_eq!((p.x, p.y), (300, 78));
+    }
+
+    #[test]
+    fn sheets_stack_directly_above_their_parent() {
+        // 1 is a sheet of 3, 4 of 1, 5 of a window that is gone.
+        let parent = |w: &i32| match w {
+            1 => Some(3),
+            4 => Some(1),
+            5 => Some(9),
+            _ => None,
+        };
+        assert_eq!(sheets_above(&[1, 2, 3, 4, 5, 6], parent), vec![2, 3, 1, 4, 5, 6]);
+    }
+
+    #[test]
+    fn recalled_frame_is_clamped_or_dropped() {
+        let area = rect(0, 24, 1000, 800);
+        assert_eq!(recall(rect(100, 100, 400, 300), area), Some(rect(100, 100, 400, 300)));
+        // Off the right edge and above the menu bar: pulled back so it can be grabbed.
+        assert_eq!(recall(rect(2000, 0, 400, 300), area), Some(rect(960, 24, 400, 300)));
+        assert_eq!(recall(rect(0, 24, 1200, 300), area), None);
+    }
+
+    #[test]
+    fn frames_file_round_trips() {
+        let frames = vec![("org.app.Foo".to_owned(), "DP-1".to_owned(), rect(-10, 40, 640, 480)), ("bar".to_owned(), String::new(), rect(0, 0, 1, 2))];
+        assert_eq!(parse_frames(&format_frames(&frames)), frames);
+        assert!(parse_frames("junk\nx\ty\t1 2 3\n").is_empty());
     }
 }

@@ -27,6 +27,7 @@ mod protocols;
 mod render;
 mod rules;
 mod services;
+mod sheets;
 mod shell;
 mod shortcuts;
 mod spaces;

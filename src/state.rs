@@ -614,7 +614,12 @@ impl State {
         // map_element also raises the window: put back what was above it, so moving never restacks.
         let above: Vec<Window> = self.space.elements().skip_while(|w| *w != window).skip(1).cloned().collect();
         let restored = !self.space.elements().any(|w| w == window);
-        self.space.map_element(window.clone(), loc + Point::from((0, crate::decorations::bar_height(window))), false);
+        let old = self.space.element_location(window);
+        let new = loc + Point::from((0, crate::decorations::bar_height(window)));
+        self.space.map_element(window.clone(), new, false);
+        if let Some(old) = old.filter(|old| *old != new) {
+            self.carry_sheets(window, new - old);
+        }
         for w in &above {
             self.space.raise_element(w, false);
         }
@@ -629,6 +634,8 @@ impl State {
     /// Starts moving `window` with the pointer; the move begins after the drag threshold.
     pub fn start_move(&mut self, window: Window, start_data: smithay::input::pointer::GrabStartData<Self>, serial: Serial) {
         let Some(pointer) = self.seat.get_pointer() else { return };
+        // A sheet is dragged by its parent.
+        let window = self.sheet_parent(&window).unwrap_or(window);
         let Some(start) = self.frame(&window) else { return };
         pointer.set_grab(self, MoveGrab { start_data, window, start, started: false, tile: None }, serial, Focus::Clear);
     }
@@ -757,6 +764,11 @@ impl State {
         saved
     }
 
+    /// Where a tiled, zoomed or full-screen window goes back to.
+    pub fn restore_frame(&self, window: &Window) -> Option<Rect> {
+        *window.user_data().get::<Restore>()?.0.lock().ok()?
+    }
+
     pub fn window_for(&self, surface: &WlSurface) -> Option<&Window> {
         self.space.elements().find(|w| w.toplevel().is_some_and(|t| t.wl_surface() == surface))
     }
@@ -772,6 +784,14 @@ impl State {
         let exclusive = self.exclusive_layer().map(|l| l.wl_surface().clone());
         match window {
             Some(window) => {
+                // A parent's focus goes to its sheet, the two raised together.
+                let window = match self.sheet_of(&window) {
+                    Some(sheet) => {
+                        self.space.raise_element(&window, false);
+                        sheet
+                    }
+                    None => window,
+                };
                 // Any window taking focus ends Show Desktop.
                 self.restore_desktop();
                 self.reveal(&window);
@@ -857,6 +877,7 @@ impl State {
         for window in above {
             self.space.raise_element(&window, false);
         }
+        self.stack_sheets();
     }
 
     fn unconstrain_popup(&self, popup: &PopupSurface) {
@@ -918,6 +939,9 @@ impl CompositorHandler for State {
                     toplevel.with_pending_state(|s| s.bounds = Some(bounds));
                 }
                 self.apply_rules(&toplevel);
+                if let Some(window) = self.window_for(surface).cloned() {
+                    self.recall_frame(&window);
+                }
                 toplevel.send_configure();
             }
         }
@@ -944,7 +968,9 @@ impl CompositorHandler for State {
                         }
                         let size = fitted;
                         let position = ruled(&window).and_then(|a| a.position);
-                        let loc = position.map_or_else(|| wm::place(area, size), |[x, y]| area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))));
+                        let loc = self.attached_loc(&window, size).unwrap_or_else(|| {
+                            position.map_or_else(|| wm::place(area, size), |[x, y]| area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))))
+                        });
                         tracing::debug!(?size, ?loc, ?position, "placed");
                         self.set_visible_loc(&window, loc);
                         self.apply_space_rule(&window);
@@ -1022,6 +1048,9 @@ impl XdgShellHandler for State {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         self.schedule_redraw();
+        if let Some(window) = self.window_for(surface.wl_surface()).cloned() {
+            self.remember_frame(&window);
+        }
         // Its buffers are still there unless the client is gone (then it just vanishes).
         if let Some(window) =
             self.window_for(surface.wl_surface()).filter(|_| smithay::reexports::wayland_server::Resource::is_alive(surface.wl_surface())).cloned()
