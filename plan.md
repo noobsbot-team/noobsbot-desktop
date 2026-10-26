@@ -1288,7 +1288,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   │        Sleep   Restart   Shut Down             ⌨ EN   🔋 85%  │  bottom: Callout buttons + status
   └─────────────────────────────────────────────────────────────┘
   ```
-  - Wallpaper darkened 30%. A wrong password makes the field **shake** (macOS) and shows "Incorrect password".
+  - Wallpaper darkened 30%. A wrong password makes the field **shake** and shows "Incorrect password".
   - Notifications on the lock screen: count only ("3 notifications"), with no content by default (privacy).
   - Locks on: Super+Ctrl+Q, the logo menu, lid close, wake from sleep, and after idle time.
 - **Built with:** drawn **by the compositor itself**; while locked no app is drawn and no input reaches apps.
@@ -1318,7 +1318,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 
 ### E6.6 Login screen
 - **What it is:** where you log in after boot.
-- **Design:** greetd + tuigreet (text, centred, clean) for M6. A **graphical macOS-style login** that matches the
+- **Design:** greetd + tuigreet (text, centred, clean) for M6. A **graphical glass login** that matches the
   lock screen comes later (optional, M7+); greetd allows it, and Noobsbot Desktop could run in a "greeter mode".
 - **Built with:** **greetd** (a tiny login daemon, written in Rust) + **tuigreet**.
 - **How it works:** greetd draws nothing itself. At boot systemd starts greetd → greetd starts the *greeter*
@@ -1349,7 +1349,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | Auto-login | **off by default**; it skips the password by design (only for desktops nobody else touches) |
   `install.sh` runs a **security check** and warns (without changing anything) if: the root disk isn't encrypted,
   bootloader editing is enabled, auto-login is on, or Secure Boot is off (informational).
-- **Own greeter (E7.2, opt-in):** `noobsbot-desktop --greeter` draws a glass macOS-style login (the lock screen,
+- **Own greeter (E7.2, opt-in):** `noobsbot-desktop --greeter` draws a glass login (the lock screen,
   E6.4, plus a user row and session choice) and speaks greetd's small JSON IPC itself (`shell/greeter.rs`, no crate).
   `install.sh --greeter` writes `data/system/etc/greetd/noobsbot-greeter.toml` as the config; tuigreet stays the default and fallback.
 - **Why:** minimal, doesn't depend on any desktop, the modern standard for lightweight setups.
@@ -1435,7 +1435,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   re-arrange monitors** (`wlr-screencopy`, `ext-image-copy-capture`, `wlr-output-management`, `ext-workspace`,
   `ext-foreign-toplevel-list`, `virtual-keyboard`, `virtual-pointer`, `wlr-layer-shell`, `keyboard-shortcuts-inhibit`).
   Exposed to everyone, any app or script becomes a screen recorder or keylogger with no prompt.
-- **Design:** macOS asks "‹App› would like to record this computer's screen"; so do we. These globals are only
+- **Design:** We ask "‹App› would like to record this computer's screen". These globals are only
   advertised to **trusted clients** (the portals, xwayland-satellite, our Settings app, anything started with
   `noobsbot-desktop --trusted <cmd>`). Any other client that binds one gets a one-time **alert** (D8): "Allow ‹app› to
   record the screen / control input?" with Allow / Deny, remembered per app in config (Settings ▸ Privacy later). Screen
@@ -1460,7 +1460,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 
 ### E6.13 Versioning, releases & Software Update (auto-updating)
 - **What it is:** how a version number is born, how a release is built, and how every installed desktop learns about
-  it and installs it, the way macOS's **Software Update** does. Nobody edits a version number by hand, and the owner
+  it and installs it, like a built-in **Software Update**. Nobody edits a version number by hand, and the owner
   never has to tell users "pull and rebuild".
 - **Version scheme (SemVer, one source of truth):**
   | Part | Rule | Example |
@@ -1502,7 +1502,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | Step | How |
   |---|---|
   | **Check** | once every 24 h (calloop timer; also "Check Now" and the first launch after boot) `GET https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/latest` (Beta channel: `/releases`, pre-releases allowed). Compares SemVer with the running version. No account, no identifier, no telemetry: the request carries nothing but the version header. Off with one toggle. Fails silently when offline |
-  | **Notify** | notification (E4.1): "Noobsbot Desktop 1.3 is available · *Update Tonight* / *Details*"; a red badge "1" on System Settings in the dock, like macOS |
+  | **Notify** | notification (E4.1): "Noobsbot Desktop 1.3 is available · *Update Tonight* / *Details*"; a red badge "1" on System Settings in the dock |
   | **Download** | in the background to `~/.cache/noobsbot-desktop/updates/`; `SHA256SUMS` + **minisign signature verified** before anything is touched; a bad signature deletes the file and shows an alert |
   | **Install** | a compositor can't replace itself while running, so the verified tarball is staged, and installed by the tiny privileged helper `noobsbot-desktop-update` through **polkit** (admin password in our alert; one polkit action `org.noobsbot.desktop.update`). It unpacks to `/usr/lib/noobsbot-desktop/versions/1.3.0/`, switches the `/usr/bin/noobsbot-desktop` symlink, keeps the previous version. Applied at the **next login** ("Install at next login", default) or now via "Log Out & Update" |
   | **Rollback** | the session wrapper `noobsbot-desktop-session` starts the current version and writes a `boot-ok` marker after 60 s of running; if a new version dies 3 times within 2 min before the marker, the wrapper starts the **previous version** and shows "Update 1.3.0 was rolled back" with a Report button (opens the GitHub issue page). Settings keeps a "Revert to 1.2.4" button for 30 days |
@@ -1516,7 +1516,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why this way:** GitHub Releases is free, already where the code lives, and needs no server of ours; release-plz
   removes human version bumps and keeps the changelog honest; minisign is the smallest proven signing scheme (used for
   Zig and libsodium releases, among others), and it is what stops a hijacked download from becoming a root
-  install; staged install + rollback is how macOS and ChromeOS avoid bricking the desktop with an update.
+  install; staged install + rollback is how mature systems avoid bricking the desktop with an update.
   **Rejected:** `git pull && cargo build` on the user's machine (needs the Rust toolchain, 5-minute builds, no
   signatures); replacing the binary live (the compositor would die); Flatpak (compositors can't be Flatpaks); only
   pacman/AUR (no repo until Open-3, and AUR builds from source anyway); our own update server (cost and upkeep);
@@ -1534,7 +1534,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 ## M7 — System Settings app (+ optional extras) — size L
 
 ### E7.1 System Settings app
-- **What it is:** a macOS-style System Settings window. It's the only Noobsbot Desktop part that is a separate program.
+- **What it is:** a glass System Settings window with a sidebar. It's the only Noobsbot Desktop part that is a separate program.
 - **Design:**
   ```
   ╭─────────────────────────────────────────────────────────────────────╮
@@ -1563,7 +1563,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
   ╰─────────────────────────────────────────────────────────────────────╯
   ```
   - 720 × 560 default; sidebar 220 px in `panel` material (rows 28 px, colourful 20 px icon squircles, selected row =
-    accent @ 20%); content uses grouped card rows (radius 10), with label left and control right, like macOS Ventura+.
+    accent @ 20%); content uses grouped card rows (radius 10), with label left and control right.
   - Pages: Wi-Fi · Bluetooth · Sound (output; **input device, level, mute**; alert volume) · Displays (drag-to-arrange
     monitors, VRR toggle later) · Appearance (mode Light / Dark / **Auto = schedule**, accent, glass opacity,
     wallpaper picker, Reduce transparency/motion) · Dock · Keyboard (layouts, repeat, shortcuts editor) ·
@@ -1588,7 +1588,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Weather widget (done, off by default) | forecast in Notification Center | Open-Meteo (no key, no account; city or lat/long, no IP lookup), `services/weather.rs` |
 | Fingerprint unlock | lock screen + sudo | `fprintd` |
 | Printers | printing from apps | CUPS |
-| Desktop icons (done) | files in `~/Desktop` shown on the wallpaper, like macOS (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
+| Desktop icons (done) | files in `~/Desktop` shown on the wallpaper (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
 | Emoji picker (done) | Super+Ctrl+E / Super+. popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
 | Own screen recorder | Super+Shift+5 ▸ Record without `wf-recorder` | compositor frames → PipeWire → `ffmpeg`/`gst` encoder |
 | Own Finder-style file manager | replace Dolphin | big project; only if wanted |
@@ -1599,8 +1599,8 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 
 An audit on 2026-10-26 compared Noobsbot Desktop with a mature traditional Linux desktop, one setting, applet and key
 at a time (about 30 settings modules, 36 panel applets, 880 settings keys). This milestone lists every gap that has a
-sensible macOS form, as Noobsbot Desktop would draw it: same glass, same Part D tokens, same behaviour rules. A feature
-with no macOS form is either given one or listed under "Not cloned" with the reason.
+sensible form in our design, as Noobsbot Desktop would draw it: same glass, same Part D tokens, same behaviour rules. A feature
+with no such form is either given one or listed under "Not cloned" with the reason.
 
 Order of work: **E8.1 first** (things that look done but aren't), then **Settings pages, the dock's per-window
 features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own mini-plan as usual.
@@ -1619,7 +1619,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 | Logo menu "System Settings…" and "About This Computer" rows are disabled | `src/shell/mod.rs` | open the Settings app (at About) |
 | Do Not Disturb is lost on restart | `src/shell/control.rs` | save it in `config.toml` |
 | Menu bar, dock, Spaces, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
-| `show-desktop` has no default key | `data/config.toml` | Super+F11 (macOS F11) |
+| `show-desktop` has no default key | `data/config.toml` | Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
 Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers (later)**. Every row writes `config.toml` or
@@ -1646,7 +1646,7 @@ calls the system service, and applies live.
 | Printers (later) | CUPS, printer list, queue, Add Printer; print-queue icon in the dock while printing |
 
 ### E8.3 Dock: the per-window jobs of a window list (priority 1)
-The dock stays per app, as on macOS. Every per-window job a taskbar does gets a macOS surface instead:
+The dock stays per app, by design. Every per-window job a taskbar does gets a surface of our own instead:
 - **Window previews:** hover (or long-press) an icon with several windows → a glass strip of live thumbnails above it,
   click to focus, × or middle-click to close, hovering a thumbnail fades the other windows. Reuses Mission Control's
   thumbnails and `close_button`.
@@ -1672,7 +1672,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow.
 
 ### E8.5 Window management
-- **Tiling, macOS 15 style:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
+- **Tiling:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
   300 ms hold; dragging out restores the old size (E1.2). Keyboard: Super+Ctrl+arrows tile (replaces the unbuilt
   nudge keys in E1.2).
 - **Window menu:** right-click the title bar, or the app asks (`show_window_menu`): Minimize, Zoom, Fill, Center,
@@ -1699,7 +1699,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
   reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space.
-- Keyboard Shortcuts dialog in macOS form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
+- Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
   ⚠ on conflicts (today the first match wins silently).
 - Default keys: log out (Super+Shift+Q), sleep key, keyboard backlight (UPower), touchpad toggle, display key
   (Settings › Displays until mirroring exists), calculator / mail / web / explorer / search keys (default-app,
@@ -1718,7 +1718,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Desktop icons for mounted drives with Eject.
 - Housekeeping: low-disk notification, Trash and thumbnail cleanup, recent-files age.
 
-### Not cloned (no macOS form, or not worth it)
+### Not cloned (no fitting form, or not worth it)
 Window shading; title-bar scroll opacity; button-layout and title-bar font choices (fixed by D2, D4); notifications at
 the bottom; free-form clock and lock-screen formats; a sound file per event; several switcher styles; pointer warping;
 volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add-on store for applets and desklets
