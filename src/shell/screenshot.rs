@@ -2,24 +2,34 @@
 //! picking a window), Super+Shift+5 opens the toolbar (Screen · Window · Region · Record · Options · Capture). The
 //! overlay goes away, the next frame is read back (capture.rs), and a worker thread saves it as
 //! `~/Pictures/Screenshots/Screenshot <date> at <time>.png`; then it is on the clipboard and a thumbnail floats at the
-//! bottom right for 5 s (click opens it). Drawn by render/screenshot.rs.
+//! bottom right for 5 s (click opens it, drag drops it into an app). Drawn by render/screenshot.rs.
 
 use std::{
+    io::Write,
+    os::fd::OwnedFd,
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
 };
 
 use smithay::{
-    input::{keyboard::Keysym, pointer::CursorImageStatus},
-    reexports::calloop::{
-        RegistrationToken, channel,
-        timer::{TimeoutAction, Timer},
+    input::{
+        keyboard::Keysym,
+        pointer::{CursorImageStatus, GrabStartData},
     },
-    utils::{Logical, Point, Rectangle, Size},
+    reexports::{
+        calloop::{
+            RegistrationToken, channel,
+            timer::{TimeoutAction, Timer},
+        },
+        wayland_server::protocol::wl_data_device_manager::DndAction,
+    },
+    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
+    wayland::selection::data_device::{SourceMetadata, start_dnd},
 };
 
 use crate::{
+    input::BTN_LEFT,
     shell::{Anchor, Row, menu_layout},
     state::State,
     text::ts,
@@ -89,6 +99,12 @@ pub struct Screenshots {
     /// The floating thumbnail and the file it opens, until its 5 s are up.
     pub thumbnail: Option<(Thumb, PathBuf)>,
     thumb_timer: Option<RegistrationToken>,
+    /// Where the left button went down on the thumbnail: a click opens it, a drag starts dragging it.
+    thumb_press: Option<Point<f64, Logical>>,
+    /// The thumbnail is being dragged into an app (it follows the pointer; its timer waits).
+    pub dragging: bool,
+    /// The last dragged file: drop targets read it after the drop.
+    drag_file: Option<PathBuf>,
     /// Options ▸ timer: seconds before a toolbar capture.
     pub delay: u8,
     /// Options ▸ Show Floating Thumbnail, unticked.
@@ -260,6 +276,32 @@ pub fn elapsed(d: Duration) -> String {
     if s < 3600 { format!("{}:{:02}", s / 60, s % 60) } else { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) }
 }
 
+/// What a dragged screenshot offers apps: its URI (browsers, chats, file managers) and its picture.
+pub const DRAG_MIMES: [&str; 2] = ["text/uri-list", "image/png"];
+
+/// The `file://` URI of `path`, percent-encoded (spaces as `%20`).
+pub fn file_uri(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    let mut uri = String::from("file://");
+    for &b in path.as_os_str().as_bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            uri.push(b as char);
+        } else {
+            uri.push_str(&format!("%{b:02X}"));
+        }
+    }
+    uri
+}
+
+/// What a drop target asked for as `mime`: the URI list, or the file's bytes; `None` for a type we don't offer.
+pub fn drag_bytes(mime: &str, path: &Path) -> Option<Vec<u8>> {
+    match mime {
+        "text/uri-list" => Some(format!("{}\r\n", file_uri(path)).into_bytes()),
+        "image/png" => std::fs::read(path).ok(),
+        _ => None,
+    }
+}
+
 /// Whether `program` is on `$PATH`.
 fn installed(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
@@ -356,6 +398,7 @@ impl State {
     /// Pointer motion while the overlay is up (output-relative): `true` if it took it, so no app sees the pointer.
     pub fn shot_motion(&mut self, to: Point<f64, Logical>) -> bool {
         if self.screenshots.shot.is_none() {
+            self.thumbnail_motion(to);
             return false;
         }
         let hover = self.shot_hit(to);
@@ -378,7 +421,7 @@ impl State {
 
     /// A press while the overlay is up: it takes every click.
     pub fn shot_press(&mut self, at: Point<f64, Logical>, left: bool) -> bool {
-        let Some(shot) = self.screenshots.shot.clone() else { return self.thumbnail_press(at) };
+        let Some(shot) = self.screenshots.shot.clone() else { return self.thumbnail_press(at, left) };
         if !left {
             // A right click cancels.
             self.close_shot();
@@ -418,7 +461,7 @@ impl State {
 
     /// The left button came up: a region drag ends; without the toolbar it is taken at once.
     pub fn shot_release(&mut self) {
-        let Some(shot) = self.screenshots.shot.as_mut() else { return };
+        let Some(shot) = self.screenshots.shot.as_mut() else { return self.thumbnail_release() };
         let Some((a, b)) = shot.drag.take() else { return };
         let rect = region(a, b);
         // A click without a drag is no region.
@@ -608,17 +651,96 @@ impl State {
         Some(Rectangle::new((size.w - THUMB_MARGIN - THUMB_W, size.h - THUMB_MARGIN - th).into(), (THUMB_W, th).into()))
     }
 
-    /// A click on the thumbnail opens the screenshot.
-    // ponytail: no drag into apps yet; that needs a compositor-started drag-and-drop source (E6.8 later).
-    fn thumbnail_press(&mut self, at: Point<f64, Logical>) -> bool {
+    /// The thumbnail's rect (output-relative) and opacity; while dragged it is half size and centred on the pointer.
+    pub fn thumbnail_frame(&self) -> Option<(Rect, Thumb, f32)> {
+        let rect = self.thumbnail_rect()?;
+        let thumb = self.screenshots.thumbnail.as_ref()?.0.clone();
+        if !self.screenshots.dragging {
+            return Some((rect, thumb, 1.0));
+        }
+        let at = self.to_output(self.seat.get_pointer()?.current_location()).to_i32_round();
+        let size = rect.size.downscale(2);
+        Some((Rectangle::new(at - Point::from((size.w / 2, size.h / 2)), size), thumb, 0.6))
+    }
+
+    /// A press on the thumbnail: a click (see `thumbnail_release`) opens the screenshot, a drag drops it into an app.
+    fn thumbnail_press(&mut self, at: Point<f64, Logical>, left: bool) -> bool {
         if !self.thumbnail_rect().is_some_and(|r| r.to_f64().contains(at)) {
             return false;
+        }
+        self.screenshots.thumb_press = left.then_some(at);
+        true
+    }
+
+    /// The left button came up after a press on the thumbnail without dragging it: it opens.
+    fn thumbnail_release(&mut self) {
+        if self.screenshots.thumb_press.take().is_none() || self.screenshots.dragging {
+            return;
         }
         if let Some((_, path)) = self.screenshots.thumbnail.clone() {
             self.hide_thumbnail();
             self.spawn(&["xdg-open".to_owned(), path.to_string_lossy().into_owned()]);
         }
-        true
+    }
+
+    /// The pointer moved with no overlay up: past a few px from a press on the thumbnail, the drag starts.
+    fn thumbnail_motion(&mut self, to: Point<f64, Logical>) {
+        if self.screenshots.dragging {
+            return self.schedule_redraw();
+        }
+        let Some(from) = self.screenshots.thumb_press else { return };
+        let Some((_, path)) = self.screenshots.thumbnail.clone() else { return };
+        if (to.x - from.x).hypot(to.y - from.y) < 6.0 {
+            return;
+        }
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        self.screenshots.thumb_press = None;
+        self.screenshots.dragging = true;
+        self.screenshots.drag_file = Some(path);
+        // The timer waits while it is dragged.
+        if let Some(token) = self.screenshots.thumb_timer.take() {
+            self.loop_handle.remove(token);
+        }
+        let start = GrabStartData { focus: None, button: BTN_LEFT, location: pointer.current_location() };
+        let metadata = SourceMetadata { mime_types: DRAG_MIMES.map(str::to_owned).to_vec(), dnd_action: DndAction::Copy };
+        let (dh, seat) = (self.display_handle.clone(), self.seat.clone());
+        start_dnd(&dh, &seat, self, SERIAL_COUNTER.next_serial(), Some(start), None, metadata);
+        self.schedule_redraw();
+    }
+
+    /// A drop target asks for the dragged screenshot as `mime`: written on a worker thread.
+    pub fn thumbnail_send(&mut self, mime: String, fd: OwnedFd) {
+        let Some(path) = self.screenshots.drag_file.clone() else { return };
+        crate::clipboard::transfer(move || {
+            if let Some(bytes) = drag_bytes(&mime, &path) {
+                let _ = std::fs::File::from(fd).write_all(&bytes);
+            }
+        });
+    }
+
+    /// The drag ended over an app that took it: the thumbnail goes.
+    pub fn thumbnail_dropped(&mut self) {
+        if std::mem::take(&mut self.screenshots.dragging) {
+            self.hide_thumbnail();
+        }
+    }
+
+    /// No app took the drag: on the dock it is dropped there (the Trash trashes it); elsewhere the thumbnail comes
+    /// back for another 5 s.
+    pub fn thumbnail_cancelled(&mut self) {
+        if !std::mem::take(&mut self.screenshots.dragging) {
+            return;
+        }
+        let Some(path) = self.screenshots.drag_file.clone() else { return };
+        let on_dock = self.seat.get_pointer().is_some_and(|p| self.dock_covers(self.to_output(p.current_location())));
+        if on_dock {
+            *self.dock_ui.uris.lock().unwrap_or_else(|e| e.into_inner()) = Some(file_uri(&path));
+            self.dock_drop();
+            return self.hide_thumbnail();
+        }
+        if let Some((thumb, path)) = self.screenshots.thumbnail.take() {
+            self.show_thumbnail(thumb, path);
+        }
     }
 
     /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts `wf-recorder` on the whole
@@ -747,6 +869,21 @@ mod tests {
         assert_eq!(elapsed(Duration::from_secs(42)), "0:42");
         assert_eq!(elapsed(Duration::from_secs(62)), "1:02");
         assert_eq!(elapsed(Duration::from_secs(3723)), "1:02:03");
+    }
+
+    #[test]
+    fn drag_offers_uri_and_png() {
+        let path = Path::new("/home/u/Pictures/Screenshots/Screenshot 2026-10-27 at 9.41.png");
+        assert_eq!(file_uri(path), "file:///home/u/Pictures/Screenshots/Screenshot%202026-10-27%20at%209.41.png");
+        assert_eq!(crate::apps::file_path(&file_uri(path)).as_deref(), path.to_str(), "round trip");
+        assert_eq!(file_uri(Path::new("/tmp/a%b#ü")), "file:///tmp/a%25b%23%C3%BC");
+        assert_eq!(drag_bytes("text/uri-list", path), Some(format!("{}\r\n", file_uri(path)).into_bytes()));
+        let file = std::env::temp_dir().join(format!("noobsbot drag {}.png", std::process::id()));
+        std::fs::write(&file, b"png").unwrap();
+        assert_eq!(drag_bytes("image/png", &file).as_deref(), Some(&b"png"[..]));
+        assert_eq!(drag_bytes("text/plain", &file), None, "only what we offer");
+        assert!(DRAG_MIMES.iter().all(|m| drag_bytes(m, &file).is_some()));
+        std::fs::remove_file(&file).unwrap();
     }
 
     #[test]
