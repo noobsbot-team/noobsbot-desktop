@@ -75,7 +75,7 @@ impl Popup {
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
             Popup::Menu(Menu::Overflow) => BarItem::Overflow,
             Popup::Menu(Menu::Input) => BarItem::Input,
-            Popup::Menu(Menu::Battery(i)) => BarItem::Status(i),
+            Popup::Menu(Menu::Battery(i) | Menu::Network(i)) => BarItem::Status(i),
             Popup::Menu(Menu::Dock | Menu::Desktop | Menu::Drawer | Menu::Window) => return None,
             Popup::Control => BarItem::ControlCenter,
         })
@@ -129,6 +129,8 @@ pub enum Menu {
     Input,
     /// The battery's menu, from `Content::status[i]`: `State::battery_menu_rows`.
     Battery(usize),
+    /// The network item's menu behind a captive portal, from `Content::status[i]`: `network_rows`.
+    Network(usize),
     /// A desktop icon's or the desktop's right-click menu (E7.2): `State::desktop_menu_rows`.
     Desktop,
     /// An app's right-click menu in the app drawer: `State::drawer_menu_rows`.
@@ -239,8 +241,18 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool, 
         ],
         Menu::Tray(_) => tray_rows(tray, 0),
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
-        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow | Menu::Battery(_) => Vec::new(),
+        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow | Menu::Battery(_) | Menu::Network(_) => Vec::new(),
     }
+}
+
+/// The network item's menu behind a captive portal at `portal` (the check URL, which leads to the sign-in page).
+pub fn network_rows(portal: Option<&str>) -> Vec<Option<Row>> {
+    let row = |label: &str, action| Some(Row { label: label.to_owned(), shortcut: "", action, sub: Vec::new() });
+    vec![
+        row("Sign in to network…", portal.map(|url| Action::Spawn(format!("xdg-open {url}")))),
+        None,
+        row("Wi-Fi Settings…", Some(Action::Spawn("noobsbot-desktop-settings --page wi-fi".into()))),
+    ]
 }
 
 /// The logo menu's Recent Items: recent `apps` (name, desktop-file id) and `docs` (name, URI), then Clear Menu.
@@ -572,6 +584,10 @@ impl State {
             BarItem::Status(i) if self.menu_bar().is_some_and(|c| c.status.get(i).is_some_and(|s| menubar::is_battery(s.symbol))) => {
                 self.popup = Some(Popup::Menu(Menu::Battery(i)));
             }
+            // Only the network's item has a badge, and only behind a captive portal; otherwise it opens nothing.
+            BarItem::Status(i) if self.menu_bar().is_some_and(|c| c.status.get(i).is_some_and(|s| s.badge)) => {
+                self.popup = Some(Popup::Menu(Menu::Network(i)));
+            }
             _ => {}
         }
     }
@@ -649,6 +665,7 @@ impl State {
             Menu::Window => self.window_menu_rows(),
             Menu::Overflow => self.overflow_menu_rows(),
             Menu::Battery(_) => self.battery_menu_rows(),
+            Menu::Network(_) => network_rows(self.network.as_ref().and_then(|n| n.portal.as_deref())),
             _ => menu_rows(menu, "", tray, self.update_ready(), self.recent_menu.as_deref().unwrap_or_default()),
         }
     }
@@ -996,6 +1013,13 @@ mod tests {
             assert!(weeks.cells.iter().chain(&weeks.weeks).chain(&weeks.header).all(|c| weeks.rect.contains_rect(*c)));
             assert_eq!(weeks.header[0].loc.x, weeks.cells[0].loc.x);
         }
+    }
+
+    #[test]
+    fn portal_menu_opens_the_check_url() {
+        let rows = network_rows(Some("http://check.example/"));
+        assert_eq!(rows[0].as_ref().unwrap().action, Some(Action::Spawn("xdg-open http://check.example/".into())));
+        assert_eq!(network_rows(None)[0].as_ref().unwrap().action, None);
     }
 
     #[test]

@@ -77,7 +77,7 @@ trait Manager {
     fn set_wireless_enabled(&self, on: bool) -> zbus::Result<()>;
     #[zbus(property)]
     fn primary_connection(&self) -> zbus::Result<OwnedObjectPath>;
-    /// `NM_CONNECTIVITY_*`: 3 = portal.
+    /// `NM_CONNECTIVITY_*`: 2 = portal.
     #[zbus(property)]
     fn connectivity(&self) -> zbus::Result<u32>;
     #[zbus(property)]
@@ -294,8 +294,8 @@ async fn link(bus: &Connection, path: OwnedObjectPath) -> zbus::Result<Link> {
     })
 }
 
-/// `NM_CONNECTIVITY_PORTAL`.
-const PORTAL: u32 = 3;
+/// `NM_CONNECTIVITY_PORTAL` (3 is LIMITED). NetworkManager reports UNKNOWN (0) while its check is off.
+const PORTAL: u32 = 2;
 /// The "Sign in to …" notification's id (replaced, not stacked).
 pub const PORTAL_NOTICE: u32 = 0xFFFA_0000;
 
