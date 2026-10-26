@@ -50,6 +50,7 @@ pub const BODY: Style = Style { size: 13, line_height: 16, weight: 400, color: [
 pub const HEADLINE: Style = Style { weight: 600, ..BODY };
 pub const CALLOUT: Style = Style { size: 12, line_height: 15, ..BODY };
 pub const CAPTION: Style = Style { size: 10, line_height: 13, weight: 500, ..BODY };
+pub const SUBHEADLINE: Style = Style { size: 11, line_height: 14, ..BODY };
 const TITLE1: Style = Style { size: 22, line_height: 26, ..BODY };
 pub const TITLE2: Style = Style { size: 17, line_height: 22, weight: 600, ..BODY };
 pub const TITLE3: Style = Style { size: 15, line_height: 20, weight: 600, ..BODY };
@@ -431,7 +432,7 @@ mod tests {
 
     #[test]
     fn type_scale_is_ordered() {
-        let scale = [TITLE1, TITLE2, TITLE3, BODY, CALLOUT, CAPTION];
+        let scale = [TITLE1, TITLE2, TITLE3, BODY, CALLOUT, SUBHEADLINE, CAPTION];
         assert!(scale.windows(2).all(|w| w[0].size >= w[1].size && w[0].line_height >= w[1].line_height));
         assert_eq!((HEADLINE.size, HEADLINE.weight), (BODY.size, 600));
     }
