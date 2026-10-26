@@ -698,7 +698,6 @@ impl State {
     /// Window rules (E1.9), resolved before the first configure so the app opens at the ruled size, and again if the
     /// app sets its app_id only after that (then the window is resized and moved where the rule says).
     /// `layer` is kept by `restack`, `decorations` by decorations.rs.
-    /// ponytail: space and opacity wait for Spaces (M4) and alpha.
     fn apply_rules(&mut self, surface: &ToplevelSurface) {
         let actions = self.resolve_rules(surface);
         let (window, area) = (self.window_for(surface.wl_surface()).cloned(), self.work_area());

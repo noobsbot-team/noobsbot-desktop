@@ -497,7 +497,9 @@ pub(super) fn window_elements(
             render_elements_from_surface_tree(renderer, popup.wl_surface(), loc + offset, scale, 1.0, Kind::Unspecified)
         })
         .collect();
-    let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = render_elements_from_surface_tree(renderer, surface, loc, scale, 1.0, Kind::Unspecified);
+    // The `opacity` window rule (E1.9) fades the app's content; our title bar and shadow stay solid.
+    let alpha = crate::state::ruled(window).and_then(|a| a.opacity).unwrap_or(1.0);
+    let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = render_elements_from_surface_tree(renderer, surface, loc, scale, alpha, Kind::Unspecified);
     // Fullscreen, or not drawn yet (mapped at 0,0 before its first buffer): no corners, no shadow.
     if state.states.contains(xdg_toplevel::State::Fullscreen) || surfaces.is_empty() || geo.size.w <= 0 || geo.size.h <= 0 {
         out.extend(surfaces.into_iter().map(SceneElement::Surface));
