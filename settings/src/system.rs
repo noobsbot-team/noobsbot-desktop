@@ -144,7 +144,7 @@ pub async fn system(timeout: u64) -> zbus::Result<Connection> {
     zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(Duration::from_secs(timeout)).build().await
 }
 
-async fn property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str) -> zbus::Result<OwnedValue> {
+pub async fn property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str) -> zbus::Result<OwnedValue> {
     let proxy = PropertiesProxy::builder(bus).destination(service.to_owned())?.path(path.to_owned())?.build().await?;
     Ok(proxy.get(InterfaceName::try_from(interface.to_owned())?, name).await?)
 }
@@ -716,9 +716,4 @@ mod tests {
         assert_eq!(field("MemTotal:       32000000 kB\n", "MemTotal"), Some("32000000 kB"));
         assert_eq!(field("a: b", "c"), None);
     }
-}
-#[test]
-fn tmp_live() {
-    let s = futures_lite::future::block_on(read());
-    eprintln!("LIVE {:?} {:?}", s.battery, s.power_mode);
 }
