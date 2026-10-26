@@ -785,6 +785,7 @@ impl State {
                         hour24: self.config.clock.format.hour24,
                         now: chrono::Local::now(),
                         caps_lock: self.caps_lock,
+                        media: self.media.as_ref(),
                     };
                     lock_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, &content, geo.size, dark, accent, appearance.glass_opacity, scale)
                 }

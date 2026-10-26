@@ -16,8 +16,8 @@ use super::{
     ui::{Align, BODY, CALLOUT, HEADLINE, Ui},
 };
 use crate::{
-    services::power::Battery,
-    shell::lock::{self, AVATAR, Button, Lock},
+    services::{media::Media, power::Battery},
+    shell::lock::{self, ART, AVATAR, Button, Lock},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
     ui::field::TextField,
@@ -37,10 +37,12 @@ pub struct Content<'a> {
     pub hour24: bool,
     pub now: chrono::DateTime<chrono::Local>,
     pub caps_lock: bool,
+    /// Now Playing; `None` hides its card.
+    pub media: Option<&'a Media>,
 }
 
-/// Date, time, missed count, hover, wrong, battery, (keyboard, message, layout pill), size, dark, opacity, scale, greeter (user, session,
-/// error).
+/// Date, time, missed count, hover, wrong, battery, (keyboard, message, layout pill, Now Playing), size, dark, opacity, scale,
+/// greeter (user, session, error).
 type PageKey = (
     String,
     String,
@@ -48,7 +50,7 @@ type PageKey = (
     Option<Button>,
     bool,
     Option<(u8, bool)>,
-    (String, String, Option<String>),
+    (String, String, Option<String>, Option<Media>),
     Size<i32, Logical>,
     bool,
     u32,
@@ -76,6 +78,8 @@ pub struct LockView {
     users: Option<(u64, Users)>,
     /// The idle shade, kept so it keeps its damage id while the screen stays dimmed.
     shade: Option<(ShadeKey, PixelShaderElement)>,
+    /// Now Playing's album art: its path, the scale, and the picture with rounded corners (`None`: unreadable).
+    art: Option<(String, u64, Option<Arc<Rendered>>)>,
 }
 
 impl LockView {
@@ -122,6 +126,17 @@ impl LockView {
         let date = content.now.format("%A, %-d %B").to_string();
         let time = content.now.format(if content.hour24 { "%H:%M" } else { "%-I:%M" }).to_string();
         let battery = content.battery.map(|b| (b.percent, b.charging));
+        // Never on the login screen; only the player's own words show (privacy).
+        let media = content.media.filter(|_| lock.greeter.is_none() && layout.media.is_some());
+        let art = match media.map(|m| m.art.as_str()).filter(|a| !a.is_empty()) {
+            Some(path) => {
+                if self.art.as_ref().is_none_or(|(p, s, _)| p != path || *s != scale.to_bits()) {
+                    self.art = Some((path.to_owned(), scale.to_bits(), album_art(path, scale)));
+                }
+                self.art.as_ref().and_then(|(_, _, a)| a.clone())
+            }
+            None => None,
+        };
         let key = (
             date,
             time,
@@ -129,7 +144,7 @@ impl LockView {
             lock.hover,
             lock.wrong.is_some(),
             battery,
-            (content.keyboard.to_owned(), content.message.to_owned(), content.layout.clone()),
+            (content.keyboard.to_owned(), content.message.to_owned(), content.layout.clone(), media.cloned()),
             size,
             dark,
             glass_opacity.to_bits(),
@@ -189,6 +204,9 @@ impl LockView {
                 }
                 ui.text(button.label(), Style { color: WHITE85, ..CALLOUT }, rect, Align::Centre);
             }
+            if let (Some(media), Some(card)) = (media, layout.media) {
+                now_playing(&mut ui, card, media, art);
+            }
             // More than one layout: the pill beside the field says which, so the corner doesn't.
             match &content.layout {
                 Some(code) => {
@@ -241,6 +259,47 @@ impl LockView {
     }
 }
 
+/// The Now Playing card: art (or a note), title and artist, previous / play-pause / next.
+fn now_playing(ui: &mut Ui, card: Rect, media: &Media, art: Option<Arc<Rendered>>) {
+    let spec = super::Material::Sheet.spec(ui.dark);
+    let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
+    ui.glass.push(ui.shaders.glass_shape(card, [r, g, b, spec.opacity * ui.glass_opacity], spec.radius, true, ui.dark, ui.scale));
+    let square = Rectangle::new((card.loc.x + 8, card.loc.y + (card.size.h - ART) / 2).into(), (ART, ART).into());
+    match art {
+        Some(art) => ui.pieces.push((art, square)),
+        None => {
+            ui.shape(square, ui.fill(2.0), 8.0);
+            let color = ui.secondary();
+            ui.symbol(Symbol::MusicNote, Weight::Fill, 20, Rectangle::new((square.loc.x + 14, square.loc.y + 14).into(), (20, 20).into()), color);
+        }
+    }
+    let buttons = crate::shell::control::media_buttons(card);
+    let (x, right) = (square.loc.x + ART + 12, buttons[0].loc.x - 8);
+    let row = |y: i32, h: i32| Rectangle::new((x, y).into(), (right - x, h).into());
+    // No artist (a browser tab): the title alone, centred.
+    let y = if media.artist.is_empty() { card.loc.y + (card.size.h - 16) / 2 } else { card.loc.y + 15 };
+    let (label, secondary) = (ui.label(), ui.secondary());
+    ui.text(&media.title, Style { color: label, ..HEADLINE }, row(y, 16), Align::Left);
+    ui.text(&media.artist, Style { color: secondary, ..BODY }, row(y + 18, 16), Align::Left);
+    let middle = if media.playing { Symbol::Pause } else { Symbol::Play };
+    for (button, symbol) in buttons.into_iter().zip([Symbol::SkipBack, middle, Symbol::SkipForward]) {
+        let at = Rectangle::new((button.loc.x + (button.size.w - 18) / 2, button.loc.y + (button.size.h - 18) / 2).into(), (18, 18).into());
+        ui.symbol(symbol, Weight::Fill, 18, at, label);
+    }
+}
+
+/// The player's cached album art, cut to an `ART` px square with rounded corners at `scale`.
+fn album_art(path: &str, scale: f64) -> Option<Arc<Rendered>> {
+    let path = std::path::Path::new(path);
+    // A regular file of sane size only: the player names the path, and reading `/dev/zero` would hang the frame.
+    if !std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() <= 8 << 20) {
+        return None;
+    }
+    let px = (f64::from(ART) * scale).round() as u32;
+    let image = super::wallpaper::decode(path, (px as i32, px as i32).into()).ok()?;
+    Some(Arc::new(cut(&image.rgbx, image.size.w as u32, image.size.h as u32, px, 8.0 * scale)))
+}
+
 /// The keyboard layout and battery, right-aligned in `rect`.
 fn status(ui: &mut Ui, rect: Rect, keyboard: &str, battery: Option<Battery>) {
     let style = Style { color: WHITE85, tabular: true, ..BODY };
@@ -264,22 +323,24 @@ fn avatar(login: &str, home: &std::path::Path, scale: f64) -> Option<Arc<Rendere
     let paths = [std::path::PathBuf::from("/var/lib/AccountsService/icons").join(login), home.join(".face"), home.join(".face.icon")];
     let px = (f64::from(AVATAR) * scale).round() as u32;
     let image = paths.iter().find_map(|p| super::wallpaper::decode(p, (px as i32, px as i32).into()).ok())?;
-    Some(Arc::new(round(&image.rgbx, image.size.w as u32, image.size.h as u32, px)))
+    Some(Arc::new(cut(&image.rgbx, image.size.w as u32, image.size.h as u32, px, f64::from(px) / 2.0)))
 }
 
-/// The centre square of an RGBX picture scaled to `px` (nearest pixel) inside a circle with a 1 px soft edge,
-/// premultiplied.
-fn round(rgbx: &[u8], w: u32, h: u32, px: u32) -> Rendered {
+/// The centre square of an RGBX picture scaled to `px` (nearest pixel), its corners rounded by `radius` (`px / 2`: a
+/// circle) with a 1 px soft edge, premultiplied.
+fn cut(rgbx: &[u8], w: u32, h: u32, px: u32, radius: f64) -> Rendered {
     let side = w.min(h).max(1);
     let (x0, y0) = ((w - side) / 2, (h - side) / 2);
-    let r = f64::from(px) / 2.0;
+    let (c, r) = (f64::from(px) / 2.0, radius.min(f64::from(px) / 2.0));
     let mut pixels = Vec::with_capacity((px * px * 4) as usize);
     for y in 0..px {
         for x in 0..px {
             let (sx, sy) = (x0 + x * side / px.max(1), y0 + y * side / px.max(1));
             let i = ((sy * w + sx) * 4) as usize;
-            let d = ((f64::from(x) + 0.5 - r).powi(2) + (f64::from(y) + 0.5 - r).powi(2)).sqrt();
-            let a = (r - d + 0.5).clamp(0.0, 1.0);
+            // Distance outside the rounded square (negative inside).
+            let (qx, qy) = ((f64::from(x) + 0.5 - c).abs() - (c - r), (f64::from(y) + 0.5 - c).abs() - (c - r));
+            let d = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+            let a = (0.5 - d).clamp(0.0, 1.0);
             let p = rgbx.get(i..i + 3).unwrap_or(&[0, 0, 0]);
             pixels.extend(p.iter().map(|&c| (f64::from(c) * a).round() as u8));
             pixels.push((255.0 * a).round() as u8);
@@ -296,11 +357,20 @@ mod tests {
     fn picture_is_cut_round() {
         // A 4 × 2 red picture: the centre square, scaled to 16 px.
         let rgbx = [255, 0, 0, 255].repeat(8);
-        let r = round(&rgbx, 4, 2, 16);
+        let r = cut(&rgbx, 4, 2, 16, 8.0);
         assert_eq!((r.width, r.height, r.pixels.len()), (16, 16, 16 * 16 * 4));
         let at = |x: usize, y: usize| &r.pixels[(y * 16 + x) * 4..(y * 16 + x) * 4 + 4];
         assert_eq!(at(0, 0), [0, 0, 0, 0], "corners are clear");
         assert_eq!(at(8, 8), [255, 0, 0, 255], "the middle is opaque");
         assert!(at(8, 0)[3] > 0 && at(8, 0)[3] < 255, "the edge is soft");
+    }
+
+    #[test]
+    fn art_has_rounded_corners() {
+        let r = cut(&[0, 0, 255, 255].repeat(16 * 16), 16, 16, 16, 4.0);
+        let alpha = |x: usize, y: usize| r.pixels[(y * 16 + x) * 4 + 3];
+        assert_eq!(alpha(0, 0), 0, "the corner is cut");
+        assert_eq!((alpha(8, 0), alpha(0, 8), alpha(8, 8)), (255, 255, 255), "the edges are straight, the middle opaque");
+        assert!(alpha(1, 1) > 0 && alpha(1, 1) < 255, "the corner is soft");
     }
 }
