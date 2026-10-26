@@ -439,6 +439,42 @@ pub struct Dock {
     pub current_workspace_only: bool,
     /// The app's name over the hovered icon.
     pub tooltips: bool,
+    /// Clicking the focused app's icon (E8.3).
+    pub click: DockClick,
+    /// Middle-clicking an icon.
+    pub middle: DockMiddle,
+    /// Scrolling on an icon cycles its app's windows.
+    pub scroll: DockScroll,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockClick {
+    /// Minimise its windows.
+    #[default]
+    Toggle,
+    /// Its next window.
+    Cycle,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockMiddle {
+    /// A new window.
+    #[default]
+    New,
+    /// Close the app's windows.
+    Close,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockScroll {
+    Off,
+    /// Down or right: the next window.
+    #[default]
+    On,
+    Reverse,
 }
 
 /// Notifications (E4.1).
@@ -538,6 +574,9 @@ impl Default for Dock {
             pinned_only: false,
             current_workspace_only: false,
             tooltips: true,
+            click: DockClick::Toggle,
+            middle: DockMiddle::New,
+            scroll: DockScroll::On,
         }
     }
 }
