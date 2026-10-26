@@ -629,7 +629,7 @@ impl State {
         let tiles = self.launchpad_tiles();
         let pages = crate::shell::launchpad::pages(tiles.len(), per_page);
         let page = (pages > 1).then(|| format!("Page {} of {pages}", l.page + 1));
-        let folder = l.folder.as_ref().and_then(|(i, _)| match tiles.get(*i) {
+        let folder = l.open_folder().and_then(|f| match tiles.get(f.index) {
             Some(Tile::Folder(name, apps)) => Some((name.clone(), apps.iter().map(|a| (a.name.clone(), None)).collect())),
             _ => None,
         });
@@ -715,8 +715,8 @@ impl State {
         } else if (LAUNCHPAD_ITEM..LAUNCHPAD_ITEM + 1000).contains(&id) {
             let i = (id - LAUNCHPAD_ITEM) as usize;
             let Some(l) = self.launchpad.as_ref() else { return };
-            match (&l.folder, self.launchpad_grid()) {
-                (Some((folder, _)), _) => self.launchpad_activate(*folder, Some(i)),
+            match (l.open_folder().map(|f| f.index), self.launchpad_grid()) {
+                (Some(folder), _) => self.launchpad_activate(folder, Some(i)),
                 (None, Some(grid)) => self.launchpad_activate(l.page * grid.per_page() + i, None),
                 (None, None) => {}
             }

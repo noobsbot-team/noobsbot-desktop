@@ -1068,7 +1068,14 @@ Goal: everything that informs you and helps you find things.
     pages slide horizontally (2-finger horizontal scroll, ←/→ keys, click a page dot; while Launchpad is open it
     owns 3-finger swipes too).
   - Icons zoom in (scale 1.1→1, fade) on open with `smooth`.
-  - Drag an icon onto the dock to pin it. Folders: later.
+  - Drag an icon onto the dock to pin it (from a folder too; the folder keeps it).
+  - Folders: hold a dragged app over another icon for 400 ms (it grows on a glass well) and drop to make a folder,
+    named from the apps' shared main category (e.g. "Utilities", else "Folder"); dropping on a folder adds the app.
+    A folder tile is a glass rounded square with a 3 × 3 grid of its first apps. A click opens it as a `panel` glass
+    over the dimmed grid, fading on the `smooth` spring; its grid pages (dots, wheel, swipe, ←/→) when it holds more
+    than the panel's rows. Click the name to rename it; drag an app off the panel to take it out (a folder left with
+    one app becomes that app); Esc or a click outside closes it. Search finds apps inside folders. Order and folders
+    are saved in `$XDG_STATE_HOME/noobsbot-desktop/launchpad.json`; uninstalled apps drop out.
 - **Built with:** the shared app index + icons (M3); our widgets.
 - **Why:** the design calls for it (R1), and it's cheap because the app index and icons already exist.
 - **Done when:** all apps show, paging and search work, and opening/closing is smooth.

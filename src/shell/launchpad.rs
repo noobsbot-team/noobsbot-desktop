@@ -116,18 +116,25 @@ impl Grid {
 pub fn folder_grid(grid: &Grid, n: usize) -> (Rect, Grid) {
     const PAD: i32 = 24;
     let cols = n.clamp(1, grid.cols.min(4));
-    // ponytail: past the rows a page holds, the rest of a big folder is cut off; scroll it if folders get that big.
+    // More apps than its rows hold: it pages, with dots under its grid.
     let rows = n.div_ceil(cols).clamp(1, grid.rows.saturating_sub(1).max(1));
+    let dots = if n > cols * rows { layout::DOT_STEP + 8 } else { 0 };
     let cell = grid.cells[0].size;
     let field_h = ts(layout::FIELD_H);
-    let (w, h) = (cols as i32 * cell.w + 2 * PAD, PAD + field_h + 12 + rows as i32 * cell.h + PAD);
+    let (w, h) = (cols as i32 * cell.w + 2 * PAD, PAD + field_h + 12 + rows as i32 * cell.h + dots + PAD);
     let (top, bottom) = (grid.cells[0].loc.y, grid.cells[grid.cells.len() - 1].loc.y + cell.h);
     let panel = Rectangle::new(((grid.width - w) / 2, (top + bottom - h) / 2).into(), (w, h).into());
     let y0 = panel.loc.y + PAD + field_h + 12;
     let cells =
         (0..rows as i32).flat_map(|r| (0..cols as i32).map(move |c| Rectangle::new((panel.loc.x + PAD + c * cell.w, y0 + r * cell.h).into(), cell))).collect();
     let field = Rectangle::new((panel.loc.x + PAD, panel.loc.y + PAD).into(), (w - 2 * PAD, field_h).into());
-    (panel, Grid { cols, rows, icon: grid.icon, cells, field, dots_y: 0, width: grid.width })
+    let dots_y = y0 + rows as i32 * cell.h + dots / 2;
+    (panel, Grid { cols, rows, icon: grid.icon, cells, field, dots_y, width: grid.width })
+}
+
+/// The dot at `p`; a dot is small, so its hit area reaches 6 px around it.
+fn dot_at(dots: &[Rect], p: Point<f64, Logical>) -> Option<usize> {
+    dots.iter().position(|d| Rectangle::new(d.loc - Point::from((6, 6)), d.size + Size::from((12, 12))).to_f64().contains(p))
 }
 
 /// Which way a page edge at `p` turns: -1 at the left side margin, 1 at the right.
@@ -305,6 +312,17 @@ pub fn take_out(order: &mut Vec<Entry>, folder: usize, j: usize) -> Option<usize
     Some(folder + 1)
 }
 
+/// Names the folder at `i` `name` (trimmed). `false`: not a folder, or a blank name (the old one stays).
+pub fn rename(order: &mut [Entry], i: usize, name: &str) -> bool {
+    match order.get_mut(i) {
+        Some(Entry::Folder { name: saved, .. }) if !name.trim().is_empty() => {
+            name.trim().clone_into(saved);
+            true
+        }
+        _ => false,
+    }
+}
+
 fn order_file() -> std::path::PathBuf {
     super::drawer::state_file("launchpad.json")
 }
@@ -324,6 +342,32 @@ const DRAG_START: f64 = 8.0;
 /// A press held this long lifts the icon too, and clicks nothing.
 const HOLD: Duration = Duration::from_millis(500);
 
+/// A dragged app held this long over another tile's icon makes a folder on drop (the target grows meanwhile).
+const MERGE_HOLD: Duration = Duration::from_millis(400);
+
+/// Where a dragged tile points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Aim {
+    /// Over another tile's icon: held there, a drop makes a folder.
+    Onto(usize),
+    /// A new place for it.
+    To(usize),
+}
+
+/// What tile `from` (an app: `app`) dragged to `p` on page `page` of `n` tiles aims at. Folders don't nest, so a
+/// folder over an icon just takes its place.
+pub fn aim(grid: &Grid, p: Point<f64, Logical>, page: usize, n: usize, from: usize, app: bool) -> Option<Aim> {
+    let i = grid.cell_at(p)?;
+    let slot = (page * grid.per_page() + i).min(n.saturating_sub(1));
+    if slot == from {
+        None
+    } else if app && page * grid.per_page() + i < n && grid.icon_rect(i).to_f64().contains(p) {
+        Some(Aim::Onto(slot))
+    } else {
+        Some(Aim::To(slot))
+    }
+}
+
 /// A lifted icon held this long at a side edge turns the page (and again while it stays).
 const EDGE_PAUSE: Duration = Duration::from_millis(600);
 
@@ -338,15 +382,22 @@ pub struct Press {
     pub since: Instant,
     /// Dragged past `DRAG_START`.
     pub moved: bool,
-    /// Held over this tile's icon: dropping makes a folder (`merge`).
-    pub onto: Option<usize>,
+    /// Over this tile's icon since then: held `MERGE_HOLD`, dropping makes a folder (`merge`).
+    pub over: Option<(usize, Instant)>,
     /// In the open folder: the app's place in it (`index` is the folder's).
     pub inner: Option<usize>,
+    /// The order before the app was dragged out of its folder: a drop on the dock pins it and puts this back.
+    pub before: Option<Vec<Entry>>,
 }
 
 impl Press {
     pub fn lifted(&self, now: Instant) -> bool {
         self.moved || now.saturating_duration_since(self.since) >= HOLD
+    }
+
+    /// The tile a drop now would make a folder with.
+    pub fn onto(&self, now: Instant) -> Option<usize> {
+        self.over.filter(|(_, t)| now.saturating_duration_since(*t) >= MERGE_HOLD).map(|(i, _)| i)
     }
 }
 
@@ -386,6 +437,26 @@ impl Spring {
     }
 }
 
+/// An open folder's panel.
+pub struct Folder {
+    /// Its place in the order.
+    pub index: usize,
+    pub name: TextField,
+    /// The name was clicked: keys edit it.
+    pub editing: bool,
+    /// The page in view, and a finger swipe on it (in screen widths).
+    pub page: usize,
+    swipe: f64,
+    /// 0 → 1 as it opens (it fades in and out on the `smooth` spring).
+    pub shown: Spring,
+}
+
+impl Folder {
+    pub fn closing(&self) -> bool {
+        self.shown.to == 0.0
+    }
+}
+
 /// A finger swipe that ends past this share of a page turns it.
 const TURN: f64 = 0.12;
 /// No scroll event for this long ends a swipe (for devices that send no scroll stop).
@@ -409,8 +480,8 @@ pub struct Launchpad {
     moves: HashMap<String, (Point<f64, Logical>, Spring)>,
     /// The edge timer is running (`launchpad_edge`).
     edge: bool,
-    /// The open folder: its place in the order, and its name being edited.
-    pub folder: Option<(usize, TextField)>,
+    /// The open folder (or the one fading out).
+    pub folder: Option<Folder>,
 }
 
 impl Launchpad {
@@ -479,7 +550,21 @@ impl Launchpad {
     }
 
     pub fn animating(&self, now: Instant) -> bool {
-        !self.shown.done(now) || !self.slide.done(now) || self.moves.values().any(|(_, s)| !s.done(now))
+        let folder = self.folder.as_ref().is_some_and(|f| !f.shown.done(now));
+        folder || !self.shown.done(now) || !self.slide.done(now) || self.moves.values().any(|(_, s)| !s.done(now))
+    }
+
+    /// The open folder, not one fading out.
+    pub fn open_folder(&self) -> Option<&Folder> {
+        self.folder.as_ref().filter(|f| !f.closing())
+    }
+
+    /// Fades the open folder out.
+    fn shut_folder(&mut self, now: Instant) {
+        if let Some(f) = self.folder.as_mut() {
+            f.shown.go(0.0, now);
+            f.editing = false;
+        }
     }
 
     /// Slides to `page`, kept within `pages`.
@@ -496,14 +581,29 @@ impl State {
         self.launchpad.as_ref().map_or_else(Vec::new, |l| tiles(self.apps.list(), &l.order, &l.field.text))
     }
 
-    /// The open folder's panel and grid.
-    pub fn launchpad_folder(&self) -> Option<(Rect, Grid)> {
-        let i = self.launchpad.as_ref()?.folder.as_ref()?.0;
+    /// The open folder's panel, its grid, and the place in the folder of the first app on its page.
+    pub fn launchpad_folder(&self) -> Option<(Rect, Grid, usize)> {
+        let i = self.launchpad.as_ref()?.open_folder()?.index;
         let n = match self.launchpad_tiles().into_iter().nth(i)? {
             Tile::Folder(_, apps) => apps.len(),
             Tile::App(_) => return None,
         };
-        Some(folder_grid(&self.launchpad_grid()?, n))
+        let (panel, inner) = folder_grid(&self.launchpad_grid()?, n);
+        let first = self.launchpad.as_ref()?.open_folder()?.page * inner.per_page();
+        Some((panel, inner, first))
+    }
+
+    /// Turns the open folder to `page`, kept within its pages.
+    fn launchpad_folder_turn(&mut self, page: usize) {
+        let n = match self.launchpad.as_ref().and_then(Launchpad::open_folder).and_then(|f| self.launchpad_tiles().into_iter().nth(f.index)) {
+            Some(Tile::Folder(_, apps)) => apps.len(),
+            _ => return,
+        };
+        let Some((_, inner, _)) = self.launchpad_folder() else { return };
+        if let Some(f) = self.launchpad.as_mut().and_then(|l| l.folder.as_mut()) {
+            f.page = page.min(pages(n, inner.per_page()) - 1);
+        }
+        self.schedule_redraw();
     }
 
     pub fn launchpad_grid(&self) -> Option<Grid> {
@@ -549,6 +649,9 @@ impl State {
     pub fn launchpad_frame(&mut self, now: Instant) {
         if let Some(l) = self.launchpad.as_mut() {
             l.moves.retain(|_, (_, s)| !s.done(now));
+            if l.folder.as_ref().is_some_and(|f| f.closing() && f.shown.done(now)) {
+                l.folder = None;
+            }
         }
         let Some(l) = self.launchpad.as_ref() else { return };
         if l.closing() && l.shown.done(now) {
@@ -586,17 +689,22 @@ impl State {
     /// empty, Return opens the first match, Esc clears the search, then closes.
     pub fn launchpad_key(&mut self, sym: Keysym, ctrl: bool) {
         let Some(l) = self.launchpad.as_mut() else { return };
-        // An open folder: typing renames it; Return or Esc closes it.
-        if let Some((i, name)) = l.folder.as_mut() {
+        // An open folder: Return or Esc closes it; with its name clicked, typing renames it and they end that.
+        if let Some(f) = l.folder.as_mut().filter(|f| !f.closing()) {
             let typed = sym.key_char().map(String::from);
-            match name.key(sym, typed.as_deref(), ctrl) {
-                Edit::Submit | Edit::Cancel => l.folder = None,
-                Edit::Changed if !name.text.trim().is_empty() => {
-                    if let Some(Entry::Folder { name: saved, .. }) = l.order.get_mut(*i) {
-                        *saved = name.text.trim().to_owned();
-                        save_order(&l.order);
-                    }
+            if !f.editing {
+                let page = f.page;
+                match sym {
+                    Keysym::Escape | Keysym::Return | Keysym::KP_Enter => l.shut_folder(Instant::now()),
+                    Keysym::Left | Keysym::KP_Left => return self.launchpad_folder_turn(page.saturating_sub(1)),
+                    Keysym::Right | Keysym::KP_Right => return self.launchpad_folder_turn(page + 1),
+                    _ => {}
                 }
+                return self.schedule_redraw();
+            }
+            match f.name.key(sym, typed.as_deref(), ctrl) {
+                Edit::Submit | Edit::Cancel => f.editing = false,
+                Edit::Changed if rename(&mut l.order, f.index, &f.name.text) => save_order(&l.order),
                 _ => {}
             }
             return self.schedule_redraw();
@@ -640,16 +748,45 @@ impl State {
         if secondary || grid.field.to_f64().contains(location) {
             return true;
         }
-        if let Some((panel, inner)) = self.launchpad_folder() {
+        if let Some((panel, inner, first)) = self.launchpad_folder() {
+            let n = match self.launchpad_tiles().into_iter().nth(self.launchpad.as_ref().and_then(Launchpad::open_folder).map_or(0, |f| f.index)) {
+                Some(Tile::Folder(_, apps)) => apps.len(),
+                _ => 0,
+            };
+            let count = pages(n, inner.per_page());
+            if count > 1
+                && let Some(dot) = dot_at(&inner.dots(count), location)
+            {
+                self.launchpad_folder_turn(dot);
+                return true;
+            }
             let Some(l) = self.launchpad.as_mut() else { return true };
-            let index = l.folder.as_ref().map_or(0, |(i, _)| *i);
-            match inner.hit(location).filter(|_| panel.to_f64().contains(location)) {
-                Some(j) => {
-                    let grab = location - inner.icon_rect(j).loc.to_f64();
-                    l.press = Some(Press { index, start: location, at: location, grab, since: Instant::now(), moved: false, onto: None, inner: Some(j) });
+            let Some(f) = l.folder.as_mut() else { return true };
+            let index = f.index;
+            // A click on the name edits it (all selected); anywhere else ends that.
+            let on_name = inner.field.to_f64().contains(location);
+            if on_name && !f.editing {
+                f.name = TextField { caret: f.name.text.len(), all: true, ..f.name.clone() };
+            }
+            f.editing = on_name;
+            let hit = inner.hit(location).filter(|k| panel.to_f64().contains(location) && first + k < n);
+            match hit {
+                Some(k) => {
+                    let (j, grab) = (first + k, location - inner.icon_rect(k).loc.to_f64());
+                    l.press = Some(Press {
+                        index,
+                        start: location,
+                        at: location,
+                        grab,
+                        since: Instant::now(),
+                        moved: false,
+                        over: None,
+                        inner: Some(j),
+                        before: None,
+                    });
                 }
                 // Outside the panel: closes the folder.
-                None if !panel.to_f64().contains(location) => l.folder = None,
+                None if !panel.to_f64().contains(location) => l.shut_folder(Instant::now()),
                 None => {}
             }
             self.schedule_redraw();
@@ -658,8 +795,7 @@ impl State {
         let tiles = self.launchpad_tiles();
         let pages = pages(tiles.len(), grid.per_page());
         if pages > 1
-            // A dot is small: its hit area reaches 6 px around it.
-            && let Some(dot) = grid.dots(pages).iter().position(|d| Rectangle::new(d.loc - Point::from((6, 6)), d.size + Size::from((12, 12))).to_f64().contains(location))
+            && let Some(dot) = dot_at(&grid.dots(pages), location)
         {
             self.launchpad_turn(dot);
             return true;
@@ -684,8 +820,9 @@ impl State {
             grab,
             since: Instant::now(),
             moved: false,
-            onto: None,
+            over: None,
             inner: None,
+            before: None,
         });
         // The icon lifts after `HOLD` without moving: draw it then.
         let lift = self.loop_handle.insert_source(Timer::from_duration(HOLD), |_, _, state| {
@@ -709,17 +846,20 @@ impl State {
             return;
         }
         // In an open folder: a new place in it, or dragged off the panel, out of it and on into the grid.
-        if let (Some(j), Some((panel, inner))) = (p.inner, folder) {
+        if let (Some(j), Some((panel, inner, first))) = (p.inner, folder) {
             let Some(Entry::Folder { apps, .. }) = l.order.get_mut(p.index) else { return };
             if panel.to_f64().contains(to) {
-                if let Some(k) = inner.cell_at(to).map(|k| k.min(apps.len() - 1)).filter(|k| *k != j) {
+                if let Some(k) = inner.cell_at(to).map(|k| (first + k).min(apps.len() - 1)).filter(|k| *k != j) {
                     move_to(apps, j, k);
                     p.inner = Some(k);
                 }
                 return self.schedule_redraw();
             }
+            let before = l.order.clone();
             let Some(at) = take_out(&mut l.order, p.index, j) else { return };
-            (p.index, p.inner, l.folder) = (at, None, None);
+            p.before = Some(before);
+            (p.index, p.inner) = (at, None);
+            l.shut_folder(Instant::now());
             // Its place keeps it on screen: the page it is on.
             let page = at / grid.per_page().max(1);
             let pages = pages(l.order.len(), grid.per_page());
@@ -727,17 +867,24 @@ impl State {
             save_order(&l.order);
             return self.schedule_redraw();
         }
-        p.onto = None;
-        if let Some(i) = grid.cell_at(to) {
-            let slot = (l.page * grid.per_page() + i).min(l.order.len().saturating_sub(1));
-            let app = matches!(l.order.get(p.index), Some(Entry::App(_)));
-            // Over another icon (an app only: folders don't nest): a folder on drop; between icons: a new place.
-            if app && slot != p.index && grid.icon_rect(i).to_f64().contains(to) {
-                p.onto = Some(slot);
-            } else if slot != p.index {
+        let app = matches!(l.order.get(p.index), Some(Entry::App(_)));
+        match aim(&grid, to, l.page, l.order.len(), p.index, app) {
+            Some(Aim::Onto(slot)) if p.over.is_some_and(|(s, _)| s == slot) => {}
+            Some(Aim::Onto(slot)) => {
+                p.over = Some((slot, Instant::now()));
+                // Held still, it becomes a folder target without another motion event: draw it then.
+                let grow = self.loop_handle.insert_source(Timer::from_duration(MERGE_HOLD), |_, _, state| {
+                    state.schedule_redraw();
+                    TimeoutAction::Drop
+                });
+                grow.inspect_err(|err| tracing::warn!("launchpad merge timer: {err}")).ok();
+            }
+            Some(Aim::To(slot)) => {
+                p.over = None;
                 let from = std::mem::replace(&mut p.index, slot);
                 l.reorder(&grid, from, slot, Instant::now());
             }
+            None => p.over = None,
         }
         if edge_of(&grid, to).is_some() && !std::mem::replace(&mut l.edge, true) {
             let timer = self.loop_handle.insert_source(Timer::from_duration(EDGE_PAUSE), |_, _, state| state.launchpad_edge());
@@ -762,12 +909,25 @@ impl State {
         TimeoutAction::ToDuration(EDGE_PAUSE)
     }
 
-    /// The button came up: a drag keeps its new order; a short press without moving opens what it pressed.
+    /// The button came up: a drag keeps its new order, or onto the dock pins its app; a short press without moving
+    /// opens what it pressed.
     pub fn launchpad_release(&mut self) {
         let Some(l) = self.launchpad.as_mut() else { return };
-        let Some(p) = l.press.take() else { return };
+        let Some(mut p) = l.press.take() else { return };
+        let app = match l.order.get(p.index) {
+            Some(Entry::App(id)) if p.moved && !l.searching() => Some(id.clone()),
+            _ => None,
+        };
+        if let Some(id) = app.filter(|_| self.dock_covers(p.at)) {
+            if let Some((l, before)) = self.launchpad.as_mut().zip(p.before.take()) {
+                l.order = before;
+                save_order(&l.order);
+            }
+            return self.launchpad_pin(&id, p.at);
+        }
+        let Some(l) = self.launchpad.as_mut() else { return };
         if p.moved && !l.searching() {
-            if let Some(onto) = p.onto {
+            if let Some(onto) = p.onto(Instant::now()) {
                 merge(&mut l.order, p.index, onto, self.apps.list());
             }
             save_order(&l.order);
@@ -782,12 +942,23 @@ impl State {
         }
         let Some(grid) = self.launchpad_grid() else { return };
         let same = match (p.inner, self.launchpad_folder()) {
-            (Some(j), Some((_, inner))) => inner.hit(p.at) == Some(j),
+            (Some(j), Some((_, inner, first))) => inner.hit(p.at).map(|k| first + k) == Some(j),
             _ => grid.hit(p.at).map(|i| page * grid.per_page() + i) == Some(p.index),
         };
         if same {
             self.launchpad_activate(p.index, p.inner);
         }
+    }
+
+    /// App `id` dropped on the dock at `at`: pinned in the slot under it (unless already pinned, or items are locked).
+    fn launchpad_pin(&mut self, id: &str, at: Point<f64, Logical>) {
+        let pinned = self.dock_pinned();
+        if self.config.dock.lock_items || pinned.iter().any(|(_, key)| key == id) {
+            return self.schedule_redraw();
+        }
+        let to = self.dock_layout(&self.dock_items()).map_or(pinned.len(), |layout| super::dock::slot(&layout, at.x, pinned.len()));
+        tracing::info!(app = id, to, "launchpad: pin to the dock");
+        self.dock_repin(id, Some(to));
     }
 
     /// Tile `index` was chosen (`inner`: an app inside that folder): an app starts, a folder opens.
@@ -800,7 +971,8 @@ impl State {
             },
             (Some(Tile::Folder(name, _)), None) => {
                 if let Some(l) = self.launchpad.as_mut() {
-                    l.folder = Some((index, TextField { caret: name.len(), text: name, ..Default::default() }));
+                    let name = TextField { caret: name.len(), text: name, ..Default::default() };
+                    l.folder = Some(Folder { index, name, editing: false, page: 0, swipe: 0.0, shown: Spring::new(0.0, 1.0, Instant::now()) });
                 }
                 return;
             }
@@ -816,17 +988,27 @@ impl State {
             return false;
         }
         let page = self.launchpad.as_ref().map_or(0, |l| l.page);
+        // An open folder's pages turn instead.
+        let folder = self.launchpad.as_ref().and_then(Launchpad::open_folder).map(|f| f.page);
         if wheel != 0.0 {
-            self.launchpad_turn(if wheel > 0.0 { page + 1 } else { page.saturating_sub(1) });
+            match folder {
+                Some(page) => self.launchpad_folder_turn(if wheel > 0.0 { page + 1 } else { page.saturating_sub(1) }),
+                None => self.launchpad_turn(if wheel > 0.0 { page + 1 } else { page.saturating_sub(1) }),
+            }
             return true;
         }
         let (Some(grid), pages) = (self.launchpad_grid(), self.launchpad_pages()) else { return true };
         let Some(l) = self.launchpad.as_mut() else { return true };
         if dx != 0.0 && dx.abs() >= dy.abs() {
-            // Past the first and last page it only gives a little (rubber band).
-            let next = l.drag + dx / f64::from(grid.width.max(1));
-            let at = page as f64 + next;
-            l.drag = if at < 0.0 || at > (pages - 1) as f64 { l.drag + (next - l.drag) / 3.0 } else { next };
+            let step = dx / f64::from(grid.width.max(1));
+            if let Some(f) = l.folder.as_mut().filter(|_| folder.is_some()) {
+                f.swipe += step;
+            } else {
+                // Past the first and last page it only gives a little (rubber band).
+                let next = l.drag + step;
+                let at = page as f64 + next;
+                l.drag = if at < 0.0 || at > (pages - 1) as f64 { l.drag + (next - l.drag) / 3.0 } else { next };
+            }
             if let Some(token) = l.swipe_end.take() {
                 self.loop_handle.remove(token);
             }
@@ -850,6 +1032,11 @@ impl State {
 
     /// The fingers let go: on to the next page if dragged far enough, else back.
     fn launchpad_swipe_end(&mut self) {
+        // An open folder's swipe turns its page, the same way.
+        let swiped = self.launchpad.as_mut().and_then(|l| l.folder.as_mut()).map(|f| (f.page, std::mem::take(&mut f.swipe)));
+        if let Some((page, d)) = swiped.filter(|(_, d)| d.abs() > TURN) {
+            self.launchpad_folder_turn(if d > 0.0 { page + 1 } else { page.saturating_sub(1) });
+        }
         let Some(l) = self.launchpad.as_mut().filter(|l| l.drag != 0.0) else { return };
         if let Some(token) = l.swipe_end.take() {
             self.loop_handle.remove(token);
@@ -965,6 +1152,13 @@ mod tests {
                 assert!(inner.cells.iter().all(|c| !c.overlaps(inner.field)));
             }
             assert_eq!(folder_grid(&g, 3).1.per_page(), 3, "a small folder: one row");
+            // A big one pages, its dots in the panel under its grid.
+            let (panel, inner) = folder_grid(&g, 40);
+            let count = pages(40, inner.per_page());
+            assert!(count > 1, "{w}×{h}");
+            let dots = inner.dots(count);
+            assert!(dots.iter().all(|d| panel.contains_rect(*d) && inner.cells.iter().all(|c| !c.overlaps(*d))), "{w}×{h}");
+            assert_eq!(dot_at(&dots, dots[1].loc.to_f64()), Some(1));
         }
     }
 
@@ -1066,6 +1260,29 @@ mod tests {
     }
 
     #[test]
+    fn held_over_an_icon_aims_at_it() {
+        let g = grid((1920, 1080).into(), 101);
+        let pp = g.per_page();
+        let mid = |r: Rect| r.loc.to_f64() + r.size.to_f64().downscale(2.0).to_point();
+        let on_icon = mid(g.icon_rect(3));
+        assert_eq!(aim(&g, on_icon, 0, 10, 0, true), Some(Aim::Onto(3)));
+        assert_eq!(aim(&g, on_icon, 1, pp + 10, 0, true), Some(Aim::Onto(pp + 3)), "on the second page");
+        assert_eq!(aim(&g, on_icon, 0, 10, 0, false), Some(Aim::To(3)), "a folder doesn't go into another");
+        assert_eq!(aim(&g, on_icon, 0, 10, 3, true), None, "its own place");
+        // Beside the icon, in its cell: a new place, not a folder.
+        let beside = Point::from((f64::from(g.cells[3].loc.x) + 2.0, on_icon.y));
+        assert_eq!(aim(&g, beside, 0, 10, 0, true), Some(Aim::To(3)));
+        // An empty cell past the last tile: the end, never a folder.
+        assert_eq!(aim(&g, mid(g.icon_rect(8)), 0, 5, 0, true), Some(Aim::To(4)));
+        assert_eq!(aim(&g, (5.0, 5.0).into(), 0, 10, 0, true), None, "off the grid");
+
+        let t0 = Instant::now();
+        let p = Press { index: 0, start: on_icon, at: on_icon, grab: on_icon, since: t0, moved: true, over: Some((3, t0)), inner: None, before: None };
+        assert_eq!(p.onto(t0 + Duration::from_millis(300)), None, "not held long enough yet");
+        assert_eq!(p.onto(t0 + MERGE_HOLD), Some(3));
+    }
+
+    #[test]
     fn dragged_out_of_a_folder() {
         let folder = |ids: &[&str]| Entry::Folder { name: "F".into(), apps: ids.iter().map(|i| i.to_string()).collect() };
         let mut order = vec![Entry::App("x".into()), folder(&["a", "b", "c"])];
@@ -1077,11 +1294,29 @@ mod tests {
     }
 
     #[test]
+    fn renames_a_folder() {
+        let mut order = vec![Entry::App("kate".into()), Entry::Folder { name: "Games".into(), apps: vec!["a".into(), "b".into()] }];
+        assert!(rename(&mut order, 1, "  Fun  "));
+        assert!(matches!(&order[1], Entry::Folder { name, .. } if name == "Fun"), "trimmed");
+        assert!(!rename(&mut order, 1, "   "), "a blank name keeps the old one");
+        assert!(matches!(&order[1], Entry::Folder { name, .. } if name == "Fun"));
+        assert!(!rename(&mut order, 0, "X"), "not a folder");
+        assert!(!rename(&mut order, 5, "X"));
+    }
+
+    #[test]
     fn order_round_trips() {
         let order = vec![Entry::App("kate".into()), Entry::Folder { name: "Games".into(), apps: vec!["a".into(), "b".into()] }];
         let text = serde_json::to_string(&order).unwrap();
         assert_eq!(text, r#"["kate",{"name":"Games","apps":["a","b"]}]"#);
         assert_eq!(serde_json::from_str::<Vec<Entry>>(&text).unwrap(), order);
+        // Loaded after "b" and "gone" were uninstalled: they drop out silently, and the folder of one is its app.
+        let saved = r#"["gone",{"name":"Games","apps":["a","b"]},{"name":"Tools","apps":["kate","c","gone"]}]"#;
+        let apps = [app("A"), app("C"), app("Kate")];
+        let loaded = arrange(&serde_json::from_str::<Vec<Entry>>(saved).unwrap(), &apps);
+        let tools = Entry::Folder { name: "Tools".into(), apps: vec!["kate".into(), "c".into()] };
+        assert_eq!(loaded, [Entry::App("a".into()), tools]);
+        assert!(serde_json::from_str::<Vec<Entry>>("{not json").is_err(), "a broken file loads as no order (load_order)");
     }
 
     #[test]
