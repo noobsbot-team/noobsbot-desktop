@@ -860,7 +860,7 @@ pub struct Ui {
     pub menu: Option<(String, Point<i32, Logical>)>,
     drag: Option<Drag>,
     /// The `text/uri-list` of the app drag in progress, read as it starts.
-    uris: Arc<Mutex<Option<String>>>,
+    pub uris: Arc<Mutex<Option<String>>>,
     /// The icon whose window previews show (after PEEK_DELAY).
     pub peek: Option<Peeking>,
     /// The open menu's recent files (URIs) and Open at Login state, read as it opens.

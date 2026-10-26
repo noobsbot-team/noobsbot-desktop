@@ -443,7 +443,7 @@ impl State {
         }
         self.capture_ask();
         let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
-        let thumbnail = self.thumbnail_rect().zip(self.screenshots.thumbnail.as_ref().map(|(t, _)| t.clone()));
+        let thumbnail = self.thumbnail_frame();
         let quit_list = self.force_quit.clone().map(|f| {
             let entries = self.force_quit_entries();
             let selected = f.selection(&entries);
@@ -559,7 +559,7 @@ impl State {
             ));
         }
         match &thumbnail {
-            Some((rect, thumb)) => bar.extend(screenshot.thumbnail(renderer, shaders, thumb, *rect, dark, scale)),
+            Some((rect, thumb, alpha)) => bar.extend(screenshot.thumbnail(renderer, shaders, thumb, *rect, *alpha, dark, scale)),
             None => screenshot.hide_thumbnail(),
         }
         let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
