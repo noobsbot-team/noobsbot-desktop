@@ -574,7 +574,7 @@ impl State {
     }
 
     /// A mouse or touchpad moved: the pointer moves by `delta`, kept on the displays.
-    fn relative_motion(&mut self, delta: Point<f64, Logical>, utime: u64) {
+    pub fn relative_motion(&mut self, delta: Point<f64, Logical>, utime: u64) {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let current = pointer.current_location();
         let screens: Vec<_> = self.space.outputs().filter_map(|o| self.space.output_geometry(o)).collect();

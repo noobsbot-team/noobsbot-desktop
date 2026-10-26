@@ -128,7 +128,22 @@ impl State {
         let size = geo.size.to_physical_precise_round(scale);
         let (tint, fading) = self.night_light.element(&self.config.night_light, self.frame_time, size);
         elements.splice(0..0, tint.map(SceneElement::Tint));
-        Some((elements, animating || fading || zooming))
+        // The bell's flash (E8.6), in front of everything.
+        let flash = self.bell_flash();
+        if let (Some(alpha), Some(views)) = (flash, self.backend.as_ref()) {
+            elements.insert(
+                0,
+                SceneElement::Shader(views.shaders.glass_shape(
+                    smithay::utils::Rectangle::from_size(geo.size),
+                    [1.0, 1.0, 1.0, alpha],
+                    0.0,
+                    false,
+                    false,
+                    scale,
+                )),
+            );
+        }
+        Some((elements, animating || fading || flash.is_some() || zooming))
     }
 
     /// The app switcher on `output`, when it shows there (the display it opened on).
@@ -626,6 +641,7 @@ impl State {
                         message: &self.config.idle.lock_message,
                         hour24: self.config.clock.format.hour24,
                         now: chrono::Local::now(),
+                        caps_lock: self.caps_lock,
                     };
                     lock_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, &content, geo.size, dark, accent, appearance.glass_opacity, scale)
                 }

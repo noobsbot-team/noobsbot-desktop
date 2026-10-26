@@ -122,6 +122,8 @@ pub struct State {
     pub suppressed: Vec<Keycode>,
     /// The key a shell surface is seeing held down (D14), and the timer repeating it.
     pub key_repeat: Option<(Keycode, RegistrationToken)>,
+    /// Sticky, slow, bounce and mouse keys (E8.6).
+    pub access: crate::input::AccessKeys,
     /// Minimised and hidden windows with where they were.
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
     /// The pid of the `noobsbot --quake` the quake action started; its window gets `rules::QUAKE_ID`.
@@ -190,6 +192,10 @@ pub struct State {
     pub shell_drag: Option<crate::shell::control::Control>,
     /// Hides the OSD; replaced on every key press.
     pub osd_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// When the bell last rang (E8.6).
+    pub bell: Option<std::time::Instant>,
+    /// Caps Lock is on (its OSD and the lock screen's ⇪).
+    pub caps_lock: bool,
     /// Puts the display settings back unless they are kept in time (`arm_display_revert`).
     pub display_revert: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Installed apps (E2.1); empty until the first scan lands.
@@ -439,6 +445,7 @@ impl State {
             config,
             suppressed: Vec::new(),
             key_repeat: None,
+            access: Default::default(),
             hidden: Vec::new(),
             quake: None,
             zones: Default::default(),
@@ -478,6 +485,8 @@ impl State {
             control_scroll: 0.0,
             shell_drag: None,
             osd_timer: None,
+            bell: None,
+            caps_lock: false,
             display_revert: None,
             apps: Default::default(),
             apps_epoch: 0,
@@ -1186,6 +1195,15 @@ impl SeatHandler for State {
     fn cursor_image(&mut self, _seat: &Seat<Self>, image: smithay::input::pointer::CursorImageStatus) {
         if self.zones.hover.is_none() {
             self.set_cursor(image);
+        }
+    }
+
+    /// Caps Lock turned on or off: the OSD says so (E8.6).
+    fn led_state_changed(&mut self, _seat: &Seat<Self>, led_state: smithay::input::keyboard::LedState) {
+        let caps = led_state.caps.unwrap_or(false);
+        if caps != std::mem::replace(&mut self.caps_lock, caps) {
+            let text = if caps { "Caps Lock On" } else { "Caps Lock Off" };
+            self.show_osd(crate::shell::Osd { symbol: crate::symbols::Symbol::Keyboard, level: None, text: Some(text.into()) });
         }
     }
 

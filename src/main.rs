@@ -4,6 +4,7 @@ mod anim;
 mod apps;
 mod arrange;
 mod backend;
+mod bell;
 mod calendar;
 mod capture;
 mod clipboard;

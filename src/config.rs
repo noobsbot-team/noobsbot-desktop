@@ -134,6 +134,18 @@ pub struct Accessibility {
     pub colour_filter: ColourFilter,
     /// Glass near-opaque, with a visible 1 px border.
     pub increase_contrast: bool,
+    /// A tapped modifier holds for the next key; tapped twice it stays until tapped again.
+    pub sticky_keys: bool,
+    /// Pressing Shift five times turns sticky keys on or off.
+    pub sticky_keys_shortcut: bool,
+    /// A key counts only once held this long, in ms; 0 = off.
+    pub slow_keys_ms: u32,
+    /// A key pressed again within this many ms of letting it go is ignored; 0 = off.
+    pub bounce_keys_ms: u32,
+    /// The keypad moves the pointer: 1–9 move, 5 clicks, 0 holds the button, . lets it go, * right-clicks.
+    pub mouse_keys: bool,
+    /// What an app ringing the bell does.
+    pub bell: Bell,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
@@ -626,6 +638,17 @@ impl Default for AppDrawer {
     fn default() -> Self {
         Self { super_tap: true }
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Bell {
+    #[default]
+    Sound,
+    /// The screen flashes white.
+    Flash,
+    Both,
+    Off,
 }
 
 /// Screen-recording answers (E6.11), by program path; the "would like to record this screen" alert fills them in.
