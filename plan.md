@@ -1702,12 +1702,18 @@ Rows live on the Appearance page (E8.2). Behind them:
   (`[accessibility] zoom_style`, `colour_filter`); following the text caret and keyboard focus is left.
 - **Keyboard:** sticky keys, slow keys, bounce keys, mouse keys (in `src/input.rs`). Built: `[accessibility] sticky_keys`,
   `sticky_keys_shortcut` (Shift ×5), `slow_keys_ms`, `bounce_keys_ms`, `mouse_keys`.
-- **Pointer:** dwell click, hold for secondary click, pointer size, shake to find the pointer.
-- **Display:** increase contrast, larger text, reduce transparency (exists), reduce motion (exists).
+- ~~**Pointer:** dwell click, hold for secondary click, pointer size, shake to find the pointer.~~ Done:
+  `[accessibility] dwell_click_ms`, `hold_secondary_ms`, `shake_to_find` (`src/pointer_assist.rs`), `[appearance] pointer_size`.
+- **Display:** increase contrast, larger text, reduce transparency (exists), reduce motion (exists). Built:
+  `[accessibility] increase_contrast`, glass opacity, reduce motion, colour filters; larger text is the text-size work.
 - **Alerts:** visual and audible bell (`xdg_system_bell`), Caps Lock indicator. Built: `[accessibility] bell`, a Caps Lock
   OSD and ⇪ in the lock screen's field.
-- **On-screen keyboard** (`virtual_keyboard` protocol), also on the lock screen.
-- **Screen reader** path: AT-SPI for our shell widgets and an Orca key monitor. Size L.
+- ~~**On-screen keyboard** (`virtual_keyboard` protocol), also on the lock screen.~~ Done: our own glass panel
+  (`src/shell/osk.rs`, `on-screen-keyboard` action, `[accessibility] on_screen_keyboard`) typing through the seat, so the
+  lock screen gets it too; `zwp_virtual_keyboard_v1` is served for other keyboards.
+- ~~**Screen reader** path: AT-SPI for our shell widgets and an Orca key monitor. Size L.~~ Done: menu bar, dock and
+  Control Center over AT-SPI (`src/access.rs`), the `KeyboardMonitor` key monitor (`src/services/a11y.rs`),
+  `[accessibility] screen_reader`. Other shell surfaces (Spotlight, Launchpad, notifications) are not exposed yet.
 
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
