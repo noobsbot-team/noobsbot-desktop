@@ -368,6 +368,8 @@ pub struct Press {
     pub over: Option<(usize, Instant)>,
     /// In the open folder: the app's place in it (`index` is the folder's).
     pub inner: Option<usize>,
+    /// The order before the app was dragged out of its folder: a drop on the dock pins it and puts this back.
+    pub before: Option<Vec<Entry>>,
 }
 
 impl Press {
@@ -677,7 +679,17 @@ impl State {
             match inner.hit(location).filter(|_| panel.to_f64().contains(location)) {
                 Some(j) => {
                     let grab = location - inner.icon_rect(j).loc.to_f64();
-                    l.press = Some(Press { index, start: location, at: location, grab, since: Instant::now(), moved: false, over: None, inner: Some(j) });
+                    l.press = Some(Press {
+                        index,
+                        start: location,
+                        at: location,
+                        grab,
+                        since: Instant::now(),
+                        moved: false,
+                        over: None,
+                        inner: Some(j),
+                        before: None,
+                    });
                 }
                 // Outside the panel: closes the folder.
                 None if !panel.to_f64().contains(location) => l.folder = None,
@@ -717,6 +729,7 @@ impl State {
             moved: false,
             over: None,
             inner: None,
+            before: None,
         });
         // The icon lifts after `HOLD` without moving: draw it then.
         let lift = self.loop_handle.insert_source(Timer::from_duration(HOLD), |_, _, state| {
@@ -749,7 +762,9 @@ impl State {
                 }
                 return self.schedule_redraw();
             }
+            let before = l.order.clone();
             let Some(at) = take_out(&mut l.order, p.index, j) else { return };
+            p.before = Some(before);
             (p.index, p.inner, l.folder) = (at, None, None);
             // Its place keeps it on screen: the page it is on.
             let page = at / grid.per_page().max(1);
@@ -800,10 +815,23 @@ impl State {
         TimeoutAction::ToDuration(EDGE_PAUSE)
     }
 
-    /// The button came up: a drag keeps its new order; a short press without moving opens what it pressed.
+    /// The button came up: a drag keeps its new order, or onto the dock pins its app; a short press without moving
+    /// opens what it pressed.
     pub fn launchpad_release(&mut self) {
         let Some(l) = self.launchpad.as_mut() else { return };
-        let Some(p) = l.press.take() else { return };
+        let Some(mut p) = l.press.take() else { return };
+        let app = match l.order.get(p.index) {
+            Some(Entry::App(id)) if p.moved && !l.searching() => Some(id.clone()),
+            _ => None,
+        };
+        if let Some(id) = app.filter(|_| self.dock_covers(p.at)) {
+            if let Some((l, before)) = self.launchpad.as_mut().zip(p.before.take()) {
+                l.order = before;
+                save_order(&l.order);
+            }
+            return self.launchpad_pin(&id, p.at);
+        }
+        let Some(l) = self.launchpad.as_mut() else { return };
         if p.moved && !l.searching() {
             if let Some(onto) = p.onto(Instant::now()) {
                 merge(&mut l.order, p.index, onto, self.apps.list());
@@ -826,6 +854,17 @@ impl State {
         if same {
             self.launchpad_activate(p.index, p.inner);
         }
+    }
+
+    /// App `id` dropped on the dock at `at`: pinned in the slot under it (unless already pinned, or items are locked).
+    fn launchpad_pin(&mut self, id: &str, at: Point<f64, Logical>) {
+        let pinned = self.dock_pinned();
+        if self.config.dock.lock_items || pinned.iter().any(|(_, key)| key == id) {
+            return self.schedule_redraw();
+        }
+        let to = self.dock_layout(&self.dock_items()).map_or(pinned.len(), |layout| super::dock::slot(&layout, at.x, pinned.len()));
+        tracing::info!(app = id, to, "launchpad: pin to the dock");
+        self.dock_repin(id, Some(to));
     }
 
     /// Tile `index` was chosen (`inner`: an app inside that folder): an app starts, a folder opens.
@@ -1121,7 +1160,7 @@ mod tests {
         assert_eq!(aim(&g, (5.0, 5.0).into(), 0, 10, 0, true), None, "off the grid");
 
         let t0 = Instant::now();
-        let p = Press { index: 0, start: on_icon, at: on_icon, grab: on_icon, since: t0, moved: true, over: Some((3, t0)), inner: None };
+        let p = Press { index: 0, start: on_icon, at: on_icon, grab: on_icon, since: t0, moved: true, over: Some((3, t0)), inner: None, before: None };
         assert_eq!(p.onto(t0 + Duration::from_millis(300)), None, "not held long enough yet");
         assert_eq!(p.onto(t0 + MERGE_HOLD), Some(3));
     }
