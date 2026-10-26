@@ -629,7 +629,13 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             vec![group(t, "Shortcuts", rows), note(t, "Type an action and press Return; “none” frees the key.")]
         }
         Page::Notifications => notifying_apps(app),
-        Page::General => vec![group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))])],
+        Page::General => {
+            let clear = button(text("Clear").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ClearRecent);
+            vec![
+                group(t, "Privacy", vec![line(t, "Recent files", "Every app's recent documents list", clear.into())]),
+                group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))]),
+            ]
+        }
         _ => Vec::new(),
     }
 }
