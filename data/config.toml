@@ -353,7 +353,7 @@ super_tap = true
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key. Keys match in any case and
 # modifier order ("Ctrl+Super+x" is "Super+Ctrl+X"): yours replaces the default with the same keys, and of two of
 # yours with the same keys the first in sorted order is kept (a warning is logged).
-# Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "default-app <MIME type or category>", "volume up|down|up-fine|down-fine", mute, mic-mute,
+# Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, display-off, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "default-app <MIME type or category>", "volume up|down|up-fine|down-fine", mute, mic-mute,
 # "brightness up|down", "keyboard-backlight up|down|toggle", "touchpad toggle|on|off", "media play-pause|next|previous|stop|forward|rewind", eject, "space left|right|1…9", "move-to-space left|right|1…16",
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows, "screen-zoom [in|out]",
