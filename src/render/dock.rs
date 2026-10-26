@@ -6,22 +6,30 @@ use smithay::{
         element::{Kind, memory::MemoryRenderBufferRenderElement},
         gles::{GlesRenderer, element::PixelShaderElement},
     },
+    desktop::{Space, Window},
     utils::{Logical, Point, Rectangle, Size},
 };
 
 use std::{collections::HashMap, sync::Arc};
 
 use super::{
-    SceneElement, Shaders, grow,
+    Material, SceneElement, Shaders, grow,
+    mission::{Shape, material, rgba, shapes},
     titlebar::{Label, keep_buffers, label_element},
+    transformed,
     ui::{CALLOUT, Ui},
+    window_elements,
 };
 use crate::{
     apps::Icons,
+    mission::close_button,
     services::launcher::Entry,
-    shell::{dock::Layout, dock_fx::Shade},
+    shell::{
+        dock::{Layout, Peek},
+        dock_fx::Shade,
+    },
     symbols::Symbols,
-    text::{Rendered, Text},
+    text::{Rendered, Style, Text},
     wm::Rect,
 };
 
@@ -81,6 +89,11 @@ pub struct DockView {
     /// The tooltips, made for these words and bottom centres, mode and scale.
     tip: Option<(TipKey, Vec<PixelShaderElement>, Vec<Piece>)>,
     tip_labels: Vec<Label>,
+    /// The window previews' glass, ✕ label, shadow and the dim behind the hovered window.
+    peek: Option<(Vec<Shape>, bool, u64, Vec<PixelShaderElement>)>,
+    peek_labels: Vec<Label>,
+    peek_shadow: Option<((Rect, bool, u64), Option<PixelShaderElement>)>,
+    peek_dim: Option<((Rect, bool, u64), PixelShaderElement)>,
 }
 
 type TipKey = (Vec<(String, Point<i32, Logical>)>, bool, u64);
@@ -166,6 +179,72 @@ impl DockView {
         let mut out: Vec<SceneElement> = self.tip_labels.iter().zip(pieces).filter_map(|(label, (_, r))| label_element(renderer, label, *r, scale)).collect();
         out.extend(glass.iter().cloned().map(SceneElement::Shader));
         out
+    }
+
+    /// The window previews (E8.3), front to back: the hovered thumbnail's ✕ and accent ring, the live thumbnails
+    /// (Mission Control's scaled windows), the `hud` strip and its shadow. Second, to go behind the dock: the hovered
+    /// window again over a dim, which fades the others (when it is on the shown Space).
+    #[expect(clippy::too_many_arguments, reason = "the frame's drawing context")]
+    pub fn peek(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        shaders: &Shaders,
+        text: &mut Text,
+        space: &Space<Window>,
+        peek: Option<&(Peek, Vec<(Window, Rect)>)>,
+        hover: Option<usize>,
+        output: Rect,
+        dark: bool,
+        accent: [u8; 3],
+        glass_opacity: f32,
+        scale: f64,
+    ) -> (Vec<SceneElement>, Vec<SceneElement>) {
+        let Some((peek, windows)) = peek else {
+            self.peek_labels = Vec::new();
+            return (Vec::new(), Vec::new());
+        };
+        let hover = hover.filter(|i| *i < windows.len().min(peek.thumbs.len()));
+        let phys = |p: Point<i32, Logical>| p.to_f64().to_physical(scale).to_i32_round();
+        let close = hover.map(|i| close_button(peek.thumbs[i]));
+        let label_rgb = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
+        let glyph = Style { size: 15, line_height: 18, weight: 500, color: label_rgb, tabular: false };
+        let pieces: Vec<_> = close.iter().map(|r| text.label("×", glyph, r.size.w as u32, scale)).collect();
+        self.peek_labels = keep_buffers(&self.peek_labels, pieces);
+        let mut out: Vec<SceneElement> = self.peek_labels.iter().zip(close).filter_map(|(l, r)| label_element(renderer, l, r, scale)).collect();
+        let mut front: Vec<Shape> = Vec::new();
+        let hud = material(Material::Hud, dark, glass_opacity);
+        if let Some(rect) = close {
+            front.push((rect, hud, f64::from(rect.size.w) / 2.0, true, 0));
+        }
+        if let Some(i) = hover {
+            front.push((grow(peek.thumbs[i], 3), rgba(accent, 1.0), 6.0, false, 3));
+        }
+        let strip_at = front.len();
+        front.push((peek.strip, hud, Material::Hud.spec(dark).radius, true, 0));
+        let glass = shapes(&mut self.peek, shaders, front, dark, scale);
+        out.extend(glass[..strip_at].iter().cloned().map(SceneElement::Shader));
+        for ((window, from), to) in windows.iter().zip(&peek.thumbs) {
+            let factor = f64::from(to.size.w) / f64::from(from.size.w.max(1));
+            let origin = phys(from.loc);
+            let elements = window_elements(renderer, shaders, text, space, window, output.loc, scale, dark);
+            out.extend(elements.into_iter().filter_map(|e| transformed(e, origin, factor, phys(to.loc) - origin)));
+        }
+        out.extend(glass[strip_at..].iter().cloned().map(SceneElement::Shader));
+        let key = (peek.strip, dark, scale.to_bits());
+        if self.peek_shadow.as_ref().is_none_or(|(k, _)| *k != key) {
+            self.peek_shadow = Some((key, shaders.shadow(peek.strip, Material::Hud.spec(dark).radius, Material::Hud.spec(dark).elevation, dark, scale, false)));
+        }
+        out.extend(self.peek_shadow.as_ref().and_then(|(_, s)| s.clone()).map(SceneElement::Shader));
+
+        let screen = Rectangle::from_size(output.size);
+        let Some((window, _)) = hover.map(|i| &windows[i]).filter(|(_, frame)| frame.overlaps(screen)) else { return (out, Vec::new()) };
+        let mut behind = window_elements(renderer, shaders, text, space, window, output.loc, scale, dark);
+        let key = (screen, dark, scale.to_bits());
+        if self.peek_dim.as_ref().is_none_or(|(k, _)| *k != key) {
+            self.peek_dim = Some((key, shaders.glass_shape(screen, [0.0, 0.0, 0.0, 0.35], 0.0, false, dark, scale)));
+        }
+        behind.extend(self.peek_dim.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
+        (out, behind)
     }
 
     /// An icon dragged off the dock vanishing: a ring of soft puffs spreading and fading where it was let go

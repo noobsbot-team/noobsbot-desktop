@@ -164,6 +164,8 @@ impl State {
         let dock_items = self.dock_items();
         let dock_frame = self.dock_frame(&dock_items);
         let dock_layout = dock_frame.layout.clone();
+        let peek = self.dock_peek();
+        let peek_hover = self.dock_ui.peek.as_ref().and_then(|p| p.hover);
         let held_at = self.dock_ui.dragged().and(self.seat.get_pointer()).map(|p| self.to_output(p.current_location()));
         let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
         let now = self.frame_time;
@@ -462,7 +464,12 @@ impl State {
         }
         drawer_view.motion(renderer, &mut bar, mark, drawer_frame.is_some(), reduce, scale, now, &mut self.anim_until);
         bar.extend(strip);
-        // The dock: behind the bar and popups, above windows.
+        // The dock: behind the bar and popups, above windows; its window previews in front of it, the window hovered
+        // there (over a dim of the others) behind it.
+        let output_rect = self.space.output_geometry(output).unwrap_or_default();
+        let (peek_front, peek_behind) =
+            dock.peek(renderer, shaders, &mut self.text, &self.space, peek.as_ref(), peek_hover, output_rect, dark, accent, appearance.glass_opacity, scale);
+        bar.extend(peek_front);
         if let Some(layout) = &dock_layout {
             let mut icons: Vec<DockIcon> = dock_items
                 .iter()
@@ -490,6 +497,7 @@ impl State {
             bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &[], dark, scale));
         }
         bar.extend(DockView::glows(shaders, &dock_frame.glows, scale));
+        bar.extend(peek_behind);
         // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.
         if let Some(((position, shown, field, page), grid)) = &pad {
             let apps = crate::shell::launchpad::filter(self.apps.list(), &field.text);

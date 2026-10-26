@@ -473,7 +473,7 @@ impl State {
     }
 
     /// A redraw at `at`: a one-shot timer, so nothing polls while the dock waits out a delay.
-    fn dock_wake(&mut self, at: Instant) {
+    pub(super) fn dock_wake(&mut self, at: Instant) {
         let Some(wait) = self.dock_fx.wake_at(at) else { return };
         let timer = smithay::reexports::calloop::timer::Timer::from_duration(wait);
         let _ = self.loop_handle.insert_source(timer, |_, _, state| {
@@ -608,7 +608,12 @@ impl State {
             }
             // Plank's tooltip: after HOVER_DELAY_TIME on one icon, centred over it, (zoomed size − half the icon) above
             // its resting centre; not while the dock moves, a menu is open or an icon is dragged.
-            let shown = self.config.dock.tooltips && !fx.tip_hidden && hide == 0.0 && menu.is_none() && !self.dock_ui.dragging();
+            let shown = self.config.dock.tooltips
+                && !fx.tip_hidden
+                && hide == 0.0
+                && menu.is_none()
+                && !self.dock_ui.dragging()
+                && self.dock_ui.peek.as_ref().is_none_or(|p| !p.shown());
             let hovered = fx.hover.clone().filter(|_| shown);
             if let Some((key, at)) = hovered
                 && let Some(i) = items.iter().position(|i| i.key == key)
