@@ -11,6 +11,8 @@ const ACCOUNTS_PATH: &str = "/org/freedesktop/Accounts";
 const USER: &str = "org.freedesktop.Accounts.User";
 /// Pictures are decoded at this many px a side (shown at 64 and 32).
 const PICTURE: u32 = 128;
+/// A new picture is saved at this many px a side: AccountsService refuses files over 1 MB.
+const FACE: u32 = 256;
 
 #[derive(Clone, Debug)]
 pub struct Account {
@@ -71,6 +73,30 @@ pub async fn set(path: String, method: &'static str, value: String) -> (Users, O
     (read().await, error)
 }
 
+/// "Change Picture…": its path field, as a text key; open while the key is there.
+pub const PICTURE_FILE: &str = "users.picture";
+
+/// `file` becomes the account's picture: cut square into `~/.face`, which AccountsService then copies.
+pub async fn set_picture(path: String, file: PathBuf) -> (Users, Option<String>) {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    match face(&file, &home) {
+        Some(face) => set(path, "SetIconFile", face.to_string_lossy().into_owned()).await,
+        None => (read().await, Some(format!("Couldn't use {} as a picture: it must be a PNG or JPEG", file.display()))),
+    }
+}
+
+/// `file` as a `FACE` px square PNG at `home/.face`.
+fn face(file: &Path, home: &Path) -> Option<PathBuf> {
+    let rgba = crate::gallery::cover(file, FACE, FACE)?;
+    let mut bytes = Vec::new();
+    let mut encoder = png::Encoder::new(&mut bytes, FACE, FACE);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.write_header().and_then(|mut w| w.write_image_data(&rgba)).ok()?;
+    let path = home.join(".face");
+    std::fs::write(&path, bytes).ok()?;
+    Some(path)
+}
+
 async fn text(bus: &Connection, path: &str, name: &str) -> String {
     crate::system::property(bus, ACCOUNTS, path, USER, name).await.ok().and_then(|v| String::try_from(v).ok()).unwrap_or_default()
 }
@@ -92,4 +118,28 @@ async fn account(bus: &Connection, path: &OwnedObjectPath) -> Option<Account> {
 /// A square picture (shown as a circle), or nothing if `file` isn't a PNG or JPEG.
 fn picture(file: &Path) -> Option<Handle> {
     Some(Handle::from_rgba(PICTURE, PICTURE, crate::gallery::cover(file, PICTURE, PICTURE)?))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn face_is_a_square_png() {
+        let dir = std::env::temp_dir().join(format!("noobsbot-settings-face-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wide = dir.join("wide.png");
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut bytes, 4, 2);
+        encoder.set_color(png::ColorType::Rgb);
+        encoder.write_header().unwrap().write_image_data(&[200; 4 * 2 * 3]).unwrap();
+        std::fs::write(&wide, bytes).unwrap();
+        let face = face(&wide, &dir).unwrap();
+        assert_eq!(face, dir.join(".face"));
+        let decoder = png::Decoder::new(std::io::Cursor::new(std::fs::read(&face).unwrap()));
+        let info = decoder.read_info().unwrap();
+        assert_eq!((info.info().width, info.info().height), (FACE, FACE));
+        assert_eq!(super::face(&dir.join("missing.jpg"), &dir), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }

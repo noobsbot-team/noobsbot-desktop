@@ -1237,7 +1237,25 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
         .padding([3, 8])
         .width(200)
         .style(t.input(false));
-    let mut parts = vec![container(head).padding([0, 4]).into(), group(t, "", vec![line(t, "Full name", "Press Return to save", name.into())])];
+    let change = button(text("Change Picture…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::PictureChooser);
+    let mut rows = vec![line(t, "Picture", "", change.into()), line(t, "Full name", "Press Return to save", name.into())];
+    if let Some(typed) = app.texts.get(crate::users::PICTURE_FILE) {
+        // The wallpaper gallery's pictures, then any file by its path.
+        let tiles = app.thumbs.iter().map(|(path, handle)| {
+            let tile = iced::widget::image(handle.clone()).width(48).height(48).content_fit(iced::ContentFit::Cover).border_radius(24.0);
+            button(tile).padding(2).style(t.tile(false)).on_press(Message::Picture(path.clone())).into()
+        });
+        rows.insert(1, container(row(tiles).spacing(8).wrap().vertical_spacing(8)).padding(12).into());
+        let file = text_input("/path/to/picture.png", typed)
+            .on_input(|v| Message::Type(crate::users::PICTURE_FILE.into(), v))
+            .on_submit(Message::Picture(typed.trim().into()))
+            .size(13)
+            .padding([3, 8])
+            .width(260)
+            .style(t.input(false));
+        rows.insert(2, line(t, "Other picture", "A PNG or JPEG file; press Return", file.into()));
+    }
+    let mut parts = vec![container(head).padding([0, 4]).into(), group(t, "", rows)];
     if !users.others.is_empty() {
         let rows = users
             .others
