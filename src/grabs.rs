@@ -101,11 +101,18 @@ impl PointerGrab<State> for MoveGrab {
         let rect = Rect::new(self.start.loc + delta.to_i32_round(), self.start.size);
         let others: Vec<Rect> =
             data.space.elements().filter(|w| **w != self.window && data.sheet_parent(w).as_ref() != Some(&self.window)).filter_map(|w| data.frame(w)).collect();
-        let Some(area) = data.work_area() else { return };
+        // The display under the pointer: its edges are magnetic, its sides tile, and the title bar stays on it.
+        // ponytail: near a shared edge the window lags the pointer by up to MIN_VISIBLE px until it crosses over.
+        let Some(area) = data.pointer_output().and_then(|o| data.output_area(&o)) else { return };
         let loc = wm::move_to(rect, area, &others, data.config.windows.magnetic_edges && !data.modifiers().ctrl);
         data.set_visible_loc(&self.window, loc);
         let tiles = data.edge_hold(&self.window, event.location);
-        let tile = if tiles && data.config.windows.snapping && !data.modifiers().ctrl { wm::tile_at(event.location, area) } else { None };
+        let tile = if tiles && data.config.windows.snapping && !data.modifiers().ctrl {
+            let screens: Vec<Rect> = data.space.outputs().filter_map(|o| data.space.output_geometry(o)).collect();
+            wm::tile_at(event.location, area, &screens)
+        } else {
+            None
+        };
         if tile != self.tile {
             self.tile = tile;
             data.tile_preview = tile.map(|t| t.rect(area));
@@ -168,7 +175,7 @@ impl PointerGrab<State> for ResizeGrab {
         if data.config.windows.magnetic_edges
             && !mods.ctrl
             && !mods.alt
-            && let Some(area) = data.work_area()
+            && let Some(area) = data.window_area(&resize.window)
         {
             let others: Vec<Rect> = data.space.elements().filter(|w| **w != resize.window).filter_map(|w| data.frame(w)).collect();
             let xs: Vec<i32> = [area.loc.x, area.loc.x + area.size.w].into_iter().chain(others.iter().flat_map(|o| [o.loc.x, o.loc.x + o.size.w])).collect();
@@ -227,7 +234,7 @@ impl State {
             self.zones.last_press = Some((std::time::Instant::now(), window.clone(), edges));
             return self.start_resize(window, edges, start_data, serial);
         }
-        let (Some(start), Some(area)) = (self.frame(&window), self.work_area()) else { return };
+        let (Some(start), Some(area)) = (self.frame(&window), self.window_area(&window)) else { return };
         let desired = wm::grow_to(start, area, edges).size;
         // A released resize: one configure, then the commit pins the window to the opposite edge.
         self.resize = Some(Resize { window, edges, start, symmetric: false, desired, sent: None, waiting: false, released: true });
