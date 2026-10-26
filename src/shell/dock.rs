@@ -683,7 +683,7 @@ impl State {
     }
 
     /// Focuses the window after (or before) the focused one of `windows`, in the order they opened.
-    fn dock_cycle(&mut self, mut windows: Vec<Window>, forward: bool) {
+    pub(crate) fn dock_cycle(&mut self, mut windows: Vec<Window>, forward: bool) {
         if windows.is_empty() {
             return;
         }
