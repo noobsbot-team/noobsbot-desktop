@@ -53,6 +53,7 @@ pub struct Config {
     pub calendar: Calendar,
     pub update: Update,
     pub desktop: Desktop,
+    pub housekeeping: Housekeeping,
     pub notifications: Notifications,
     /// App name (as it sends notifications) → how they show.
     pub notification_apps: BTreeMap<String, AppStyle>,
@@ -518,6 +519,7 @@ impl Default for Config {
             calendar: Calendar::default(),
             update: Update::default(),
             desktop: Desktop::default(),
+            housekeeping: Housekeeping::default(),
             notifications: Notifications::default(),
             notification_apps: BTreeMap::new(),
             app_drawer: AppDrawer::default(),
@@ -684,6 +686,22 @@ pub struct Desktop {
 impl Default for Desktop {
     fn default() -> Self {
         Self { icons: true, show_drives: true }
+    }
+}
+
+/// Daily cleanups (E8.8); 0 days = never.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Housekeeping {
+    /// Trash items deleted more than this many days ago are removed for good.
+    pub empty_trash_days: u32,
+    /// Recent-files entries last used more than this many days ago are dropped.
+    pub recent_days: u32,
+}
+
+impl Default for Housekeeping {
+    fn default() -> Self {
+        Self { empty_trash_days: 30, recent_days: 30 }
     }
 }
 

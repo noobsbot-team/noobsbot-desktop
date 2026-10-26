@@ -331,6 +331,7 @@ doesn't understand is skipped and reported in the journal.
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
 | `[desktop]` | desktop icons on or off, mounted drives among them (`show_drives`) |
+| `[housekeeping]` | when old Trash items and recent-files entries are cleared |
 | `[bindings]` | keyboard shortcuts |
 | `[[rules]]` | window rules: open on a Space, size, position, always on top, no title bar, opacity |
 
