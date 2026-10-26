@@ -95,7 +95,7 @@ impl CalendarWidget {
         // label, label-secondary, label-tertiary (Part D).
         let ink = |alpha_light: u8, alpha_dark: u8| if dark { [255, 255, 255, alpha_dark] } else { [0, 0, 0, alpha_light] };
         let (label, secondary, tertiary) = (ink(217, 217), ink(128, 140), ink(66, 64));
-        let title3 = Style { size: 15, line_height: 20, weight: 600, color: label, tabular: false };
+        let title3 = Style { color: label, ..super::ui::TITLE3 };
         let caption = Style { size: 10, line_height: 13, weight: 500, color: secondary, tabular: false };
         let body = Style { size: 13, line_height: 16, weight: 400, color: label, tabular: true };
 

@@ -66,7 +66,7 @@ type Drawn<K> = (K, Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>);
 const WHITE: [u8; 4] = [255; 4];
 const WHITE85: [u8; 4] = [255, 255, 255, 217];
 const DISPLAY: Style = Style { size: 96, line_height: 100, weight: 300, color: WHITE, tabular: true };
-const TITLE2: Style = Style { size: 17, line_height: 22, weight: 600, color: WHITE85, tabular: false };
+const TITLE2: Style = Style { color: WHITE85, ..super::ui::TITLE2 };
 
 #[derive(Default)]
 pub struct LockView {
