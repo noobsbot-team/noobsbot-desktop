@@ -14,7 +14,7 @@ use smithay::{
         },
         wayland_server::{
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, WEnum,
-            backend::GlobalId,
+            backend::{ClientId, GlobalId},
             protocol::{wl_output::WlOutput, wl_pointer},
         },
     },
@@ -28,10 +28,19 @@ pub fn global(dh: &DisplayHandle) -> GlobalId {
 }
 
 /// One virtual pointer: the display its absolute motion maps onto (all of them when `None`), and the scroll being
-/// gathered until `frame`.
+/// gathered until `frame`, and the buttons it holds (released for it when it goes away mid-drag).
 pub struct Pointer {
     output: Option<Output>,
     scroll: Mutex<Scroll>,
+    held: Mutex<Vec<u32>>,
+}
+
+/// Keeps `held` as the set of buttons down.
+fn track(held: &mut Vec<u32>, button: u32, state: ButtonState) {
+    held.retain(|&b| b != button);
+    if state == ButtonState::Pressed {
+        held.push(button);
+    }
 }
 
 #[derive(Default)]
@@ -91,7 +100,7 @@ impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for State {
             zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointerWithOutput { id, output, .. } => (id, output),
             _ => return,
         };
-        init.init(id, Pointer { output: output.as_ref().and_then(Output::from_resource), scroll: Mutex::default() });
+        init.init(id, Pointer { output: output.as_ref().and_then(Output::from_resource), scroll: Mutex::default(), held: Mutex::default() });
     }
 }
 
@@ -126,6 +135,7 @@ impl Dispatch<ZwlrVirtualPointerV1, Pointer> for State {
             Request::Button { time, button, state: pressed } => {
                 if let Some(pressed) = pressed.into_result().ok().and_then(|s| ButtonState::try_from(s).ok()) {
                     state.idle_activity();
+                    track(&mut data.held.lock().unwrap(), button, pressed);
                     state.assisted_button(button, pressed, time);
                 }
             }
@@ -160,6 +170,14 @@ impl Dispatch<ZwlrVirtualPointerV1, Pointer> for State {
             _ => {}
         }
     }
+
+    /// Covers `destroy` and a disconnect: release what it still holds (pointer_button sends the frame).
+    fn destroyed(state: &mut Self, _: ClientId, _: &ZwlrVirtualPointerV1, data: &Pointer) {
+        let time = state.now_msec();
+        for button in std::mem::take(&mut *data.held.lock().unwrap()) {
+            state.assisted_button(button, ButtonState::Released, time);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -173,5 +191,17 @@ mod tests {
         assert_eq!(absolute(50, 25, 100, 100, area), Some((3200.0, 360.0).into()));
         assert_eq!(absolute(200, 100, 100, 100, area), Some((4480.0, 1440.0).into()), "clamped to the extent");
         assert_eq!(absolute(1, 1, 0, 100, area), None);
+    }
+
+    #[test]
+    fn held_buttons_track_press_and_release() {
+        let mut held = vec![];
+        track(&mut held, 272, ButtonState::Pressed);
+        track(&mut held, 273, ButtonState::Pressed);
+        track(&mut held, 272, ButtonState::Pressed);
+        assert_eq!(held, [273, 272], "a repeated press is held once");
+        track(&mut held, 273, ButtonState::Released);
+        track(&mut held, 274, ButtonState::Released);
+        assert_eq!(held, [272]);
     }
 }
