@@ -60,15 +60,15 @@ fn area(frame: Rectangle<f64, Logical>) -> Rectangle<f64, Logical> {
 
 /// Some elements drawn offscreen: `src` is where they are in `texture` (and on the output, physical px).
 #[derive(Clone)]
-struct Shot {
-    texture: GlesTexture,
+pub(super) struct Shot {
+    pub(super) texture: GlesTexture,
     src: Rectangle<i32, Physical>,
 }
 
 /// Draws `elements` (front to back) where they are on the output into a transparent texture reaching to the far
 /// corner of `area`, keeping `area`'s on-output part. Drawn in place, so elements that clip to output coordinates
 /// (rounded windows) still line up. ponytail: parts left of or above the output are cut off.
-fn snapshot(renderer: &mut GlesRenderer, elements: &[SceneElement], area: Rectangle<i32, Physical>, scale: f64) -> Option<Shot> {
+pub(super) fn snapshot(renderer: &mut GlesRenderer, elements: &[SceneElement], area: Rectangle<i32, Physical>, scale: f64) -> Option<Shot> {
     // A window dragged far right or down would ask for a texture past GL_MAX_TEXTURE_SIZE (GL_INVALID_VALUE);
     // the part beyond it is cut off like the part before the output. ponytail: one texture per animating
     // window per frame; a pool needs the Rc count smithay's texture doesn't expose.
