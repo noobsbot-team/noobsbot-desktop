@@ -272,6 +272,12 @@ channel = "stable"
 # arrange; right-click for Open, Rename, Move to Trash and New Folder.
 icons = true
 
+[housekeeping]
+# Once a day: items in the Trash longer than this many days are deleted for good, and recent-files entries older
+# than this are forgotten (0 = never). Thumbnails unused for 90 days are removed too.
+empty_trash_days = 30
+recent_days = 30
+
 [notifications]
 # Do Not Disturb (the Control Center tile): banners stay quiet; Notification Center still collects them.
 dnd = false
