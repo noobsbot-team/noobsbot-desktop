@@ -20,17 +20,25 @@ pub fn flash_alpha(elapsed: Duration) -> Option<f32> {
     (elapsed < FLASH).then(|| 0.4 * (1.0 - elapsed.as_secs_f32() / FLASH.as_secs_f32()))
 }
 
-/// Plays sound `name` from the sound theme, else the freedesktop one straight to PipeWire; off the calling thread.
-pub fn play(name: &str) {
+/// The players' volume options at `percent` (1 … 100): canberra-gtk-play's gain in dB, pw-play's factor.
+pub fn volume_args(percent: u8) -> (String, String) {
+    let factor = f32::from(percent.clamp(1, 100)) / 100.0;
+    (format!("--volume={:.1}", 20.0 * factor.log10()), format!("--volume={factor:.2}"))
+}
+
+/// Plays sound `name` from the sound theme, else the freedesktop one straight to PipeWire, at `volume` percent; off
+/// the calling thread. Silent at 0.
+pub fn play(name: &str, volume: u8) {
     // A theme name only: the config file's value goes into a path.
-    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if volume == 0 || name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return;
     }
     let name = name.to_owned();
     std::thread::spawn(move || {
+        let (db, factor) = volume_args(volume);
         let quiet = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
-        if !quiet(Command::new("canberra-gtk-play").args(["-i", &name])) {
-            quiet(Command::new("pw-play").arg(format!("/usr/share/sounds/freedesktop/stereo/{name}.oga")));
+        if !quiet(Command::new("canberra-gtk-play").args(["-i", &name, &db])) {
+            quiet(Command::new("pw-play").args([&factor, &format!("/usr/share/sounds/freedesktop/stereo/{name}.oga")]));
         }
     });
 }
@@ -47,14 +55,14 @@ impl State {
             self.schedule_redraw();
         }
         if matches!(mode, Bell::Sound | Bell::Both) {
-            play(&self.config.sound.alert);
+            play(&self.config.sound.alert, self.config.sound.alert_volume);
         }
     }
 
     /// A user interface sound (`screen-capture`, `trash-empty`), unless `[sound] ui_sounds` is off.
     pub fn ui_sound(&self, name: &str) {
         if self.config.sound.ui_sounds {
-            play(name);
+            play(name, 100);
         }
     }
 
@@ -81,5 +89,13 @@ mod tests {
         assert_eq!(flash_alpha(Duration::ZERO), Some(0.4));
         assert!(flash_alpha(Duration::from_millis(150)).is_some_and(|a| (a - 0.2).abs() < 1e-6));
         assert_eq!(flash_alpha(FLASH), None);
+    }
+
+    #[test]
+    fn volume_options() {
+        assert_eq!(volume_args(100), ("--volume=0.0".into(), "--volume=1.00".into()));
+        assert_eq!(volume_args(50), ("--volume=-6.0".into(), "--volume=0.50".into()));
+        assert_eq!(volume_args(10), ("--volume=-20.0".into(), "--volume=0.10".into()));
+        assert_eq!(volume_args(200).1, "--volume=1.00");
     }
 }
