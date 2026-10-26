@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn symbols_follow_state() {
-        let wifi_of = |link, wifi_enabled| wifi(&Network { wifi_enabled, link, networks: Vec::new() });
+        let wifi_of = |link, wifi_enabled| wifi(&Network { wifi_enabled, link, networks: Vec::new(), vpns: Vec::new() });
         assert_eq!(wifi_of(Link::Wifi { ssid: "x".into(), bars: 3 }, true), Symbol::WifiHigh);
         assert_eq!(wifi_of(Link::Wifi { ssid: "x".into(), bars: 1 }, true), Symbol::WifiLow);
         assert_eq!(wifi_of(Link::None, true), Symbol::WifiNone);
