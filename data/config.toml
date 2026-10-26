@@ -375,7 +375,7 @@ super_tap = true
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows, "screen-zoom [in|out]",
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-window (the focused one), screen-record, screenshot-toolbar, emoji,
-# app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard, "input-source [previous|1…9]" (next, previous or the
+# app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard, keyboard-viewer, "input-source [previous|1…9]" (next, previous or the
 # n-th keyboard layout; 1…9 have no default key, as Super+Ctrl+1…9 are Spaces).
 [bindings]
 "Super+Return" = "terminal"

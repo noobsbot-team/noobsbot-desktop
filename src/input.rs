@@ -379,6 +379,7 @@ impl State {
     /// A key to the shell, its shortcuts and the focused app; the on-screen keyboard types through it too.
     pub fn key(&mut self, code: Keycode, key_state: KeyState, time: u32) {
         let Some(keyboard) = self.seat.get_keyboard() else { return };
+        self.viewer_key(code.raw() - 8, key_state == KeyState::Pressed);
         let serial = SERIAL_COUNTER.next_serial();
         // Settings recording a shortcut gets every key, as an app that inhibits shortcuts does.
         let inhibited = self.shortcuts_inhibited() || self.recording_on();

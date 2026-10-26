@@ -238,6 +238,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
 - **Emoji:** Super+Ctrl+E or Super+period opens the picker; the emoji is typed into the focused text field, or copied.
 - **On-screen keyboard:** the `on-screen-keyboard` action (or the input menu) shows a keyboard to click, on the lock
   screen too; `[accessibility] on_screen_keyboard = true` keeps it up.
+- **Keyboard Viewer:** the input menu (or the `keyboard-viewer` action) shows the active layout's keys, read-only;
+  the keys you hold light up.
 - **Quake terminal:** F12 drops a terminal down from the top of the screen.
 - **Desktop icons:** files in `~/Desktop` appear on the wallpaper. Drag to arrange, double-click to open,
   right-click for Open, Rename, Move to Trash and New Folder. Mounted drives show at the top right, with Eject.

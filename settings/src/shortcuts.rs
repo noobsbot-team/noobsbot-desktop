@@ -404,6 +404,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("shut-down", "Shut Down", "System"),
     ("log-out", "Log Out", "System"),
     ("input-source", "Next Input Source", "System"),
+    ("keyboard-viewer", "Keyboard Viewer", "System"),
 ];
 
 /// Actions with an argument (`space 3`, `exec firefox`): name and category.

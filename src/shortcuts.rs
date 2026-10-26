@@ -87,6 +87,8 @@ pub enum Action {
     Emoji,
     /// Shows or hides the on-screen keyboard (E8.6).
     OnScreenKeyboard,
+    /// Shows or hides the Keyboard Viewer (the input menu).
+    KeyboardViewer,
     /// A row of a dock icon's right-click menu (E3.1).
     Dock(crate::shell::dock::Command),
     /// The n-th dock icon, from 0 (Super+1…9, E8.3): focus, cycle or open it; `new`: a new window (Super+Shift+n).
@@ -258,6 +260,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("spotlight", "") => Some(Action::Spotlight),
         ("emoji", "") => Some(Action::Emoji),
         ("on-screen-keyboard", "") => Some(Action::OnScreenKeyboard),
+        ("keyboard-viewer", "") => Some(Action::KeyboardViewer),
         ("launchpad", "") => Some(Action::Launchpad),
         ("app-drawer", "") => Some(Action::AppDrawer),
         ("space", "left") => Some(Action::SwitchSpace(-1)),
@@ -471,6 +474,7 @@ impl State {
             }
             Action::Emoji => self.toggle_emoji(),
             Action::OnScreenKeyboard => self.toggle_osk(),
+            Action::KeyboardViewer => self.toggle_keyboard_viewer(),
             Action::Layout(index) => self.switch_layout(index),
             Action::PreviousLayout => self.switch_layout(Some(crate::ime::step(self.layouts.active, self.layouts.list.len(), -1))),
             Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
