@@ -724,7 +724,14 @@ impl State {
 
     fn dock_builtin(&mut self, builtin: Builtin, key: &str) {
         match builtin {
-            Builtin::Launchpad => self.toggle_launchpad(),
+            Builtin::Launchpad => {
+                // On this dock's display.
+                self.toggle_launchpad();
+                let output = self.dock_output();
+                if let Some(l) = self.launchpad.as_mut().filter(|l| !l.closing()) {
+                    l.output = output;
+                }
+            }
             Builtin::AppDrawer => {
                 // The drawer opens above its icon; from another display's dock, in its corner on the first.
                 let items = self.dock_items();

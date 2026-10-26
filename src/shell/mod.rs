@@ -455,6 +455,12 @@ impl State {
         rebase(location, origin(None), origin(output))
     }
 
+    /// `location` relative to `overlay_output(output)` made first-output-relative again.
+    pub fn display_to_output(&self, output: Option<&smithay::output::Output>, location: Point<f64, Logical>) -> Point<f64, Logical> {
+        let origin = |o| self.overlay_geometry(o).unwrap_or_default().loc;
+        rebase(location, origin(output), origin(None))
+    }
+
     /// The focused window's display, else the pointer's (D13): where alerts and Spotlight show.
     pub fn focus_output(&self) -> Option<smithay::output::Output> {
         let window = self.focused_window().and_then(|w| self.space.element_geometry(&w));
@@ -1057,6 +1063,19 @@ mod tests {
         let (main, second) = (Point::from((1280, 0)), Point::from((0, 0)));
         assert_eq!(rebase((-1180.0, 50.0).into(), main, second), (100.0, 50.0).into());
         assert_eq!(rebase((1.0, 2.0).into(), main, main), (1.0, 2.0).into());
+    }
+
+    #[test]
+    fn launchpad_opens_on_the_pointers_display() {
+        let screens = two_displays();
+        // The pointer just left of the main display: Launchpad is laid out in the left one's size, and a press there
+        // lands inside it.
+        let pointer = Point::from((-10.0, 500.0));
+        let at = display_for(&screens, None, pointer);
+        assert_eq!(at, 1);
+        let local = rebase(pointer, screens[0].loc, screens[at].loc);
+        assert_eq!(local, (1270.0, 700.0).into());
+        assert!(Rectangle::from_size(screens[at].size).to_f64().contains(local));
     }
 
     #[test]
