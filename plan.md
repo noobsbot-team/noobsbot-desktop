@@ -1663,9 +1663,9 @@ The dock stays per app, by design. Every per-window job a taskbar does gets a su
   a greyed heading, as submenus don't nest) and Move to Display; Close Others.
 - ~~**Spring-loading:** a file dragged over an icon brings that app's window up (App Exposé when it has several).~~
   Done: held 0.6 s (`src/shell/dock.rs` `Spring`).
-- **Config:** `[dock] click = "toggle" | "cycle"`, `middle = "new" | "close"`, scroll on / off / reverse, Shift-click
-  new window, cycle across apps. Built: `click`, `middle`, `scroll`, Shift/Ctrl-click new window, with Settings rows.
-  Missing: cycle across apps.
+- ~~**Config:** `[dock] click = "toggle" | "cycle"`, `middle = "new" | "close"`, scroll on / off / reverse, Shift-click
+  new window, cycle across apps.~~ Done: `click`, `middle`, `scroll`, Shift/Ctrl-click new window,
+  `cycle_across_apps` (click / scroll cycling walks on into the next dock app), with Settings rows.
 - **Later, if asked:** `[dock] mode = "windows"`, one icon per window with the title as tooltip.
 
 ### E8.4 Appearance and themes (priority 1)
