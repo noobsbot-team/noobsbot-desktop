@@ -221,7 +221,7 @@ impl RenderElement<GlesRenderer> for FilterElement {
         damage: &[Rectangle<i32, Physical>],
         opaque_regions: &[Rectangle<i32, Physical>],
     ) -> Result<(), GlesError> {
-        frame.override_default_tex_program(self.program.clone(), vec![Uniform::new("filter", self.filter)]);
+        frame.override_default_tex_program(self.program.clone(), vec![Uniform::new("mode", self.filter)]);
         let drawn = RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions);
         frame.clear_tex_program_override();
         drawn
