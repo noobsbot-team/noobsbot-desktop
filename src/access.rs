@@ -1,5 +1,6 @@
-//! Our shell widgets for the screen reader over AT-SPI (E8.6): the menu bar, the dock and the open Control Center
-//! as one accessible app, with names, roles and on/off states; dock icons and Control Center toggles can be pressed.
+//! Our shell widgets for the screen reader over AT-SPI (E8.6), as one accessible app: the menu bar, dock, Control
+//! Center, Mission Control, Spotlight, Launchpad, notifications, alerts and Force Quit, the app switcher and the lock
+//! screen, with names, roles and states; their buttons can be pressed. Banners are live regions, read as they come.
 //! Built only while the screen reader is on: the adapter keeps a bus connection and a thread.
 
 use std::sync::{Arc, Mutex};
