@@ -365,6 +365,41 @@ pub async fn set_volume(output: bool, percent: u8) -> Status {
     read().await
 }
 
+/// The default microphone's level, 0 … 1, twenty times a second while subscribed: `pw-record` to a pipe, ended
+/// when the subscription is.
+pub fn level() -> impl iced::futures::Stream<Item = f32> {
+    iced::stream::channel(1, async |tx: iced::futures::channel::mpsc::Sender<f32>| {
+        let mut sender = tx.clone();
+        let spawned = std::thread::Builder::new().name("level".into()).spawn(move || {
+            use std::io::Read;
+            let args = ["--rate", "16000", "--channels", "1", "--format", "s16", "-"];
+            let Ok(mut child) = Command::new("pw-record").args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn() else {
+                return;
+            };
+            let mut stdout = child.stdout.take().expect("piped");
+            // 50 ms of 16 kHz mono s16.
+            let mut chunk = [0u8; 1600];
+            while !sender.is_closed() && stdout.read_exact(&mut chunk).is_ok() {
+                let _ = sender.try_send(meter(chunk.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b))));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        });
+        if let Err(err) = spawned {
+            eprintln!("level: {err}");
+        }
+        std::future::pending::<()>().await;
+        drop(tx);
+    })
+}
+
+/// The peak of `samples` on a 60 dB scale: -60 dBFS and below is 0, full scale is 1.
+pub fn meter(samples: impl Iterator<Item = i16>) -> f32 {
+    let peak = samples.map(i16::unsigned_abs).max().unwrap_or(0);
+    let db = 20.0 * (f32::from(peak) / 32768.0).max(1e-6).log10();
+    ((db + 60.0) / 60.0).clamp(0.0, 1.0)
+}
+
 /// The output's balance, -1 left … 1 right, its loudest channel kept; then the new status.
 pub async fn set_balance(balance: f32) -> Status {
     if let Some((loudest, _)) = crate::pactl::read() {
@@ -513,6 +548,15 @@ pub fn user() -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn meter_is_peak_decibels() {
+        assert_eq!(meter([].into_iter()), 0.0);
+        assert_eq!(meter([0, 30, -32].into_iter()), 0.0, "below -60 dBFS");
+        assert_eq!(meter([12, i16::MIN, 5].into_iter()), 1.0);
+        // -20 dBFS: two thirds up.
+        assert!((meter([3277].into_iter()) - 2.0 / 3.0).abs() < 0.01);
+    }
 
     #[test]
     fn volume_and_name() {

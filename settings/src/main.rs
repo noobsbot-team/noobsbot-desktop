@@ -51,6 +51,10 @@ fn main() -> iced::Result {
                 all.push(iced::Subscription::run(system::discover).map(|()| Message::Rescan));
                 all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::Rescan));
             }
+            // The microphone's live level, only while Sound shows it.
+            if app.page == Page::Sound && app.status.input.is_some() {
+                all.push(iced::Subscription::run(system::level).map(Message::Level));
+            }
             if app.shortcuts.as_ref().is_some_and(|e| e.recording.is_some()) {
                 all.push(iced::event::listen_with(shortcuts::key_pressed));
             }
@@ -117,6 +121,8 @@ pub struct App {
     notifiers: Vec<String>,
     /// Keyboard ▸ Keyboard Shortcuts…, open.
     shortcuts: Option<shortcuts::Editor>,
+    /// Sound ▸ Input: the microphone's level, 0 … 1.
+    level: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -190,6 +196,8 @@ pub enum Message {
     /// `keyboard.options` rewritten by a Modifier Keys dropdown.
     Options(String),
     Shortcuts(shortcuts::Msg),
+    /// The microphone's level, 0 … 1.
+    Level(f32),
 }
 
 impl App {
@@ -215,6 +223,7 @@ impl App {
             picker: None,
             notifiers: config::notifying_apps(),
             shortcuts: None,
+            level: 0.0,
         };
         app.retheme();
         if page == Page::General {
@@ -302,6 +311,7 @@ impl App {
                 }
             }
             Message::Status(status) => self.status = status,
+            Message::Level(level) => self.level = level,
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Wallpaper(path) => {
                 self.save("appearance.wallpaper", path.as_str());
