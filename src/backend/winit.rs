@@ -593,9 +593,9 @@ impl State {
         bar.extend(DockView::glows(shaders, &dock_frame.glows, scale));
         bar.extend(peek_behind);
         // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.
-        if let Some(((position, shown, field, page), grid)) = &pad {
-            let apps = crate::shell::launchpad::filter(self.apps.list(), &field.text);
-            let frame = LaunchpadFrame { apps: &apps, grid, output: size, position: *position, page: *page, shown: *shown, field };
+        if let (Some(((position, shown, field, page), grid)), Some(l)) = (&pad, self.launchpad.as_ref()) {
+            let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &field.text);
+            let frame = LaunchpadFrame { tiles: &tiles, grid, output: size, position: *position, page: *page, shown: *shown, field };
             bar.extend(pad_view.elements(
                 renderer,
                 shaders,

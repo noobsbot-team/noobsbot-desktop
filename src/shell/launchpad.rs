@@ -2,8 +2,16 @@
 //! from its dock icon or the `launchpad` binding (F4, off by default); Esc, a click on empty space or the binding
 //! again closes it. Pages slide with a two-finger horizontal swipe, the wheel, ←/→ or a click on a page dot. Typing
 //! filters; Return opens the first match. Animations run only while something moves.
+//!
+//! The order and folders are saved in `$XDG_STATE_HOME/noobsbot-desktop/launchpad.json`; apps it doesn't name go at
+//! the end, by name.
 
-use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    time::{Duration, Instant},
+};
+
+use serde::{Deserialize, Serialize};
 
 use smithay::{
     input::keyboard::Keysym,
@@ -134,6 +142,69 @@ pub fn filter<'a>(apps: &'a [App], query: &str) -> Vec<&'a App> {
     out
 }
 
+/// One place in the grid: an app's desktop-file id, or a folder of them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Entry {
+    App(String),
+    Folder { name: String, apps: Vec<String> },
+}
+
+/// What a place shows.
+pub enum Tile<'a> {
+    App(&'a App),
+    Folder(String, Vec<&'a App>),
+}
+
+/// `order` against the installed `apps`: gone apps dropped, folders left with one app dissolved, apps it doesn't
+/// name appended in `apps`' order (by name).
+pub fn arrange(order: &[Entry], apps: &[App]) -> Vec<Entry> {
+    let known: HashSet<&str> = apps.iter().filter(|a| !a.no_display).map(|a| a.id.as_str()).collect();
+    let mut seen = HashSet::new();
+    let mut keep = |id: &String| known.contains(id.as_str()) && seen.insert(id.clone());
+    let mut out: Vec<Entry> = order
+        .iter()
+        .filter_map(|e| match e {
+            Entry::App(id) => keep(id).then(|| e.clone()),
+            Entry::Folder { name, apps } => tidy(Entry::Folder { name: name.clone(), apps: apps.iter().filter(|id| keep(id)).cloned().collect() }),
+        })
+        .collect();
+    out.extend(apps.iter().filter(|a| !a.no_display && !seen.contains(&a.id)).map(|a| Entry::App(a.id.clone())));
+    out
+}
+
+/// A folder with one app is that app; with none, nothing.
+fn tidy(entry: Entry) -> Option<Entry> {
+    match entry {
+        Entry::Folder { mut apps, .. } if apps.len() < 2 => apps.pop().map(Entry::App),
+        e => Some(e),
+    }
+}
+
+/// What the grid shows: the saved `order` while `query` is empty, else every app matching it (folders' too).
+pub fn tiles<'a>(apps: &'a [App], order: &[Entry], query: &str) -> Vec<Tile<'a>> {
+    if !query.trim().is_empty() {
+        return filter(apps, query).into_iter().map(Tile::App).collect();
+    }
+    let by_id: HashMap<&str, &App> = apps.iter().map(|a| (a.id.as_str(), a)).collect();
+    arrange(order, apps)
+        .into_iter()
+        .filter_map(|e| match e {
+            Entry::App(id) => by_id.get(id.as_str()).copied().map(Tile::App),
+            Entry::Folder { name, apps } => Some(Tile::Folder(name, apps.iter().filter_map(|id| by_id.get(id.as_str()).copied()).collect())),
+        })
+        .collect()
+}
+
+fn order_file() -> std::path::PathBuf {
+    super::drawer::state_file("launchpad.json")
+}
+
+/// The saved order; empty when there is none (or it doesn't parse).
+fn load_order() -> Vec<Entry> {
+    std::fs::read(order_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
 /// D10 `smooth`: a critically damped spring with a 0.4 s response.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spring {
@@ -177,6 +248,8 @@ const SWIPE_END: Duration = Duration::from_millis(150);
 
 pub struct Launchpad {
     pub field: TextField,
+    /// The saved order (see `arrange`).
+    pub order: Vec<Entry>,
     pub page: usize,
     /// 0 closed → 1 open: icons zoom from 1.1 and fade in.
     pub shown: Spring,
@@ -190,7 +263,15 @@ pub struct Launchpad {
 
 impl Launchpad {
     fn new(now: Instant) -> Self {
-        Self { field: TextField::default(), page: 0, shown: Spring::new(0.0, 1.0, now), slide: Spring::new(0.0, 0.0, now), drag: 0.0, swipe_end: None }
+        Self {
+            field: TextField::default(),
+            order: load_order(),
+            page: 0,
+            shown: Spring::new(0.0, 1.0, now),
+            slide: Spring::new(0.0, 0.0, now),
+            drag: 0.0,
+            swipe_end: None,
+        }
     }
 
     pub fn closing(&self) -> bool {
@@ -215,9 +296,9 @@ impl Launchpad {
 }
 
 impl State {
-    /// What the grid shows: the launchable apps matching the search.
-    pub fn launchpad_apps(&self) -> Vec<&App> {
-        self.launchpad.as_ref().map_or_else(Vec::new, |l| filter(self.apps.list(), &l.field.text))
+    /// What the grid shows.
+    pub fn launchpad_tiles(&self) -> Vec<Tile<'_>> {
+        self.launchpad.as_ref().map_or_else(Vec::new, |l| tiles(self.apps.list(), &l.order, &l.field.text))
     }
 
     pub fn launchpad_grid(&self) -> Option<Grid> {
@@ -269,7 +350,7 @@ impl State {
     }
 
     fn launchpad_pages(&self) -> usize {
-        let n = self.launchpad_apps().len();
+        let n = self.launchpad_tiles().len();
         self.launchpad_grid().map_or(1, |g| pages(n, g.per_page()))
     }
 
@@ -311,7 +392,10 @@ impl State {
         let typed = sym.key_char().map(String::from);
         match l.field.key(sym, typed.as_deref(), ctrl) {
             Edit::Submit => {
-                let first = self.launchpad_apps().first().map(|a| (*a).clone());
+                let first = self.launchpad_tiles().into_iter().find_map(|t| match t {
+                    Tile::App(a) => Some(a.clone()),
+                    Tile::Folder(..) => None,
+                });
                 return self.launchpad_launch(first);
             }
             Edit::Changed => {
@@ -332,8 +416,8 @@ impl State {
         if secondary || grid.field.to_f64().contains(location) {
             return true;
         }
-        let apps = self.launchpad_apps();
-        let pages = pages(apps.len(), grid.per_page());
+        let tiles = self.launchpad_tiles();
+        let pages = pages(tiles.len(), grid.per_page());
         if pages > 1
             // A dot is small: its hit area reaches 6 px around it.
             && let Some(dot) = grid.dots(pages).iter().position(|d| Rectangle::new(d.loc - Point::from((6, 6)), d.size + Size::from((12, 12))).to_f64().contains(location))
@@ -341,7 +425,11 @@ impl State {
             self.launchpad_turn(dot);
             return true;
         }
-        let app = grid.hit(location).and_then(|i| apps.get(page * grid.per_page() + i)).map(|a| (*a).clone());
+        // ponytail: a folder click does nothing until folders open (E8.8).
+        let app = grid.hit(location).and_then(|i| tiles.get(page * grid.per_page() + i)).and_then(|t| match t {
+            Tile::App(a) => Some((*a).clone()),
+            Tile::Folder(..) => None,
+        });
         match app {
             Some(app) => self.launchpad_launch(Some(app)),
             None => {
@@ -485,6 +573,38 @@ mod tests {
         assert_eq!(names("k"), ["Kate", "Kdenlive", "Ark"], "prefix matches first");
         assert_eq!(names("FIRE"), ["Firefox"]);
         assert_eq!(names(" set"), Vec::<&str>::new());
+    }
+
+    fn app_id(e: &Entry) -> &str {
+        match e {
+            Entry::App(id) => id,
+            Entry::Folder { name, .. } => name,
+        }
+    }
+
+    #[test]
+    fn saved_order_then_new_apps() {
+        let apps = [app("Ark"), app("Dolphin"), app("Firefox"), app("Kate")];
+        let a = |id: &str| Entry::App(id.into());
+        let folder = |ids: &[&str]| Entry::Folder { name: "Tools".into(), apps: ids.iter().map(|i| i.to_string()).collect() };
+        let order = [a("kate"), a("gone"), folder(&["dolphin", "gone2"]), a("kate")];
+        let got = arrange(&order, &apps);
+        assert_eq!(got.iter().map(app_id).collect::<Vec<_>>(), ["kate", "dolphin", "ark", "firefox"], "a folder of one dissolves, new apps last");
+        let kept = arrange(&[folder(&["firefox", "ark"])], &apps);
+        assert_eq!(kept[0], folder(&["firefox", "ark"]));
+        assert_eq!(kept.len(), 3);
+        assert_eq!(arrange(&[], &apps).len(), 4, "nothing saved: all, by name");
+        let t = tiles(&apps, &[folder(&["firefox", "ark"])], "");
+        assert!(matches!(&t[0], Tile::Folder(name, apps) if name == "Tools" && apps.len() == 2));
+        assert_eq!(tiles(&apps, &[folder(&["firefox", "ark"])], "fire").len(), 1, "search finds apps in folders");
+    }
+
+    #[test]
+    fn order_round_trips() {
+        let order = vec![Entry::App("kate".into()), Entry::Folder { name: "Games".into(), apps: vec!["a".into(), "b".into()] }];
+        let text = serde_json::to_string(&order).unwrap();
+        assert_eq!(text, r#"["kate",{"name":"Games","apps":["a","b"]}]"#);
+        assert_eq!(serde_json::from_str::<Vec<Entry>>(&text).unwrap(), order);
     }
 
     #[test]
