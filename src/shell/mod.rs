@@ -32,6 +32,7 @@ use crate::{
     shortcuts::Action,
     state::State,
     symbols::Symbol,
+    text::ts,
     wm::Rect,
 };
 
@@ -224,10 +225,10 @@ fn tray_rows(tray: &[Option<MenuRow>], depth: usize) -> Vec<Option<Row>> {
 
 /// A menu's height with `rows`.
 pub fn menu_height(rows: &[Option<Row>]) -> i32 {
-    2 * menu::PAD + rows.iter().map(|r| if r.is_some() { menu::ROW } else { menu::SEPARATOR }).sum::<i32>()
+    2 * menu::PAD + rows.iter().map(|r| if r.is_some() { ts(menu::ROW) } else { menu::SEPARATOR }).sum::<i32>()
 }
 
-/// Menus (D8), in logical px.
+/// Menus (D8), in logical px; `ROW`, `SIDE` and `MIN_WIDTH` grow with the text size (`text::ts`).
 pub mod menu {
     pub const PAD: i32 = 5;
     pub const ROW: i32 = 22;
@@ -242,7 +243,7 @@ pub mod menu {
 /// which are neither drawn nor hit.
 pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows: &[Option<Row>], scroll: usize) -> (Rect, Vec<Rect>) {
     use menu::*;
-    let row_h = |row: &Option<Row>| if row.is_some() { ROW } else { SEPARATOR };
+    let row_h = |row: &Option<Row>| if row.is_some() { ts(ROW) } else { SEPARATOR };
     let height = menu_height(rows);
     let (left, top) = match anchor {
         Anchor::Below(x) => (x, menubar::HEIGHT + DROP),
@@ -760,6 +761,19 @@ mod tests {
         let (above, _) = menu_layout(Anchor::Above((640, 1100).into()), output, 200, &rows, 0);
         assert_eq!(above, Rectangle::new((540, 1100 - 4 - 142).into(), (200, 142).into()));
         assert_eq!(rows[2].as_ref().map(|r| (r.label.as_str(), r.action.clone())), Some(("Hide Kate", Some(Action::Hide))));
+    }
+
+    #[test]
+    fn menu_rows_grow_with_the_text_size() {
+        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
+        let output = Size::from((1280, 1200));
+        let big = crate::text::with_scale(1.5, || menu_layout(Anchor::Below(6), output, 200, &rows, 0));
+        let small = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
+        // 5 rows of 33 (a 13 px font at 1.5 shapes into 24 px lines) + the same separators and padding.
+        assert_eq!(big.0.size.h, 5 * 33 + 2 * 11 + 2 * 5);
+        assert!(big.1.iter().zip(&rows).all(|(c, r)| r.is_none() || c.size.h >= 24));
+        assert_eq!(small.0.size.h, 142, "unchanged at 1.0");
+        assert!(big.1.iter().all(|c| big.0.contains_rect(*c)));
     }
 
     #[test]
