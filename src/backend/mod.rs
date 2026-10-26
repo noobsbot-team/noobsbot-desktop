@@ -38,6 +38,8 @@ pub struct Views {
     /// The banner sliding in, drawn apart from the stack under it.
     pub entering: NotificationViews,
     pub menu: MenuPopover,
+    /// The open menu's submenu.
+    pub submenu: MenuPopover,
     pub osd: OsdPopover,
     pub control: ControlCenter,
     pub alert: AlertSheet,
@@ -74,6 +76,7 @@ impl Views {
             notifications: NotificationViews::default(),
             entering: NotificationViews::default(),
             menu: MenuPopover::default(),
+            submenu: MenuPopover::default(),
             osd: OsdPopover::default(),
             control: ControlCenter::default(),
             alert: AlertSheet::default(),

@@ -181,7 +181,7 @@ pub fn toolbar(output: Size<i32, Logical>) -> Toolbar {
 
 /// The Options menu over its button: its rect and one rect per row.
 pub fn options_menu(bar: &Toolbar, output: Size<i32, Logical>) -> (Rect, Vec<Rect>) {
-    let rows: Vec<Option<Row>> = OPTION_ROWS.iter().map(|r| r.map(|label| Row { label: label.into(), shortcut: "", action: None })).collect();
+    let rows: Vec<Option<Row>> = OPTION_ROWS.iter().map(|r| r.map(|label| Row { sub: Vec::new(), label: label.into(), shortcut: "", action: None })).collect();
     let at = (bar.options.loc.x + bar.options.size.w / 2, bar.rect.loc.y).into();
     menu_layout(Anchor::Above(at), output, OPTIONS_MENU_W, &rows, 0)
 }

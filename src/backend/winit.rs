@@ -259,6 +259,7 @@ impl State {
         let dock_menu =
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
         let input_menu = self.input_menu_rows();
+        let overflow_menu = self.overflow_menu_rows();
         let update_ready = self.update_ready();
         let desktop_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Desktop)))
             .then(|| self.desktop_menu_rows())
@@ -279,6 +280,7 @@ impl State {
         let ripple = output_size.and_then(|size| self.ripple_frame(size));
         let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some() || ripple.is_some();
         let idle_shade = self.idle_shade();
+        let open_sub = self.open_submenu();
         let Views {
             shaders,
             wallpaper,
@@ -288,6 +290,7 @@ impl State {
             notifications,
             entering,
             menu,
+            submenu,
             osd,
             control,
             alert: sheet,
@@ -499,12 +502,45 @@ impl State {
                         window_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
                     }
                     _ => (
-                        if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray, update_ready) },
-                        crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
+                        match kind {
+                            crate::shell::Menu::Input => input_menu.clone(),
+                            crate::shell::Menu::Overflow => overflow_menu.clone(),
+                            _ => crate::shell::menu_rows(kind, &app, tray, update_ready),
+                        },
+                        // A tray item opened from "»" hangs from it.
+                        crate::shell::Anchor::Below(
+                            popup
+                                .item()
+                                .and_then(|i| menu_bar.pill(i))
+                                .or_else(|| menu_bar.pill(crate::render::menubar::BarItem::Overflow))
+                                .map_or(0, |r| r.loc.x),
+                        ),
                     ),
                 };
                 let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
-                bar.extend(menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, dark, accent, appearance.glass_opacity, scale));
+                let main =
+                    menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, open_sub, dark, accent, appearance.glass_opacity, scale);
+                // The submenu beside its row, in front of the menu.
+                let beside = open_sub.and_then(|i| Some((rows.get(i)?.as_ref()?.sub.clone(), menu.cell(i)?, menu.rect()?)));
+                if let Some((sub, row, parent)) = beside {
+                    let anchor =
+                        crate::shell::Anchor::Beside(smithay::utils::Rectangle::new((parent.loc.x, row.loc.y).into(), (parent.size.w, row.size.h).into()));
+                    bar.extend(submenu.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &sub,
+                        anchor,
+                        size,
+                        hover,
+                        None,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
+                }
+                bar.extend(main);
             }
             Some(Popup::Control) => {
                 if let Some(status) = &status {

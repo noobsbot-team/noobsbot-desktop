@@ -189,6 +189,8 @@ pub struct State {
     pub symbols: crate::symbols::Symbols,
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
+    /// The open menu's row whose submenu is open, while that menu is the popup.
+    pub submenu: Option<(crate::shell::Popup, usize)>,
     pub osd: Option<crate::shell::Osd>,
     /// The power alert that is up.
     pub alert: Option<crate::shell::alert::Alert>,
@@ -388,7 +390,7 @@ impl State {
                     crate::services::Update::PinEntry { device, passkey } => state.show_pin_entry(device, passkey),
                     crate::services::Update::Polkit(event) => state.polkit_event(event),
                     crate::services::Update::Tray(tray) => state.tray = tray,
-                    crate::services::Update::TrayMenu { service, menu, rows } => state.show_tray_menu(service, menu, rows),
+                    crate::services::Update::TrayMenu { service, menu, parent, rows } => state.show_tray_menu(service, menu, parent, rows),
                     crate::services::Update::Notify(n) => state.notify(*n),
                     crate::services::Update::CloseNotification(id) => state.close_notification(id, crate::shell::notify::Reason::Closed),
                     crate::services::Update::History(list) => state.restore_notifications(list),
@@ -500,6 +502,7 @@ impl State {
             media: None,
             tray: Vec::new(),
             tray_menu: None,
+            submenu: None,
             disks: Default::default(),
             symbols: Default::default(),
             popup: None,
