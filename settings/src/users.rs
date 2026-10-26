@@ -19,6 +19,7 @@ pub struct Account {
     /// AccountsService's object path.
     pub path: String,
     pub login: String,
+    pub uid: u64,
     /// The full name; may be empty.
     pub name: String,
     pub picture: Option<Handle>,
@@ -177,6 +178,9 @@ fn passwd_error(stderr: &str) -> String {
 /// first is there.
 pub const NEW: [&str; 5] = ["users.new.name", "users.new.login", "users.new.password", "users.new.verify", "users.new.admin"];
 
+/// Delete User…'s alert: the account's path, as a text key; open while it is there.
+pub const DELETE: &str = "users.delete";
+
 /// An account name from a full name: its ASCII letters lower-cased, digits, `-` and `_` (none of these first), at
 /// most 32 characters. ponytail: accented letters are dropped, not transliterated.
 pub fn suggest(full: &str) -> String {
@@ -218,6 +222,11 @@ fn create_args<'a>(login: &'a str, full: &'a str, admin: bool) -> (&'a str, &'a 
     (login, full, i32::from(admin))
 }
 
+/// AccountsService's `DeleteUser` arguments: the uid, and whether the home folder goes too.
+fn delete_args(uid: u64, remove_files: bool) -> (i64, bool) {
+    (uid as i64, remove_files)
+}
+
 /// The words of a D-Bus error (a polkit denial says "Not authorized").
 fn reason(err: zbus::Error) -> String {
     match err {
@@ -241,6 +250,17 @@ pub async fn create(full: String, login: String, admin: bool, password: String) 
         set.map_err(|err| format!("Added {login}, but couldn't set the password: {}", reason(err))).map(drop)
     };
     let error = error.await.err();
+    (read().await, error)
+}
+
+/// Removes an account (`DeleteUser`), its home folder too with `remove_files`; then the accounts again and what went
+/// wrong. Interactive like `create`.
+pub async fn delete(login: String, uid: u64, remove_files: bool) -> (Users, Option<String>) {
+    let error = async {
+        let bus = crate::system::system(120).await?;
+        bus.call_method(Some(ACCOUNTS), ACCOUNTS_PATH, Some(ACCOUNTS), "DeleteUser", &delete_args(uid, remove_files)).await
+    };
+    let error = error.await.err().map(|err| format!("Couldn't delete {login}: {}", reason(err)));
     (read().await, error)
 }
 
@@ -278,11 +298,12 @@ async fn account(bus: &Connection, path: &OwnedObjectPath) -> Option<Account> {
         return None;
     }
     let name = text(bus, path, "RealName").await;
+    let uid = crate::system::property(bus, ACCOUNTS, path, USER, "Uid").await.ok().and_then(|v| u64::try_from(v).ok()).unwrap_or_default();
     // As the lock screen looks: AccountsService's copy, else `~/.face`.
     let files = [PathBuf::from(text(bus, path, "IconFile").await), PathBuf::from("/var/lib/AccountsService/icons").join(&login)];
     let face = PathBuf::from(text(bus, path, "HomeDirectory").await).join(".face");
     let picture = files.iter().chain([&face]).find_map(|f| picture(f));
-    Some(Account { path: path.to_owned(), login, name, picture })
+    Some(Account { path: path.to_owned(), login, uid, name, picture })
 }
 
 /// A square picture (shown as a circle), or nothing if `file` isn't a PNG or JPEG.
@@ -344,9 +365,12 @@ mod tests {
     fn dbus_arguments() {
         assert_eq!(create_args("ani", "Ani S", false), ("ani", "Ani S", 0));
         assert_eq!(create_args("ani", "Ani S", true), ("ani", "Ani S", 1));
-        // The signatures AccountsService declares: CreateUser(ssi).
+        assert_eq!(delete_args(1001, true), (1001, true));
+        assert_eq!(delete_args(1001, false), (1001, false));
+        // The signatures AccountsService declares: CreateUser(ssi), DeleteUser(xb).
         use zbus::zvariant::Type;
         assert_eq!(<(&str, &str, i32)>::SIGNATURE.to_string(), "(ssi)");
+        assert_eq!(<(i64, bool)>::SIGNATURE.to_string(), "(xb)");
     }
 
     #[test]

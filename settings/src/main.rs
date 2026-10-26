@@ -266,6 +266,10 @@ pub enum Message {
     /// Users ▸ Add User…: the sheet opens or closes.
     AddUserForm,
     AddUser,
+    /// Other Users ▸ Delete User…: this account's alert opens; `None` closes it.
+    DeleteUser(Option<String>),
+    /// The alert's choice: `true` deletes the home folder too.
+    DeleteUserNow(bool),
 }
 
 impl App {
@@ -485,6 +489,20 @@ impl App {
                 // ponytail: the sheet keeps its fields until the account is added (to try again); wiped when it closes.
                 let password = field(users::NEW[2]).to_owned();
                 return Task::perform(users::create(full, login, admin, password), Message::UsersActed);
+            }
+            Message::DeleteUser(path) => {
+                self.error = None;
+                match path {
+                    Some(path) => self.texts.insert(users::DELETE.into(), path),
+                    None => self.texts.remove(users::DELETE),
+                };
+            }
+            Message::DeleteUserNow(remove_files) => {
+                let path = self.texts.remove(users::DELETE);
+                let others = self.users.as_ref().map_or(&[][..], |u| &u.others[..]);
+                // Only other people's accounts have the button; uid 0 is an unread one, never root.
+                let Some(a) = others.iter().find(|a| Some(&a.path) == path.as_ref() && a.uid != 0) else { return Task::none() };
+                return Task::perform(users::delete(a.login.clone(), a.uid, remove_files), Message::UsersActed);
             }
             Message::UsersActed((users, error)) => {
                 // Done: Add User's sheet closes; failed: it stays, under the reason.

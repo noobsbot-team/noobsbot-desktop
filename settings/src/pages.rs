@@ -1496,7 +1496,8 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
             .iter()
             .map(|a| {
                 let words = column![text(a.shown()).size(13), text(&a.login).size(11).color(t.secondary())].spacing(2);
-                row![picture(t, a, 32.0), words].spacing(10).align_y(Alignment::Center).padding([6, 12]).into()
+                let delete = button(text("Delete User…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::DeleteUser(Some(a.path.clone())));
+                row![picture(t, a, 32.0), words.width(Length::Fill), delete].spacing(10).align_y(Alignment::Center).padding([6, 12]).into()
             })
             .collect();
         parts.push(group(t, "Other Users", rows));
@@ -1506,10 +1507,30 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
     parts
 }
 
-/// Users' Add User… sheet over the window, when it is open.
+/// Users' Add User… sheet or Delete User… alert over the window, when one is open.
 pub fn users_sheet(app: &App) -> Option<Element<'_, Message>> {
     use crate::users::NEW;
     let t = app.tokens;
+    if let Some(path) = app.texts.get(crate::users::DELETE) {
+        let a = app.users.as_ref()?.others.iter().find(|a| &a.path == path)?;
+        let push =
+            |label: &'static str, primary: bool, message: Message| button(text(label).size(13)).padding([4, 14]).style(t.push(primary)).on_press(message);
+        let card = column![
+            text(format!("Delete the user “{}”?", a.shown())).size(15).font(font(Weight::Semibold)),
+            text(format!("{} can't sign in after this. Their home folder can stay, or go with the account.", a.login)).size(12).color(t.secondary()),
+            row![
+                space().width(Length::Fill),
+                push("Cancel", false, Message::DeleteUser(None)),
+                push("Keep Home Folder", true, Message::DeleteUserNow(false)),
+                push("Delete Home Folder", false, Message::DeleteUserNow(true)),
+            ]
+            .spacing(8),
+        ]
+        .spacing(10)
+        .width(420);
+        let sheet = container(card).padding(18).style(t.sheet());
+        return Some(iced::widget::opaque(container(sheet).center(Length::Fill).style(t.dim())));
+    }
     let value = |key: &str| app.texts.get(key).map(String::as_str);
     let full = value(NEW[0])?;
     let suggested = crate::users::suggest(full);
