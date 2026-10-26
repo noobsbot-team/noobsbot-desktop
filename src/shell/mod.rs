@@ -565,7 +565,8 @@ impl State {
             return true;
         }
         // The screenshot thumbnail, unless it is being dragged (then the app under it is the drop target).
-        let on_thumbnail = !self.screenshots.dragging && self.thumbnail_rect().is_some_and(|r| r.to_f64().contains(location));
+        let on_thumbnail = !self.screenshots.dragging
+            && self.thumbnail_rect().is_some_and(|r| r.to_f64().contains(self.to_display(self.thumbnail_output().as_ref(), location)));
         on_thumbnail || self.menu_bar_at(location).is_some() || self.in_popup(location) || self.dock_covers(self.to_dock(location))
     }
 
@@ -1106,6 +1107,15 @@ mod tests {
         assert_eq!(rect, Some(Rectangle::new((280, 100).into(), (1000, 100).into())));
         // Window: the focused window's display.
         assert_eq!(display_for(&[main, left], Some((-300, 400).into()), (500.0, 500.0).into()), 1);
+    }
+
+    #[test]
+    fn thumbnail_follows_the_dragging_pointer_across_displays() {
+        let [main, left] = two_displays();
+        // Dragged onto the left display: drawn there, centred on the pointer in its coordinates.
+        let pointer = Point::from((-1270.0, -190.0));
+        assert_eq!(display_for(&[main, left], None, pointer), 1);
+        assert_eq!(rebase(pointer, main.loc, left.loc), (10.0, 10.0).into());
     }
 
     #[test]

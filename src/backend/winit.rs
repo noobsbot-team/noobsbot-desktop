@@ -560,6 +560,22 @@ impl State {
         views.screenshot.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, &shot, flags, size, dark, accent, glass, scale)
     }
 
+    /// The screenshot thumbnail, on `output` when it shows there (`thumbnail_output`).
+    fn thumbnail_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let frame = self.thumbnail_frame();
+        let here = self.thumbnail_output().as_ref() == Some(output);
+        let (dark, scale) = (render::is_dark(&self.config.appearance), output.current_scale().fractional_scale());
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        match &frame {
+            Some((rect, thumb, alpha)) if here => views.screenshot.thumbnail(renderer, &views.shaders, thumb, *rect, *alpha, dark, scale),
+            Some(_) => Vec::new(),
+            None => {
+                views.screenshot.hide_thumbnail();
+                Vec::new()
+            }
+        }
+    }
+
     /// Spotlight, on `output` when it shows there.
     fn spotlight_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
         let Some(open) = self.spotlight.clone().filter(|s| self.overlay_output(s.output.as_ref()).as_ref() == Some(output)) else { return Vec::new() };
@@ -626,6 +642,7 @@ impl State {
             let drawer = self.drawer_elements(renderer, output);
             let mut ripple = self.alert_elements(renderer, output);
             ripple.extend(self.shot_elements(renderer, output));
+            ripple.extend(self.thumbnail_elements(renderer, output));
             ripple.extend(self.spotlight_elements(renderer, output));
             ripple.extend(self.ripple_elements(output));
             let animating = animating || !ripple.is_empty();
@@ -691,7 +708,7 @@ impl State {
         }
         self.capture_ask();
         let shot = self.shot_elements(renderer, output);
-        let thumbnail = self.thumbnail_frame();
+        let thumbnail = self.thumbnail_elements(renderer, output);
         let quit_list = self.force_quit.clone().map(|f| {
             let entries = self.force_quit_entries();
             let selected = f.selection(&entries);
@@ -748,7 +765,7 @@ impl State {
             tiles: _,
             entrances,
             lock: lock_view,
-            screenshot,
+            screenshot: _,
             desktop: desktop_view,
             widgets: widget_view,
         } = self.backend.as_mut()?;
@@ -764,10 +781,7 @@ impl State {
         bar.extend(alert);
         // The screenshot overlay and its thumbnail: in front of all but the alert.
         bar.extend(shot);
-        match &thumbnail {
-            Some((rect, thumb, alpha)) => bar.extend(screenshot.thumbnail(renderer, shaders, thumb, *rect, *alpha, dark, scale)),
-            None => screenshot.hide_thumbnail(),
-        }
+        bar.extend(thumbnail);
         let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
         bar.extend(switcher_elements);
         if let Some((entries, selected)) = &quit_list {
