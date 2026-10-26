@@ -241,6 +241,8 @@ pub struct State {
     pub idle: crate::idle::Idle,
     /// Night Light's fade and the Control Center's override (E8.4).
     pub night_light: crate::render::NightLight,
+    /// Zoom and colour filters (E8.6).
+    pub zoom: crate::render::Zoom,
     /// The screenshot overlay, toolbar and thumbnail (E6.8).
     pub screenshots: crate::shell::screenshot::Screenshots,
     /// wlr-screencopy for other programs (E6.8, E6.11).
@@ -502,6 +504,7 @@ impl State {
             lock: None,
             idle: crate::idle::Idle::new(&dh, handle.clone()),
             night_light: Default::default(),
+            zoom: Default::default(),
             screenshots: Default::default(),
             capture: crate::capture::Capture::new(&dh),
             display_handle: dh,

@@ -260,6 +260,7 @@ settings file.
 | Super+` | next window of the same app |
 | Super+Shift+3 / 4 / 5 | screenshot: screen / region / toolbar |
 | Super+Ctrl+Q | lock screen |
+| Super+Alt+8, Super+Alt+= / - | Zoom on or off, in, out |
 | Super+Alt+Esc | Force Quit |
 | Super+Ctrl+Space | next keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
@@ -292,6 +293,7 @@ doesn't understand is skipped and reported in the journal.
 |---|---|
 | `[appearance]` | light / dark / auto (set hours, or sunset to sunrise at the weather place), accent colour, glass opacity, wallpapers and slideshow, theming Qt apps to match, reduce motion, text size and pointer size (exported to apps) |
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
+| `[accessibility]` | Zoom style (whole screen or a lens), colour filters (invert, greyscale), increase contrast |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
 | `[touchpad]` | tap to click, natural scrolling, three or four-finger swipes, gesture sensitivity |
 | `[hot_corners]` | an action for each screen corner (off by default) |

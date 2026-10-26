@@ -112,13 +112,23 @@ pub fn wallpaper(event_loop: &mut EventLoop<State>, state: &State) -> Result<Wal
 
 impl State {
     /// Every element of `output`'s frame, front to back, and whether an animation needs another frame. Both backends
-    /// draw with it. Night Light goes in front of everything (capture.rs leaves it out).
+    /// draw with it. Zoom and colour filters (E8.6) take the frame, then Night Light goes in front of everything
+    /// (capture.rs leaves both out: `zoom.plain` and no tint).
     pub fn frame_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
-        let (mut elements, animating) = self.scene_elements(renderer, output)?;
-        let size = self.space.output_geometry(output)?.size.to_physical_precise_round(output.current_scale().fractional_scale());
+        if let Some(views) = self.backend.as_mut() {
+            views.shaders.contrast = self.config.accessibility.increase_contrast;
+        }
+        let (elements, animating) = self.scene_elements(renderer, output)?;
+        let geo = self.space.output_geometry(output)?;
+        let scale = output.current_scale().fractional_scale();
+        let zooming = self.zoom.advance(self.frame_time, self.config.appearance.reduce_motion);
+        let pointer = self.seat.get_pointer().map(|p| p.current_location()).filter(|p| geo.to_f64().contains(*p)).map(|p| p - geo.loc.to_f64());
+        let views = self.backend.as_ref()?;
+        let mut elements = self.zoom.apply(renderer, &views.shaders, elements, &output.name(), geo.size.to_f64(), pointer, &self.config.accessibility, scale);
+        let size = geo.size.to_physical_precise_round(scale);
         let (tint, fading) = self.night_light.element(&self.config.night_light, self.frame_time, size);
         elements.splice(0..0, tint.map(SceneElement::Tint));
-        Some((elements, animating || fading))
+        Some((elements, animating || fading || zooming))
     }
 
     /// The app switcher on `output`, when it shows there (the display it opened on).
@@ -684,7 +694,10 @@ impl State {
         };
         // Read back only when a screenshot or an allowed copy waits, the same way as on the real screen (udev.rs).
         let pixels = damaged.filter(|&damaged| self.frame_wanted(output, damaged)).and_then(|_| {
-            let scene: Vec<&SceneElement> = elements.iter().filter(|e| !matches!(e, SceneElement::Tint(_))).collect();
+            let scene: Vec<&SceneElement> = match &self.zoom.plain {
+                Some(plain) => vec![plain],
+                None => elements.iter().filter(|e| !matches!(e, SceneElement::Tint(_))).collect(),
+            };
             crate::capture::render(backend.renderer(), output, &scene, CLEAR)
         });
         drop(elements);

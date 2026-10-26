@@ -36,6 +36,7 @@ pub struct Config {
     pub check_updates: bool,
     pub appearance: Appearance,
     pub night_light: NightLight,
+    pub accessibility: Accessibility,
     pub keyboard: Keyboard,
     pub touchpad: Touchpad,
     pub mouse: Mouse,
@@ -121,6 +122,37 @@ pub enum NightSchedule {
     Custom,
     /// Sunset to sunrise at the weather place; the hours without one.
     Sunset,
+}
+
+/// Accessibility (E8.6).
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default)]
+pub struct Accessibility {
+    /// Zoom (Super+Alt+8) magnifies the whole screen, or a lens around the pointer.
+    pub zoom_style: ZoomStyle,
+    /// The whole screen through a colour filter; screenshots stay true.
+    pub colour_filter: ColourFilter,
+    /// Glass near-opaque, with a visible 1 px border.
+    pub increase_contrast: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ZoomStyle {
+    #[default]
+    Full,
+    Lens,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ColourFilter {
+    #[default]
+    None,
+    Invert,
+    /// Light and dark swap, colours keep their hue.
+    InvertHue,
+    Greyscale,
 }
 
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
@@ -412,6 +444,7 @@ impl Default for Config {
             check_updates: true,
             appearance: Appearance::default(),
             night_light: NightLight::default(),
+            accessibility: Accessibility::default(),
             keyboard: Keyboard::default(),
             touchpad: Touchpad::default(),
             mouse: Mouse::default(),
@@ -755,6 +788,9 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Alt+H", "hide-others"),
         ("Super+Tab", "switcher"),
         ("Super+Alt+Escape", "force-quit"),
+        ("Super+Alt+8", "screen-zoom"),
+        ("Super+Alt+equal", "screen-zoom in"),
+        ("Super+Alt+minus", "screen-zoom out"),
         ("Super+Ctrl+Q", "lock"),
         ("Super+N", "notification-center"),
         ("Super+Space", "spotlight"),
