@@ -19,7 +19,7 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
-    Wifi,
+    Network,
     Bluetooth,
     Sound,
     Displays,
@@ -42,7 +42,7 @@ pub enum Page {
 
 impl Page {
     pub const ALL: [Page; 19] = [
-        Page::Wifi,
+        Page::Network,
         Page::Bluetooth,
         Page::Sound,
         Page::Displays,
@@ -65,7 +65,7 @@ impl Page {
 
     pub fn name(self) -> &'static str {
         match self {
-            Page::Wifi => "Wi-Fi",
+            Page::Network => "Network",
             Page::Bluetooth => "Bluetooth",
             Page::Sound => "Sound",
             Page::Displays => "Displays",
@@ -87,15 +87,19 @@ impl Page {
         }
     }
 
-    /// `--page appearance`, `--page date-time`, …: the page's name in lowercase, spaces as dashes.
+    /// `--page appearance`, `--page date-time`, …: the page's name in lowercase, spaces as dashes (`wi-fi` and
+    /// `wifi`, the Network page's old slugs, still open it).
     pub fn parse(name: &str) -> Option<Page> {
+        if matches!(name, "wi-fi" | "wifi") {
+            return Some(Page::Network);
+        }
         let slug = |p: Page| p.name().to_lowercase().replace(" & ", "-").replace(' ', "-");
         Page::ALL.into_iter().find(|p| slug(*p) == name)
     }
 
     /// Pages that read the system services when opened.
     pub fn is_system(self) -> bool {
-        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery | Page::Privacy)
+        matches!(self, Page::Network | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery | Page::Privacy)
     }
 
     /// A little space starts a new block in the sidebar.
@@ -106,7 +110,7 @@ impl Page {
     /// Phosphor fill symbol and squircle colour.
     fn icon(self) -> (&'static str, u32) {
         match self {
-            Page::Wifi => ("wifi-high", 0x007AFF),
+            Page::Network => ("wifi-high", 0x007AFF),
             Page::Bluetooth => ("bluetooth", 0x007AFF),
             Page::Sound => ("speaker-high", 0xFF2D55),
             Page::Displays => ("monitor", 0x0A84FF),
@@ -574,18 +578,18 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Mouse, "", "mouse.double_click_ms", "Double-click speed", "Longest gap between two clicks", Kind::Slider { min: 150.0, max: 1000.0, step: 50.0 }),
     s(Page::Mouse, "", "mouse.middle_click_paste", "Middle click pastes", "The last selected text", Kind::Toggle),
     s(
-        Page::Wifi,
+        Page::Network,
         "Proxy",
         "network.proxy",
         "Proxy",
         "For apps started from the desktop; Automatic reaches only GTK apps",
         Kind::Choice(&[("none", "None"), ("manual", "Manual"), ("auto", "Automatic")]),
     ),
-    s(Page::Wifi, "Proxy", "network.proxy_http", "HTTP proxy", "Manual: host:port", Kind::Text("None")),
-    s(Page::Wifi, "Proxy", "network.proxy_https", "HTTPS proxy", "Manual: host:port", Kind::Text("None")),
-    s(Page::Wifi, "Proxy", "network.proxy_socks", "SOCKS proxy", "Manual: host:port", Kind::Text("None")),
-    s(Page::Wifi, "Proxy", "network.proxy_bypass", "Bypass proxies for", "Comma separated hosts and networks", Kind::Text("localhost, .lan")),
-    s(Page::Wifi, "Proxy", "network.proxy_pac", "Auto-config URL", "Automatic: the PAC file", Kind::Text("http://wpad/wpad.dat")),
+    s(Page::Network, "Proxy", "network.proxy_http", "HTTP proxy", "Manual: host:port", Kind::Text("None")),
+    s(Page::Network, "Proxy", "network.proxy_https", "HTTPS proxy", "Manual: host:port", Kind::Text("None")),
+    s(Page::Network, "Proxy", "network.proxy_socks", "SOCKS proxy", "Manual: host:port", Kind::Text("None")),
+    s(Page::Network, "Proxy", "network.proxy_bypass", "Bypass proxies for", "Comma separated hosts and networks", Kind::Text("localhost, .lan")),
+    s(Page::Network, "Proxy", "network.proxy_pac", "Auto-config URL", "Automatic: the PAC file", Kind::Text("http://wpad/wpad.dat")),
     s(Page::DateTime, "", "clock.timezone", "Time zone", "Type a city; picking one also sets the system's", Kind::Zone),
     s(Page::DateTime, "", "clock.hour24", "24-hour time", "", Kind::Toggle),
     s(Page::DateTime, "Menu bar clock", "clock.weekday", "Show the day of the week", "", Kind::Toggle),
@@ -1250,7 +1254,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
     let status = &app.status;
     let missing = |what: &'static str| vec![group(t, "", vec![fact(t, what, String::new())])];
     match page {
-        Page::Wifi => match &status.wifi {
+        Page::Network => match &status.wifi {
             Some(wifi) => network_part(app, wifi),
             None => missing("NetworkManager isn't running"),
         },
@@ -2319,7 +2323,9 @@ mod tests {
     fn page_names_parse() {
         assert_eq!(Page::parse("desktop-dock"), Some(Page::Dock));
         assert_eq!(Page::parse("date-time"), Some(Page::DateTime));
-        assert_eq!(Page::parse("wi-fi"), Some(Page::Wifi));
+        assert_eq!(Page::parse("network"), Some(Page::Network));
+        assert_eq!(Page::parse("wi-fi"), Some(Page::Network));
+        assert_eq!(Page::parse("wifi"), Some(Page::Network));
         assert_eq!(Page::parse("battery"), Some(Page::Battery));
         assert_eq!(Page::parse("privacy-security"), Some(Page::Privacy));
         assert_eq!(Page::parse("users"), Some(Page::Users));

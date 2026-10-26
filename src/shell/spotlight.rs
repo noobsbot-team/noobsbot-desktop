@@ -104,7 +104,7 @@ pub struct Setting {
 /// can't drift from it (the shell doesn't link the Settings crate).
 pub static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| parse_settings(include_str!("../../settings/src/pages.rs")));
 
-/// `pages.rs`: its `Page::name` arms (`Page::Wifi => "Wi-Fi",`), `Page::icon` arms (`Page::Wifi => ("wifi-high",
+/// `pages.rs`: its `Page::name` arms (`Page::Network => "Wi-Fi",`), `Page::icon` arms (`Page::Network => ("wifi-high",
 /// 0x007AFF),`) and the `SETTINGS` rows (`s(Page::Sound, "group", "key", "Label", …)`, one line or spread over
 /// several). Pages whose symbol the shell lacks are left out (a test checks there are none).
 pub fn parse_settings(src: &'static str) -> Vec<Setting> {
@@ -692,7 +692,7 @@ mod tests {
         // Every page, with its symbol (a page missing here lacks a `Symbol`), and a slug its `Page::parse` takes.
         let all = src.split_once("pub const ALL: [Page; ").and_then(|(_, r)| r.split_once(']')).map(|(n, _)| n.parse::<usize>().unwrap());
         assert_eq!(Some(pages.len()), all);
-        for (page, slug) in [("Wi-Fi", "wi-fi"), ("Desktop & Dock", "desktop-dock"), ("Date & Time", "date-time"), ("Lock Screen", "lock-screen")] {
+        for (page, slug) in [("Network", "network"), ("Desktop & Dock", "desktop-dock"), ("Date & Time", "date-time"), ("Lock Screen", "lock-screen")] {
             assert_eq!(pages.iter().find(|p| p.page == page).map(|p| p.slug.as_str()), Some(slug));
         }
         // Every `SETTINGS` row (bar the few named as their page: Appearance, Trackpad, Spaces), one line or several.
