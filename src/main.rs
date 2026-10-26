@@ -134,6 +134,7 @@ fn main() {
 
 fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, show: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
+    heartbeat(&event_loop);
     let display: Display<State> = Display::new()?;
     let config_path = config::path();
     // Not nested: a test run never writes the owner's config.
@@ -584,4 +585,31 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         let _ = state.display_handle.flush_clients();
     })?;
     Ok(())
+}
+
+/// E6.4: a byte a second to the session's watchdog (`noobsbot-desktop-watchdog`) from a loop timer, so a stuck loop
+/// goes quiet and gets restarted. Runs before any thread starts, which `remove_var` needs.
+fn heartbeat(event_loop: &EventLoop<'static, State>) {
+    use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+    const SECOND: std::time::Duration = std::time::Duration::from_secs(1);
+    let Some(fd) = std::env::var("NOOBSBOT_HEARTBEAT_FD").ok().and_then(|fd| fd.parse::<i32>().ok()) else { return };
+    // SAFETY: still single-threaded. Apps and nested runs must not see a number that means nothing to them.
+    unsafe { std::env::remove_var("NOOBSBOT_HEARTBEAT_FD") };
+    // SAFETY: fstat and fcntl only inspect and flag the descriptor; it is used only if it really is a pipe.
+    let mut stat = unsafe { std::mem::zeroed::<libc::stat>() };
+    if unsafe { libc::fstat(fd, &mut stat) } != 0 || stat.st_mode & libc::S_IFMT != libc::S_IFIFO {
+        return;
+    }
+    unsafe {
+        libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+        libc::fcntl(fd, libc::F_SETFL, libc::O_NONBLOCK);
+    }
+    let beat = move |_, _: &mut (), _: &mut State| {
+        // SAFETY: a one-byte write from a static buffer. EAGAIN (watchdog behind) and EPIPE (watchdog gone) are dropped.
+        unsafe { libc::write(fd, b".".as_ptr().cast(), 1) };
+        TimeoutAction::ToDuration(SECOND)
+    };
+    if let Err(err) = event_loop.handle().insert_source(Timer::from_duration(SECOND), beat) {
+        tracing::warn!("no session heartbeat: {err}");
+    }
 }
