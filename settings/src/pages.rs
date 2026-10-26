@@ -123,6 +123,9 @@ macro_rules! symbols {
 
 symbols![
     "wifi-high",
+    "wifi-medium",
+    "wifi-low",
+    "check",
     "bluetooth",
     "speaker-high",
     "monitor",
@@ -482,10 +485,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
     let missing = |what: &'static str| vec![group(t, "", vec![fact(t, what, String::new())])];
     match page {
         Page::Wifi => match &status.wifi {
-            Some(wifi) => {
-                let network = wifi.connection.clone().unwrap_or_else(|| "Not connected".into());
-                vec![group(t, "", vec![line(t, "Wi-Fi", "", toggle(t, wifi.enabled, Message::Wifi)), fact(t, "Network", network)])]
-            }
+            Some(wifi) => network_part(app, wifi),
             None => missing("NetworkManager isn't running"),
         },
         Page::Bluetooth => match &status.bluetooth {
@@ -535,6 +535,84 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         Page::Appearance => vec![gallery(app)],
         _ => Vec::new(),
     }
+}
+
+/// Wi-Fi (E8.2 Network): the switch, networks in range, Known Networks, and the details of the links that are up.
+fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<'a, Message>> {
+    let t = app.tokens;
+    let net = &wifi.network;
+    let network = wifi.connection.clone().unwrap_or_else(|| "Not connected".into());
+    let mut parts = vec![group(t, "", vec![line(t, "Wi-Fi", "", toggle(t, wifi.enabled, Message::Wifi)), fact(t, "Network", network)])];
+    let symbol = |name: &'static str| svg(icon(name)).width(14).height(14).style(Tokens::tint(t.secondary()));
+    if wifi.enabled && !net.networks.is_empty() {
+        let mut rows = Vec::new();
+        for ap in &net.networks {
+            let check: Element<'a, Message> = if ap.connected { symbol("check").into() } else { space().width(14).into() };
+            let bars = match ap.strength {
+                0..=33 => "wifi-low",
+                34..=66 => "wifi-medium",
+                _ => "wifi-high",
+            };
+            let mut item = row![check, text(&ap.ssid).size(13).width(Length::Fill)].spacing(8).align_y(Alignment::Center);
+            if ap.secure {
+                item = item.push(symbol("lock-simple"));
+            }
+            item = item.push(symbol(bars));
+            let press = (!ap.connected).then(|| Message::Join(ap.ssid.clone()));
+            rows.push(button(item).padding([6, 12]).width(Length::Fill).style(t.sidebar_row(false)).on_press_maybe(press).into());
+            let key = format!("{}{}", crate::network::PASSWORD, ap.ssid);
+            if let Some(password) = app.texts.get(&key) {
+                let field = text_input("Password", password)
+                    .secure(true)
+                    .on_input({
+                        let key = key.clone();
+                        move |v| Message::Type(key.clone(), v)
+                    })
+                    .on_submit(Message::Submit(key.clone()))
+                    .size(13)
+                    .padding([3, 8])
+                    .width(180)
+                    .style(t.input(false));
+                let join = button(text("Join").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::Submit(key));
+                rows.push(line(t, "Password", "", row![field, join].spacing(8).align_y(Alignment::Center).into()));
+            }
+        }
+        parts.push(group(t, "Networks", rows));
+    }
+    if !net.known.is_empty() {
+        let rows = net
+            .known
+            .iter()
+            .map(|k| {
+                let path = k.path.clone();
+                let controls = row![
+                    text("Auto-Join").size(12).color(t.secondary()),
+                    toggle(t, k.auto_join, move |on| Message::AutoJoin(path.clone(), on)),
+                    button(text("Forget").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::Forget(k.path.clone())),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center);
+                line(t, k.ssid.as_str(), "", controls.into())
+            })
+            .collect();
+        parts.push(group(t, "Known Networks", rows));
+    }
+    for d in &net.details {
+        let rows = [("IP address", &d.ip), ("Router", &d.router), ("DNS", &d.dns), ("MAC address", &d.mac)]
+            .into_iter()
+            .filter(|(_, value)| !value.is_empty())
+            .map(|(label, value)| fact(t, label, value.clone()))
+            .collect();
+        parts.push(group(t, if d.wifi { "Wi-Fi Details" } else { "Ethernet Details" }, rows));
+    }
+    if net.editor {
+        let advanced = button(text("Advanced…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::Advanced);
+        parts.push(container(advanced).align_right(Length::Fill).into());
+    }
+    if let Some(error) = &net.error {
+        parts.push(note(t, error));
+    }
+    parts
 }
 
 /// Appearance ▸ Wallpaper: the built-in opal, then the pictures found (`gallery`), as tiles that wrap.

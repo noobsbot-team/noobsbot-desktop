@@ -26,6 +26,7 @@ pub struct Wifi {
     pub enabled: bool,
     /// The primary connection's name.
     pub connection: Option<String>,
+    pub network: crate::network::Network,
 }
 
 #[derive(Clone, Debug)]
@@ -55,7 +56,7 @@ pub async fn read() -> Status {
 
 /// The desktop's connect (`src/services/mod.rs`): on this thread, not zbus's pool, whose idle thread wakes every
 /// 500 ms.
-async fn connect(variable: &str, fallback: String) -> zbus::Result<Connection> {
+pub async fn connect(variable: &str, fallback: String) -> zbus::Result<Connection> {
     let address = std::env::var(variable).unwrap_or_default();
     let path = address.strip_prefix("unix:path=").map_or(fallback.as_str(), |rest| rest.split(',').next().unwrap_or(rest));
     let socket = UnixStream::connect(path)?;
@@ -82,7 +83,7 @@ async fn wifi(bus: &Connection) -> Option<Wifi> {
         }
         None => None,
     };
-    Some(Wifi { enabled, connection })
+    Some(Wifi { enabled, connection, network: crate::network::read(bus).await })
 }
 
 async fn bluetooth(bus: &Connection) -> Option<Bluetooth> {
