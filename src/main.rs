@@ -31,6 +31,7 @@ mod shell;
 mod shortcuts;
 mod spaces;
 mod state;
+mod sun;
 mod symbols;
 mod sync;
 mod text;

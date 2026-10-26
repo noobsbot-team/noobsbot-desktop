@@ -86,6 +86,7 @@ pub fn spawn(settings: config::Weather, found: Sender<Option<Weather>>) -> mpsc:
         let mut sent = false;
         loop {
             let shown = settings.enabled.then(|| refresh(&settings)).flatten();
+            crate::sun::set_place(place(&settings));
             if shown.is_some() || sent {
                 sent = true;
                 if found.send(shown).is_err() {
@@ -138,6 +139,17 @@ fn refresh(settings: &config::Weather) -> Option<Weather> {
     }
     let cached = cached?;
     parse(&cached, mtime(&path)?, now)
+}
+
+/// The typed coordinates, else the city as the cache geocoded it (no request): for sunset and sunrise (sun.rs).
+fn place(settings: &config::Weather) -> Option<(f64, f64)> {
+    let city = clean(settings.city.trim());
+    if city.is_empty() {
+        return ((settings.latitude, settings.longitude) != (0.0, 0.0)).then_some((settings.latitude, settings.longitude));
+    }
+    let cache = std::fs::read_to_string(cache_path()).ok()?;
+    let place = section(&cache, "place").filter(|p| scalar(p, "query").map(unquote) == Some(city))?;
+    Some((scalar(place, "latitude")?.parse().ok()?, scalar(place, "longitude")?.parse().ok()?))
 }
 
 /// Whether the cache answers these settings: same city (or coordinates, without one) and units.
