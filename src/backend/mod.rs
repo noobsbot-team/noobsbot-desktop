@@ -54,6 +54,8 @@ pub struct Views {
     pub launchpad: LaunchpadView,
     pub drawer: DrawerView,
     pub mission: MissionView,
+    /// Mission Control on the other displays, by output name.
+    pub missions: std::collections::HashMap<String, MissionView>,
     /// Closing and minimising windows still animating (E5.5).
     pub ghosts: Vec<render::motion::Ghost>,
     /// Minimised windows' last frames, drawn on their dock tiles.
@@ -92,6 +94,7 @@ impl Views {
             launchpad: LaunchpadView::default(),
             drawer: DrawerView::default(),
             mission: MissionView::default(),
+            missions: Default::default(),
             ghosts: Vec::new(),
             tiles: Vec::new(),
             entrances: Default::default(),
