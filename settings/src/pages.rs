@@ -211,6 +211,8 @@ pub enum Kind {
     Steps(&'static [(i64, &'static str)]),
     /// A sound from the system's sound theme, with a button that plays it.
     Sound,
+    /// Degrees typed in a field, checked to lie within ± this.
+    Degrees(f64),
     /// A switch for a two-word key: the value written off, then on.
     Flag(&'static str, &'static str),
     /// A list of paths, a row each with Remove; with an Add… button that opens the file chooser for this `texts` key.
@@ -618,7 +620,9 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Notifications, "Do Not Disturb", "notifications.dnd_from", "From", "", Kind::Slider { min: 0.0, max: 23.0, step: 1.0 }),
     s(Page::Notifications, "Do Not Disturb", "notifications.dnd_until", "To", "", Kind::Slider { min: 0.0, max: 23.0, step: 1.0 }),
     s(Page::Notifications, "Weather", "weather.enabled", "Weather widget", "Forecast from Open-Meteo every 30 minutes; sends only the place", Kind::Toggle),
-    s(Page::Notifications, "Weather", "weather.city", "City", "Looked up once; never located by IP", Kind::Text("Kathmandu")),
+    s(Page::Notifications, "Weather", "weather.city", "City", "Looked up once, never located by IP; empty = the coordinates below", Kind::Text("Kathmandu")),
+    s(Page::Notifications, "Weather", "weather.latitude", "Latitude", "North is positive; setting it clears City", Kind::Degrees(90.0)),
+    s(Page::Notifications, "Weather", "weather.longitude", "Longitude", "East is positive; setting it clears City", Kind::Degrees(180.0)),
     s(Page::Notifications, "Weather", "weather.units", "Units", "", Kind::Choice(&[("celsius", "°C"), ("fahrenheit", "°F")])),
     s(Page::LockScreen, "", "idle.dim", "Dim the display when inactive", "", Kind::Slider { min: 0.0, max: 600.0, step: 30.0 }),
     s(
@@ -793,6 +797,18 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
                 .size(13)
                 .padding([3, 8])
                 .width(180)
+                .style(t.input(false))
+                .into()
+        }
+        Kind::Degrees(limit) => {
+            let saved = app.config.num(key);
+            let value = app.texts.get(key).cloned().unwrap_or_else(|| if saved == 0.0 { String::new() } else { saved.to_string() });
+            text_input(&format!("−{limit:.0} … {limit:.0}"), &value)
+                .on_input(move |v| Message::Type(key.into(), v))
+                .on_submit(Message::Submit(key.into()))
+                .size(13)
+                .padding([3, 8])
+                .width(120)
                 .style(t.input(false))
                 .into()
         }
@@ -1910,6 +1926,12 @@ pub fn parse_scale(typed: &str) -> Option<f64> {
     (1.0..=3.0).contains(&scale).then(|| (scale * 1000.0).round() / 1000.0)
 }
 
+/// Typed degrees: `27.7`, `-85.3°` or `−85.3`; `None` when not a number within ±`limit`.
+pub fn parse_degrees(typed: &str, limit: f64) -> Option<f64> {
+    let value: f64 = typed.trim().trim_end_matches('°').replace('−', "-").parse().ok()?;
+    (value.is_finite() && value.abs() <= limit).then_some(value)
+}
+
 /// A segmented control (D8) of `(label, selected, message)`.
 fn segments<'a>(t: Tokens, items: Vec<(String, bool, Message)>) -> Element<'a, Message> {
     let mut row = row![].spacing(2);
@@ -2096,6 +2118,17 @@ mod tests {
         assert!(c.lock && c.value().is_inline_table(), "lock on: a table");
         assert_eq!(AppRule::read(Some(&c.value())), c);
         assert_eq!(AppRule::read(None).style, "banner");
+    }
+
+    #[test]
+    fn degrees_parse_within_range() {
+        assert_eq!(parse_degrees(" 27.7 ", 90.0), Some(27.7));
+        assert_eq!(parse_degrees("−85.3°", 180.0), Some(-85.3));
+        assert_eq!(parse_degrees("-180", 180.0), Some(-180.0));
+        assert_eq!(parse_degrees("91", 90.0), None);
+        assert_eq!(parse_degrees("NaN", 90.0), None);
+        assert_eq!(parse_degrees("north", 90.0), None);
+        assert_eq!(parse_degrees("", 90.0), None);
     }
 
     #[test]
