@@ -31,6 +31,7 @@ use smithay::{
                 memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
                 surface::render_elements_from_surface_tree,
                 texture::TextureRenderElement,
+                utils::{Relocate, RelocateRenderElement, RescaleRenderElement},
             },
             gles::{GlesRenderer, GlesTexture},
             multigpu::{ApiDevice, GpuManager, MultiRenderer, gbm::GbmGlesBackend},
@@ -120,6 +121,8 @@ struct Screen {
     /// The connector whose picture it shows (mirroring), and that picture as last drawn.
     mirror_of: Option<String>,
     mirrored: Option<Mirrored>,
+    /// Percent the frame is drawn smaller, centred (`underscan`).
+    underscan: u8,
 }
 
 /// A mirror's copy of its source's frame: drawn offscreen at the source's size, redrawn where the source changed.
@@ -424,6 +427,7 @@ impl State {
                 if screen.mirror_of != of {
                     (screen.mirror_of, screen.mirrored) = (of, None);
                 }
+                screen.underscan = d.underscan;
                 // Takes effect with the next frame; a display that needs a modeset for it may blank briefly.
                 if screen.compositor.vrr_enabled() != d.vrr
                     && let Err(err) = screen.compositor.use_vrr(d.vrr)
@@ -489,17 +493,33 @@ impl State {
             None => self.frame_elements(renderer.as_mut(), &screen.output),
         };
         let Some((elements, animating)) = drawn else { return };
-        let mut all: Vec<OnGpu> = self.cursor_elements(renderer.as_mut(), &mut udev.cursors, &screen.output).into_iter().map(OnGpu).collect();
-        let cursors = all.len();
-        all.extend(elements.into_iter().map(OnGpu));
-        let frame = screen.compositor.render_frame(&mut renderer, &all, CLEAR, FrameFlags::DEFAULT).map(|f| f.is_empty);
+        let mut scene = self.cursor_elements(renderer.as_mut(), &mut udev.cursors, &screen.output);
+        let cursors = scene.len();
+        scene.extend(elements);
+        let all: Vec<OnGpu> = scene.iter().map(OnGpu).collect();
+        let frame = if screen.underscan == 0 {
+            screen.compositor.render_frame(&mut renderer, &all, CLEAR, FrameFlags::DEFAULT).map(|f| f.is_empty)
+        } else {
+            // Underscan: the frame (drawn at the output's larger scale, see `displays::drawn_scale`) shrunk into a
+            // centred rect, black around it. Input needs nothing: the output's logical size is the shrunk picture's.
+            // ponytail: a touchscreen or tablet mapped to this display still spans the whole panel onto the picture,
+            // so touches land up to 5 % off at the edges; offset absolute input too if a touch TV ever turns up.
+            let size = screen.output.current_transform().transform_size(screen.output.current_mode().map_or_else(Size::default, |m| m.size));
+            let at = displays::underscan_rect(size, screen.underscan).loc;
+            let k = 1.0 - f64::from(screen.underscan) / 100.0;
+            let shrunk: Vec<_> = all
+                .into_iter()
+                .map(|e| RelocateRenderElement::from_element(RescaleRenderElement::from_element(e, Point::default(), k), at, Relocate::Relative))
+                .collect();
+            screen.compositor.render_frame(&mut renderer, &shrunk, [0.0, 0.0, 0.0, 1.0], FrameFlags::DEFAULT).map(|f| f.is_empty)
+        };
         // A screenshot or an allowed copy waits: the frame drawn once more offscreen on the render GPU, without the
         // cursor (the scanout buffer may be on another GPU, and planes hold the cursor and direct-scanout apps).
         let pixels = match frame {
             Ok(empty) if self.frame_wanted(&screen.output, !empty) => {
                 let scene: Vec<&SceneElement> = match &self.zoom.plain {
                     Some(plain) => vec![plain],
-                    None => all[cursors..].iter().map(|e| &e.0).filter(|e| !matches!(e, SceneElement::Tint(_))).collect(),
+                    None => scene[cursors..].iter().filter(|e| !matches!(e, SceneElement::Tint(_))).collect(),
                 };
                 crate::capture::render(renderer.as_mut(), &screen.output, &scene, CLEAR)
             }
@@ -879,6 +899,7 @@ fn light(
             render_time: Duration::ZERO,
             mirror_of: None,
             mirrored: None,
+            underscan: 0,
         },
     ))
 }
@@ -1038,9 +1059,9 @@ fn vt_of(sym: Keysym) -> Option<i32> {
 }
 
 /// A scene element drawn by the render GPU's GLES frame inside a multi-GPU frame.
-struct OnGpu(SceneElement);
+struct OnGpu<'e>(&'e SceneElement);
 
-impl Element for OnGpu {
+impl Element for OnGpu<'_> {
     fn id(&self) -> &Id {
         self.0.id()
     }
@@ -1073,7 +1094,7 @@ impl Element for OnGpu {
     }
 }
 
-impl<'a> RenderElement<Multi<'a>> for OnGpu {
+impl<'a> RenderElement<Multi<'a>> for OnGpu<'_> {
     fn draw(
         &self,
         frame: &mut <Multi<'a> as RendererSuper>::Frame<'_, '_>,
