@@ -888,9 +888,9 @@ pub fn menu_rows(
     rows
 }
 
-/// The `href`s in a `recently-used.xbel` whose bookmark names one of `apps` (any case), most recently used first.
+/// Each bookmark in a `recently-used.xbel`: its `href` and the apps that used it, with when (ISO 8601, UTC).
 // ponytail: a string scan, not an XML parser; enough for the files GLib and KDE write.
-pub fn recent_files(xbel: &str, apps: &[&str]) -> Vec<String> {
+fn bookmarks(xbel: &str) -> Vec<(String, Vec<(String, String)>)> {
     let attr = |tag: &str, key: &str| -> Option<String> {
         let start = tag.find(&format!(" {key}=\""))? + key.len() + 3;
         let value = &tag[start..start + tag[start..].find('"')?];
@@ -898,21 +898,56 @@ pub fn recent_files(xbel: &str, apps: &[&str]) -> Vec<String> {
     };
     // The tag up to `>`, with a space before its first attribute, which the split ate.
     let head = |s: &str| format!(" {}", &s[..s.find('>').unwrap_or(s.len())]);
-    let mut found: Vec<(String, String)> = Vec::new();
+    let mut found = Vec::new();
     for bookmark in xbel.split("<bookmark ").skip(1) {
         let Some(href) = attr(&head(bookmark), "href") else { continue };
-        let used = bookmark
+        let apps = bookmark
             .split("<bookmark:application ")
             .skip(1)
             .map(head)
-            .filter(|a| attr(a, "name").is_some_and(|n| apps.iter().any(|app| app.eq_ignore_ascii_case(&n))));
-        if let Some(at) = used.map(|a| attr(&a, "modified").unwrap_or_default()).max() {
-            found.push((at, href));
-        }
+            .filter_map(|a| Some((attr(&a, "name")?, attr(&a, "modified").unwrap_or_default())))
+            .collect();
+        found.push((href, apps));
     }
+    found
+}
+
+/// The `href`s in a `recently-used.xbel` whose bookmark names one of `apps` (any case), most recently used first.
+pub fn recent_files(xbel: &str, apps: &[&str]) -> Vec<String> {
+    let mut found: Vec<(String, String)> = bookmarks(xbel)
+        .into_iter()
+        .filter_map(|(href, used)| {
+            let at = used.into_iter().filter(|(n, _)| apps.iter().any(|app| app.eq_ignore_ascii_case(n))).map(|(_, at)| at).max()?;
+            Some((at, href))
+        })
+        .collect();
     // ISO 8601 times in UTC sort as text.
     found.sort_by(|a, b| b.0.cmp(&a.0));
     found.into_iter().map(|(_, href)| href).collect()
+}
+
+/// Every app named in a `recently-used.xbel` and every file in it, each most recently used first.
+pub fn recent_items(xbel: &str) -> (Vec<String>, Vec<String>) {
+    let marks = bookmarks(xbel);
+    let mut files: Vec<(String, String)> =
+        marks.iter().map(|(href, used)| (used.iter().map(|(_, at)| at.clone()).max().unwrap_or_default(), href.clone())).collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut apps: Vec<(String, String)> = marks.into_iter().flat_map(|(_, used)| used).map(|(name, at)| (at, name)).collect();
+    apps.sort_by(|a, b| b.cmp(a));
+    let mut names: Vec<String> = Vec::new();
+    for (_, name) in apps {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    (names, files.into_iter().map(|(_, href)| href).collect())
+}
+
+/// A `recently-used.xbel` with every bookmark gone (Clear Menu); `None` if it has no `<xbel>` to keep.
+pub fn cleared(xbel: &str) -> Option<String> {
+    let start = xbel.find("<xbel")?;
+    let end = start + xbel[start..].find('>')? + 1;
+    Some(format!("{}\n</xbel>\n", &xbel[..end]))
 }
 
 /// `~/.config/autostart/<id>.desktop`.
@@ -1430,6 +1465,15 @@ mod tests {
         assert_eq!(recent_files(xbel, &["GEDIT"]), ["file:///home/u/a%20b&c.txt"]);
         assert!(recent_files(xbel, &["dolphin"]).is_empty());
         assert!(recent_files("", &["kate"]).is_empty());
+
+        let (apps, files) = recent_items(xbel);
+        assert_eq!(apps, ["gwenview", "gedit", "org.kde.kate", "Kate"]);
+        assert_eq!(files, ["file:///home/u/pic.png", "file:///home/u/a%20b&c.txt", "file:///home/u/old.txt"]);
+
+        let empty = cleared(xbel).unwrap();
+        assert!(empty.starts_with("<?xml") && empty.ends_with("</xbel>\n") && !empty.contains("<bookmark "));
+        assert_eq!(recent_items(&empty), (Vec::new(), Vec::new()));
+        assert_eq!(cleared("garbage"), None);
     }
 
     #[test]
