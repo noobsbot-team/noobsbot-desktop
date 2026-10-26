@@ -47,6 +47,8 @@ pub struct Frame<'a> {
     pub lifted: Option<(usize, Rect)>,
     /// How far each tile is drawn off its cell (sliding aside); may be empty.
     pub offsets: &'a [Point<i32, Logical>],
+    /// The tile a dragged icon is held over: dropping makes a folder.
+    pub onto: Option<usize>,
 }
 
 /// Size, pages, page, shown, caret x, selection width, dark, opacity, accent, scale.
@@ -88,7 +90,7 @@ impl LaunchpadView {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let Frame { tiles, grid, output, position, page, shown, field, lifted, offsets } = *frame;
+        let Frame { tiles, grid, output, position, page, shown, field, lifted, offsets, onto } = *frame;
         let per_page = grid.per_page();
         let count = pages(tiles.len(), per_page);
         let spec = Material::Panel.spec(dark);
@@ -120,6 +122,10 @@ impl LaunchpadView {
                 let icon = shift(grid.icon_rect(i));
                 if icon.loc.x + icon.size.w < 0 || icon.loc.x > output.w {
                     continue;
+                }
+                if onto == Some(p * per_page + i) {
+                    let well = zoom(icon, icon.loc.to_f64() + icon.size.to_f64().downscale(2.0).to_point(), 1.2);
+                    moving.push((well, tint(alpha), f64::from(well.size.w) * 0.225, true));
                 }
                 let name = art(icons, tile, icon, (px, mini_px), alpha, tint(alpha), &mut pieces, &mut moving);
                 let name_rect = shift(grid.name_rect(i));
