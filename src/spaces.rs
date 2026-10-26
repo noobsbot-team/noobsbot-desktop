@@ -4,7 +4,10 @@
 //! output, so nothing on screen (drawing, hit tests, frame callbacks) sees them and their apps idle, while the dock,
 //! the switcher and Force Quit still find them. Row 0 is the shown Space; Space `d` lives in row `d + 1` while hidden.
 
-use std::{collections::HashMap, time::Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     desktop::Window,
@@ -16,14 +19,12 @@ use smithay::{
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 
-use crate::{rules, state::State, wm::Rect};
+use crate::{anim::SMOOTH, rules, state::State, wm::Rect};
 
 /// Rows between Spaces: far more than any window can hang off a screen edge.
 pub const STRIDE: i32 = 1 << 16;
 /// The Space indicator shows this long after a switch.
 const HUD_TIME: std::time::Duration = std::time::Duration::from_millis(800);
-/// D10 `smooth`.
-const SMOOTH: f64 = 0.4;
 /// A window held against a side this long during a move goes to the neighbouring Space (E8.7).
 pub const EDGE_HOLD: std::time::Duration = std::time::Duration::from_millis(700);
 
@@ -39,27 +40,50 @@ impl Desks {
     }
 }
 
-/// A value easing from `from` to `to`.
-/// ponytail: an ease-out cubic over `smooth`'s 0.4 s, not a spring; swap for the anim.rs springs when they land.
+/// A value springing (D10 `smooth`) from `from` to `to`, or held where the fingers put it.
 #[derive(Debug, Clone, Copy)]
 pub struct Tween {
     from: f64,
     to: f64,
+    /// Speed when let go, per second.
+    v: f64,
     start: Instant,
+    /// Until it settles; `None`: held at `from`.
+    settle: Option<Duration>,
 }
+
+/// The fastest a fling starts (per second): bounds the overshoot of a critically damped spring to `v / (ωe)`, about 7%.
+const MAX_SPEED: f64 = 3.0;
 
 impl Tween {
     pub fn new(from: f64, to: f64) -> Self {
-        Self { from, to, start: Instant::now() }
+        Self::fling(from, to, 0.0)
+    }
+
+    /// Let go at `from` moving at `v` per second.
+    pub fn fling(from: f64, to: f64, v: f64) -> Self {
+        let v = v.clamp(-MAX_SPEED, MAX_SPEED);
+        Self { from, to, v, start: Instant::now(), settle: Some(SMOOTH.settle_release(from - to, v)) }
+    }
+
+    /// Held at `at` until let go: never done.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the next commit holds slides and Mission Control under the fingers"))]
+    pub fn hold(at: f64) -> Self {
+        Self { from: at, to: at, v: 0.0, start: Instant::now(), settle: None }
     }
 
     pub fn value(&self, now: Instant) -> f64 {
-        let t = (now.saturating_duration_since(self.start).as_secs_f64() / SMOOTH).min(1.0);
-        self.from + (self.to - self.from) * (1.0 - (1.0 - t).powi(3))
+        if self.settle.is_none() {
+            return self.from;
+        }
+        if self.done(now) {
+            return self.to;
+        }
+        self.to + SMOOTH.release(self.from - self.to, self.v, now.saturating_duration_since(self.start).as_secs_f64())
     }
 
     pub fn done(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.start).as_secs_f64() >= SMOOTH
+        self.settle.is_some_and(|d| now.saturating_duration_since(self.start) >= d)
     }
 
     pub fn target(&self) -> f64 {
@@ -754,12 +778,27 @@ mod tests {
     }
 
     #[test]
-    fn tween_eases_to_its_target() {
-        let tween = Tween { from: 0.0, to: 1.0, start: Instant::now() - std::time::Duration::from_millis(200) };
+    fn tween_springs_to_its_target() {
+        let tween = Tween { start: Instant::now() - Duration::from_millis(200), ..Tween::new(0.0, 1.0) };
         let mid = tween.value(Instant::now());
-        assert!(mid > 0.5 && mid < 1.0, "ease-out: past half way at half time, got {mid}");
-        let later = Instant::now() + std::time::Duration::from_secs(1);
+        assert!(mid > 0.5 && mid < 1.0, "past half way at 200 ms, got {mid}");
+        let later = Instant::now() + Duration::from_secs(1);
         assert_eq!(tween.value(later), 1.0);
         assert!(tween.done(later));
+        let held = Tween::hold(0.3);
+        assert!(!held.done(later) && held.value(later) == 0.3, "held until let go");
+    }
+
+    #[test]
+    fn flings_settle_without_overshooting_far() {
+        let t0 = Instant::now();
+        for from in [0.0, 0.3, 0.7, 1.0] {
+            for v in [0.0, 2.0, 10.0, 100.0] {
+                let tween = Tween { start: t0, ..Tween::fling(from, 1.0, v) };
+                let peak = (0..2000).map(|ms| tween.value(t0 + Duration::from_millis(ms))).fold(0.0, f64::max);
+                assert!(peak <= 1.075, "{from} at {v}/s peaks at {peak}");
+                assert!(tween.done(t0 + Duration::from_secs(2)) && tween.value(t0 + Duration::from_secs(2)) == 1.0);
+            }
+        }
     }
 }
