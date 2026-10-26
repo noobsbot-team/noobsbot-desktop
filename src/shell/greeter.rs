@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn row_matches_the_lock_screen_for_one_user() {
-        let l = layout((1280, 800).into());
+        let l = layout((1280, 800).into(), &[]);
         let one = row(&l, 1280, 1);
         assert_eq!((one.avatars[0], one.names[0]), (l.avatar, l.name));
         let three = row(&l, 1280, 3);
@@ -468,7 +468,7 @@ mod tests {
         assert!(three.avatars[0].loc.x + three.avatars[0].size.w < three.avatars[1].loc.x);
         assert!(three.names.windows(2).all(|w| w[0].loc.x + w[0].size.w < w[1].loc.x));
         assert_eq!(three.session.loc.x, 1280 - l.status.loc.x - l.status.size.w);
-        let six = row(&layout((800, 600).into()), 800, MAX_USERS);
+        let six = row(&layout((800, 600).into(), &[]), 800, MAX_USERS);
         assert!(six.avatars[0].loc.x >= 0 && six.names[5].loc.x + six.names[5].size.w <= 800, "six fit 800 px");
     }
 

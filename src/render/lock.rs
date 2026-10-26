@@ -41,8 +41,8 @@ pub struct Content<'a> {
     pub media: Option<&'a Media>,
 }
 
-/// Date, time, missed count, hover, wrong, battery, (keyboard, message, layout pill, Now Playing), size, dark, opacity, scale,
-/// greeter (user, session, error).
+/// Date, time, missed count, hover, wrong, battery, (keyboard, message, layout pill, Now Playing, listed notifications),
+/// size, dark, opacity, scale, greeter (user, session, error).
 type PageKey = (
     String,
     String,
@@ -50,7 +50,7 @@ type PageKey = (
     Option<Button>,
     bool,
     Option<(u8, bool)>,
-    (String, String, Option<String>, Option<Media>),
+    (String, String, Option<String>, Option<Media>, Vec<lock::Listed>),
     Size<i32, Logical>,
     bool,
     u32,
@@ -107,7 +107,7 @@ impl LockView {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let layout = lock::layout(size);
+        let layout = lock::layout(size, &content.lock.listed);
         let lock = content.lock;
         let count = lock.greeter.as_ref().map_or(1, |g| g.users.len());
         if self.users.as_ref().is_none_or(|(s, u)| *s != scale.to_bits() || u.len() != count) {
@@ -144,7 +144,7 @@ impl LockView {
             lock.hover,
             lock.wrong.is_some(),
             battery,
-            (content.keyboard.to_owned(), content.message.to_owned(), content.layout.clone(), media.cloned()),
+            (content.keyboard.to_owned(), content.message.to_owned(), content.layout.clone(), media.cloned(), lock.listed.clone()),
             size,
             dark,
             glass_opacity.to_bits(),
@@ -157,8 +157,15 @@ impl LockView {
             ui.shape(Rectangle::from_size(size), [0.0, 0.0, 0.0, if dark { 0.3 } else { 0.4 }], 0.0);
             ui.text(&key.0, TITLE2, layout.date, Align::Centre);
             ui.text(&key.1, DISPLAY, layout.clock, Align::Centre);
-            if lock.missed > 0 {
-                let words = if lock.missed == 1 { "1 notification".to_owned() } else { format!("{} notifications", lock.missed) };
+            for (listed, card) in lock.listed.iter().zip(layout.cards.into_iter().flatten()) {
+                notice(&mut ui, card, listed);
+            }
+            // Listed ones that didn't fit join the count.
+            let shown = layout.cards.iter().flatten().count().min(lock.listed.len());
+            let count = lock.missed + lock.listed.len() - shown;
+            if count > 0 {
+                let more = if shown > 0 { " more" } else { "" };
+                let words = if count == 1 { format!("1{more} notification") } else { format!("{count}{more} notifications") };
                 ui.text(&words, Style { color: WHITE85, ..CALLOUT }, layout.missed, Align::Centre);
             }
             if lock.greeter.is_none() && !content.message.is_empty() {
@@ -256,6 +263,22 @@ impl LockView {
         out.extend(field_glass.iter().rev().cloned().map(SceneElement::Shader));
         out.extend(page_glass.iter().rev().cloned().map(SceneElement::Shader));
         out
+    }
+}
+
+/// A listed notification's card: its app, then its title, then its body when previews allow it.
+fn notice(ui: &mut Ui, card: Rect, listed: &lock::Listed) {
+    let spec = super::Material::Sheet.spec(ui.dark);
+    let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
+    ui.glass.push(ui.shaders.glass_shape(card, [r, g, b, spec.opacity * ui.glass_opacity], spec.radius, true, ui.dark, ui.scale));
+    let (label, secondary) = (ui.label(), ui.secondary());
+    let (callout_h, line) = (ts(15), ts(16));
+    let row = |y: i32, h: i32| Rectangle::new((card.loc.x + 12, y).into(), (card.size.w - 24, h).into());
+    let y = card.loc.y + 8;
+    ui.text(&listed.app, Style { color: secondary, ..CALLOUT }, row(y, callout_h), Align::Left);
+    ui.text(&listed.title, Style { color: label, ..HEADLINE }, row(y + callout_h + 2, line), Align::Left);
+    if !listed.body.is_empty() {
+        ui.text(&listed.body, Style { color: label, ..BODY }, row(y + callout_h + line + 4, line), Align::Left);
     }
 }
 
