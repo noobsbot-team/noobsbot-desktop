@@ -130,6 +130,8 @@ pub struct State {
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
     /// The pid of the `noobsbot --quake` the quake action started; its window gets `rules::QUAKE_ID`.
     pub quake: Option<u32>,
+    /// Saved windows waiting for their app's window to map (E8.8, session.rs).
+    pub reopen: Vec<crate::session::Entry>,
     /// The pid of the Orca `[accessibility] screen_reader` started.
     pub screen_reader: Option<u32>,
     /// Our widgets on the accessibility bus while the screen reader is on.
@@ -521,6 +523,7 @@ impl State {
             caps_lock: false,
             display_revert: None,
             apps: Default::default(),
+            reopen: Vec::new(),
             apps_epoch: 0,
             icons: crate::apps::Icons::new(icons_tx),
             dock_reveal: false,
@@ -984,7 +987,9 @@ impl CompositorHandler for State {
                     toplevel.with_pending_state(|s| s.bounds = Some(bounds));
                 }
                 self.apply_rules(&toplevel);
-                if let Some(window) = self.window_for(surface).cloned() {
+                if let Some(window) = self.window_for(surface).cloned()
+                    && !self.session_claim(&window)
+                {
                     self.recall_frame(&window);
                 }
                 toplevel.send_configure();
@@ -1019,6 +1024,7 @@ impl CompositorHandler for State {
                         tracing::debug!(?size, ?loc, ?position, "placed");
                         self.set_visible_loc(&window, loc);
                         self.apply_space_rule(&window);
+                        self.session_place(&window);
                         self.window_opened(&window);
                     }
                 }

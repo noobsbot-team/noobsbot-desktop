@@ -175,6 +175,8 @@ spaces = 0
 # Advanced: "hover" gives the keyboard to the window under the pointer after a moment, without raising it;
 # "click" (the default) needs a click.
 focus = "click"
+# Log Out / Restart / Shut Down reopen the running apps' windows at the next login (the alert's checkbox sets it).
+reopen_at_login = true
 
 [clock]
 # Time zone, like "Asia/Kathmandu"; empty = keep the system's. Changing it sets the system zone (may ask for your password).
