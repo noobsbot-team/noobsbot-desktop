@@ -84,6 +84,12 @@ impl SpotlightPanel {
                     Hit::App(app) => app_icons
                         .push((icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| super::dock::placeholder(px)), icon)),
                     Hit::Answer(_) => ui.symbol(Symbol::Calculator, Weight::Regular, 24, icon, main),
+                    // The page's symbol on its colour, as in the Settings sidebar.
+                    Hit::Setting(setting) => {
+                        let [_, r, g, b] = setting.color.to_be_bytes().map(|c| f32::from(c) / 255.0);
+                        ui.shape(icon, [r, g, b, 1.0], 8.0);
+                        ui.symbol(setting.symbol, Weight::Fill, 20, icon, [255; 4]);
+                    }
                 }
                 let x = icon.loc.x + layout::ICON + 8;
                 let inner = Rectangle::new((x, row.loc.y).into(), (row.loc.x + row.size.w - 12 - x, row.size.h).into());
