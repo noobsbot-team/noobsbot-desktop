@@ -381,7 +381,14 @@ impl State {
                 let (dots, up_next) = calendar.clone().unwrap_or_default();
                 let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots };
                 if let Some(center) = &center {
-                    let view = View::Center { center, month: &shown, up_next: &up_next, batteries: &batteries, dnd: self.config.notifications.dnd, weather: self.weather.as_ref() };
+                    let view = View::Center {
+                        center,
+                        month: &shown,
+                        up_next: &up_next,
+                        batteries: &batteries,
+                        dnd: self.config.notifications.dnd,
+                        weather: self.weather.as_ref(),
+                    };
                     bar.extend(notifications.elements(
                         renderer,
                         shaders,
