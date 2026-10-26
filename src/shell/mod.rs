@@ -518,7 +518,7 @@ impl State {
         if self.launchpad_open() || self.drawer_layout().is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
-        self.menu_bar_at(location).is_some() || self.in_popup(location) || self.dock_covers(location)
+        self.menu_bar_at(location).is_some() || self.in_popup(location) || self.dock_covers(self.to_dock(location))
     }
 
     /// A press at `location` (output-relative); `secondary`: the right button. `true`: the shell took it, so no

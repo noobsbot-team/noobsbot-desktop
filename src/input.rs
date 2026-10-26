@@ -499,7 +499,7 @@ impl State {
             && !self.switcher_press(location)
             && !self.shot_press(self.to_output(location), button == BTN_LEFT)
             && !self.drawer_press(self.to_output(location), button == BTN_RIGHT)
-            && !self.dock_press(self.to_output(location), button)
+            && !self.dock_press(self.to_dock(self.to_output(location)), button)
             && !self.mission_press(location, button)
             && !self.shell_press(self.to_output(location), button == BTN_RIGHT)
         {
@@ -554,7 +554,7 @@ impl State {
             self.shell_release();
             self.desktop_release();
             self.launchpad_release();
-            self.dock_release(self.to_output(pointer.current_location()));
+            self.dock_release(self.to_dock(self.to_output(pointer.current_location())));
         }
         pointer.button(self, &ButtonEvent { button, state, serial, time });
         pointer.frame(self);
@@ -652,7 +652,7 @@ impl State {
                 {
                     return;
                 }
-                if shell && (self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, page_wheel)) {
+                if shell && (self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(self.to_dock(pos), page_wheel)) {
                     return;
                 }
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);

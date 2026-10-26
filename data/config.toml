@@ -265,6 +265,9 @@ show_trash = true
 # The dock menu's Options ▸ Assign To, per app: "all" puts its windows on every Space; "<display>:<n>" opens its new
 # windows on Space n of that display. E.g. assign = { "org.kde.kate" = "all", "kitty" = "DP-1:2" }
 assign = {}
+# Which displays have a dock: "all" (one each), "main" (the main display only) or "pointer" (the one the pointer
+# is on; the dock follows it).
+displays = "all"
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.

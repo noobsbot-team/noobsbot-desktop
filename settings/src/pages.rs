@@ -414,6 +414,14 @@ pub const SETTINGS: &[Setting] = &[
     s(
         Page::Dock,
         "Dock",
+        "dock.displays",
+        "Show the Dock on",
+        "",
+        Kind::Choice(&[("all", "All Displays"), ("main", "Main Display"), ("pointer", "Display with the Pointer")]),
+    ),
+    s(
+        Page::Dock,
+        "Dock",
         "dock.click",
         "Click the active app to",
         "Shift-click opens a new window",
