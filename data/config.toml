@@ -270,6 +270,9 @@ assign = {}
 # Which displays have a dock: "all" (one each), "main" (the main display only) or "pointer" (the one the pointer
 # is on; the dock follows it).
 displays = "all"
+# A display's own pinned list, by connector name, in place of items (the dock menu's Options ▸ Separate Items on
+# This Display). A display that isn't connected keeps its list. E.g. outputs = { "HDMI-A-1" = ["kitty", "dolphin"] }
+outputs = {}
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.
