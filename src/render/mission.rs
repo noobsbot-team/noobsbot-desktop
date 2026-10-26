@@ -207,15 +207,29 @@ impl MissionView {
     }
 }
 
-/// A Space sliding in: each window drawn against its own output origin, so the old Space slides out beside it.
+/// A Space sliding in: each window drawn against its own output origin, so the old Space slides out beside it;
+/// one with alpha under 1 (the reduce-motion crossfade) is drawn as a snapshot at that alpha.
 pub fn sliding(
     renderer: &mut GlesRenderer,
     shaders: &Shaders,
     text: &mut Text,
     space: &Space<Window>,
-    windows: &[(Window, Point<i32, Logical>)],
+    windows: &[crate::spaces::SlideWindow],
     scale: f64,
     dark: bool,
 ) -> Vec<SceneElement> {
-    windows.iter().flat_map(|(window, origin)| window_elements(renderer, shaders, text, space, window, *origin, scale, dark)).collect()
+    let mut out = Vec::new();
+    for (window, origin, alpha) in windows.iter().filter(|w| w.2 > 0.0) {
+        let elements = window_elements(renderer, shaders, text, space, window, *origin, scale, dark);
+        out.extend(faded(renderer, elements, *alpha, scale));
+    }
+    out
+}
+
+/// `elements` at `alpha`: as they are when opaque, else as one snapshot (`motion::transformed`).
+fn faded(renderer: &mut GlesRenderer, elements: Vec<SceneElement>, alpha: f64, scale: f64) -> Vec<SceneElement> {
+    if alpha >= 1.0 {
+        return elements;
+    }
+    super::motion::transformed(renderer, elements, scale, |rect| crate::anim::Look { rect, alpha })
 }

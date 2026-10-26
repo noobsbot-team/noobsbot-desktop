@@ -107,6 +107,9 @@ impl Tween {
     }
 }
 
+/// A window in a slide frame: the output origin it is drawn against, and its alpha.
+pub type SlideWindow = (Window, Point<i32, Logical>, f64);
+
 /// The screen sliding from one Space to the next: `progress` 0 → 1.
 #[derive(Debug, Clone)]
 pub struct Slide {
@@ -232,6 +235,17 @@ pub fn swipe_slide(current: usize, count: usize, q: f64) -> (usize, usize, f64) 
             (next, current, 1.0 - if q > 1.0 { 1.0 + crate::gestures::rubber(q - 1.0) } else { q })
         }
         _ => (current, current, 1.0 + crate::gestures::rubber(q)),
+    }
+}
+
+/// Where a window of the new (`new`) or old Space is drawn `p` into a slide across `width` towards `dir`: its
+/// sideways offset and alpha. Under reduce motion nothing moves; the new Space fades in as the old fades out.
+pub fn slide_place(width: i32, dir: i32, p: f64, reduce: bool, new: bool) -> (i32, f64) {
+    let p = if reduce { p.clamp(0.0, 1.0) } else { p };
+    match (reduce, new) {
+        (true, true) => (0, p),
+        (true, false) => (0, 1.0 - p),
+        (false, new) => ((f64::from(width) * (1.0 - p)).round() as i32 * dir - if new { 0 } else { dir * width }, 1.0),
     }
 }
 
@@ -756,15 +770,16 @@ impl State {
     }
 
     /// This frame of a slide on `output`: the windows of both Spaces, topmost first, each with the output origin it
-    /// is drawn against. The new Space comes in from the side it lies on; windows on every Space stay put.
-    pub fn slide_frame(&mut self, output: &Output) -> Option<Vec<(Window, Point<i32, Logical>)>> {
+    /// is drawn against and its alpha. The new Space comes in from the side it lies on (under reduce motion it fades
+    /// in over the old one in place); windows on every Space stay put.
+    pub fn slide_frame(&mut self, output: &Output) -> Option<Vec<SlideWindow>> {
         let (slide, p) = self.slide_progress()?;
         if slide.key != self.output_key(output) {
             return None;
         }
         let width = self.space.output_geometry(output)?.size.w;
         let dir = if slide.to > slide.from { 1 } else { -1 };
-        let shift = (f64::from(width) * (1.0 - p)).round() as i32 * dir;
+        let reduce = self.config.appearance.reduce_motion;
         let old = row_of(slide.from, slide.to);
         let held = self.spaces.edge.as_ref().map(|(_, w, _)| w.clone());
         let windows = self
@@ -774,13 +789,13 @@ impl State {
             .filter(|w| self.window_output(w).as_ref().unwrap_or(output) == output)
             .filter_map(|w| {
                 let row = self.window_row(w);
-                let by = match row {
-                    0 if self.sticky(w) || held.as_ref() == Some(w) => 0,
-                    0 => shift,
-                    r if r == old => shift - dir * width,
+                let (by, alpha) = match row {
+                    0 if self.sticky(w) || held.as_ref() == Some(w) => (0, 1.0),
+                    0 => slide_place(width, dir, p, reduce, true),
+                    r if r == old => slide_place(width, dir, p, reduce, false),
                     _ => return None,
                 };
-                Some((w.clone(), self.row_origin(output, row) - Point::from((by, 0))))
+                Some((w.clone(), self.row_origin(output, row) - Point::from((by, 0)), alpha))
             })
             .collect();
         Some(windows)
@@ -932,6 +947,20 @@ mod tests {
         assert!(tween.done(later));
         let held = Tween::hold(0.3);
         assert!(!held.done(later) && held.value(later) == 0.3, "held until let go");
+    }
+
+    #[test]
+    fn reduce_motion_crossfades_spaces_in_place() {
+        for p in [0.0, 0.25, 0.5, 1.0] {
+            for dir in [-1, 1] {
+                let (new, old) = (slide_place(1920, dir, p, true, true), slide_place(1920, dir, p, true, false));
+                assert_eq!((new.0, old.0), (0, 0), "nothing moves");
+                assert_eq!((new.1, old.1), (p, 1.0 - p));
+            }
+        }
+        // Without it, the old Space slides out beside the new, both opaque.
+        assert_eq!(slide_place(1920, 1, 0.25, false, true), (1440, 1.0));
+        assert_eq!(slide_place(1920, 1, 0.25, false, false), (-480, 1.0));
     }
 
     #[test]
