@@ -173,6 +173,8 @@ pub enum Kind {
     Accent,
     /// A time zone, searched as you type.
     Zone,
+    /// One xkb option in a comma list (the key is `keyboard.options`): its family, and the choices ("" = none).
+    XkbOption(fn(&str) -> bool, &'static [(&'static str, &'static str)]),
 }
 
 pub struct Setting {
@@ -246,9 +248,16 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_rate", "Key repeat rate", "", Kind::Slider { min: 0.0, max: 60.0, step: 1.0 }),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_delay", "Delay until repeat", "", Kind::Slider { min: 150.0, max: 1500.0, step: 50.0 }),
-    s(Page::Keyboard, "Input", "keyboard.layout", "Layouts", "Like us,np; empty = the system's", Kind::Text("System")),
-    s(Page::Keyboard, "Input", "keyboard.variant", "Variants", "", Kind::Text("None")),
-    s(Page::Keyboard, "Input", "keyboard.options", "Options", "Like caps:escape", Kind::Text("None")),
+    s(Page::Keyboard, "Modifier keys", "keyboard.options", "Caps Lock key", "", Kind::XkbOption(crate::xkb::is_caps, crate::xkb::CAPS)),
+    s(
+        Page::Keyboard,
+        "Modifier keys",
+        "keyboard.options",
+        "Compose key",
+        "Then type a sequence, like ' e for é",
+        Kind::XkbOption(crate::xkb::is_compose, crate::xkb::COMPOSE),
+    ),
+    s(Page::Keyboard, "Modifier keys", "keyboard.options", "Other xkb options", "Like grp:alt_shift_toggle; Caps Lock and Compose above", Kind::Text("None")),
     s(Page::Trackpad, "", "touchpad.tap_to_click", "Tap to click", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.natural_scroll", "Natural scrolling", "Content follows your fingers", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.speed", "Tracking speed", "", Kind::Slider { min: -1.0, max: 1.0, step: 0.1 }),
@@ -414,6 +423,25 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
             swatches.into()
         }
         Kind::Zone => zone_picker(app, key),
+        Kind::XkbOption(family, choices) => {
+            let options = app.config.str(key);
+            let current = crate::xkb::current(options, family);
+            let selected = choices.iter().find(|c| c.0 == current).map(|&(v, l)| Labelled(v, l));
+            let pick = pick_list(choices.iter().map(|&(v, l)| Labelled(v, l)).collect::<Vec<_>>(), selected, move |c: Labelled| {
+                Message::Options(crate::xkb::with_option(options, family, c.0))
+            });
+            pick.placeholder(current).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()
+        }
+    }
+}
+
+/// A dropdown choice: the value written, the label shown.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Labelled(&'static str, &'static str);
+
+impl std::fmt::Display for Labelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.1)
     }
 }
 
@@ -728,7 +756,9 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                     line(t, keys.replace('+', " + "), "", field.into())
                 })
                 .collect();
-            vec![group(t, "Shortcuts", rows), note(t, "Type an action and press Return; “none” frees the key.")]
+            let mut parts = input_sources(app);
+            parts.extend([group(t, "Shortcuts", rows), note(t, "Type an action and press Return; “none” frees the key.")]);
+            parts
         }
         Page::General => vec![login_items(app), group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))])],
         _ => Vec::new(),
@@ -758,6 +788,64 @@ fn login_items(app: &App) -> Element<'_, Message> {
         .menu_style(t.menu());
     rows.push(line(t, "Open at login", "Off keeps the entry, hidden", add.into()));
     group(t, "Login Items", rows)
+}
+
+/// Keyboard ▸ Input Sources: the chosen layouts in switching order (Super+Ctrl+Space), with + to pick more.
+fn input_sources(app: &App) -> Vec<Element<'_, Message>> {
+    let t = app.tokens;
+    let sources = crate::xkb::chosen(app.config.str("keyboard.layout"), app.config.str("keyboard.variant"));
+    let small = |label: &'static str, message: Option<Message>| {
+        button(text(label).size(12).center()).padding([2, 8]).height(22).style(t.segment(false)).on_press_maybe(message)
+    };
+    let mut rows: Vec<Element<'_, Message>> = Vec::new();
+    for (i, (layout, variant)) in sources.iter().enumerate() {
+        let moved = |to: usize| {
+            let mut list = sources.clone();
+            list.swap(i, to);
+            Message::Sources(list)
+        };
+        let mut rest = sources.clone();
+        rest.remove(i);
+        let buttons = row![
+            small("↑", (i > 0).then(|| moved(i - 1))),
+            small("↓", (i + 1 < sources.len()).then(|| moved(i + 1))),
+            small("−", Some(Message::Sources(rest))),
+        ]
+        .spacing(2);
+        let code = if variant.is_empty() { layout.clone() } else { format!("{layout} ({variant})") };
+        rows.push(line(
+            t,
+            crate::xkb::name(layout, variant),
+            "",
+            row![text(code).size(12).color(t.secondary()), container(buttons).padding(2).style(t.field())].spacing(8).align_y(Alignment::Center).into(),
+        ));
+    }
+    if rows.is_empty() {
+        rows.push(fact(t, "The system's layout", String::new()));
+    }
+    let add = if app.picker.is_some() { small("Done", Some(Message::Picker(None))) } else { small("+", Some(Message::Picker(Some(String::new())))) };
+    rows.push(line(t, "Add an input source", "", add.into()));
+    let mut parts = vec![group(t, "Input Sources", rows)];
+    if let Some(query) = &app.picker {
+        let field = text_input("Search layouts", query).on_input(|q| Message::Picker(Some(q))).size(13).padding([4, 8]).style(t.input(false));
+        let query = query.trim().to_lowercase();
+        let mut picks: Vec<Element<'_, Message>> = vec![container(field).padding([8, 12]).into()];
+        // ponytail: the first 40 matches; typing narrows it.
+        for source in crate::xkb::ALL
+            .iter()
+            .filter(|s| !sources.contains(&(s.layout.clone(), s.variant.clone())))
+            .filter(|s| query.is_empty() || s.name.to_lowercase().contains(&query) || s.layout == query)
+            .take(40)
+        {
+            let mut list = sources.clone();
+            list.push((source.layout.clone(), source.variant.clone()));
+            picks.push(
+                button(text(&source.name).size(13)).padding([6, 12]).width(Length::Fill).style(t.sidebar_row(false)).on_press(Message::Sources(list)).into(),
+            );
+        }
+        parts.push(group(t, "", picks));
+    }
+    parts
 }
 
 /// `eDP-1` → `Built-in display`, `winit` → `Nested window`, `HDMI-A-1` → `HDMI-A-1`.
