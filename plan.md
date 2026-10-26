@@ -1717,7 +1717,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
-  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space.
+  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space. Built: edge drag, reorder by dragging a Space in the bar, keyboard navigation, every-Space view; every display still in progress.
 - ~~Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
   ⚠ on conflicts (today the first match wins silently).~~ Done: Settings ▸ Keyboard ▸ Keyboard Shortcuts…
   (`settings/src/shortcuts.rs`); recording asks the desktop to pass every key through; conflicts are also logged.
