@@ -197,10 +197,12 @@ pub struct State {
     pub popup: Option<crate::shell::Popup>,
     /// The display whose bar the popup hangs from (`State::popup_output`); `None`: the first.
     pub bar_output: Option<smithay::output::Output>,
-    /// The open menu's row whose submenu is open, while that menu is the popup.
-    pub submenu: Option<(crate::shell::Popup, usize)>,
-    /// The row the keyboard lit in that popup: in its open submenu (`true`) or itself; the pointer takes over again.
-    pub menu_cursor: Option<(crate::shell::Popup, bool, usize)>,
+    /// The open submenus while that menu is the popup: the menu's row whose submenu is open, that submenu's row whose
+    /// submenu is open, and so on.
+    pub submenu: Option<(crate::shell::Popup, Vec<usize>)>,
+    /// The row the keyboard lit in that popup and its level (0: the menu, n: the n-th open submenu); the pointer takes
+    /// over again.
+    pub menu_cursor: Option<(crate::shell::Popup, usize, usize)>,
     /// The pointer heads for the open submenu across other rows: their submenus wait for this timer (`AIM_GRACE`).
     pub aim_timer: Option<smithay::reexports::calloop::RegistrationToken>,
     /// The logo menu's Recent Items while it is open (`refresh_recent`).

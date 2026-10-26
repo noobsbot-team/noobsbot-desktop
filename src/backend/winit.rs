@@ -241,8 +241,8 @@ impl State {
         let window_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Window)))
             .then(|| self.window_menu_rows())
             .and_then(|rows| Some((self.window_menu_anchor()?, rows)));
-        let open_sub = self.open_submenu();
-        let cursor = self.menu_cursor.filter(|(p, sub, _)| Some(*p) == self.popup && (open_sub.is_some() || !sub));
+        let path = self.open_path().to_vec();
+        let cursor = self.menu_cursor.filter(|(p, d, _)| Some(*p) == self.popup && *d <= path.len());
         let (now, scale) = (self.frame_time, output.current_scale().fractional_scale());
         let appearance = &self.config.appearance;
         let (dark, reduce, hour24) = (render::is_dark(appearance), appearance.reduce_motion, self.config.clock.format.hour24);
@@ -341,33 +341,44 @@ impl State {
                     ),
                 };
                 let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
-                // The keyboard's row is lit instead of the pointer's, which goes nowhere.
-                let (hover, lit, sub_lit) = match cursor {
-                    Some((_, false, i)) => ((f64::MIN, f64::MIN).into(), Some(i), None),
-                    Some((_, true, j)) => ((f64::MIN, f64::MIN).into(), open_sub, Some(j)),
-                    None => (hover, open_sub, None),
+                // The keyboard's row is lit instead of the pointer's, which goes nowhere; a row whose submenu is
+                // open stays lit.
+                let hover = if cursor.is_some() { (f64::MIN, f64::MIN).into() } else { hover };
+                let lit = |d: usize| match cursor {
+                    Some((_, at, i)) if at == d => Some(i),
+                    _ => path.get(d).copied(),
                 };
-                let main = menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, lit, dark, accent, appearance.glass_opacity, scale);
-                // The submenu beside its row, in front of the menu.
-                let beside = open_sub.and_then(|i| Some((rows.get(i)?.as_ref()?.sub.clone(), menu.cell(i)?, menu.rect()?)));
-                if let Some((sub, row, parent)) = beside {
-                    let anchor =
-                        crate::shell::Anchor::Beside(smithay::utils::Rectangle::new((parent.loc.x, row.loc.y).into(), (parent.size.w, row.size.h).into()));
-                    popups.extend(submenu.elements(
+                let main = menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, lit(0), dark, accent, appearance.glass_opacity, scale);
+                // Each open submenu beside its row, in front of its parent, the way its parent went.
+                let mut levels = Vec::new();
+                let (mut parent, mut grand) = (menu.rect().zip(path.first().and_then(|&i| menu.cell(i))), None::<crate::wm::Rect>);
+                for d in 0..path.len() {
+                    let Some((prect, row)) = parent else { break };
+                    let left = grand.is_some_and(|g| prect.loc.x < g.loc.x);
+                    let beside = smithay::utils::Rectangle::new((prect.loc.x, row.loc.y).into(), (prect.size.w, row.size.h).into());
+                    if submenu.len() <= d {
+                        submenu.push(Default::default());
+                    }
+                    let view = &mut submenu[d];
+                    let sub = crate::shell::sub_rows(&rows, &path[..=d]);
+                    let anchor = crate::shell::Anchor::Beside(beside, left);
+                    levels.push(view.elements(
                         renderer,
                         shaders,
                         &mut self.text,
-                        &sub,
+                        sub,
                         anchor,
                         size,
                         hover,
-                        sub_lit,
+                        lit(d + 1),
                         dark,
                         accent,
                         appearance.glass_opacity,
                         scale,
                     ));
+                    (parent, grand) = (view.rect().zip(path.get(d + 1).and_then(|&i| view.cell(i))), Some(prect));
                 }
+                popups.extend(levels.into_iter().rev().flatten());
                 popups.extend(main);
             }
             Some(Popup::Control | Popup::Module(..)) => {
