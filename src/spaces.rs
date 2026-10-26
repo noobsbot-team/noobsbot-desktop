@@ -67,7 +67,6 @@ impl Tween {
     }
 
     /// Held at `at` until let go: never done.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the next commit holds slides and Mission Control under the fingers"))]
     pub fn hold(at: f64) -> Self {
         Self { from: at, to: at, v: 0.0, start: Instant::now(), settle: None }
     }
@@ -209,7 +208,6 @@ pub fn step(current: usize, delta: i32, count: usize) -> Option<usize> {
 /// The slide a swipe `q` screen widths towards the next Space (negative: the previous) shows while `current` of
 /// `count` is shown: (from, to, progress), drawn as sliding back from the neighbour to `current`. With no neighbour
 /// that way `from == to` and the screen only gives a little; past the neighbour too.
-#[cfg_attr(not(test), expect(dead_code, reason = "the next commit slides Spaces under the fingers"))]
 pub fn swipe_slide(current: usize, count: usize, q: f64) -> (usize, usize, f64) {
     match step(current, if q > 0.0 { 1 } else { -1 }, count) {
         Some(next) if q != 0.0 => {
@@ -397,6 +395,34 @@ impl State {
         if let Some(to) = step(d.current, delta, d.list.len()) {
             self.show_space_at(&key, to);
         }
+    }
+
+    /// A sideways swipe on the display under `key`: its shown Space and the neighbour follow the fingers, `q` screen
+    /// widths towards the next Space.
+    pub fn swipe_space(&mut self, key: &str, q: f64) {
+        let d = self.desks_at(key);
+        let (from, to, p) = swipe_slide(d.current, d.list.len(), q);
+        self.spaces.slide = Some(Slide { key: key.to_owned(), from, to, progress: Tween::hold(p) });
+        self.schedule_redraw();
+    }
+
+    /// The fingers lifted at `q` moving at `v` widths per second: on to the neighbour (`commit`) or back, springing
+    /// from there.
+    pub fn swipe_space_end(&mut self, key: &str, q: f64, v: f64, commit: bool) {
+        let d = self.desks_at(key);
+        let (next, current, p) = swipe_slide(d.current, d.list.len(), q);
+        // Towards the neighbour; rubber-banding, it just springs back.
+        let v = if next == current { 0.0 } else { v * q.signum() };
+        let progress = if commit && next != current {
+            self.show_space_at(key, next);
+            Tween::fling(1.0 - p, 1.0, v)
+        } else {
+            Tween::fling(p, 1.0, -v)
+        };
+        if let Some(slide) = self.spaces.slide.as_mut() {
+            slide.progress = progress;
+        }
+        self.schedule_redraw();
     }
 
     /// Super+Ctrl+1…9, or a Space clicked in Mission Control: on the display under the pointer.
