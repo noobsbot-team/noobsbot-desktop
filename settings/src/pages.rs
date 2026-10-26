@@ -211,6 +211,8 @@ pub enum Kind {
     Steps(&'static [(i64, &'static str)]),
     /// A sound from the system's sound theme, with a button that plays it.
     Sound,
+    /// A switch for a two-word key: the value written off, then on.
+    Flag(&'static str, &'static str),
     /// A list of paths, a row each with Remove; with an Add… button that opens the file chooser for this `texts` key.
     List(Option<&'static str>),
 }
@@ -448,6 +450,14 @@ pub const SETTINGS: &[Setting] = &[
         "Drag windows with",
         "Hold the key and drag anywhere in a window",
         Kind::Choice(&[("super", "Super"), ("alt", "Alt")]),
+    ),
+    s(
+        Page::Dock,
+        "Windows",
+        "windows.focus",
+        "Focus follows the pointer",
+        "The window under the pointer gets the keyboard after a moment, without coming to the front",
+        Kind::Flag("click", "hover"),
     ),
     s(Page::Dock, "Windows", "windows.magnetic_edges", "Magnetic edges", "Edges stick to screen and window edges", Kind::Toggle),
     s(Page::Dock, "Windows", "windows.snapping", "Tile at screen edges", "Drag to a side, a corner or the top; hold Ctrl to skip", Kind::Toggle),
@@ -743,6 +753,7 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
     let key = setting.key;
     match setting.kind {
         Kind::Toggle => toggle(t, app.config.bool(key), move |on| Message::Toggle(key, on)),
+        Kind::Flag(off, on) => toggle(t, app.config.str(key) == on, move |yes| Message::Choose(key.into(), if yes { on } else { off })),
         Kind::Choice(options) => choice(t, app.config.str(key), options, key),
         Kind::Menu(options) => {
             let current = app.config.str(key);
