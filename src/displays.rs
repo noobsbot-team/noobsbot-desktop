@@ -102,8 +102,8 @@ pub fn pick_mode(modes: &[Mode]) -> Option<usize> {
 }
 
 /// The auto scale (E6.2, D13), in 25% steps from 100 to 200%: the one nearest to drawing about 110 logical px per
-/// inch on a monitor and 128 on a laptop's own panel, which sits closer to the eyes (macOS's densities: a 27-inch
-/// 1440p or 5K monitor, a MacBook's default "looks like"). Never less than 1280 × 720 logical px; without a believable
+/// inch on a monitor and 128 on a laptop's own panel, which sits closer to the eyes (the densities of a 27-inch
+/// 1440p or 5K monitor and a laptop's default "looks like"). Never less than 1280 × 720 logical px; without a believable
 /// physical size (projectors, TVs): 100%.
 pub fn pick_scale((w, h): (i32, i32), (mm_w, _): (u32, u32), built_in: bool) -> f64 {
     if mm_w < 100 || w <= 0 {
@@ -148,7 +148,7 @@ impl State {
     /// Applies the display settings to every display, live: lights, darkens and modesets them (real screen), sets
     /// scale, rotation and position, puts the primary first (the shell draws on the first output), tells every
     /// window and panel its new scale, and rewrites `displays.json`. At start, on hotplug and on config reload.
-    // ponytail: windows keep their logical size; zoomed ones on another output too, as `work_area` is the first's.
+    // ponytail: windows keep their logical size.
     pub fn apply_displays(&mut self) {
         let shown = match &self.device {
             Some(Device::Udev(_)) => self.udev_displays(),
@@ -204,30 +204,33 @@ impl State {
             let row = self.window_row(&window) * crate::spaces::STRIDE;
             self.set_visible_loc(&window, crate::wm::place(area, frame.size) + smithay::utils::Point::from((0, row)));
         }
-        // Zoomed and fullscreen windows on the first output fill its work area at the new scale or size.
-        let first = self.space.outputs().next().cloned();
-        let filled: Vec<(Window, ToplevelSurface)> = self
-            .space
-            .elements()
-            .filter(|w| first.is_some() && self.window_output(w) == first)
-            .filter_map(|w| {
-                let toplevel = w.toplevel()?;
-                let states = toplevel.current_state().states;
-                (states.contains(xdg_toplevel::State::Maximized) || states.contains(xdg_toplevel::State::Fullscreen)).then(|| (w.clone(), toplevel.clone()))
-            })
-            .collect();
-        if let Some(area) = self.work_area() {
-            for (window, toplevel) in filled {
-                let size = self.content_size(&window, area.size);
-                toplevel.with_pending_state(|s| s.size = Some(size));
-                toplevel.send_pending_configure();
-                let row = self.window_row(&window) * crate::spaces::STRIDE;
-                self.set_visible_loc(&window, area.loc + smithay::utils::Point::from((0, row)));
-            }
-        }
+        self.refit_filled();
         self.send_scales();
         write_info(&shown.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>());
         self.schedule_redraw();
+    }
+
+    /// Zoomed and fullscreen windows fill their display's work area again, at its new scale or size, or after the
+    /// menu bar starts or stops hiding.
+    pub fn refit_filled(&mut self) {
+        let filled: Vec<(Window, ToplevelSurface, Output)> = self
+            .space
+            .elements()
+            .filter_map(|w| {
+                let toplevel = w.toplevel()?;
+                let states = toplevel.current_state().states;
+                let filled = states.contains(xdg_toplevel::State::Maximized) || states.contains(xdg_toplevel::State::Fullscreen);
+                filled.then(|| Some((w.clone(), toplevel.clone(), self.window_output(w)?))).flatten()
+            })
+            .collect();
+        for (window, toplevel, output) in filled {
+            let Some(area) = self.output_area(&output) else { continue };
+            let size = self.content_size(&window, area.size);
+            toplevel.with_pending_state(|s| s.size = Some(size));
+            toplevel.send_pending_configure();
+            let row = self.window_row(&window) * crate::spaces::STRIDE;
+            self.set_visible_loc(&window, area.loc + smithay::utils::Point::from((0, row)));
+        }
     }
 
     /// The output `window` is mostly on (its hidden-Space row folded away); `None` when it is on no output.
@@ -367,7 +370,7 @@ mod tests {
         assert_eq!(pick_scale((1920, 1200), (300, 190), true), 1.25, "14-inch 1920 × 1200 (the owner's): 1536 × 960 logical");
         assert_eq!(pick_scale((1920, 1080), (344, 194), true), 1.0, "15.6-inch 1080p laptop");
         assert_eq!(pick_scale((1920, 1080), (294, 165), true), 1.25, "13.3-inch 1080p");
-        assert_eq!(pick_scale((2560, 1600), (286, 179), true), 1.75, "13.3-inch 2560 × 1600: macOS's looks-like 1440 × 900");
+        assert_eq!(pick_scale((2560, 1600), (286, 179), true), 1.75, "13.3-inch 2560 × 1600: looks like 1440 × 900");
         assert_eq!(pick_scale((2880, 1800), (301, 188), true), 2.0, "14-inch 2880 × 1800");
         assert_eq!(pick_scale((3840, 2160), (344, 194), true), 2.0, "15.6-inch 4K, capped at 200%");
         assert_eq!(pick_scale((1366, 768), (160, 90), true), 1.0, "never under 1280 × 720 logical");

@@ -59,7 +59,7 @@ fn main() -> iced::Result {
         .run()
 }
 
-/// Typing while no field has focus searches (as in macOS). The search field isn't focused up front: a focused field's
+/// Typing while no field has focus searches. The search field isn't focused up front: a focused field's
 /// caret blinks, which woke the app every 500 ms for as long as its window was active.
 fn type_ahead(event: iced::Event, status: iced::event::Status, _: iced::window::Id) -> Option<Message> {
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { text: Some(text), modifiers, .. }) = event else { return None };
@@ -218,7 +218,7 @@ impl App {
         if page == Page::General {
             (app.login_items, app.installed) = autostart::load();
         }
-        // Typing searches at once, as in macOS (see `type_ahead`).
+        // Typing searches at once (see `type_ahead`).
         (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs)]))
     }
 

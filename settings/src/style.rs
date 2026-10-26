@@ -280,7 +280,7 @@ impl Tokens {
         }
     }
 
-    /// A thin rail with the accent left of a white knob, as macOS Settings draws it.
+    /// A thin rail with the accent left of a white knob.
     pub fn slider(self) -> impl Fn(&iced::Theme, slider::Status) -> slider::Style {
         move |_, _| slider::Style {
             rail: slider::Rail {
