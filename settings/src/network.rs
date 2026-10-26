@@ -546,12 +546,16 @@ fn dicts(value: Option<&OwnedValue>) -> Vec<HashMap<String, OwnedValue>> {
     value.and_then(|v| Vec::<HashMap<String, OwnedValue>>::try_from(v.try_clone().ok()?).ok()).unwrap_or_default()
 }
 
-/// A network in range: its saved connection, or a new one; `password` makes it a WPA-PSK one.
+/// A network in range: its saved connection (with `password` as its new one), or a new WPA-PSK one.
 pub async fn join(bus: Connection, ap: Ap, password: Option<String>) -> zbus::Result<()> {
     let (point, device) = (ObjectPath::try_from(ap.ap.as_str())?, ObjectPath::try_from(ap.device.as_str())?);
     let manager = Some("org.freedesktop.NetworkManager");
     match (&ap.saved, password) {
-        (Some(saved), None) => {
+        (Some(saved), password) => {
+            if let Some(password) = password {
+                let settings: Settings = bus.call_method(Some(NM), saved.as_str(), Some(SAVED), "GetSettings", &()).await?.body().deserialize()?;
+                bus.call_method(Some(NM), saved.as_str(), Some(SAVED), "Update", &(with_password(settings, &password)?,)).await?;
+            }
             bus.call_method(
                 Some(NM),
                 "/org/freedesktop/NetworkManager",
@@ -561,8 +565,7 @@ pub async fn join(bus: Connection, ap: Ap, password: Option<String>) -> zbus::Re
             )
             .await?;
         }
-        (_, password) => {
-            // ponytail: a new password for a saved network adds a second connection, as in the desktop's join.
+        (None, password) => {
             let mut settings: HashMap<&str, HashMap<&str, Value>> = HashMap::new();
             if let Some(psk) = password {
                 settings.insert("802-11-wireless-security", HashMap::from([("key-mgmt", Value::from("wpa-psk")), ("psk", Value::from(psk))]));
@@ -571,6 +574,28 @@ pub async fn join(bus: Connection, ap: Ap, password: Option<String>) -> zbus::Re
         }
     }
     Ok(())
+}
+
+/// A saved connection's settings with `password` as its key: the WEP key on a WEP one, else the WPA one, stored by
+/// NetworkManager (flags 0). The desktop's join (src/services/network.rs) does the same.
+fn with_password(mut settings: Settings, password: &str) -> zbus::Result<Settings> {
+    let value = |v: Value| OwnedValue::try_from(v).map_err(zbus::Error::from);
+    let security = settings.entry("802-11-wireless-security".into()).or_default();
+    let key_mgmt = security.get("key-mgmt").and_then(|v| String::try_from(v.try_clone().ok()?).ok()).unwrap_or_else(|| "wpa-psk".into());
+    if key_mgmt == "none" {
+        let index = security.get("wep-tx-keyidx").and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
+        // wep-key-type: 1, a key (10 or 26 hex digits, or 5 or 13 ASCII characters); 2, a passphrase.
+        let key =
+            (matches!(password.len(), 10 | 26) && password.chars().all(|c| c.is_ascii_hexdigit())) || (matches!(password.len(), 5 | 13) && password.is_ascii());
+        security.insert(format!("wep-key{index}"), value(Value::from(password))?);
+        security.insert("wep-key-type".into(), value(Value::from(if key { 1u32 } else { 2 }))?);
+        security.insert("wep-key-flags".into(), value(Value::from(0u32))?);
+    } else {
+        security.insert("key-mgmt".into(), value(Value::from(key_mgmt))?);
+        security.insert("psk".into(), value(Value::from(password))?);
+        security.insert("psk-flags".into(), value(Value::from(0u32))?);
+    }
+    Ok(settings)
 }
 
 /// "Other…": a network that doesn't announce its name. `security` is "none", "psk" (WPA2/WPA3 Personal), "sae" (WPA3
@@ -677,6 +702,21 @@ pub fn advanced() {
 mod tests {
     use super::*;
     use zbus::names::OwnedInterfaceName;
+
+    #[test]
+    fn new_password_into_saved_settings() {
+        let value = |v: Value| OwnedValue::try_from(v).unwrap();
+        let text = |s: &Settings, k: &str| String::try_from(s["802-11-wireless-security"][k].try_clone().unwrap()).unwrap();
+        let number = |s: &Settings, k: &str| u32::try_from(&s["802-11-wireless-security"][k]).unwrap();
+        let wpa = with_password(Settings::new(), "hunter22").unwrap();
+        assert_eq!((text(&wpa, "key-mgmt"), text(&wpa, "psk"), number(&wpa, "psk-flags")), ("wpa-psk".into(), "hunter22".into(), 0));
+        let wep = |key: &str| {
+            let saved = HashMap::from([("802-11-wireless-security".into(), HashMap::from([("key-mgmt".into(), value(Value::from("none")))]))]);
+            with_password(saved, key).unwrap()
+        };
+        assert_eq!((text(&wep("0123456789"), "wep-key0"), number(&wep("0123456789"), "wep-key-type")), ("0123456789".into(), 1));
+        assert_eq!(number(&wep("a long passphrase"), "wep-key-type"), 2);
+    }
 
     fn value(v: Value) -> OwnedValue {
         OwnedValue::try_from(v).unwrap()

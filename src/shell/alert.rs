@@ -19,6 +19,7 @@ use crate::{
         Command,
         bluetooth::Pairing,
         bolt::Accessory,
+        network::Secret,
         polkit::{Auth, Event},
     },
     state::State,
@@ -45,11 +46,12 @@ pub enum Kind {
         client: ClientId,
     },
     /// A Wi-Fi password (E2.3): `join` has the access point and device paths when we join, `None` when
-    /// NetworkManager asked (its secret agent); `field` is the password typed so far.
+    /// NetworkManager asked (its secret agent); `field` is the password typed so far; `secret` what it is.
     Wifi {
         ssid: String,
         join: Option<(String, String)>,
         field: TextField,
+        secret: Secret,
     },
     /// An old Bluetooth device needs a PIN (or six-digit passkey) typed (E2.3).
     Pin {
@@ -121,7 +123,10 @@ impl Alert {
             Kind::Pair(Pairing { device, code: Some(code), answer: true }) => format!("Make sure “{device}” shows the code {code}."),
             Kind::Pair(Pairing { device, code: None, .. }) => format!("“{device}” wants to pair with this computer."),
             Kind::Pair(Pairing { device, code: Some(code), answer: false }) => format!("Type {code} on “{device}”, then press Return."),
-            Kind::Wifi { .. } => "Enter the password for this Wi-Fi network.".into(),
+            Kind::Wifi { secret: Secret::Psk, .. } => "Enter the password for this Wi-Fi network.".into(),
+            Kind::Wifi { secret: Secret::Wep, .. } => "Enter the WEP key or passphrase for this Wi-Fi network.".into(),
+            Kind::Wifi { secret: Secret::Identity, .. } => "Enter your user name for this network.".into(),
+            Kind::Wifi { secret: Secret::Password, .. } => "Enter the password for your account on this network.".into(),
             Kind::Pin { passkey: false, .. } => "Enter the PIN shown on the device or in its manual.".into(),
             Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
@@ -258,10 +263,14 @@ impl State {
         true
     }
 
-    /// NetworkManager asks for `ssid`'s password (`Some`) or gives up (`None`, which closes only its alert).
-    pub fn show_wifi_secret(&mut self, ssid: Option<String>) {
-        match ssid {
-            Some(ssid) => self.open_ask(Kind::Wifi { ssid, join: None, field: TextField::secure() }),
+    /// NetworkManager asks for `ssid`'s password, key or user name (`Some`) or gives up (`None`, which closes only its
+    /// alert).
+    pub fn show_wifi_secret(&mut self, ask: Option<(String, Secret)>) {
+        match ask {
+            Some((ssid, secret)) => {
+                let field = if secret == Secret::Identity { TextField::default() } else { TextField::secure() };
+                self.open_ask(Kind::Wifi { ssid, join: None, field, secret });
+            }
             None if matches!(&self.alert, Some(Alert { kind: Kind::Wifi { join: None, .. }, .. })) => self.close_alert(),
             None => {}
         }
@@ -364,8 +373,7 @@ impl State {
             }
             self.services.send(Command::PolkitAnswer(None));
         }
-        // ponytail: WPA's 8-character minimum for every secured network; WEP keys (5/13) can't be typed yet.
-        if button == Button::Confirm && matches!(&alert.kind, Kind::Wifi { field, .. } if field.text.chars().count() < 8) {
+        if button == Button::Confirm && matches!(&alert.kind, Kind::Wifi { field, secret, .. } if field.text.chars().count() < secret.shortest()) {
             return;
         }
         self.close_alert();
@@ -386,7 +394,7 @@ impl State {
             Kind::Pin { field, .. } => return self.services.send(Command::PinEntry((button == Button::Confirm).then_some(field.text))),
             Kind::Wifi { join: None, field, .. } => return self.services.send(Command::WifiSecret((button == Button::Confirm).then_some(field.text))),
             Kind::Wifi { .. } if button == Button::Cancel => return,
-            Kind::Wifi { ssid, join: Some((ap, device)), field } => {
+            Kind::Wifi { ssid, join: Some((ap, device)), field, .. } => {
                 return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
             }
             Kind::ScreenRecording { exe, client, .. } => return self.recording_answer(client, exe, button == Button::Confirm),
@@ -475,8 +483,10 @@ mod tests {
 
     #[test]
     fn wifi_text() {
-        let alert = Alert { kind: Kind::Wifi { ssid: "Home".into(), join: None, field: TextField::secure() }, deadline: None };
+        let alert = Alert { kind: Kind::Wifi { ssid: "Home".into(), join: None, field: TextField::secure(), secret: Secret::Psk }, deadline: None };
         assert_eq!((alert.title().as_str(), alert.confirm(), alert.cancel()), ("Join “Home”?", "Join", "Cancel"));
+        let wep = Alert { kind: Kind::Wifi { ssid: "Home".into(), join: None, field: TextField::secure(), secret: Secret::Wep }, deadline: None };
+        assert!(wep.body(Instant::now()).contains("WEP key"));
         assert!(alert.field().is_some_and(|f| f.secure) && alert.cancellable());
     }
 

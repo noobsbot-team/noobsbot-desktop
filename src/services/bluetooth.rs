@@ -184,20 +184,19 @@ trait AgentManager {
 
 const AGENT: &str = "/org/noobsbot/bluetooth_agent";
 
-/// Serves the agent and makes it BlueZ's default.
-// ponytail: registered once; if bluetoothd restarts, pairing needs a desktop restart. Re-register on the BlueZ
-// name-owner change if that ever matters.
+/// Serves the agent and makes it BlueZ's default, again whenever bluetoothd restarts.
 pub async fn serve_agent(bus: &Connection, updates: &Sender<super::Update>, answer: &Answer, entry: &Entry) {
-    let result = async {
-        bus.object_server().at(AGENT, Agent { bus: bus.clone(), updates: updates.clone(), answer: answer.clone(), entry: entry.clone() }).await?;
+    let agent = Agent { bus: bus.clone(), updates: updates.clone(), answer: answer.clone(), entry: entry.clone() };
+    if let Err(err) = bus.object_server().at(AGENT, agent).await {
+        return tracing::warn!("Bluetooth pairing agent off: {err}");
+    }
+    let register = || async {
         let manager = AgentManagerProxy::new(bus).await?;
         let path = zbus::zvariant::ObjectPath::from_static_str_unchecked(AGENT);
         manager.register_agent(&path, "DisplayYesNo").await?;
         manager.request_default_agent(&path).await
     };
-    if let Err(err) = result.await {
-        tracing::warn!("Bluetooth pairing agent off: {err}");
-    }
+    super::keep_registered(bus, SERVICE, "Bluetooth pairing agent", register).await;
 }
 
 #[zbus::proxy(interface = "org.bluez.Adapter1", default_service = "org.bluez")]
