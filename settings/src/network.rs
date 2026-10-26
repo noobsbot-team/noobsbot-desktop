@@ -22,6 +22,8 @@ const ACTIVE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 const EDITOR: &str = "nm-connection-editor";
 /// `App::texts` key prefix of a network's password field, then its name.
 pub const PASSWORD: &str = "wifi.password.";
+/// `App::texts` key of VPN ▸ Import WireGuard's path field.
+pub const WIREGUARD: &str = "wifi.wireguard";
 /// `App::texts` key prefix of the Details sheet's fields (`path`, `method`, `address`, …); open while `path` is there.
 pub const DETAILS: &str = "wifi.details.";
 /// `App::texts` key prefix of the "Other…" form's fields (`ssid`, `security`, …); open while its `ssid` is there.
@@ -166,6 +168,183 @@ pub async fn vpn_switch(bus: Connection, vpn: Vpn) -> zbus::Result<()> {
             drop(bus.call_method(Some(NM), manager, Some(NM), "ActivateConnection", &(ObjectPath::try_from(vpn.path.as_str())?, &none, &none)).await?)
         }
     }
+    Ok(())
+}
+
+/// One `[Peer]` of a WireGuard `.conf`; the preshared key is zeroed when dropped.
+#[derive(Default)]
+struct Peer {
+    public_key: String,
+    preshared_key: String,
+    endpoint: String,
+    allowed_ips: Vec<String>,
+    keepalive: Option<u32>,
+}
+
+impl Drop for Peer {
+    fn drop(&mut self) {
+        wipe(&mut self.preshared_key);
+    }
+}
+
+/// A WireGuard `.conf` as NetworkManager needs it; the private key is zeroed when dropped.
+#[derive(Default)]
+pub struct WireGuard {
+    /// The connection's and interface's name.
+    name: String,
+    private_key: String,
+    addresses: Vec<(std::net::IpAddr, u32)>,
+    dns: Vec<std::net::Ipv4Addr>,
+    listen_port: Option<u32>,
+    mtu: Option<u32>,
+    peers: Vec<Peer>,
+}
+
+impl Drop for WireGuard {
+    fn drop(&mut self) {
+        wipe(&mut self.private_key);
+    }
+}
+
+/// A WireGuard key: 32 bytes in base64 (43 characters and `=`; the last one carries 2 zero bits).
+fn is_key(key: &str) -> bool {
+    let b = key.as_bytes();
+    b.len() == 44 && b[43] == b'=' && b[..43].iter().all(|c| c.is_ascii_alphanumeric() || *c == b'+' || *c == b'/') && b"AEIMQUYcgkosw048".contains(&b[42])
+}
+
+/// Reads a WireGuard `.conf`; `name` (the file's name) becomes the interface's. Errors name the line and key, never
+/// a key's value. Keys only `wg-quick` knows (PostUp, Table, …) are skipped.
+pub fn parse_wireguard(name: &str, conf: &str) -> Result<WireGuard, String> {
+    let interface: String = name.chars().filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')).take(15).collect();
+    let mut wg = WireGuard::default();
+    wg.name = if interface.is_empty() { "wg0".into() } else { interface };
+    let mut section = String::new();
+    for (n, line) in conf.lines().enumerate() {
+        let line = line.split('#').next().unwrap_or_default().trim();
+        if line.is_empty() {
+            continue;
+        }
+        let at = |what: String| format!("line {}: {what}", n + 1);
+        if line.starts_with('[') {
+            section = line.to_lowercase();
+            match section.as_str() {
+                "[interface]" => {}
+                "[peer]" => wg.peers.push(Peer::default()),
+                _ => return Err(at(format!("unknown section {line}"))),
+            }
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else { return Err(at("not “Key = value”".into())) };
+        let (key, value) = (key.trim().to_lowercase(), value.trim());
+        let list = || value.split(',').map(str::trim).filter(|s| !s.is_empty());
+        let number = || value.parse::<u32>().map_err(|_| at(format!("{key} isn't a number")));
+        let key_value = || if is_key(value) { Ok(value.to_owned()) } else { Err(at(format!("{key} isn't a WireGuard key"))) };
+        match (section.as_str(), key.as_str()) {
+            ("[interface]", "privatekey") => wg.private_key = key_value()?,
+            ("[interface]", "address") => {
+                for a in list() {
+                    let (ip, prefix) = a.split_once('/').unwrap_or((a, ""));
+                    let ip: std::net::IpAddr = ip.parse().map_err(|_| at(format!("“{a}” isn't an address")))?;
+                    let prefix = if prefix.is_empty() {
+                        if ip.is_ipv4() { 32 } else { 128 }
+                    } else {
+                        prefix.parse().map_err(|_| at(format!("“{a}” isn't an address")))?
+                    };
+                    wg.addresses.push((ip, prefix));
+                }
+            }
+            // ponytail: IPv4 servers only; IPv6 servers and search domains are left out.
+            ("[interface]", "dns") => wg.dns.extend(list().filter_map(|d| d.parse::<std::net::Ipv4Addr>().ok())),
+            ("[interface]", "listenport") => wg.listen_port = Some(number()?),
+            ("[interface]", "mtu") => wg.mtu = Some(number()?),
+            ("[peer]", key) => {
+                let peer = wg.peers.last_mut().expect("a [Peer] section has a peer");
+                match key {
+                    "publickey" => peer.public_key = key_value()?,
+                    "presharedkey" => peer.preshared_key = key_value()?,
+                    "endpoint" => peer.endpoint = value.to_owned(),
+                    "allowedips" => peer.allowed_ips.extend(list().map(str::to_owned)),
+                    "persistentkeepalive" if value != "off" => peer.keepalive = Some(number()?),
+                    _ => {}
+                }
+            }
+            ("", _) => return Err(at(format!("{key} is outside [Interface] and [Peer]"))),
+            _ => {}
+        }
+    }
+    if wg.private_key.is_empty() {
+        return Err("no PrivateKey in [Interface]".into());
+    }
+    if wg.peers.is_empty() || wg.peers.iter().any(|p| p.public_key.is_empty()) {
+        return Err("every [Peer] needs a PublicKey".into());
+    }
+    Ok(wg)
+}
+
+/// The new `wireguard` connection; it doesn't come up by itself.
+fn wireguard_settings(wg: &WireGuard) -> Dict<'_> {
+    let peers: Vec<HashMap<&str, Value>> = wg
+        .peers
+        .iter()
+        .map(|p| {
+            let mut peer = HashMap::from([("public-key", Value::from(p.public_key.as_str())), ("allowed-ips", Value::from(p.allowed_ips.clone()))]);
+            if !p.endpoint.is_empty() {
+                peer.insert("endpoint", p.endpoint.as_str().into());
+            }
+            if !p.preshared_key.is_empty() {
+                peer.insert("preshared-key", p.preshared_key.as_str().into());
+                peer.insert("preshared-key-flags", 0u32.into());
+            }
+            if let Some(seconds) = p.keepalive {
+                peer.insert("persistent-keepalive", seconds.into());
+            }
+            peer
+        })
+        .collect();
+    // NetworkManager stores the private key itself (flags 0), as the file did.
+    let mut wireguard = HashMap::from([("private-key", Value::from(wg.private_key.as_str())), ("private-key-flags", 0u32.into()), ("peers", peers.into())]);
+    if let Some(port) = wg.listen_port {
+        wireguard.insert("listen-port", port.into());
+    }
+    if let Some(mtu) = wg.mtu {
+        wireguard.insert("mtu", mtu.into());
+    }
+    let ip = |v4: bool| {
+        let addresses: Vec<HashMap<&str, Value>> = wg
+            .addresses
+            .iter()
+            .filter(|(a, _)| a.is_ipv4() == v4)
+            .map(|(a, prefix)| HashMap::from([("address", Value::from(a.to_string())), ("prefix", Value::from(*prefix))]))
+            .collect();
+        let mut setting = HashMap::from([("method", Value::from(if addresses.is_empty() { "disabled" } else { "manual" }))]);
+        if !addresses.is_empty() {
+            setting.insert("address-data", addresses.into());
+        }
+        setting
+    };
+    let mut ipv4 = ip(true);
+    if !wg.dns.is_empty() {
+        ipv4.insert("dns", wg.dns.iter().map(|a| u32::from_ne_bytes(a.octets())).collect::<Vec<u32>>().into());
+    }
+    let connection = HashMap::from([
+        ("id", Value::from(wg.name.as_str())),
+        ("type", "wireguard".into()),
+        ("interface-name", wg.name.as_str().into()),
+        ("autoconnect", false.into()),
+    ]);
+    Dict::from([("connection", connection), ("wireguard", wireguard), ("ipv4", ipv4), ("ipv6", ip(false))])
+}
+
+/// VPN ▸ Import WireGuard: reads the `.conf` at `path` and saves it as a NetworkManager connection.
+pub async fn import_wireguard(bus: Connection, path: String) -> zbus::Result<()> {
+    let path = std::path::PathBuf::from(path.trim());
+    let mut conf = std::fs::read_to_string(&path).map_err(|err| zbus::Error::Failure(format!("{}: {err}", path.display())))?;
+    let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let parsed = parse_wireguard(&name, &conf);
+    wipe(&mut conf);
+    let wg = parsed.map_err(|err| zbus::Error::Failure(format!("{}: {err}", path.display())))?;
+    let settings = "/org/freedesktop/NetworkManager/Settings";
+    bus.call_method(Some(NM), settings, Some("org.freedesktop.NetworkManager.Settings"), "AddConnection", &(wireguard_settings(&wg),)).await?;
     Ok(())
 }
 
@@ -494,6 +673,51 @@ mod tests {
         for bad in [Ip4 { prefix: "33".into(), ..typed.clone() }, Ip4 { gateway: "router".into(), ..typed.clone() }, Ip4 { dns: "1.1.1".into(), ..typed }] {
             assert!(set_ip4(&mut settings, &bad).is_err());
         }
+    }
+
+    const PRIVATE: &str = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=";
+    const PUBLIC: &str = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=";
+
+    #[test]
+    fn wireguard_conf() {
+        let conf = format!(
+            "[Interface]\nPrivateKey = {PRIVATE}\nAddress = 10.0.0.2/24, fd00::2\nDNS = 1.1.1.1, example.lan\nPostUp = iptables …\n\n\
+             [Peer] # the server\nPublicKey = {PUBLIC}\nPresharedKey = {PUBLIC}\nEndpoint = vpn.example.com:51820\n\
+             AllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n"
+        );
+        let wg = parse_wireguard("my vpn.conf-with-a-long-name", &conf).unwrap();
+        let settings = wireguard_settings(&wg);
+        let text = |v: &Value| String::try_from(v.try_clone().unwrap()).unwrap();
+        assert_eq!(text(&settings["connection"]["type"]), "wireguard");
+        assert_eq!(text(&settings["connection"]["interface-name"]), "myvpnconf-with-");
+        assert_eq!(text(&settings["wireguard"]["private-key"]), PRIVATE);
+        let peers = Vec::<HashMap<String, OwnedValue>>::try_from(settings["wireguard"]["peers"].try_clone().unwrap()).unwrap();
+        assert_eq!(peers.len(), 1);
+        assert_eq!(text(&peers[0]["endpoint"].try_clone().unwrap().into()), "vpn.example.com:51820");
+        assert_eq!(Vec::<String>::try_from(peers[0]["allowed-ips"].try_clone().unwrap()).unwrap(), ["0.0.0.0/0", "::/0"]);
+        assert_eq!(u32::try_from(&peers[0]["persistent-keepalive"]).unwrap(), 25);
+        let address = |v4: &str| dicts(Some(&OwnedValue::try_from(settings[v4]["address-data"].try_clone().unwrap()).unwrap()));
+        assert_eq!(
+            (text(&address("ipv4")[0]["address"].try_clone().unwrap().into()), u32::try_from(&address("ipv4")[0]["prefix"]).unwrap()),
+            ("10.0.0.2".into(), 24)
+        );
+        assert_eq!(u32::try_from(&address("ipv6")[0]["prefix"]).unwrap(), 128);
+        assert_eq!(Vec::<u32>::try_from(settings["ipv4"]["dns"].try_clone().unwrap()).unwrap(), [u32::from_ne_bytes([1, 1, 1, 1])]);
+    }
+
+    #[test]
+    fn wireguard_rejects_bad_keys() {
+        let conf = |private: &str, public: &str| format!("[Interface]\nPrivateKey = {private}\n[Peer]\nPublicKey = {public}\nAllowedIPs = 0.0.0.0/0\n");
+        assert!(parse_wireguard("wg0", &conf(PRIVATE, PUBLIC)).is_ok());
+        for private in ["short=", &PRIVATE.replace('k', "!"), &PRIVATE.replace("Bmk=", "Bml="), &PRIVATE[..43]] {
+            let err = parse_wireguard("wg0", &conf(private, PUBLIC)).err().unwrap();
+            // The error says which key, never what it is.
+            assert!(err.contains("privatekey") && !err.contains(private), "{err}");
+        }
+        assert!(parse_wireguard("wg0", &conf(PRIVATE, "nope")).is_err());
+        assert!(parse_wireguard("wg0", &format!("[Interface]\nPrivateKey = {PRIVATE}\n")).is_err());
+        assert!(parse_wireguard("wg0", &format!("PrivateKey = {PRIVATE}\n")).is_err());
+        assert!(parse_wireguard("wg0", "[Interface]\nAddress = nonsense\n").is_err());
     }
 
     #[test]

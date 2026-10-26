@@ -160,6 +160,8 @@ pub enum Message {
     UpdateIp4,
     /// VPN ▸ a connection's switch.
     Vpn(network::Vpn),
+    /// VPN ▸ Import: the typed WireGuard `.conf` path.
+    ImportWireGuard,
     /// Networks ▸ Other…: opens (`true`) or closes the hidden-network form.
     OtherNetwork(bool),
     /// The hidden-network form ▸ Join.
@@ -423,6 +425,10 @@ impl App {
                 return Task::perform(network::change(move |bus| network::update_ip4(bus, path, ip4)), Message::Status);
             }
             Message::Vpn(vpn) => return Task::perform(network::change(move |bus| network::vpn_switch(bus, vpn)), Message::Status),
+            Message::ImportWireGuard => {
+                let Some(path) = self.texts.remove(network::WIREGUARD) else { return Task::none() };
+                return Task::perform(network::change(move |bus| network::import_wireguard(bus, path)), Message::Status);
+            }
             Message::OtherNetwork(open) => {
                 let fields: Vec<String> = self.texts.keys().filter(|k| k.starts_with(network::OTHER)).cloned().collect();
                 for key in fields {
