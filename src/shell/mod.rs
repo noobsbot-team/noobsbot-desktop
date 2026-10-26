@@ -98,14 +98,16 @@ pub fn aims_at(from: Point<f64, Logical>, to: Point<f64, Logical>, sub: Rect) ->
     to != from && !((d1 < 0.0 || d2 < 0.0 || d3 < 0.0) && (d1 > 0.0 || d2 > 0.0 || d3 > 0.0))
 }
 
-/// What a click on status item `i` of `kind` opens: its Control Center module, or the battery menu.
-pub fn status_popup(kind: menubar::Kind, i: usize) -> Popup {
-    match kind {
+/// What a click on status item `i` of `kind` opens: its Control Center module, or the battery menu. The recording's
+/// item opens nothing: it stops the recording.
+pub fn status_popup(kind: menubar::Kind, i: usize) -> Option<Popup> {
+    Some(match kind {
+        menubar::Kind::Recording => return None,
         menubar::Kind::Network => Popup::Module(control::Module::Wifi, i),
         menubar::Kind::Bluetooth => Popup::Module(control::Module::Bluetooth, i),
         menubar::Kind::Volume => Popup::Module(control::Module::Sound, i),
         menubar::Kind::Battery => Popup::Menu(Menu::Battery(i)),
-    }
+    })
 }
 
 /// What a click on `item` opens; a status item's needs its kind (`State::bar_popup`).
@@ -574,7 +576,7 @@ impl State {
     /// What a click on bar `item` opens.
     fn bar_popup(&self, item: BarItem) -> Option<Popup> {
         match item {
-            BarItem::Status(i) => Some(status_popup(self.menu_bar()?.status.get(i)?.kind, i)),
+            BarItem::Status(i) => status_popup(self.menu_bar()?.status.get(i)?.kind, i),
             _ => popup_for(item),
         }
     }
@@ -587,6 +589,9 @@ impl State {
             // fcitx5 tells nobody when its method changes: ask now.
             BarItem::Input => self.services.send(crate::services::Command::FcitxRead),
             BarItem::ControlCenter => self.services.send(crate::services::Command::Inhibitors),
+            BarItem::Status(i) if self.menu_bar().and_then(|c| c.status.get(i).map(|s| s.kind)) == Some(menubar::Kind::Recording) => {
+                self.toggle_recording();
+            }
             BarItem::Status(_) => {
                 self.control_scroll = 0.0;
                 if matches!(self.popup, Some(Popup::Module(control::Module::Wifi, _))) {
@@ -1022,10 +1027,11 @@ mod tests {
     #[test]
     fn status_items_open_their_module() {
         use menubar::Kind;
-        assert_eq!(status_popup(Kind::Network, 0), Popup::Module(control::Module::Wifi, 0));
-        assert_eq!(status_popup(Kind::Bluetooth, 1), Popup::Module(control::Module::Bluetooth, 1));
-        assert_eq!(status_popup(Kind::Volume, 3), Popup::Module(control::Module::Sound, 3));
-        assert_eq!(status_popup(Kind::Battery, 2), Popup::Menu(Menu::Battery(2)));
+        assert_eq!(status_popup(Kind::Network, 0), Some(Popup::Module(control::Module::Wifi, 0)));
+        assert_eq!(status_popup(Kind::Bluetooth, 1), Some(Popup::Module(control::Module::Bluetooth, 1)));
+        assert_eq!(status_popup(Kind::Volume, 3), Some(Popup::Module(control::Module::Sound, 3)));
+        assert_eq!(status_popup(Kind::Battery, 2), Some(Popup::Menu(Menu::Battery(2))));
+        assert_eq!(status_popup(Kind::Recording, 0), None, "the stop item stops, it opens nothing");
         assert_eq!(Popup::Module(control::Module::Sound, 3).item(), Some(BarItem::Status(3)));
     }
 

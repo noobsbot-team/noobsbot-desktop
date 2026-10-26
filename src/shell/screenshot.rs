@@ -7,7 +7,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use smithay::{
@@ -93,8 +93,8 @@ pub struct Screenshots {
     pub delay: u8,
     /// Options ▸ Show Floating Thumbnail, unticked.
     pub no_thumbnail: bool,
-    /// The running `wf-recorder`.
-    pub recording: Option<u32>,
+    /// The running `wf-recorder` and when it started.
+    pub recording: Option<(u32, Instant)>,
     last_mode: Mode,
     tx: Option<channel::Sender<Msg>>,
 }
@@ -252,6 +252,12 @@ fn encode_png(rgba: &[u8], w: u32, h: u32) -> Result<Vec<u8>, png::EncodingError
     encoder.set_compression(png::Compression::Fast);
     encoder.write_header()?.write_image_data(rgba)?;
     Ok(bytes)
+}
+
+/// A recording's length as the menu bar shows it: `0:42`, `1:02:03`.
+pub fn elapsed(d: Duration) -> String {
+    let s = d.as_secs();
+    if s < 3600 { format!("{}:{:02}", s / 60, s % 60) } else { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) }
 }
 
 /// Whether `program` is on `$PATH`.
@@ -615,10 +621,11 @@ impl State {
         true
     }
 
-    /// Record in the toolbar (or the screen-record key): starts `wf-recorder` on the whole screen (into ~/Videos), or stops it.
-    // ponytail: wf-recorder until our own PipeWire recorder (E7.2); no menu-bar stop button, Super+Shift+5 ▸ Stop.
+    /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts `wf-recorder` on the whole
+    /// screen (into ~/Videos), or stops it.
+    // ponytail: wf-recorder until our own PipeWire recorder (E7.2).
     pub fn toggle_recording(&mut self) {
-        if let Some(pid) = self.screenshots.recording.take() {
+        if let Some((pid, _)) = self.screenshots.recording.take() {
             // SIGINT lets it finish the file.
             unsafe { libc::kill(pid as i32, libc::SIGINT) };
             return self.close_shot();
@@ -635,7 +642,16 @@ impl State {
         command.arg("-f").arg(&path).env("WAYLAND_DISPLAY", crate::perms::trusted_socket(&self.socket_name));
         match command.spawn() {
             Ok(mut child) => {
-                self.screenshots.recording = Some(child.id());
+                self.screenshots.recording = Some((child.id(), Instant::now()));
+                // The menu bar's elapsed time ticks each second while it records.
+                let second = Duration::from_secs(1);
+                let ticks = self.loop_handle.insert_source(Timer::from_duration(second), move |_, _, state| {
+                    state.schedule_redraw();
+                    if state.screenshots.recording.is_some() { TimeoutAction::ToDuration(second) } else { TimeoutAction::Drop }
+                });
+                if let Err(err) = ticks {
+                    tracing::warn!("recording timer: {err}");
+                }
                 std::thread::spawn(move || {
                     let _ = child.wait();
                     if let Some(tx) = tx {
@@ -724,6 +740,13 @@ mod tests {
         // Second pixel of the first row is source pixel 2.
         assert_eq!(&t.rgba[4..8], &rgba[8..12]);
         assert_eq!(shrink(&rgba, 10, 4, 100).size, (10, 4));
+    }
+
+    #[test]
+    fn recording_time_reads_as_minutes_and_seconds() {
+        assert_eq!(elapsed(Duration::from_secs(42)), "0:42");
+        assert_eq!(elapsed(Duration::from_secs(62)), "1:02");
+        assert_eq!(elapsed(Duration::from_secs(3723)), "1:02:03");
     }
 
     #[test]

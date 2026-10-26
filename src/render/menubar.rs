@@ -94,6 +94,8 @@ pub enum BarItem {
 /// Which status item it is: what a click on it opens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
+    /// A screen recording runs: a click stops it.
+    Recording,
     Network,
     Bluetooth,
     Battery,
