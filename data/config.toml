@@ -80,7 +80,8 @@ scale = 0.0
 move_modifier = "super"
 # Window edges stick to screen and window edges within 8 px (hold Ctrl to disable while dragging).
 magnetic_edges = true
-# Hold a window at a screen edge to snap it into a half or a quarter.
+# Drag a window to a screen side for a half, a side's top or bottom for a quarter, the top for the whole screen.
+# Dragging it away gives back its old size. Hold Ctrl to skip.
 snapping = true
 # Double-clicking a title bar: "zoom", "minimise" or "nothing".
 double_click_title = "zoom"

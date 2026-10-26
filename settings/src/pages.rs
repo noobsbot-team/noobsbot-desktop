@@ -204,7 +204,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Choice(&[("super", "Super"), ("alt", "Alt")]),
     ),
     s(Page::Dock, "Windows", "windows.magnetic_edges", "Magnetic edges", "Edges stick to screen and window edges", Kind::Toggle),
-    s(Page::Dock, "Windows", "windows.snapping", "Snap to halves and quarters", "Hold a window at a screen edge", Kind::Toggle),
+    s(Page::Dock, "Windows", "windows.snapping", "Tile at screen edges", "Drag to a side, a corner or the top; hold Ctrl to skip", Kind::Toggle),
     s(
         Page::Dock,
         "Windows",

@@ -195,7 +195,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
 
 ## Using it
 - **Windows:** the red, yellow and green buttons close, minimise and zoom. Drag the title bar, or hold Super and drag
-  anywhere in a window. Hold a window against a screen edge to snap it to a half or a quarter. Edges stick to other
+  anywhere in a window. Drag a window to a side of the screen for a half, near a corner for a quarter, or to the top to fill the screen;
+  drag it away for its old size. Edges stick to other
   edges while you drag (hold Ctrl to stop that). Double-click a title bar to zoom.
 - **Menu bar:** the logo menu (About, Sleep, Restart, Shut Down, Lock, Log Out, Force Quit, Software Update), the
   focused app's menu, then status icons: input source, battery, Wi-Fi, Control Center and the clock. Most Linux apps

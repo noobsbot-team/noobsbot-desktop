@@ -507,6 +507,14 @@ impl State {
             bar.extend(components.elements(renderer, shaders, &mut self.text, &mut self.symbols, geo.size, dark, accent, appearance.glass_opacity, scale));
         }
         let output_geo = self.space.output_geometry(output).unwrap_or_default();
+        // Where a dragged window will tile (E8.5): `panel` glass at half strength, inset like a window gap.
+        if let Some(tile) = self.tile_preview {
+            let (loc, size) = (tile.loc - output_geo.loc, tile.size);
+            let rect = crate::wm::Rect::new((loc.x + 6, loc.y + 6).into(), (size.w - 12, size.h - 12).into());
+            let spec = render::Material::Panel.spec(dark);
+            let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
+            bar.push(SceneElement::Shader(shaders.glass_shape(rect, [r, g, b, 0.5 * appearance.glass_opacity], render::WINDOW_RADIUS, true, dark, scale)));
+        }
         let windows = match (&overview, &slide) {
             (Some(overview), _) => {
                 Some(mission.windows(renderer, shaders, &mut self.text, &self.space, overview, output_geo, dark, accent, appearance.glass_opacity, scale))

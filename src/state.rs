@@ -67,6 +67,10 @@ struct Restore(std::sync::Mutex<Option<Rect>>);
 /// The window rules that matched this window.
 struct Ruled(std::sync::Mutex<Actions>);
 
+/// A tiled window tells the app every edge is tiled, so it drops its own shadow and corners.
+const TILED: [xdg_toplevel::State; 4] =
+    [xdg_toplevel::State::TiledLeft, xdg_toplevel::State::TiledRight, xdg_toplevel::State::TiledTop, xdg_toplevel::State::TiledBottom];
+
 pub(crate) fn ruled(window: &Window) -> Option<Actions> {
     window.user_data().get::<Ruled>().and_then(|r| r.0.lock().ok().map(|a| a.clone()))
 }
@@ -96,6 +100,8 @@ pub struct State {
     /// Frames keep coming until then (anim.rs).
     pub anim_until: Option<Instant>,
     pub resize: Option<Resize>,
+    /// Where the dragged window will tile (E8.5), shown as a glass outline.
+    pub tile_preview: Option<Rect>,
     /// Nested in another desktop: Alt stands in for Super, which the host keeps.
     pub nested: bool,
     pub config: Config,
@@ -409,6 +415,7 @@ impl State {
             redraw_pending: false,
             anim_until: None,
             resize: None,
+            tile_preview: None,
             nested,
             x_display: None,
             update: None,
@@ -610,7 +617,45 @@ impl State {
     pub fn start_move(&mut self, window: Window, start_data: smithay::input::pointer::GrabStartData<Self>, serial: Serial) {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let Some(start) = self.frame(&window) else { return };
-        pointer.set_grab(self, MoveGrab { start_data, window, start, started: false }, serial, Focus::Clear);
+        pointer.set_grab(self, MoveGrab { start_data, window, start, started: false, tile: None }, serial, Focus::Clear);
+    }
+
+    /// Tiles `window` (E8.5), remembering where it was; dragging it away puts it back (`untile`).
+    pub fn tile(&mut self, window: &Window, tile: crate::wm::Tile) {
+        let Some(surface) = window.toplevel().cloned() else { return };
+        let rect = match tile {
+            crate::wm::Tile::Zoom => return self.fill(&surface, xdg_toplevel::State::Maximized),
+            crate::wm::Tile::Part(rect) => rect,
+        };
+        self.window_reframing(window);
+        let restore = window.user_data().get_or_insert(|| Restore(std::sync::Mutex::new(None)));
+        if let (Ok(mut saved), Some(frame)) = (restore.0.lock(), self.frame(window)) {
+            saved.get_or_insert(frame);
+        }
+        surface.with_pending_state(|s| TILED.iter().for_each(|t| _ = s.states.set(*t)));
+        let size = self.content_size(window, rect.size);
+        surface.with_pending_state(|s| s.size = Some(size));
+        surface.send_pending_configure();
+        self.set_visible_loc(window, rect.loc);
+    }
+
+    /// A tiled window being dragged away gets its old size back, its title bar under the pointer at `at`; returns its
+    /// new rectangle.
+    pub fn untile(&mut self, window: &Window, at: Point<f64, Logical>) -> Option<Rect> {
+        let surface = window.toplevel()?;
+        if !surface.with_pending_state(|s| s.states.contains(xdg_toplevel::State::TiledLeft)) {
+            return None;
+        }
+        self.window_reframing(window);
+        let saved = window.user_data().get::<Restore>().and_then(|r| r.0.lock().ok()?.take());
+        surface.with_pending_state(|s| TILED.iter().for_each(|t| _ = s.states.unset(*t)));
+        surface.with_pending_state(|s| s.size = saved.map(|r| self.content_size(window, r.size)));
+        surface.send_pending_configure();
+        let saved = saved?;
+        let at = at.to_i32_round::<i32>();
+        let rect = Rect::new((at.x - saved.size.w / 2, at.y - crate::decorations::BAR / 2).into(), saved.size);
+        self.set_visible_loc(window, rect.loc);
+        Some(rect)
     }
 
     /// Zoom (fill the work area) or fullscreen (fill the output), remembering where the window was.
