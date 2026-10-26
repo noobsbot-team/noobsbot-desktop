@@ -131,16 +131,15 @@ pub struct Row {
 
 /// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows, `update`: a verified
 /// update is waiting (E6.13).
-// ponytail: rows whose window isn't built yet (About, Settings) are disabled until
-// their milestone adds it.
 pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) -> Vec<Option<Row>> {
     let row = |label: String, shortcut, action| Some(Row { label, shortcut, action });
+    let settings = |page: &str| Some(Action::Spawn(format!("noobsbot-desktop-settings --page {page}")));
     match menu {
         Menu::Logo => vec![
-            row("About This Computer".into(), "", None),
-            row("System Settings…".into(), "", None),
-            // ponytail: the row itself is the badge until Settings ▸ Software Update (M7) exists to open.
-            if update { row("Restart to Update…".into(), "", Some(Action::InstallUpdate)) } else { row("Software Update…".into(), "", None) },
+            row("About This Computer".into(), "", settings("about")),
+            row("System Settings…".into(), "", settings("appearance")),
+            // The row itself is the badge (E6.13).
+            if update { row("Restart to Update…".into(), "", Some(Action::InstallUpdate)) } else { row("Software Update…".into(), "", settings("general")) },
             None,
             row("Force Quit…".into(), "⌥⌘⎋", Some(Action::ForceQuit)),
             None,
