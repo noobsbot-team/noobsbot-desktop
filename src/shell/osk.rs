@@ -118,7 +118,6 @@ pub fn keys() -> impl Iterator<Item = Key> {
 
 pub const PAD: i32 = 10;
 pub const GAP: i32 = 5;
-pub const RADIUS: f64 = 14.0;
 /// Bottom margin.
 const MARGIN: i32 = 8;
 
