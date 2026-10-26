@@ -29,6 +29,8 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Start {
     Screen,
+    /// The focused window, at once.
+    Window,
     Region,
     Toolbar,
 }
@@ -258,6 +260,10 @@ impl State {
     pub fn screenshot(&mut self, start: Start) {
         match start {
             Start::Screen => self.shoot(Mode::Screen, None),
+            Start::Window => {
+                let Some(frame) = self.focused_window().and_then(|w| self.frame(&w)) else { return };
+                self.shoot(Mode::Window, Some(Rectangle::new(frame.loc - self.shot_origin(), frame.size)));
+            }
             Start::Region => self.open_shot(Shot { mode: Mode::Region, ..Default::default() }),
             // Its key again closes it.
             Start::Toolbar if self.screenshots.shot.as_ref().is_some_and(|s| s.toolbar) => self.close_shot(),
@@ -294,9 +300,14 @@ impl State {
         }
     }
 
+    /// The captured output's top-left corner, in global coordinates.
+    fn shot_origin(&self) -> Point<i32, Logical> {
+        self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or((0, 0).into(), |g| g.loc)
+    }
+
     /// The window frame (title bar included) at `at`, output-relative.
     fn shot_window(&self, at: Point<f64, Logical>) -> Option<Rect> {
-        let origin = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or((0, 0).into(), |g| g.loc);
+        let origin = self.shot_origin();
         let global = at + origin.to_f64();
         let frame = self.space.elements().rev().filter(|w| self.on_current(w)).find_map(|w| self.frame(w).filter(|f| f.to_f64().contains(global)))?;
         Some(Rectangle::new(frame.loc - origin, frame.size))
@@ -600,9 +611,9 @@ impl State {
         true
     }
 
-    /// Record in the toolbar: starts `wf-recorder` on the whole screen (into ~/Videos), or stops it.
+    /// Record in the toolbar (or the screen-record key): starts `wf-recorder` on the whole screen (into ~/Videos), or stops it.
     // ponytail: wf-recorder until our own PipeWire recorder (E7.2); no menu-bar stop button, Super+Shift+5 ▸ Stop.
-    fn toggle_recording(&mut self) {
+    pub fn toggle_recording(&mut self) {
         if let Some(pid) = self.screenshots.recording.take() {
             // SIGINT lets it finish the file.
             unsafe { libc::kill(pid as i32, libc::SIGINT) };
