@@ -62,7 +62,7 @@ jobs:
           name="noobsbot-desktop-$version-x86_64"
           mkdir -p "dist/$name"
           cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings target/release/noobsbot-desktop-update \
-            target/release/noobsbot-desktop-watchdog \
+            target/release/noobsbot-desktop-watchdog target/release/noobsbot-desktop-widget-system \
             "$RUNNER_TEMP/xws/bin/xwayland-satellite" LICENSE README.md "dist/$name/"
           cp -r data "dist/$name/"
           cd dist
@@ -101,7 +101,7 @@ jobs:
         run: |
           mkdir x
           tar --zstd -xf dist/*.tar.zst -C x --strip-components=1
-          for bin in noobsbot-desktop noobsbot-desktop-settings noobsbot-desktop-update noobsbot-desktop-watchdog xwayland-satellite; do
+          for bin in noobsbot-desktop noobsbot-desktop-settings noobsbot-desktop-update noobsbot-desktop-watchdog noobsbot-desktop-widget-system xwayland-satellite; do
             if ldd "x/$bin" | grep 'not found'; then echo "$bin: missing libraries on ${{ matrix.system }}"; exit 1; fi
           done
           x/noobsbot-desktop --version
