@@ -896,6 +896,8 @@ main() {
     user_settings
     security_check
     [[ -z $NET_MOVE || -n $NET_KEEP ]] || ((!NM_TAKEOVER)) || say "The network moves to NetworkManager at the reboot."
+    # Not installed by default: either input-method engine is the user's pick.
+    say "Typing Pinyin, Nepali and other scripts needs fcitx5 (fcitx5-m17n…) or the ibus package (Settings › Keyboard › Input method)."
     if [[ -n $OLD_DM ]] && ((KEEP_DM)); then
         say "Done. Reboot, choose Noobsbot Desktop in ${OLD_DM%.service}'s session menu, and log in."
     elif ((GREETER)); then say "Done. Reboot, log in at the login screen, and Noobsbot Desktop starts."
