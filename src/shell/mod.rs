@@ -433,7 +433,34 @@ pub fn grid(year: i32, month: u32, week_start: Weekday) -> Vec<[NaiveDate; 7]> {
     crate::calendar::month_grid(year, month, week_start).unwrap_or_default()
 }
 
+/// `location` relative to a display at `from` made relative to one at `to` (global origins).
+pub fn rebase(location: Point<f64, Logical>, from: Point<i32, Logical>, to: Point<i32, Logical>) -> Point<f64, Logical> {
+    location + from.to_f64() - to.to_f64()
+}
+
 impl State {
+    /// The display an overlay remembered (`output`), while it is still connected; else the first.
+    pub fn overlay_output(&self, output: Option<&smithay::output::Output>) -> Option<smithay::output::Output> {
+        output.filter(|o| self.space.outputs().any(|x| x == *o)).or_else(|| self.space.outputs().next()).cloned()
+    }
+
+    /// `overlay_output`'s area, global.
+    pub fn overlay_geometry(&self, output: Option<&smithay::output::Output>) -> Option<Rectangle<i32, Logical>> {
+        self.overlay_output(output).and_then(|o| self.space.output_geometry(&o))
+    }
+
+    /// `location` (first-output-relative, as the shell gets it) relative to `overlay_output(output)`.
+    pub fn to_display(&self, output: Option<&smithay::output::Output>, location: Point<f64, Logical>) -> Point<f64, Logical> {
+        let origin = |o| self.overlay_geometry(o).unwrap_or_default().loc;
+        rebase(location, origin(None), origin(output))
+    }
+
+    /// The focused window's display, else the pointer's (D13): where alerts and Spotlight show.
+    pub fn focus_output(&self) -> Option<smithay::output::Output> {
+        let window = self.focused_window().and_then(|w| self.space.element_geometry(&w));
+        self.display_with(window.map(|g| g.loc + Point::from((g.size.w / 2, g.size.h / 2))))
+    }
+
     /// `location` relative to the first output's top-left corner, where the shell lays out.
     pub fn to_output(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
         let origin = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or((0, 0).into(), |g| g.loc);
@@ -451,16 +478,9 @@ impl State {
         if self.popup.is_some_and(|p| p.item().is_none()) { first } else { bar.or(first) }.cloned()
     }
 
-    /// The display the alert shows on: the focused window's, else the pointer's (D13).
-    pub fn alert_output(&self) -> Option<smithay::output::Output> {
-        let window = self.focused_window().and_then(|w| self.space.element_geometry(&w));
-        self.display_with(window.map(|g| g.loc + Point::from((g.size.w / 2, g.size.h / 2))))
-    }
-
     /// `location` (first-output-relative) relative to the alert's display.
     fn to_alert(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
-        let origin = |o: Option<smithay::output::Output>| o.and_then(|o| self.space.output_geometry(&o)).map_or((0, 0).into(), |g| g.loc);
-        location + origin(self.space.outputs().next().cloned()).to_f64() - origin(self.alert_output()).to_f64()
+        self.to_display(self.focus_output().as_ref(), location)
     }
 
     /// The size of the popup's display, which Notification Center and Control Center are laid out in.
@@ -522,7 +542,8 @@ impl State {
         if on_alert || self.on_banner(location) || self.mission_open() || self.osk_panel().is_some_and(|r| r.to_f64().contains(location)) {
             return true;
         }
-        if self.spotlight.is_some() && self.spotlight_layout(self.spotlight_results().len()).is_some_and(|l| l.rect.to_f64().contains(location)) {
+        let on_spotlight = self.spotlight.as_ref().map(|s| self.to_display(s.output.as_ref(), location));
+        if on_spotlight.is_some_and(|at| self.spotlight_layout(self.spotlight_results().len()).is_some_and(|l| l.rect.to_f64().contains(at))) {
             return true;
         }
         if self.emoji.as_ref().is_some_and(|e| e.layout().rect.to_f64().contains(location)) {
@@ -1018,6 +1039,35 @@ fn calendar_click(layout: &CalendarLayout, location: Point<f64, Logical>, (year,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::displays::display_for;
+
+    /// The main display, and a second one left of and above it (negative origin).
+    fn two_displays() -> [Rectangle<i32, Logical>; 2] {
+        [Rectangle::new((0, 0).into(), (1920, 1080).into()), Rectangle::new((-1280, -200).into(), (1280, 1024).into())]
+    }
+
+    #[test]
+    fn points_move_between_displays() {
+        let [main, left] = two_displays();
+        // Global (-600, 100) is first-output-relative (-600, 100); on the left display it is (680, 300).
+        let on_left = rebase((-600.0, 100.0).into(), main.loc, left.loc);
+        assert_eq!(on_left, (680.0, 300.0).into());
+        assert_eq!(rebase(on_left, left.loc, main.loc), (-600.0, 100.0).into());
+        // A main display that is not at the origin, the second at it.
+        let (main, second) = (Point::from((1280, 0)), Point::from((0, 0)));
+        assert_eq!(rebase((-1180.0, 50.0).into(), main, second), (100.0, 50.0).into());
+        assert_eq!(rebase((1.0, 2.0).into(), main, main), (1.0, 2.0).into());
+    }
+
+    #[test]
+    fn spotlight_opens_on_the_focused_windows_display() {
+        let screens = two_displays();
+        // The focused window's centre on the left display, the pointer on the main one.
+        assert_eq!(display_for(&screens, Some((-640, 300).into()), (100.0, 100.0).into()), 1);
+        // No focused window: the pointer's.
+        assert_eq!(display_for(&screens, None, (-600.0, -150.0).into()), 1);
+        assert_eq!(display_for(&screens, None, (100.0, 100.0).into()), 0);
+    }
 
     #[test]
     fn months_wrap_years() {

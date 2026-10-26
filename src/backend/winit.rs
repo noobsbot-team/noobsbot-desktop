@@ -468,9 +468,9 @@ impl State {
         (bar, dock_frame.animating)
     }
 
-    /// The alert, on `output` when it shows there (`alert_output`).
+    /// The alert, on `output` when it shows there (`focus_output`).
     fn alert_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
-        let shown = self.alert.is_some() && self.alert_output().as_ref() == Some(output);
+        let shown = self.alert.is_some() && self.focus_output().as_ref() == Some(output);
         let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
         let (scale, reopen) = (output.current_scale().fractional_scale(), self.config.windows.reopen_at_login);
         let appearance = &self.config.appearance;
@@ -487,6 +487,33 @@ impl State {
                 Vec::new()
             }
         }
+    }
+
+    /// Spotlight, on `output` when it shows there.
+    fn spotlight_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let Some(open) = self.spotlight.clone().filter(|s| self.overlay_output(s.output.as_ref()).as_ref() == Some(output)) else { return Vec::new() };
+        let hits = self.spotlight_results();
+        let Some(layout) = self.spotlight_layout(hits.len()) else { return Vec::new() };
+        let selected = open.selected.min(layout.rows.len().saturating_sub(1));
+        let appearance = &self.config.appearance;
+        let (dark, glass, scale) = (render::is_dark(appearance), appearance.glass_opacity, output.current_scale().fractional_scale());
+        let accent = render::accent(appearance.accent, dark);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        views.spotlight.elements(
+            renderer,
+            &views.shaders,
+            &mut self.text,
+            &mut self.symbols,
+            &mut self.icons,
+            &hits,
+            selected,
+            &open.field,
+            &layout,
+            dark,
+            accent,
+            glass,
+            scale,
+        )
     }
 
     /// The hot-corner ripple (E5.4) on `output`, if its corner is there: a faint glass disc with a light rim, growing
@@ -524,6 +551,7 @@ impl State {
             // Its own menu bar and the popups opened from it.
             let (strip, popups) = self.bar_elements(renderer, output, locked);
             let mut ripple = self.alert_elements(renderer, output);
+            ripple.extend(self.spotlight_elements(renderer, output));
             ripple.extend(self.ripple_elements(output));
             let animating = animating || !ripple.is_empty();
             // Its own dock, in front of the windows.
@@ -590,10 +618,7 @@ impl State {
             let selected = f.selection(&entries);
             (entries, selected)
         });
-        let search = self.spotlight.clone().and_then(|s| {
-            let hits = self.spotlight_results();
-            Some((self.spotlight_layout(hits.len())?, hits, s))
-        });
+        let search = self.spotlight_elements(renderer, output);
         let (cards, more) = self.banner_layout();
         let (dock_elements, dock_animating) = self.dock_elements(renderer, output);
         let now = self.frame_time;
@@ -633,7 +658,7 @@ impl State {
             docks: _,
             switcher: _,
             force_quit,
-            spotlight,
+            spotlight: _,
             emoji: emoji_view,
             osk: _,
             launchpad: pad_view,
@@ -684,24 +709,7 @@ impl State {
         if let Some((entries, selected)) = &quit_list {
             bar.extend(force_quit.elements(renderer, shaders, &mut self.text, &mut self.icons, entries, *selected, size, dark, accent, scale));
         }
-        if let Some((layout, hits, open)) = &search {
-            let selected = open.selected.min(layout.rows.len().saturating_sub(1));
-            bar.extend(spotlight.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                &mut self.icons,
-                hits,
-                selected,
-                &open.field,
-                layout,
-                dark,
-                accent,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
+        bar.extend(search);
         if let Some(picker) = &self.emoji {
             bar.extend(emoji_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, picker, dark, accent, appearance.glass_opacity, scale));
         }
