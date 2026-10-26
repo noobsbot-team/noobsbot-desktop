@@ -1686,10 +1686,12 @@ Rows live on the Appearance page (E8.2). Behind them:
 
 ### E8.6 Accessibility
 - **Zoom** (full screen and picture-in-picture), with invert and greyscale filters; keys Super+Alt+8 / = / −.
-- **Keyboard:** sticky keys, slow keys, bounce keys, mouse keys (in `src/input.rs`).
+- **Keyboard:** sticky keys, slow keys, bounce keys, mouse keys (in `src/input.rs`). Built: `[accessibility] sticky_keys`,
+  `sticky_keys_shortcut` (Shift ×5), `slow_keys_ms`, `bounce_keys_ms`, `mouse_keys`.
 - **Pointer:** dwell click, hold for secondary click, pointer size, shake to find the pointer.
 - **Display:** increase contrast, larger text, reduce transparency (exists), reduce motion (exists).
-- **Alerts:** visual and audible bell (`xdg_system_bell`), Caps Lock indicator.
+- **Alerts:** visual and audible bell (`xdg_system_bell`), Caps Lock indicator. Built: `[accessibility] bell`, a Caps Lock
+  OSD and ⇪ in the lock screen's field.
 - **On-screen keyboard** (`virtual_keyboard` protocol), also on the lock screen.
 - **Screen reader** path: AT-SPI for our shell widgets and an Orca key monitor. Size L.
 
