@@ -464,6 +464,8 @@ pub struct Spotlight {
     /// The selected row; 0 is the top hit.
     pub selected: usize,
     pub files: Files,
+    /// The display it shows on (`focus_output` when it opened).
+    pub output: Option<smithay::output::Output>,
 }
 
 impl State {
@@ -471,7 +473,7 @@ impl State {
     pub fn toggle_spotlight(&mut self) {
         if !self.close_spotlight() {
             self.popup = None;
-            self.spotlight = Some(Spotlight::default());
+            self.spotlight = Some(Spotlight { output: self.focus_output(), ..Default::default() });
             self.schedule_redraw();
         }
     }
@@ -489,9 +491,9 @@ impl State {
         self.spotlight.as_ref().map(|s| results(self.apps.list(), &s.files.hits, &s.field.text)).unwrap_or_default()
     }
 
-    /// The layout for `count` rows, above the dock.
+    /// The layout for `count` rows, above the dock, relative to its display.
     pub fn spotlight_layout(&self, count: usize) -> Option<Layout> {
-        let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
+        let size = self.overlay_geometry(self.spotlight.as_ref()?.output.as_ref())?.size;
         Some(layout(size, size.h - crate::shell::dock::reserve(&self.config.dock), count))
     }
 
@@ -526,7 +528,7 @@ impl State {
                 }
                 Edit::Moved | Edit::Ignored => {}
                 Edit::Cancel if open.field.text.is_empty() => return self.close_spotlight(),
-                Edit::Cancel => open = Spotlight::default(),
+                Edit::Cancel => open = Spotlight { output: open.output.take(), ..Default::default() },
                 Edit::Submit => {
                     if let Some(hit) = hits.into_iter().nth(open.selected.min(last)) {
                         self.spotlight_open(hit);
@@ -612,11 +614,10 @@ impl State {
         }
     }
 
-    /// A press at `location` (output-relative): a row opens its result; outside, Spotlight closes. `true`: taken.
+    /// A press at `location` (first-output-relative): a row opens its result; outside, Spotlight closes. `true`: taken.
     pub fn spotlight_press(&mut self, location: Point<f64, Logical>) -> bool {
-        if self.spotlight.is_none() {
-            return false;
-        }
+        let Some(open) = &self.spotlight else { return false };
+        let location = self.to_display(open.output.as_ref(), location);
         let hits = self.spotlight_results();
         let Some(layout) = self.spotlight_layout(hits.len()) else { return false };
         if !layout.rect.to_f64().contains(location) {
