@@ -327,7 +327,7 @@ doesn't understand is skipped and reported in the journal.
 | `[spaces]` | each display with its own Spaces, or one set for all |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week |
 | `[menu_bar]` | hide the menu bar until the pointer reaches the top edge |
-| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions |
+| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To) |
 | `[idle]` | when to dim, turn the screen off and sleep (battery and AC), locking |
 | `[privacy]` | which programs may record the screen |
 | `[notifications]` | Do Not Disturb, on a schedule too (`dnd_scheduled`, `dnd_from`, `dnd_until`), banners over full-screen windows (`full_screen`), previews always, when unlocked or never (`previews`) |

@@ -612,6 +612,9 @@ pub struct Dock {
     pub minimise_effect: MinimiseEffect,
     /// The Trash at the dock's right end, after a separator (E8.8).
     pub show_trash: bool,
+    /// Options ▸ Assign To, per dock app (item key): `"all"` (every Space) or `"<display>:<n>"` (its new windows
+    /// open on Space n of that display).
+    pub assign: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -902,6 +905,7 @@ impl Default for Dock {
             minimise_into_icon: false,
             minimise_effect: MinimiseEffect::Scale,
             show_trash: true,
+            assign: BTreeMap::new(),
         }
     }
 }
@@ -1176,7 +1180,7 @@ fn warn_unknown(prefix: &str, user: &toml::Table, known: &toml::Table) {
                     }
                 }
             }
-            (Some(toml::Value::Table(known)), toml::Value::Table(user)) if name != "bindings" && name != "notification_apps" => {
+            (Some(toml::Value::Table(known)), toml::Value::Table(user)) if !["bindings", "notification_apps", "dock.assign"].contains(&name.as_str()) => {
                 warn_unknown(&name, user, known)
             }
             _ => {}
