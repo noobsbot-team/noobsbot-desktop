@@ -543,13 +543,18 @@ fn sounds(files: Vec<String>) -> Vec<(String, String)> {
     out
 }
 
-/// Plays theme sound `name` as the desktop does: the sound theme's, else the freedesktop file straight to PipeWire.
-pub fn play(name: &str) {
+/// Plays theme sound `name` at `volume` percent as the desktop does (`bell::play`): the sound theme's, else the
+/// freedesktop file straight to PipeWire.
+pub fn play(name: &str, volume: u8) {
+    if volume == 0 {
+        return;
+    }
     let name = name.to_owned();
     std::thread::spawn(move || {
+        let factor = f32::from(volume.min(100)) / 100.0;
         let quiet = |c: &mut Command| c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
-        if !quiet(Command::new("canberra-gtk-play").args(["-i", &name])) {
-            quiet(Command::new("pw-play").arg(format!("{SOUND_DIR}/{name}.oga")));
+        if !quiet(Command::new("canberra-gtk-play").args(["-i", &name, &format!("--volume={:.1}", 20.0 * factor.log10())])) {
+            quiet(Command::new("pw-play").args([&format!("--volume={factor:.2}"), &format!("{SOUND_DIR}/{name}.oga")]));
         }
     });
 }
