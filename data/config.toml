@@ -261,6 +261,8 @@ lock_message = ""
 [battery]
 # The percentage beside the menu bar's battery symbol.
 show_percentage = true
+# Slightly dim the display on battery: unplugging lowers the brightness a step, plugging in gives it back.
+dim_on_battery = true
 
 [sound]
 # The alert sound, by its name in the freedesktop sound theme (/usr/share/sounds/freedesktop/stereo): "bell",

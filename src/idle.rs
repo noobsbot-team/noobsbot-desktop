@@ -40,6 +40,10 @@ pub enum Stage {
     Asleep,
 }
 
+/// Unplugging takes this much brightness (percent), never going below `DIM_FLOOR`.
+const DIM_STEP: u8 = 10;
+const DIM_FLOOR: u8 = 20;
+
 /// The low-battery notification's id (replaced, not stacked); below the disk notices' ids.
 const LOW_BATTERY: u32 = 0xFFFE_0000;
 
@@ -52,6 +56,8 @@ pub struct Idle {
     last_input: Instant,
     pub stage: Stage,
     timer: Option<RegistrationToken>,
+    /// Brightness taken on unplugging (`battery_dim`), given back on plugging in.
+    battery_dim: u8,
 }
 
 impl Idle {
@@ -64,6 +70,7 @@ impl Idle {
             last_input: Instant::now(),
             stage: Stage::Active,
             timer: None,
+            battery_dim: 0,
         }
     }
 }
@@ -84,6 +91,17 @@ pub fn next(config: &config::Idle, on_battery: bool, stage: Stage, idle: Duratio
 pub fn low_battery(old: Option<&Battery>, new: Option<&Battery>) -> Option<u8> {
     let (old, new) = (old?, new?);
     [10, 20].into_iter().find(|&level| new.on_battery && new.percent <= level && old.percent > level)
+}
+
+/// Brightness after a change of power source, and how much is now taken: unplugged, `DIM_STEP` lower but not below
+/// `DIM_FLOOR`; plugged in, `taken` given back.
+pub fn battery_dim(brightness: u8, on_battery: bool, taken: u8) -> (u8, u8) {
+    if on_battery {
+        let take = brightness.saturating_sub(DIM_FLOOR).min(DIM_STEP);
+        (brightness - take, take)
+    } else {
+        (brightness.saturating_add(taken).min(100), 0)
+    }
 }
 
 impl State {
@@ -197,10 +215,22 @@ impl State {
             });
         }
         let replugged = self.battery.map(|b| b.on_battery) != battery.map(|b| b.on_battery);
+        let old_known = self.battery.is_some();
         self.battery = battery;
         if replugged {
             // The display-off and sleep times differ by power source.
             self.idle_arm();
+        }
+        // A plug change, not start-up: dim on battery, or give back what was taken.
+        if let (true, true, Some(b), Some(now)) = (replugged, old_known, battery, self.brightness)
+            && (!b.on_battery || self.config.battery.dim_on_battery)
+        {
+            let (level, taken) = battery_dim(now, b.on_battery, self.idle.battery_dim);
+            self.idle.battery_dim = taken;
+            if level != now {
+                self.brightness = Some(level);
+                self.services.send(crate::services::Command::Brightness(level));
+            }
         }
     }
 }
@@ -277,6 +307,16 @@ mod tests {
         assert_eq!(next(&c, false, Stage::Off, secs(300)), Some((Stage::Locked, secs(60))));
         let unlocked = config::Idle { lock: false, ..Default::default() };
         assert_eq!(next(&unlocked, false, Stage::Off, secs(300)), None);
+    }
+
+    #[test]
+    fn battery_dim_steps_down_to_the_floor_and_gives_back() {
+        assert_eq!(battery_dim(80, true, 0), (70, 10));
+        assert_eq!(battery_dim(70, false, 10), (80, 0));
+        assert_eq!(battery_dim(25, true, 0), (20, 5), "stops at the floor");
+        assert_eq!(battery_dim(15, true, 0), (15, 0), "already below it: untouched");
+        assert_eq!(battery_dim(95, false, 10), (100, 0), "turned up meanwhile: capped");
+        assert_eq!(battery_dim(60, false, 0), (60, 0), "nothing taken, nothing given");
     }
 
     #[test]

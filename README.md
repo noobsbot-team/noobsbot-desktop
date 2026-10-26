@@ -331,7 +331,7 @@ doesn't understand is skipped and reported in the journal.
 | `[menu_bar]` | hide the menu bar until the pointer reaches the top edge |
 | `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To) |
 | `[idle]` | when to dim, turn the screen off and sleep (each on battery and on AC), locking |
-| `[battery]` | the percentage beside the menu bar's battery symbol |
+| `[battery]` | the percentage beside the menu bar's battery symbol, slightly dim the display on battery |
 | `[sound]` | the alert sound (from the system's sound theme) and user interface sound effects on or off |
 | `[privacy]` | which programs may record the screen |
 | `[notifications]` | Do Not Disturb, on a schedule too (`dnd_scheduled`, `dnd_from`, `dnd_until`), banners over full-screen windows (`full_screen`), previews always, when unlocked or never (`previews`) |

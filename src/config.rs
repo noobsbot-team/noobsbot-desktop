@@ -936,11 +936,13 @@ impl Default for Sound {
 pub struct Battery {
     /// The percentage beside the menu bar's battery symbol.
     pub show_percentage: bool,
+    /// Unplugging lowers the brightness a step (`idle::battery_dim`); plugging in gives it back.
+    pub dim_on_battery: bool,
 }
 
 impl Default for Battery {
     fn default() -> Self {
-        Self { show_percentage: true }
+        Self { show_percentage: true, dim_on_battery: true }
     }
 }
 
