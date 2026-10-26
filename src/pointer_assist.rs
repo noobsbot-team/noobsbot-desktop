@@ -1,4 +1,4 @@
-//! Pointer accessibility (E8.6): shake to find the pointer, dwell click.
+//! Pointer accessibility (E8.6): shake to find the pointer, dwell click, hold for secondary click.
 
 use std::{
     collections::VecDeque,
@@ -7,11 +7,17 @@ use std::{
 
 use smithay::{
     backend::input::ButtonState,
-    reexports::calloop::timer::{TimeoutAction, Timer},
+    reexports::calloop::{
+        RegistrationToken,
+        timer::{TimeoutAction, Timer},
+    },
     utils::{Logical, Point, Rectangle},
 };
 
-use crate::{input::BTN_LEFT, state::State};
+use crate::{
+    input::{BTN_LEFT, BTN_RIGHT},
+    state::State,
+};
 
 /// How far the pointer may drift and still be resting (logical px).
 const STILL: f64 = 4.0;
@@ -107,11 +113,60 @@ impl Dwell {
     }
 }
 
+/// A primary press held back until it is clear whether it stays still long enough to become a secondary click.
+#[derive(Default)]
+pub struct Hold {
+    /// Where and when (event time) the held press was.
+    pending: Option<(Point<f64, Logical>, u32)>,
+    /// The press became a secondary click: its release goes nowhere.
+    swallow: bool,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum Release {
+    /// Send the held press (at this time), then the release.
+    Press(u32),
+    Swallow,
+    Pass,
+}
+
+impl Hold {
+    pub fn press(&mut self, at: Point<f64, Logical>, time: u32) {
+        (self.pending, self.swallow) = (Some((at, time)), false);
+    }
+
+    /// The pointer moved to `pos`: the held press's time once it strays (send it as it was).
+    pub fn moved(&mut self, pos: Point<f64, Logical>) -> Option<u32> {
+        self.pending.take_if(|(at, _)| !near(*at, pos)).map(|(_, time)| time)
+    }
+
+    pub fn release(&mut self) -> Release {
+        match (self.pending.take(), std::mem::take(&mut self.swallow)) {
+            (Some((_, time)), _) => Release::Press(time),
+            (None, true) => Release::Swallow,
+            (None, false) => Release::Pass,
+        }
+    }
+
+    /// The hold time is up: true when a held press becomes a secondary click.
+    pub fn fire(&mut self) -> bool {
+        self.swallow = self.pending.take().is_some();
+        self.swallow
+    }
+
+    /// The held press, to send now (another button came).
+    pub fn take(&mut self) -> Option<u32> {
+        self.pending.take().map(|(_, time)| time)
+    }
+}
+
 #[derive(Default)]
 pub struct Assist {
     pub shake: Shake,
     pub dwell: Dwell,
+    pub hold: Hold,
     dwell_timer: bool,
+    hold_timer: Option<RegistrationToken>,
 }
 
 impl Assist {
@@ -139,6 +194,10 @@ impl State {
         let now = Instant::now();
         if self.config.accessibility.shake_to_find && self.pointer_assist.shake.motion(now, delta) {
             self.schedule_redraw();
+        }
+        if let Some(time) = self.pointer_assist.hold.moved(to) {
+            self.drop_hold_timer();
+            self.pointer_button(BTN_LEFT, ButtonState::Pressed, time);
         }
         let wait = self.dwell_wait();
         if wait.is_zero() {
@@ -170,6 +229,51 @@ impl State {
             });
             self.pointer_assist.dwell_timer = armed.is_ok();
         }
+    }
+
+    fn drop_hold_timer(&mut self) {
+        if let Some(token) = self.pointer_assist.hold_timer.take() {
+            self.loop_handle.remove(token);
+        }
+    }
+
+    /// A button from a device: a primary press is held back for hold-for-secondary-click, the rest goes on.
+    pub fn assisted_button(&mut self, button: u32, state: ButtonState, time: u32) {
+        let wait = ms(self.config.accessibility.hold_secondary_ms);
+        self.pointer_assist.dwell.cancel();
+        if button == BTN_LEFT && state == ButtonState::Pressed && !wait.is_zero() {
+            let Some(at) = self.seat.get_pointer().map(|p| p.current_location()) else { return };
+            self.pointer_assist.hold.press(at, time);
+            self.drop_hold_timer();
+            let timer = self.loop_handle.insert_source(Timer::from_duration(wait), |_, _, state| {
+                state.pointer_assist.hold_timer = None;
+                if state.pointer_assist.hold.fire() {
+                    let time = state.now_msec();
+                    state.pointer_button(BTN_RIGHT, ButtonState::Pressed, time);
+                    state.pointer_button(BTN_RIGHT, ButtonState::Released, time);
+                }
+                TimeoutAction::Drop
+            });
+            match timer {
+                Ok(token) => self.pointer_assist.hold_timer = Some(token),
+                Err(_) => self.pointer_button(button, state, time),
+            }
+            return;
+        }
+        let held = if button == BTN_LEFT && state == ButtonState::Released {
+            match self.pointer_assist.hold.release() {
+                Release::Swallow => return,
+                Release::Press(time) => Some(time),
+                Release::Pass => None,
+            }
+        } else {
+            self.pointer_assist.hold.take()
+        };
+        if let Some(time) = held {
+            self.drop_hold_timer();
+            self.pointer_button(BTN_LEFT, ButtonState::Pressed, time);
+        }
+        self.pointer_button(button, state, time);
     }
 
     /// The dwell countdown ring around the pointer, output-relative (logical).
@@ -226,5 +330,25 @@ mod tests {
         assert!(!dwell.motion(t0 + Duration::from_millis(2100), p(101.0, 100.0)));
         assert!(dwell.motion(t0 + Duration::from_millis(2200), p(120.0, 100.0)));
         assert_eq!(dwell.remaining(t0 + Duration::from_millis(2700), wait), Some(Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn a_still_hold_turns_into_a_secondary_click() {
+        let mut hold = Hold::default();
+        assert_eq!(hold.release(), Release::Pass, "nothing held: releases pass");
+        // Released early: the primary click, late.
+        hold.press(p(10.0, 10.0), 7);
+        assert_eq!(hold.release(), Release::Press(7));
+        // Held still past the wait: a secondary click, and the primary release goes nowhere.
+        hold.press(p(10.0, 10.0), 8);
+        assert_eq!(hold.moved(p(12.0, 11.0)), None);
+        assert!(hold.fire());
+        assert_eq!(hold.release(), Release::Swallow);
+        assert_eq!(hold.release(), Release::Pass);
+        // Dragged away: the press goes out as it was, then the release passes.
+        hold.press(p(10.0, 10.0), 9);
+        assert_eq!(hold.moved(p(30.0, 10.0)), Some(9));
+        assert!(!hold.fire());
+        assert_eq!(hold.release(), Release::Pass);
     }
 }
