@@ -1,4 +1,4 @@
-//! What the system pages show: NetworkManager and BlueZ over D-Bus, PipeWire through `wpctl` (the desktop's own
+//! What the system pages show: NetworkManager, BlueZ, UPower and power-profiles-daemon over D-Bus, PipeWire through `wpctl` (the desktop's own
 //! paths, `src/services/`), and the About facts from `/proc`, `/sys` and `/etc`. Read once when a page opens.
 //! ponytail: no change signals; the page re-reads after its own changes, a live follow if that falls short.
 
@@ -21,6 +21,10 @@ pub struct Status {
     pub input: Option<Device>,
     /// `None`: systemd-timedated isn't there.
     pub time: Option<Time>,
+    /// `None`: no battery (a desktop), or UPower isn't running.
+    pub battery: Option<Battery>,
+    /// `None`: power-profiles-daemon isn't running.
+    pub power_mode: Option<PowerMode>,
 }
 
 #[derive(Clone, Debug)]
@@ -31,6 +35,24 @@ pub struct Time {
     pub can_ntp: bool,
     /// The system's time zone.
     pub zone: String,
+}
+
+/// UPower's display device (the desktop's `src/services/power.rs`).
+#[derive(Clone, Debug)]
+pub struct Battery {
+    pub percent: u8,
+    /// UPower's state: 1 charging, 2 discharging, 4 fully charged, 5/6 pending charge/discharge.
+    pub state: u32,
+    /// Until empty while discharging, until full while charging; 0 while estimating.
+    pub seconds: i64,
+}
+
+/// power-profiles-daemon (the desktop's `src/services/profiles.rs`).
+#[derive(Clone, Debug)]
+pub struct PowerMode {
+    /// `power-saver`, `balanced` or `performance`.
+    pub active: String,
+    pub available: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,11 +80,11 @@ const NM: &str = "org.freedesktop.NetworkManager";
 
 pub async fn read() -> Status {
     let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await.ok();
-    let (wifi, bluetooth, time) = match &system {
-        Some(bus) => (wifi(bus).await, bluetooth(bus).await, time(bus).await),
-        None => (None, None, None),
+    let (wifi, bluetooth, time, battery, power_mode) = match &system {
+        Some(bus) => (wifi(bus).await, bluetooth(bus).await, time(bus).await, battery(bus).await, power_mode(bus).await),
+        None => (None, None, None, None, None),
     };
-    Status { wifi, bluetooth, output: device(OUTPUT), input: device(INPUT), time }
+    Status { wifi, bluetooth, output: device(OUTPUT), input: device(INPUT), time, battery, power_mode }
 }
 
 /// The desktop's connect (`src/services/mod.rs`): on this thread, not zbus's pool, whose idle thread wakes every
@@ -83,9 +105,9 @@ async fn property(bus: &Connection, service: &str, path: &str, interface: &str, 
     Ok(proxy.get(InterfaceName::try_from(interface.to_owned())?, name).await?)
 }
 
-async fn set_property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str, value: bool) -> zbus::Result<()> {
+async fn set_property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str, value: Value<'_>) -> zbus::Result<()> {
     let proxy = PropertiesProxy::builder(bus).destination(service.to_owned())?.path(path.to_owned())?.build().await?;
-    Ok(proxy.set(InterfaceName::try_from(interface.to_owned())?, name, Value::from(value)).await?)
+    Ok(proxy.set(InterfaceName::try_from(interface.to_owned())?, name, value).await?)
 }
 
 async fn wifi(bus: &Connection) -> Option<Wifi> {
@@ -128,10 +150,47 @@ async fn bluetooth(bus: &Connection) -> Option<Bluetooth> {
     Some(Bluetooth { powered: powered?, devices })
 }
 
+const UPOWER: &str = "org.freedesktop.UPower";
+const DISPLAY_DEVICE: &str = "/org/freedesktop/UPower/devices/DisplayDevice";
+
+async fn battery(bus: &Connection) -> Option<Battery> {
+    let get = |name| property(bus, UPOWER, DISPLAY_DEVICE, "org.freedesktop.UPower.Device", name);
+    if !bool::try_from(get("IsPresent").await.ok()?).ok()? {
+        return None;
+    }
+    let percent = f64::try_from(get("Percentage").await.ok()?).ok()?.round().clamp(0.0, 100.0) as u8;
+    let state = u32::try_from(get("State").await.ok()?).ok()?;
+    let seconds = match state {
+        1 => i64::try_from(get("TimeToFull").await.ok()?).ok()?,
+        2 => i64::try_from(get("TimeToEmpty").await.ok()?).ok()?,
+        _ => 0,
+    };
+    Some(Battery { percent, state, seconds })
+}
+
+const PROFILES: &str = "org.freedesktop.UPower.PowerProfiles";
+const PROFILES_PATH: &str = "/org/freedesktop/UPower/PowerProfiles";
+
+async fn power_mode(bus: &Connection) -> Option<PowerMode> {
+    let active = String::try_from(property(bus, PROFILES, PROFILES_PATH, PROFILES, "ActiveProfile").await.ok()?).ok()?;
+    let profiles =
+        Vec::<std::collections::HashMap<String, OwnedValue>>::try_from(property(bus, PROFILES, PROFILES_PATH, PROFILES, "Profiles").await.ok()?).ok()?;
+    let available = profiles.iter().filter_map(|p| p.get("Profile")?.downcast_ref::<String>().ok()).collect();
+    Some(PowerMode { active, available })
+}
+
+/// `power-saver`, `balanced` or `performance`, then the new status.
+pub async fn set_power_mode(profile: String) -> Status {
+    if let Ok(bus) = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await {
+        let _ = set_property(&bus, PROFILES, PROFILES_PATH, PROFILES, "ActiveProfile", profile.as_str().into()).await;
+    }
+    read().await
+}
+
 /// Wi-Fi on or off, then the new status.
 pub async fn set_wifi(on: bool) -> Status {
     if let Ok(bus) = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await {
-        let _ = set_property(&bus, NM, "/org/freedesktop/NetworkManager", NM, "WirelessEnabled", on).await;
+        let _ = set_property(&bus, NM, "/org/freedesktop/NetworkManager", NM, "WirelessEnabled", on.into()).await;
     }
     read().await
 }
@@ -143,7 +202,7 @@ pub async fn set_bluetooth(on: bool) -> Status {
     {
         for (path, interfaces) in manager.get_managed_objects().await.unwrap_or_default() {
             if interfaces.keys().any(|i| i.as_str() == "org.bluez.Adapter1") {
-                let _ = set_property(&bus, "org.bluez", path.as_str(), "org.bluez.Adapter1", "Powered", on).await;
+                let _ = set_property(&bus, "org.bluez", path.as_str(), "org.bluez.Adapter1", "Powered", on.into()).await;
             }
         }
     }
@@ -362,4 +421,9 @@ mod tests {
         assert_eq!(field("MemTotal:       32000000 kB\n", "MemTotal"), Some("32000000 kB"));
         assert_eq!(field("a: b", "c"), None);
     }
+}
+#[test]
+fn tmp_live() {
+    let s = futures_lite::future::block_on(read());
+    eprintln!("LIVE {:?} {:?}", s.battery, s.power_mode);
 }
