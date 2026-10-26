@@ -9,7 +9,7 @@ use std::sync::{
 
 use smithay::{
     delegate_cursor_shape, delegate_fractional_scale, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_pointer_constraints,
-    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context,
+    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context, delegate_virtual_keyboard_manager,
     desktop::{LayerSurface, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorIcon, CursorImageStatus, MotionEvent, PointerHandle, RelativeMotionEvent},
     output::Output,
@@ -41,6 +41,7 @@ use smithay::{
         shell::wlr_layer::{KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
         tablet_manager::TabletSeatHandler,
         text_input::TextInputManagerState,
+        virtual_keyboard::VirtualKeyboardManagerState,
     },
 };
 
@@ -65,6 +66,7 @@ pub struct Protocols {
     _tearing_control: GlobalId,
     _text_input: TextInputManagerState,
     _input_method: InputMethodManagerState,
+    _virtual_keyboard: VirtualKeyboardManagerState,
 }
 
 impl Protocols {
@@ -89,6 +91,8 @@ impl Protocols {
             _text_input: TextInputManagerState::new::<State>(dh),
             // An input method sees every key typed: not for sandboxed apps.
             _input_method: InputMethodManagerState::new::<State, _>(dh, unsandboxed),
+            // A virtual keyboard types into any app (and the lock screen): trusted clients only.
+            _virtual_keyboard: VirtualKeyboardManagerState::new::<State, _>(dh, crate::perms::trusted),
         }
     }
 }
@@ -423,3 +427,4 @@ delegate_pointer_gestures!(State);
 delegate_cursor_shape!(State);
 delegate_keyboard_shortcuts_inhibit!(State);
 delegate_security_context!(State);
+delegate_virtual_keyboard_manager!(State);
