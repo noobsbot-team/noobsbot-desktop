@@ -1718,8 +1718,9 @@ Rows live on the Appearance page (E8.2). Behind them:
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
   reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space.
-- Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
-  ⚠ on conflicts (today the first match wins silently).
+- ~~Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
+  ⚠ on conflicts (today the first match wins silently).~~ Done: Settings ▸ Keyboard ▸ Keyboard Shortcuts…
+  (`settings/src/shortcuts.rs`); recording asks the desktop to pass every key through; conflicts are also logged.
 - Default keys: log out (Super+Shift+Q), sleep key, keyboard backlight (UPower), touchpad toggle, display key
   (Settings › Displays until mirroring exists), calculator / mail / web / explorer / search keys (default-app,
   Spotlight), media stop / seek / eject, Shift+Alt+volume quarter steps, Alt+Print window screenshot, Super+Alt+5
