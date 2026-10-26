@@ -829,6 +829,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("XF86AudioForward", "media forward"),
         ("XF86AudioRewind", "media rewind"),
         ("XF86Eject", "eject"),
+        ("XF86Display", "exec noobsbot-desktop-settings --page displays"),
         ("XF86PowerOff", "shut-down"),
         ("XF86Sleep", "sleep"),
         ("Super+Shift+Q", "log-out"),

@@ -634,6 +634,7 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_KbdLightOnOff, false), Some(&Action::KbdBacklight(None)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_TouchpadToggle, false), Some(&Action::Touchpad(None)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_TouchpadOff, false), Some(&Action::Touchpad(Some(false))));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Display, false), Some(&Action::Spawn("noobsbot-desktop-settings --page displays".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }

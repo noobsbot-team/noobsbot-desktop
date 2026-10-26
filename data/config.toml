@@ -360,6 +360,8 @@ super_tap = true
 "XF86AudioRewind" = "media rewind"
 # Ejects the last mounted USB drive or disc.
 "XF86Eject" = "eject"
+# The display key opens System Settings › Displays (arrangement, which screens are on).
+"XF86Display" = "exec noobsbot-desktop-settings --page displays"
 # The power button asks before shutting down (the system's own power-key action is held off while the desktop runs).
 "XF86PowerOff" = "shut-down"
 "XF86Sleep" = "sleep"
