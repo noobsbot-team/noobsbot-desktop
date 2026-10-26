@@ -1,5 +1,5 @@
 //! The Force Quit window (E4.7): `sheet` glass, radius 12, elevation 5, centred; traffic lights and the title, two
-//! lines of Callout, the app list (28 px rows, 20 px icons, frozen apps marked in red) and the accent Force Quit button.
+//! lines of Callout, the app list (28 px rows at text size 1, 20 px icons, frozen apps marked in red) and the accent Force Quit button.
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
@@ -20,8 +20,8 @@ use crate::{
 const LIGHTS: [[u8; 3]; 3] = [[0xFF, 0x5F, 0x57], [0xFE, 0xBC, 0x2E], [0x28, 0xC8, 0x40]];
 const RED: [u8; 4] = [0xFF, 0x3B, 0x30, 0xFF];
 
-/// Entries, selected row, dark, accent, scale.
-type Key = (Vec<Entry>, Option<usize>, bool, [u8; 3], u64);
+/// Entries, selected row, the window's rect (it grows with the text size), dark, accent, scale.
+type Key = (Vec<Entry>, Option<usize>, crate::wm::Rect, bool, [u8; 3], u64);
 
 #[derive(Default)]
 pub struct ForceQuitWindow {
@@ -55,7 +55,7 @@ impl ForceQuitWindow {
         let (tiles, letters): (Vec<_>, Vec<_>) =
             entries.iter().zip(rows).map(|(e, r)| app_icon(shaders, text, icons, &e.name, e.icon.as_deref(), icon(*r), dark, scale)).unzip();
 
-        let key = (entries.to_vec(), selected, dark, accent, scale.to_bits());
+        let key = (entries.to_vec(), selected, l.rect, dark, accent, scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             let [ar, ag, ab] = accent.map(|c| f32::from(c) / 255.0);
             let mut glass: Vec<_> = tiles.into_iter().flatten().collect();
@@ -90,7 +90,7 @@ impl ForceQuitWindow {
             Rectangle::new((x, rect.loc.y).into(), (w, rect.size.h).into())
         };
 
-        let mut pieces = vec![text.label("Force Quit Applications", Style { weight: 600, ..body }, layout::WIDTH as u32, scale)];
+        let mut pieces = vec![text.label("Force Quit Applications", Style { weight: 600, ..body }, l.title.size.w as u32, scale)];
         let mut rects = vec![l.title];
         for (line, rect) in ["If an app doesn't respond for a while,", "select its name and click Force Quit."].iter().zip(l.lines) {
             let piece = text.label(line, callout, rect.size.w as u32, scale);
