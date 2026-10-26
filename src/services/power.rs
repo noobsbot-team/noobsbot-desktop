@@ -1,5 +1,6 @@
 //! Battery state from UPower's display device (E2.3): the combined battery the menu bar and Control Center show.
-//! Also the keyboard backlight, which UPower sets without root.
+//! Also peripherals' batteries (wireless mice, keyboards, headsets) and the keyboard backlight, which UPower sets
+//! without root.
 
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{Connection, proxy::CacheProperties};
@@ -27,6 +28,12 @@ pub struct Battery {
 trait Device {
     #[zbus(property)]
     fn is_present(&self) -> zbus::Result<bool>;
+    #[zbus(property, name = "Type")]
+    fn type_(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn power_supply(&self) -> zbus::Result<bool>;
+    #[zbus(property)]
+    fn model(&self) -> zbus::Result<String>;
     #[zbus(property)]
     fn percentage(&self) -> zbus::Result<f64>;
     #[zbus(property)]
@@ -35,6 +42,19 @@ trait Device {
     fn time_to_empty(&self) -> zbus::Result<i64>;
     #[zbus(property)]
     fn time_to_full(&self) -> zbus::Result<i64>;
+}
+
+/// A peripheral's battery.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Peripheral {
+    /// Its model ("MX Master 3"), else its kind ("Mouse").
+    pub name: String,
+    pub percent: u8,
+}
+
+#[zbus::proxy(interface = "org.freedesktop.UPower", default_service = "org.freedesktop.UPower", default_path = "/org/freedesktop/UPower")]
+trait UPower {
+    fn enumerate_devices(&self) -> zbus::Result<Vec<zbus::zvariant::OwnedObjectPath>>;
 }
 
 #[zbus::proxy(
@@ -101,6 +121,45 @@ fn kbd_level(now: i32, max: i32, change: Option<bool>) -> i32 {
 /// Sends the battery now and after every change, including UPower starting or stopping.
 pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
     super::follow(bus, SERVICE, PATH, updates, Update::Battery, read).await;
+}
+
+/// Sends the peripherals' batteries now and after every change, devices coming and going included.
+pub async fn watch_peripherals(bus: &Connection, updates: &Sender<Update>) {
+    super::follow(bus, SERVICE, "/org/freedesktop/UPower", updates, Update::Peripherals, read_peripherals).await;
+}
+
+async fn read_peripherals(bus: &Connection) -> Option<Vec<Peripheral>> {
+    let paths = UPowerProxy::builder(bus).cache_properties(CacheProperties::No).build().await.ok()?.enumerate_devices().await.ok()?;
+    let mut list = Vec::new();
+    for path in paths {
+        let Ok(builder) = DeviceProxy::builder(bus).path(path) else { continue };
+        let Ok(device) = builder.cache_properties(CacheProperties::No).build().await else { continue };
+        let (Ok(kind), Ok(supply), Ok(present), Ok(percent)) =
+            (device.type_().await, device.power_supply().await, device.is_present().await, device.percentage().await)
+        else {
+            continue;
+        };
+        list.extend(peripheral(kind, supply, present, &device.model().await.unwrap_or_default(), percent));
+    }
+    Some(list)
+}
+
+/// A UPower device as a peripheral: present, not powering the computer, and a mouse, keyboard, game controller, pen,
+/// touchpad, headset, speaker or headphones (UPower's types 5, 6, 12, 13, 14, 17, 18, 19).
+fn peripheral(kind: u32, power_supply: bool, present: bool, model: &str, percent: f64) -> Option<Peripheral> {
+    let fallback = match kind {
+        5 => "Mouse",
+        6 => "Keyboard",
+        12 => "Game Controller",
+        13 => "Pen",
+        14 => "Trackpad",
+        17 => "Headset",
+        18 => "Speaker",
+        19 => "Headphones",
+        _ => return None,
+    };
+    let name = if model.trim().is_empty() { fallback } else { model.trim() };
+    (present && !power_supply).then(|| Peripheral { name: name.to_owned(), percent: percent.round().clamp(0.0, 100.0) as u8 })
 }
 
 /// `None` when there is no battery or UPower doesn't answer.
@@ -170,6 +229,16 @@ mod tests {
         assert_eq!(time_left(&b(true, false, None)), "Charging");
         assert_eq!(time_left(&b(false, false, None)), "Not charging");
         assert_eq!(time_left(&Battery { percent: 100, ..b(false, false, None) }), "Fully charged");
+    }
+
+    #[test]
+    fn peripherals_only() {
+        assert_eq!(peripheral(5, false, true, "MX Master 3", 61.6), Some(Peripheral { name: "MX Master 3".into(), percent: 62 }));
+        assert_eq!(peripheral(17, false, true, " ", 40.0).map(|p| p.name), Some("Headset".into()), "no model: its kind");
+        assert_eq!(peripheral(2, true, true, "BAT0", 80.0), None, "the laptop's own battery");
+        assert_eq!(peripheral(1, true, true, "", 0.0), None, "the power adapter");
+        assert_eq!(peripheral(6, false, false, "ELAN Keyboard", 0.0), None, "not present (a touchscreen's pen slot)");
+        assert_eq!(peripheral(6, true, true, "Dock", 50.0), None, "powers the computer");
     }
 
     #[test]

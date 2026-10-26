@@ -675,13 +675,17 @@ impl State {
         self.recent_menu = Some(recent_rows(&apps, &docs));
     }
 
-    /// The battery menu: time left and power source, then Battery Settings.
+    /// The battery menu: time left and power source, the peripherals' batteries, then Battery Settings.
     pub fn battery_menu_rows(&self) -> Vec<Option<Row>> {
         let row = |label: String, action| Some(Row { label, shortcut: "", action, sub: Vec::new() });
         let mut rows = Vec::new();
         if let Some(b) = &self.battery {
             let source = if b.on_battery { "Battery" } else { "Power Adapter" };
             rows.extend([row(crate::services::power::time_left(b), None), row(format!("Power Source: {source}"), None), None]);
+        }
+        if !self.peripherals.is_empty() {
+            rows.extend(self.peripherals.iter().map(|p| row(format!("{}  {}%", p.name, p.percent), None)));
+            rows.push(None);
         }
         rows.push(row("Battery Settings…".into(), Some(Action::Spawn("noobsbot-desktop-settings --page battery".into()))));
         rows

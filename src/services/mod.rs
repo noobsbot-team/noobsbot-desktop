@@ -44,6 +44,8 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 pub enum Update {
     /// `None`: no battery, or UPower isn't running.
     Battery(Option<power::Battery>),
+    /// Peripherals' batteries; `None`: UPower isn't running.
+    Peripherals(Option<Vec<power::Peripheral>>),
     /// `None`: NetworkManager isn't running.
     Network(Option<network::Network>),
     /// `None`: no adapter, or BlueZ isn't running.
@@ -280,7 +282,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     let system_clients = async {
         if let Some(bus) = &system {
             future::zip(
-                future::zip(power::watch(bus, &updates), profiles::watch(bus, &updates)),
+                future::zip(future::zip(power::watch(bus, &updates), power::watch_peripherals(bus, &updates)), profiles::watch(bus, &updates)),
                 future::zip(future::zip(network::watch(bus, &updates), bluetooth::watch(bus, &updates)), disks::watch(bus, &updates)),
             )
             .await;
