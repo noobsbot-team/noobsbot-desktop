@@ -37,6 +37,8 @@ pub enum Msg {
     DraftAction(String),
     Add,
     Remove,
+    /// Every `[bindings]` line of the user's file goes; the desktop's defaults apply.
+    Restore,
 }
 
 /// An action in the + picker, shown by its label.
@@ -247,6 +249,10 @@ pub fn update(app: &mut App, msg: Msg) -> Task<Message> {
             Some(combo) => app.config.change(&[key(&combo)], []),
             None => Ok(()),
         },
+        Msg::Restore => {
+            let all: Vec<String> = app.config.keys("bindings").iter().map(|c| key(c)).collect();
+            app.config.change(&all, [])
+        }
         Msg::Enable(combo, true) => app.config.change(&[key(&combo)], []),
         Msg::Enable(combo, false) => app.config.set(&key(&combo), "none"),
     };
@@ -339,6 +345,7 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
         small("+", Some(Msg::New)),
         small("−", selected),
         space().width(Length::Fill),
+        small("Restore Defaults", Some(Msg::Restore)),
         button(text("Done").size(13)).padding([4, 14]).style(t.push(true)).on_press(Message::Shortcuts(Msg::Close))
     ]
     .spacing(8);
