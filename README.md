@@ -50,7 +50,7 @@ itself. Apps (the terminal, browser, file manager, editor) are ordinary separate
 - **Fast and light:** it aims for 0% CPU when nothing changes, under 100 MB of memory for the whole desktop and
   under half a second to start. Measurements are in [`PERF.md`](PERF.md).
 - **Self-contained:** it installs on a fresh Arch or Debian 13 system and needs no other desktop. Nothing from GNOME, KDE
-  Plasma or Cinnamon is installed (Dolphin and Kate bring some KDE libraries, which load only when they're open).
+  Plasma or any other desktop is installed (Dolphin and Kate bring some KDE libraries, which load only when they're open).
 
 ## How it is different
 | | Noobsbot Desktop | GNOME / KDE Plasma | Tiling compositors (Hyprland, Sway, niri) | macOS themes on another desktop |
@@ -210,7 +210,7 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   dock is imported; `noobsbot-desktop dock --import-plank` does it again later.
 - **Spotlight (Super+Space):** apps and a calculator. Arrow keys select, Return opens, Esc closes.
 - **Launchpad:** every app in a grid, with search. Open it from the dock or with a four-finger pinch.
-- **App drawer (Super+A, or tap Super alone):** apps by category, like the Cinnamon menu, with search, Favorites and
+- **App drawer (Super+A, or tap Super alone):** apps by category, like a classic start menu, with search, Favorites and
   Recent; right-click an app to favorite it or add it to the dock or desktop. Lock, Log Out and Shut Down sit in its
   left strip. Turn the Super tap off with `[app_drawer] super_tap = false`; add `"app-drawer"` to `[dock] items` for a
   dock icon. Favorites and Recent live in `~/.local/state/noobsbot-desktop/favorites` and `recent-apps`, one desktop
