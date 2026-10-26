@@ -71,6 +71,7 @@ impl Popup {
             Popup::Menu(Menu::Logo) => BarItem::Logo,
             Popup::Menu(Menu::App) => BarItem::App,
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
+            Popup::Menu(Menu::Overflow) => BarItem::Overflow,
             Popup::Menu(Menu::Input) => BarItem::Input,
             Popup::Menu(Menu::Dock | Menu::Desktop | Menu::Drawer | Menu::Window) => return None,
             Popup::Control => BarItem::ControlCenter,
@@ -91,6 +92,7 @@ fn popup_for(item: BarItem) -> Option<Popup> {
             Some(Popup::Notifications { year, month })
         }
         BarItem::ControlCenter => Some(Popup::Control),
+        BarItem::Overflow => Some(Popup::Menu(Menu::Overflow)),
         // Its menu comes over D-Bus first: see `tray_press`.
         BarItem::Status(_) | BarItem::Tray(_) => None,
     }
@@ -102,6 +104,8 @@ pub enum Menu {
     App,
     /// `State::tray[i]`'s dbusmenu, rows in `State::tray_menu`.
     Tray(usize),
+    /// The tray items that didn't fit the bar: `State::overflow_menu_rows`.
+    Overflow,
     /// A dock icon's right-click menu: `State::dock_menu_rows`, above `State::dock_ui.menu`.
     Dock,
     /// Keyboard layouts and input methods (E6.12): `State::input_menu_rows`.
@@ -172,7 +176,7 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) 
         ],
         Menu::Tray(_) => tray_rows(tray, 0),
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
-        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window => Vec::new(),
+        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow => Vec::new(),
     }
 }
 
@@ -492,8 +496,21 @@ impl State {
             Menu::Desktop => self.desktop_menu_rows(),
             Menu::Drawer => self.drawer_menu_rows(),
             Menu::Window => self.window_menu_rows(),
+            Menu::Overflow => self.overflow_menu_rows(),
             _ => menu_rows(menu, "", tray, self.update_ready()),
         }
+    }
+
+    /// The tray items hidden under "»", by title; a click opens the item's menu or activates it.
+    pub fn overflow_menu_rows(&self) -> Vec<Option<Row>> {
+        let hidden = self.backend.as_ref().map_or(0, |b| b.menu_bar.overflow());
+        let title = |t: &crate::services::tray::TrayItem| if t.title.is_empty() { t.service.clone() } else { t.title.clone() };
+        self.tray
+            .iter()
+            .take(hidden)
+            .enumerate()
+            .map(|(i, t)| Some(Row { label: title(t), shortcut: "", action: Some(Action::TrayItem(i)), sub: Vec::new() }))
+            .collect()
     }
 
     /// The row of the open menu whose submenu is open.
@@ -542,7 +559,7 @@ impl State {
 
     /// A click on tray item `i`: its menu (fetched, then shown by `show_tray_menu`) if it is a menu or this is a
     /// right click, else Activate at the click.
-    fn tray_press(&mut self, i: usize, location: Point<f64, Logical>, secondary: bool) {
+    pub fn tray_press(&mut self, i: usize, location: Point<f64, Logical>, secondary: bool) {
         let Some(item) = self.tray.get(i) else { return };
         let command = match &item.menu {
             Some(menu) if item.item_is_menu || secondary => Command::TrayMenu { service: item.service.clone(), menu: menu.clone(), parent: 0 },
