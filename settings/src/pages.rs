@@ -1066,7 +1066,8 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             .spacing(6)
             .align_x(Alignment::Center);
             let rows = crate::system::about().into_iter().map(|(label, value)| fact(t, label, value)).collect();
-            vec![container(head).center_x(Length::Fill).into(), group(t, "", rows)]
+            let copy = button(text("Copy System Report").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::CopyReport);
+            vec![container(head).center_x(Length::Fill).into(), group(t, "", rows), container(copy).align_right(Length::Fill).into()]
         }
         Page::Battery => {
             let rows = match &status.battery {
@@ -1564,7 +1565,7 @@ pub fn keep_sheet<'a>(t: Tokens, left: u64) -> Element<'a, Message> {
 }
 
 /// The desktop's version: the root package's, which release-plz bumps (this crate's own stays 0.1.0).
-fn version() -> &'static str {
+pub fn version() -> &'static str {
     let manifest = include_str!("../../Cargo.toml");
     manifest.lines().find_map(|l| l.strip_prefix("version = ")).map_or("", |v| v.trim_matches('"'))
 }
