@@ -500,7 +500,7 @@ impl State {
         }
         let dnd = self.config.notifications.dnd;
         let covered = !self.config.notifications.full_screen && self.menu_bar().is_none();
-        if rule.sound && !dnd && !covered && self.notifications.get(id).is_none() {
+        if rule.sound && !n.silent && !dnd && !covered && self.notifications.get(id).is_none() {
             crate::bell::play("message-new-instant", "Notification");
         }
         let quiet = style == AppStyle::None || dnd || self.locked() || covered || self.center_open();
