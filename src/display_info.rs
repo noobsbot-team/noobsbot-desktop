@@ -47,6 +47,10 @@ pub struct Display {
     pub primary: bool,
     /// The connector it shows the picture of (mirroring); empty = part of the arrangement.
     pub mirror: String,
+    /// The connector reports variable refresh rate support (`vrr_capable`).
+    pub vrr_capable: bool,
+    /// Variable refresh rate is on (asked for, and capable).
+    pub vrr: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

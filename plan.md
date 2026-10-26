@@ -70,7 +70,7 @@ and must be **very fast** while using **as little RAM and CPU as possible**.
 - **No Apple assets.** No SF fonts, no Apple icons or wallpapers (license forbids). Open look-alikes (Part H).
 - **No custom drivers.** Drivers come from the Linux kernel (G1 explains why that's enough).
 - **No blur** (owner's decision), which is also faster.
-- **Not in v1** (listed as limits L7–L14 so nobody expects them): HDR / 10-bit colour, VRR, hibernate, desktop icons,
+- **Not in v1** (listed as limits L7–L14 so nobody expects them): HDR / 10-bit colour, hibernate, desktop icons,
   fast user switching, translated UI strings, single-window screen sharing, sharp X11 apps on HiDPI.
 
 ## A4. How the desktop is put together
@@ -1269,7 +1269,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Design:** plug in a monitor → it lights up within 1 s, placed to the right (or as last arranged; layouts are
   remembered per monitor set). Each display has its own menu bar and Spaces. Per-display scale 100/125/150/175/200%.
   The highest refresh rate is chosen by default. **Night Shift** warms colours on a schedule (default 19:00–07:00; sunset/sunrise only if geoclue is enabled, E2.6).
-  **Not in v1:** HDR and 10-bit colour; **VRR** (adaptive sync) is a per-display toggle planned right after M6 (L11).
+  **Not in v1:** HDR and 10-bit colour (L11). **VRR** (adaptive sync) is a per-display toggle (`vrr`, off by default).
 - **Built with:** DRM/KMS hotplug via udev; `fractional-scale` protocol; Night Shift via the GPU **gamma table**
   (zero rendering cost); `wlr-output-management` so external tools (and our Settings app) can change layouts.
 - **Edge cases handled:** all monitors unplugged (zero outputs: windows and state are kept, drawn again on the next
@@ -1585,7 +1585,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
   - 720 × 560 default; sidebar 220 px in `panel` material (rows 28 px, colourful 20 px icon squircles, selected row =
     accent @ 20%); content uses grouped card rows (radius 10), with label left and control right.
   - Pages: Wi-Fi · Bluetooth · Sound (output; **input device, level, mute**; alert volume) · Displays (drag-to-arrange
-    monitors, VRR toggle later) · Appearance (mode Light / Dark / **Auto = schedule**, accent, glass opacity,
+    monitors, a Variable refresh rate switch on capable displays) · Appearance (mode Light / Dark / **Auto = schedule**, accent, glass opacity,
     wallpaper picker, Reduce transparency/motion) · Dock · Keyboard (layouts, repeat, shortcuts editor) ·
     **Trackpad** (each gesture with an animated preview, finger count, tap-to-click, natural scroll, speed) ·
     Date & Time (zone search, 12/24 h, automatic) · Spaces · Notifications (per-app allow, banner/alert, DND schedule) ·
@@ -2131,7 +2131,7 @@ Rule: **a crate is added only when its feature is built.**
   solid Noobsbot Glass (same colours) instead.
 - **L9 — KIO network-share passwords** are asked once per session (no KWallet; one keyring, E6.7).
 - **L10 — No hibernate** in v1 (sleep only).
-- **L11 — No VRR, HDR or 10-bit** in v1 (VRR toggle planned right after M6).
+- **L11 — No HDR or 10-bit** in v1. VRR is a per-display toggle (`[[display.outputs]] vrr`), off by default.
 - **L12 — Desktop icons** are a simple grid (E7.2): no multi-select, no thumbnails.
 - **L13 — English UI only** in v1 (dates and numbers follow the locale); no fast user switching.
 - **L14 — X11 apps are soft on HiDPI** (bitmap-scaled through XWayland); native apps are sharp.

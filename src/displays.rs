@@ -47,6 +47,7 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays, lid_closed: bool) -> 
         (d.width, d.height) = ((f64::from(w) / d.scale).ceil() as i32, (f64::from(h) / d.scale).ceil() as i32);
         d.primary = false;
         d.mirror = String::new();
+        d.vrr = e.vrr && d.vrr_capable;
     }
     clamshell(&mut displays, lid_closed);
     if !displays.iter().any(|d| d.enabled)
@@ -682,6 +683,18 @@ mod tests {
         assert!(p[0].enabled && p[0].primary && !p[1].enabled, "the first stays on");
         let primary_off = Displays { outputs: vec![OutputSettings { enabled: false, primary: true, ..output("eDP-1") }], ..Default::default() };
         assert!(plan(laptop_and_monitor(), &primary_off, false)[1].primary, "an off display is never primary");
+    }
+
+    #[test]
+    fn vrr_only_where_capable() {
+        let mut displays = laptop_and_monitor();
+        displays[1].vrr_capable = true;
+        let both = Displays {
+            outputs: vec![OutputSettings { vrr: true, ..output("eDP-1") }, OutputSettings { vrr: true, ..output("HDMI-A-1") }],
+            ..Default::default()
+        };
+        let p = plan(displays, &both, false);
+        assert!(!p[0].vrr && p[1].vrr);
     }
 
     #[test]
