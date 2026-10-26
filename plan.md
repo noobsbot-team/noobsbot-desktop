@@ -889,7 +889,7 @@ Goal: the owner's current dock (Plank, Transparent-Tight theme), rebuilt nativel
   | zoom-enabled / zoom-percent | `true` / `150` | magnification on, **150%** (icons grow to 126 px under the pointer) |
   | hide-mode | `intelligent` | **intelligent hide**: hides when the focused window overlaps the dock; shows again when nothing overlaps or when the pointer touches the bottom edge |
   | theme | `Transparent-Tight` | same look (see Design) |
-  | docks per monitor | `dock1` (main screen) + `dock2` (`HDMI-1`), each with its own items | **one dock per monitor, each with its own pinned list** |
+  | docks per monitor | `dock1` (main screen) + `dock2` (`HDMI-1`), each with its own items | **one dock per monitor, each with its own pinned list** (done: `[dock] displays = "all"`; a display uses the shared `items` until Options ▸ Separate Items on This Display copies them into its own `[dock] outputs` list) |
   | dock-items (dock1) | Google Chrome, VS Code, Brave, Dolphin, Kate, Spectacle, kitty, noobsbot | same order (Brave's slot holds Helium, the new default browser). On a fresh system only installed apps are shown. Default fresh-install pins = Helium, Dolphin, Kate, noobsbot-terminal (Chrome, VS Code, Spectacle, kitty appear in their old places once installed) |
 - **Design (Transparent-Tight theme, copied value by value):**
   ```
