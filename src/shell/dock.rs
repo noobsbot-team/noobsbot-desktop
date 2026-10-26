@@ -1191,7 +1191,7 @@ impl State {
         if item.key == TRASH_KEY {
             let row =
                 |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Dock) });
-            let full = super::trash::is_full(&super::trash::dir());
+            let full = super::trash::any_full();
             return vec![row("Open", Some(Command::Open)), None, row("Empty Trash", full.then_some(Command::EmptyTrash))];
         }
         let name = item.title().to_owned();
