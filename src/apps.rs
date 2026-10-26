@@ -431,7 +431,6 @@ const THEMES: [&str; 4] = ["WhiteSur", "hicolor", "Adwaita", "breeze"];
 /// `u32::MAX` for an SVG; then `/usr/share/pixmaps`. Symbolic (monochrome) variants are skipped.
 // ponytail: follows the fixed THEMES list, not each theme's `Inherits`; read index.theme chains if a theme needs it.
 pub fn icon_files(name: &str) -> Vec<(u32, PathBuf)> {
-    let files = |dir: &Path, size: u32| [(u32::MAX, dir.join(format!("{name}.svg"))), (size, dir.join(format!("{name}.png")))];
     if name.is_empty() {
         return Vec::new();
     }
@@ -441,26 +440,41 @@ pub fn icon_files(name: &str) -> Vec<(u32, PathBuf)> {
     let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
     let bases: Vec<PathBuf> =
         std::iter::once(data_home().join("icons")).chain([home.join(".icons")]).chain(data_dirs().iter().skip(1).map(|d| d.join("icons"))).collect();
+    let found = theme_icon_files(name, &bases);
+    if !found.is_empty() {
+        return found;
+    }
+    icon_dir_files(name, Path::new("/usr/share/pixmaps"), 0).into_iter().filter(|(_, p)| p.is_file()).collect()
+}
+
+/// `name.svg` and `name.png` in `dir`, as (size, path).
+fn icon_dir_files(name: &str, dir: &Path, size: u32) -> [(u32, PathBuf); 2] {
+    [(u32::MAX, dir.join(format!("{name}.svg"))), (size, dir.join(format!("{name}.png")))]
+}
+
+/// [`icon_files`]' theme search over the icon `bases`, highest priority first. A theme's `index.theme` can sit in
+/// any one base and lists the dirs for all of them: programs installed to /usr/local put their icons in
+/// /usr/local/share/icons/hicolor, which has none of its own.
+fn theme_icon_files(name: &str, bases: &[PathBuf]) -> Vec<(u32, PathBuf)> {
     for theme in THEMES {
-        for base in &bases {
+        let Some(index) = bases.iter().find_map(|base| std::fs::read_to_string(base.join(theme).join("index.theme")).ok()) else { continue };
+        let dirs: Vec<&str> = index
+            .lines()
+            .find_map(|l| l.strip_prefix("Directories="))
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|d| !d.is_empty() && !d.contains("symbolic"))
+            .collect();
+        for base in bases {
             let root = base.join(theme);
-            let Ok(index) = std::fs::read_to_string(root.join("index.theme")) else { continue };
-            let found: Vec<(u32, PathBuf)> = index
-                .lines()
-                .find_map(|l| l.strip_prefix("Directories="))
-                .unwrap_or_default()
-                .split(',')
-                .map(str::trim)
-                .filter(|d| !d.is_empty() && !d.contains("symbolic"))
-                .flat_map(|d| files(&root.join(d), dir_size(d)))
-                .filter(|(_, p)| p.is_file())
-                .collect();
+            let found: Vec<(u32, PathBuf)> = dirs.iter().flat_map(|d| icon_dir_files(name, &root.join(d), dir_size(d))).filter(|(_, p)| p.is_file()).collect();
             if !found.is_empty() {
                 return found;
             }
         }
     }
-    files(Path::new("/usr/share/pixmaps"), 0).into_iter().filter(|(_, p)| p.is_file()).collect()
+    Vec::new()
 }
 
 /// The file to draw a `px`-sized icon from: a bitmap of exactly `px`, else an SVG, else the smallest bigger bitmap
@@ -892,6 +906,24 @@ mod tests {
         let mut icons = Icons::default();
         assert!(icons.get(path.to_str().unwrap(), 32).is_some());
         assert!(icons.get("no-such-icon-anywhere", 32).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn finds_icons_in_a_base_without_index_theme() {
+        let dir = std::env::temp_dir().join(format!("noobsbot-icon-bases-{}", std::process::id()));
+        let (local, usr) = (dir.join("local/icons"), dir.join("usr/icons"));
+        for d in [local.join("hicolor/scalable/apps"), usr.join("hicolor/48x48/apps")] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        // Like Debian: only /usr/share/icons/hicolor has the index; /usr/local/share/icons/hicolor has the icon.
+        std::fs::write(usr.join("hicolor/index.theme"), "[Icon Theme]\nDirectories=48x48/apps,scalable/apps\n").unwrap();
+        std::fs::write(local.join("hicolor/scalable/apps/term.svg"), "<svg/>").unwrap();
+        std::fs::write(usr.join("hicolor/48x48/apps/other.png"), "").unwrap();
+        let bases = [local.clone(), usr.clone()];
+        assert_eq!(theme_icon_files("term", &bases), [(u32::MAX, local.join("hicolor/scalable/apps/term.svg"))]);
+        assert_eq!(theme_icon_files("other", &bases), [(48, usr.join("hicolor/48x48/apps/other.png"))]);
+        assert!(theme_icon_files("none", &bases).is_empty());
         let _ = std::fs::remove_dir_all(dir);
     }
 }
