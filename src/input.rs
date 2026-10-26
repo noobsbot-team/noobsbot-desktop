@@ -238,8 +238,8 @@ pub fn resize_icon(edges: Edges) -> CursorIcon {
 
 impl State {
     /// A key one of our surfaces takes before any app: the lock screen (every key while locked), an alert, the
-    /// screenshot overlay, the switcher, Force Quit, Mission Control, Spotlight, the emoji picker, an open popup's
-    /// Esc, the app drawer, Launchpad, a desktop icon's name. Overlays that take every key still let desktop
+    /// screenshot overlay (and a thumbnail drag's Esc), the switcher, Force Quit, Mission Control, Spotlight, the
+    /// emoji picker, an open popup's Esc, the app drawer, Launchpad, a desktop icon's name. Overlays that take every key still let desktop
     /// shortcuts through. True when the key was used.
     fn shell_key(&mut self, sym: Keysym, raw: Keysym, mods: &ModifiersState) -> bool {
         if self.locked() {
@@ -247,7 +247,7 @@ impl State {
             let through = shortcuts::lookup(&self.bindings, mods, raw, self.nested).is_some_and(Action::while_locked);
             return !through && self.lock_key(sym, mods.ctrl);
         }
-        if self.alert_key(sym, mods.ctrl) {
+        if self.alert_key(sym, mods.ctrl) || (sym == Keysym::Escape && self.thumbnail_escape()) {
             return true;
         }
         let unbound = shortcuts::lookup(&self.bindings, mods, raw, self.nested).is_none();
