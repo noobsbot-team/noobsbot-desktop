@@ -211,6 +211,8 @@ pub enum Kind {
     Steps(&'static [(i64, &'static str)]),
     /// A sound from the system's sound theme, with a button that plays it.
     Sound,
+    /// A list of paths, a row each with Remove; with an Add… button that opens the file chooser for this `texts` key.
+    List(Option<&'static str>),
 }
 
 pub struct Setting {
@@ -225,6 +227,9 @@ pub struct Setting {
 const fn s(page: Page, group: &'static str, key: &'static str, label: &'static str, help: &'static str, kind: Kind) -> Setting {
     Setting { page, group, key, label, help, kind }
 }
+
+/// Date & Time ▸ Calendars ▸ Add…: the chooser's, or the path field's, `texts` key.
+pub const CALENDAR_ADD: &str = "calendar.add";
 
 /// Every setting in `config.toml` (`data/config.toml`), in page order.
 pub const SETTINGS: &[Setting] = &[
@@ -401,6 +406,8 @@ pub const SETTINGS: &[Setting] = &[
         "Intelligent: while a window overlaps it",
         Kind::Choice(&[("intelligent", "Intelligent"), ("never", "Never")]),
     ),
+    s(Page::Dock, "Dock", "dock.hide_delay", "Wait before hiding", "", Kind::Slider { min: 0.0, max: 2000.0, step: 50.0 }),
+    s(Page::Dock, "Dock", "dock.unhide_delay", "Wait before showing", "When the pointer calls it up", Kind::Slider { min: 0.0, max: 2000.0, step: 50.0 }),
     s(Page::Dock, "Dock", "dock.minimise_into_icon", "Minimise windows into application icon", "", Kind::Toggle),
     s(Page::Dock, "Dock", "dock.minimise_effect", "Minimise windows using", "", Kind::Choice(&[("scale", "Scale Effect"), ("genie", "Genie Effect")])),
     s(Page::Dock, "Dock", "dock.show_trash", "Show Trash in Dock", "", Kind::Toggle),
@@ -422,6 +429,17 @@ pub const SETTINGS: &[Setting] = &[
         "After an app's last window, clicking or scrolling goes to the next app",
         Kind::Toggle,
     ),
+    s(Page::Dock, "Dock", "dock.tooltips", "Show app names", "Over the icon under the pointer", Kind::Toggle),
+    s(Page::Dock, "Dock", "dock.pinned_only", "Show only kept apps", "Running apps not kept in the Dock stay out", Kind::Toggle),
+    s(
+        Page::Dock,
+        "Dock",
+        "dock.current_workspace_only",
+        "Show only this Space's apps",
+        "Running apps and minimised windows of the current Space",
+        Kind::Toggle,
+    ),
+    s(Page::Dock, "Dock", "dock.lock_items", "Lock the Dock's contents", "No dragging icons in, out or around, and no Keep in Dock", Kind::Toggle),
     s(Page::Dock, "Menu Bar", "menu_bar.auto_hide", "Automatically hide and show the menu bar", "Shows when the pointer touches the top edge", Kind::Toggle),
     s(
         Page::Dock,
@@ -489,6 +507,22 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Trackpad, "", "touchpad.drag_lock", "Drag lock", "Keep dragging through a short lift", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.disable_while_typing", "Ignore while typing", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.ignore_with_mouse", "Ignore when a mouse is plugged in", "", Kind::Toggle),
+    s(
+        Page::Trackpad,
+        "Gestures",
+        "touchpad.swipe_fingers",
+        "Swipe with",
+        "Four leaves three-finger swipes to apps",
+        Kind::Steps(&[(3, "Three fingers"), (4, "Four fingers")]),
+    ),
+    s(
+        Page::Trackpad,
+        "Gestures",
+        "touchpad.gesture_sensitivity",
+        "Gesture sensitivity",
+        "Higher: a shorter swipe or pinch is enough",
+        Kind::Slider { min: 0.25, max: 4.0, step: 0.25 },
+    ),
     s(Page::Trackpad, "Gestures", "touchpad.gesture_spaces", "Swipe between Spaces", "Swipe left or right", Kind::Toggle),
     s(Page::Trackpad, "Gestures", "touchpad.gesture_mission_control", "Mission Control", "Swipe up", Kind::Toggle),
     s(Page::Trackpad, "Gestures", "touchpad.gesture_app_expose", "App Exposé", "Swipe down", Kind::Toggle),
@@ -528,6 +562,14 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Choice(&[("auto", "Region default"), ("sunday", "Sunday"), ("monday", "Monday"), ("saturday", "Saturday")]),
     ),
     s(Page::DateTime, "Calendar", "clock.week_numbers", "Show week numbers", "In the Notification Center calendar", Kind::Toggle),
+    s(
+        Page::DateTime,
+        "Calendar",
+        "calendar.files",
+        "Calendars",
+        "Events for Up Next and reminders: .ics files, folders or dir/*.ics",
+        Kind::List(Some(CALENDAR_ADD)),
+    ),
     s(Page::Spaces, "", "windows.spaces", "Spaces", "Dynamic: + in Mission Control adds more", Kind::Slider { min: 0.0, max: 16.0, step: 1.0 }),
     s(Page::Spaces, "", "spaces.per_display", "Displays have separate Spaces", "Off: every display switches Spaces together", Kind::Toggle),
     s(Page::Notifications, "", "notifications.dnd", "Do Not Disturb", "Banners stay quiet; Notification Center still collects them", Kind::Toggle),
@@ -585,6 +627,15 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Battery, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
+    s(
+        Page::Privacy,
+        "Screen Recording",
+        "privacy.screen_recording",
+        "Allowed to record the screen",
+        "Programs ask the first time; Remove asks again",
+        Kind::List(None),
+    ),
+    s(Page::Privacy, "Screen Recording", "privacy.screen_recording_denied", "Denied", "", Kind::List(None)),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
     s(
         Page::General,
@@ -603,6 +654,14 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Steps(&[(0, "Never"), (7, "After 7 days"), (30, "After 30 days"), (90, "After 90 days")]),
     ),
     s(Page::General, "Software Update", "check_updates", "Check for updates daily", "Sends nothing but the version; installs at next login", Kind::Toggle),
+    s(
+        Page::General,
+        "Software Update",
+        "update.channel",
+        "Updates",
+        "Beta also offers pre-releases; from the next login",
+        Kind::Choice(&[("stable", "Stable"), ("beta", "Beta")]),
+    ),
     s(Page::General, "Session", "windows.reopen_at_login", "Reopen windows when logging back in", "Also the Log Out alert's checkbox", Kind::Toggle),
 ];
 
@@ -630,11 +689,12 @@ fn shown(key: &str, value: f64) -> String {
         "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
         "keyboard.repeat_rate" => format!("{value:.0}/s"),
-        "keyboard.repeat_delay" | "mouse.double_click_ms" => format!("{value:.0} ms"),
+        "keyboard.repeat_delay" | "mouse.double_click_ms" | "dock.hide_delay" | "dock.unhide_delay" => format!("{value:.0} ms"),
         "appearance.dark_from" | "appearance.dark_until" | "night_light.from" | "night_light.until" | "notifications.dnd_from" | "notifications.dnd_until" => {
             format!("{value:02.0}:00")
         }
         "night_light.temperature" => format!("{value:.0} K"),
+        "touchpad.gesture_sensitivity" => format!("{}×", (value * 100.0).round() / 100.0),
         "mouse.speed" | "touchpad.speed" => format!("{:.0}%", (value + 1.0) * 50.0),
         k if k.starts_with("idle.") => match value.round() as u32 {
             0 => "Never".into(),
@@ -751,6 +811,8 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
             .align_y(Alignment::Center)
             .into()
         }
+        Kind::List(None) => space().into(),
+        Kind::List(Some(add)) => button(text("Add…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::OpenFile(add)).into(),
         Kind::XkbOption(family, choices) => {
             let options = app.config.str(key);
             let current = crate::xkb::current(options, family);
@@ -930,13 +992,44 @@ fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>,
 fn settings_of<'a>(app: &'a App, filter: impl Fn(&Setting) -> bool) -> Vec<(&'static str, Vec<Element<'a, Message>>)> {
     let mut groups: Vec<(&'static str, Vec<Element<'a, Message>>)> = Vec::new();
     for setting in SETTINGS.iter().filter(|s| filter(s)) {
-        let row = line(app.tokens, setting.label, setting.help, control(app, setting));
+        let mut rows = vec![line(app.tokens, setting.label, setting.help, control(app, setting))];
+        if let Kind::List(add) = setting.kind {
+            rows.extend(list_rows(app, setting.key, add));
+        }
         match groups.last_mut() {
-            Some((group, rows)) if *group == setting.group => rows.push(row),
-            _ => groups.push((setting.group, vec![row])),
+            Some((group, old)) if *group == setting.group => old.extend(rows),
+            _ => groups.push((setting.group, rows)),
         }
     }
     groups
+}
+
+/// A `Kind::List`'s entries under its row, each with Remove; then the path field when Add… found no chooser.
+fn list_rows<'a>(app: &'a App, key: &'static str, add: Option<&'static str>) -> Vec<Element<'a, Message>> {
+    let t = app.tokens;
+    let items = app.config.list(key);
+    let mut rows: Vec<Element<'a, Message>> = items
+        .iter()
+        .map(|&item| {
+            let rest = items.iter().filter(|&&i| i != item).map(|&i| i.to_owned()).collect();
+            let remove = button(text("Remove").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::List(key, rest));
+            line(t, item, "", remove.into())
+        })
+        .collect();
+    if items.is_empty() {
+        rows.push(container(text("None").size(12).color(t.secondary())).padding([8, 12]).into());
+    }
+    if let Some((add, typed)) = add.and_then(|add| Some((add, app.texts.get(add)?))) {
+        let field = text_input("Path", typed)
+            .on_input(move |v| Message::Type(add.into(), v))
+            .on_submit(Message::Submit(add.into()))
+            .size(13)
+            .padding([3, 8])
+            .width(240)
+            .style(t.input(false));
+        rows.push(line(t, "Path", "", field.into()));
+    }
+    rows
 }
 
 pub fn page<'a>(app: &'a App, page: Page) -> Element<'a, Message> {
