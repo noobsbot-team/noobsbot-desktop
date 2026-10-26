@@ -1,6 +1,6 @@
-//! The menu bar (E2.2): a 24 px `bar` glass strip across the top. Left: the logo and the active app's name; right:
-//! tray icons, Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4). Every piece is kept between
-//! frames, so a frame where only the minute changed damages only the clock.
+//! The menu bar (E2.2): a 24 px `bar` glass strip (taller with larger text) across the top. Left: the logo and the
+//! active app's name; right: tray icons, Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4).
+//! Every piece is kept between frames, so a frame where only the minute changed damages only the clock.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -23,14 +23,14 @@ use crate::{
         tray::Image,
     },
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     wm::Rect,
 };
 
-/// D: the bar's height in logical px; windows stay below it.
-pub const HEIGHT: i32 = 24;
+/// D: the bar's height in logical px at text size 1; windows stay below it.
+const HEIGHT: i32 = 24;
 const EDGE: i32 = 14;
-/// Between right-side items (E2.2).
+/// Between right-side items (E2.2); this, `TIGHT`, `APP_WIDTH` and `MIN_APP` grow with the text size.
 const GAP: i32 = 12;
 const LOGO_GAP: i32 = 18;
 /// Between a battery's percentage and its symbol.
@@ -40,9 +40,14 @@ const SYMBOL: u16 = 16;
 const APP_WIDTH: i32 = 300;
 const MIN_APP: i32 = 40;
 
+/// The bar's height in logical px, grown with the text size.
+pub fn height() -> i32 {
+    ts(HEIGHT)
+}
+
 /// The width left for the app's name between the logo and the right group on a `width`-wide bar.
 pub fn app_room(width: i32, logo: i32, right: i32) -> i32 {
-    width - 2 * EDGE - logo - LOGO_GAP - GAP - right
+    width - 2 * EDGE - logo - LOGO_GAP - ts(GAP) - right
 }
 
 /// How many tray icons, from the left, go into the "»" item's menu so the app's name keeps `MIN_APP`: `fixed` is
@@ -50,8 +55,8 @@ pub fn app_room(width: i32, logo: i32, right: i32) -> i32 {
 pub fn tray_overflow(width: i32, logo: i32, fixed: i32, tray: &[i32], chevron: i32) -> usize {
     (0..=tray.len())
         .find(|&k| {
-            let more = if k > 0 { chevron + GAP } else { 0 };
-            app_room(width, logo, fixed + more + tray[k..].iter().map(|w| w + GAP).sum::<i32>()) >= MIN_APP
+            let more = if k > 0 { chevron + ts(GAP) } else { 0 };
+            app_room(width, logo, fixed + more + tray[k..].iter().map(|w| w + ts(GAP)).sum::<i32>()) >= ts(MIN_APP)
         })
         .unwrap_or(tray.len())
 }
@@ -152,8 +157,8 @@ pub fn app_name(id: &str) -> String {
     })
 }
 
-/// Width, dark, glass opacity and scale: what the strip and its shadow depend on.
-type GlassKey = (i32, bool, u32, u64);
+/// Width, height, dark, glass opacity and scale: what the strip and its shadow depend on.
+type GlassKey = (i32, i32, bool, u32, u64);
 
 /// The bar's pieces, kept between frames.
 #[derive(Default)]
@@ -182,7 +187,7 @@ impl MenuBar {
     /// The pressed pill behind `item`: rounded, a little inside the bar's height. Menus line up with it.
     pub fn pill(&self, item: BarItem) -> Option<Rect> {
         let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
-        Some(Rectangle::new((area.loc.x + GAP / 2 - 6, 2).into(), (area.size.w - GAP + 12, HEIGHT - 4).into()))
+        Some(Rectangle::new((area.loc.x + ts(GAP) / 2 - 6, 2).into(), (area.size.w - ts(GAP) + 12, height() - 4).into()))
     }
 
     /// How many tray icons, from the first, didn't fit and are in the "»" menu.
@@ -217,9 +222,9 @@ impl MenuBar {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let key = (width, dark, glass_opacity.to_bits(), scale.to_bits());
+        let key = (width, height(), dark, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
-            let rect = Rectangle::new((0, 0).into(), (width, HEIGHT).into());
+            let rect = Rectangle::new((0, 0).into(), (width, height()).into());
             let spec = Material::Bar.spec(dark);
             let mut glass = vec![shaders.glass(rect, Material::Bar, dark, glass_opacity, scale)];
             glass.extend(shaders.shadow(rect, spec.radius, spec.elevation, dark, scale, false));
@@ -236,15 +241,15 @@ impl MenuBar {
         let px = (f64::from(SYMBOL) * scale).round() as u32;
         let tray: Vec<_> = content.tray.iter().map(|images| icons.tray(images, px)).collect();
         if let Some(code) = &content.input {
-            right.push((text.label(code, Style { weight: 600, ..body }, 100, scale), GAP, BarItem::Input));
+            right.push((text.label(code, Style { weight: 600, ..body }, 100, scale), ts(GAP), BarItem::Input));
         }
         for (i, item) in content.status.iter().enumerate() {
             if let Some(t) = &item.text {
-                right.push((text.label(t, body, 100, scale), TIGHT, BarItem::Status(i)));
+                right.push((text.label(t, body, 100, scale), ts(TIGHT), BarItem::Status(i)));
             }
-            right.push((symbol(symbols, item.symbol), GAP, BarItem::Status(i)));
+            right.push((symbol(symbols, item.symbol), ts(GAP), BarItem::Status(i)));
         }
-        right.push((symbol(symbols, Symbol::Sliders), GAP, BarItem::ControlCenter));
+        right.push((symbol(symbols, Symbol::Sliders), ts(GAP), BarItem::ControlCenter));
         right.push((text.label(&content.clock, body, 300, scale), 0, BarItem::Clock));
 
         let logical = |r: &Rendered| (f64::from(r.width) / scale).round() as i32;
@@ -254,25 +259,25 @@ impl MenuBar {
         let chevron = text.label("»", body, 100, scale);
         let widths: Vec<i32> = tray.iter().map(|t| logical(t)).collect();
         self.overflow = tray_overflow(width, logical(&logo), fixed, &widths, logical(&chevron));
-        let shown = tray.into_iter().enumerate().skip(self.overflow).map(|(i, icon)| (icon, GAP, BarItem::Tray(i)));
-        let more = (self.overflow > 0).then_some((chevron, GAP, BarItem::Overflow));
+        let shown = tray.into_iter().enumerate().skip(self.overflow).map(|(i, icon)| (icon, ts(GAP), BarItem::Tray(i)));
+        let more = (self.overflow > 0).then_some((chevron, ts(GAP), BarItem::Overflow));
         right = more.into_iter().chain(shown).chain(right).collect();
         let total: i32 = right.iter().map(|(piece, gap, _)| logical(piece) + gap).sum();
         let room = app_room(width, logical(&logo), total);
         let mut left = vec![(logo, LOGO_GAP, BarItem::Logo)];
-        if let Some(app) = content.app.as_ref().filter(|_| room >= MIN_APP) {
+        if let Some(app) = content.app.as_ref().filter(|_| room >= ts(MIN_APP)) {
             let name = self.names.entry(app.clone()).or_insert_with(|| app_name(app));
-            left.push((text.label(name, Style { weight: 600, tabular: false, ..body }, room.min(APP_WIDTH) as u32, scale), 0, BarItem::App));
+            left.push((text.label(name, Style { weight: 600, tabular: false, ..body }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
         }
         let mut rects = Vec::new();
         let mut x = EDGE;
         for (piece, gap, _) in &left {
-            rects.push(Rectangle::new((x, 0).into(), (logical(piece), HEIGHT).into()));
+            rects.push(Rectangle::new((x, 0).into(), (logical(piece), height()).into()));
             x += logical(piece) + gap;
         }
         let mut x = width - EDGE - total;
         for (piece, gap, _) in &right {
-            rects.push(Rectangle::new((x, 0).into(), (logical(piece), HEIGHT).into()));
+            rects.push(Rectangle::new((x, 0).into(), (logical(piece), height()).into()));
             x += logical(piece) + gap;
         }
 
@@ -280,7 +285,7 @@ impl MenuBar {
         let items: Vec<BarItem> = left.iter().chain(&right).map(|(_, _, item)| *item).collect();
         self.hits.clear();
         for (item, rect) in items.iter().zip(&rects) {
-            let rect = Rectangle::new((rect.loc.x - GAP / 2, 0).into(), (rect.size.w + GAP, HEIGHT).into());
+            let rect = Rectangle::new((rect.loc.x - ts(GAP) / 2, 0).into(), (rect.size.w + ts(GAP), height()).into());
             match self.hits.last_mut() {
                 Some((last, area)) if last == item => *area = area.merge(rect),
                 _ => self.hits.push((*item, rect)),
@@ -311,7 +316,7 @@ impl MenuBar {
 /// Whether an auto-hiding bar shows with the pointer `y` px below its display's top: at the very edge, or anywhere
 /// on the bar once `shown`.
 pub fn reveals(shown: bool, y: f64) -> bool {
-    (0.0..if shown { f64::from(HEIGHT) } else { 1.0 }).contains(&y)
+    (0.0..if shown { f64::from(height()) } else { 1.0 }).contains(&y)
 }
 
 /// The bar's elements moved `hidden` (0 to 1) of the way up out of sight, shadow included.
@@ -327,7 +332,7 @@ pub fn slid(renderer: &mut GlesRenderer, strip: Vec<SceneElement>, hidden: f64, 
 
 /// The part of the output windows may use: everything below the bar.
 pub fn below(area: Rect) -> Rect {
-    let cut = (HEIGHT - area.loc.y).clamp(0, area.size.h);
+    let cut = (height() - area.loc.y).clamp(0, area.size.h);
     Rectangle::new((area.loc.x, area.loc.y + cut).into(), Size::from((area.size.w, area.size.h - cut)))
 }
 
@@ -396,6 +401,23 @@ mod tests {
         // Nothing fits even with every icon gone: all of them are in the menu.
         assert_eq!(tray_overflow(600, 16, 700, &tray, 10), 4);
         assert_eq!(tray_overflow(600, 16, 700, &[], 10), 0);
+    }
+
+    #[test]
+    fn the_bar_grows_with_the_text_size() {
+        let area = Rectangle::new((0, 0).into(), (1280, 800).into());
+        assert_eq!(height(), 24);
+        crate::text::with_scale(1.5, || {
+            // A 13 px label shapes into a 24 px line at 1.5: the 36 px bar holds it with room to spare.
+            assert_eq!(height(), 36);
+            assert_eq!(below(area), Rectangle::new((0, 36).into(), (1280, 764).into()));
+            assert!(reveals(true, 30.0), "the whole taller bar keeps it shown");
+            // Items space out and the app's name keeps a wider minimum.
+            assert_eq!(app_room(1280, 16, 400), 1280 - 2 * EDGE - 16 - LOGO_GAP - 18 - 400);
+            let tray = [24; 4];
+            let fixed = 1024 - 2 * EDGE - 24 - LOGO_GAP - 18 - 60 - (15 + 18) - 2 * (24 + 18);
+            assert_eq!(tray_overflow(1024, 24, fixed, &tray, 15), 2);
+        });
     }
 
     #[test]

@@ -1,5 +1,5 @@
-//! Dropdown menus (D8): the logo menu and the app menu (E2.2). `popover` glass, radius 8, padding 5, 22 px rows; the
-//! hovered row is an accent pill with white text, disabled rows are at 40%.
+//! Dropdown menus (D8): the logo menu and the app menu (E2.2). `popover` glass, radius 8, padding 5, 22 px rows
+//! (grown with the text size); the hovered row is an accent pill with white text, disabled rows are at 40%.
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
@@ -12,7 +12,7 @@ use super::{
 };
 use crate::{
     shell::{self, Row, menu::*},
-    text::{Style, Text},
+    text::{Style, Text, ts},
     wm::Rect,
 };
 
@@ -59,8 +59,8 @@ impl MenuPopover {
         let above = cells.iter().take_while(|c| c.size.h == 0).count();
         let below = cells.iter().rev().take_while(|c| c.size.h == 0).count();
         self.scroll.1 += dy;
-        let rows = (self.scroll.1 / f64::from(ROW)).trunc();
-        self.scroll.1 -= rows * f64::from(ROW);
+        let rows = (self.scroll.1 / f64::from(ts(ROW))).trunc();
+        self.scroll.1 -= rows * f64::from(ts(ROW));
         let scroll = (above as f64 + rows).clamp(0.0, (above + below) as f64) as usize;
         self.scroll.0 = scroll;
         scroll != above
@@ -91,13 +91,14 @@ impl MenuPopover {
         let logical = |w: u32| (f64::from(w) / scale).round() as i32;
 
         // Sized to the widest label plus its shortcut.
-        let mut width = MIN_WIDTH;
+        let mut width = ts(MIN_WIDTH);
+        let inset = ts(SIDE);
         // A submenu row shows a chevron where a shortcut would be.
         let side = |row: &Row| if row.sub.is_empty() { row.shortcut } else { "›" };
         let live = |row: &Row| row.action.is_some() || !row.sub.is_empty();
         for row in rows.iter().flatten() {
-            let shortcut = if side(row).is_empty() { 0 } else { SHORTCUT_GAP + logical(text.label(side(row), body, 200, scale).width) };
-            width = width.max(logical(text.label(&row.label, body, 400, scale).width) + shortcut + 2 * (SIDE + PAD));
+            let shortcut = if side(row).is_empty() { 0 } else { ts(SHORTCUT_GAP) + logical(text.label(side(row), body, 200, scale).width) };
+            width = width.max(logical(text.label(&row.label, body, 400, scale).width) + shortcut + 2 * (inset + PAD));
         }
         if self.scroll.2 != Some((anchor, rows.len())) {
             self.scroll = (0, 0.0, Some((anchor, rows.len())));
@@ -109,7 +110,7 @@ impl MenuPopover {
             .iter()
             .zip(&cells)
             .filter(|(row, c)| row.is_none() && c.size.h > 0)
-            .map(|(_, c)| Rectangle::new((c.loc.x + SIDE - PAD, c.loc.y + SEPARATOR / 2).into(), (c.size.w - 2 * (SIDE - PAD), 1).into()))
+            .map(|(_, c)| Rectangle::new((c.loc.x + inset - PAD, c.loc.y + SEPARATOR / 2).into(), (c.size.w - 2 * (inset - PAD), 1).into()))
             .collect();
         let key = (rect, separators.clone(), dark, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
@@ -157,7 +158,7 @@ impl MenuPopover {
                     return None;
                 }
                 let w = logical(piece.0.width);
-                let x = if right { cell.loc.x + cell.size.w - (SIDE - PAD) - w } else { cell.loc.x + SIDE - PAD };
+                let x = if right { cell.loc.x + cell.size.w - (inset - PAD) - w } else { cell.loc.x + inset - PAD };
                 label_element(renderer, piece, Rectangle::new((x, cell.loc.y).into(), (w, cell.size.h).into()), scale)
             })
             .collect();

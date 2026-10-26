@@ -186,7 +186,7 @@ pub fn card(n: &Notification, x: i32, y: i32, w: i32, hovered: bool, close: bool
 /// The banners on screen (newest on top), and the "+N more" pill under them when there are more than 3.
 pub fn banners(store: &Store, output_width: i32, osd: bool) -> (Vec<Card>, Option<(Rect, usize)>) {
     let x = output_width - BANNER_RIGHT - BANNER_W;
-    let mut y = menubar::HEIGHT + BANNER_TOP + if osd { OSD_SHIFT } else { 0 };
+    let mut y = menubar::height() + BANNER_TOP + if osd { OSD_SHIFT } else { 0 };
     let mut cards = Vec::new();
     for n in store.banners.iter().filter_map(|id| store.get(*id)).take(MAX_BANNERS) {
         let card = card(n, x, y, BANNER_W, store.hovered == Some(n.id), true);
@@ -250,7 +250,7 @@ impl Center {
 #[expect(clippy::too_many_arguments, reason = "one count per section")]
 pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize, up_next: usize, batteries: usize, weather: bool, widgets: &[bool]) -> Center {
     let x = output.w - MARGIN - CENTER_W;
-    let top = menubar::HEIGHT + DROP;
+    let top = menubar::height() + DROP;
     let rect = Rectangle::new((x, top).into(), (CENTER_W, (output.h - top - MARGIN).max(100)).into());
     let inner_x = x + CENTER_PAD;
     let inner_w = CENTER_W - 2 * CENTER_PAD;

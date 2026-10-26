@@ -52,6 +52,32 @@ pub fn set_scale(k: f32) {
     SCALE.store(k.to_bits(), Ordering::Relaxed);
 }
 
+/// The text size multiplier set by `set_scale`.
+pub fn factor() -> f32 {
+    #[cfg(test)]
+    if let Some(k) = TEST_SCALE.get() {
+        return k;
+    }
+    f32::from_bits(SCALE.load(Ordering::Relaxed))
+}
+
+/// `px` grown with the text size, rounded: for the heights and paddings that hold text, never icons or radii.
+pub fn ts(px: i32) -> i32 {
+    (px as f32 * factor()).round() as i32
+}
+
+#[cfg(test)]
+thread_local!(static TEST_SCALE: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) });
+
+/// Runs `f` with the text scale at `k` on this thread only, so parallel tests don't see it.
+#[cfg(test)]
+pub fn with_scale<T>(k: f32, f: impl FnOnce() -> T) -> T {
+    TEST_SCALE.set(Some(k));
+    let out = f();
+    TEST_SCALE.set(None);
+    out
+}
+
 /// `style` with its size and line height times `k`, rounded to whole px.
 fn scaled(style: Style, k: f32) -> Style {
     let px = |v: u16| (f32::from(v) * k).round() as u16;
@@ -159,7 +185,7 @@ impl Text {
 
     /// `wrap`: `None` one line, else (at most n lines, 0 = any; centred).
     fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<(u8, bool)>, emoji: bool) -> Arc<Rendered> {
-        let style = scaled(style, f32::from_bits(SCALE.load(Ordering::Relaxed)));
+        let style = scaled(style, factor());
         // A one-line label that fits is the same pixels whatever the limit was: it lives under one key (C19), so a
         // dock tooltip or menu title isn't rendered again for every width it is asked at.
         let fits = (text.to_owned(), style, u32::MAX, scale.to_bits(), wrap, emoji);
@@ -371,6 +397,14 @@ mod tests {
         let Some(mut text) = text() else { return };
         let label = text.label("Window", HEADLINE, 200, 1.25);
         assert_eq!((label.width % 5, label.height), (0, 20), "{} x {}", label.width, label.height);
+    }
+
+    #[test]
+    fn layout_px_grow_with_the_text_scale() {
+        assert_eq!(ts(24), 24);
+        assert_eq!(with_scale(1.5, || (ts(24), ts(5), ts(-4))), (36, 8, -6));
+        assert_eq!(with_scale(0.8, || ts(22)), 18);
+        assert_eq!(ts(22), 22, "the override ends with the closure");
     }
 
     #[test]
