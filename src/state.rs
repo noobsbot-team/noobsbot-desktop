@@ -963,6 +963,13 @@ impl XdgShellHandler for State {
         self.start_move(window, start_data, serial);
     }
 
+    /// The app's own minimise button (GTK4, libadwaita).
+    fn minimize_request(&mut self, surface: ToplevelSurface) {
+        if let Some(window) = self.window_for(surface.wl_surface()).cloned() {
+            self.minimise(vec![window]);
+        }
+    }
+
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         self.fill(&surface, xdg_toplevel::State::Maximized);
     }
