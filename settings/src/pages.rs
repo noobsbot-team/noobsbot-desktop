@@ -1420,11 +1420,7 @@ fn input_sources(app: &App) -> Vec<Element<'_, Message>> {
     };
     let mut rows: Vec<Element<'_, Message>> = Vec::new();
     for (i, (layout, variant)) in sources.iter().enumerate() {
-        let moved = |to: usize| {
-            let mut list = sources.clone();
-            list.swap(i, to);
-            Message::Sources(list)
-        };
+        let moved = |to: usize| Message::Sources(crate::xkb::moved(&sources, i, to));
         let mut rest = sources.clone();
         rest.remove(i);
         let buttons = row![
