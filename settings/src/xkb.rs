@@ -79,8 +79,9 @@ trait Controller {
     fn available_input_methods(&self) -> zbus::Result<Vec<Method>>;
 }
 
-/// fcitx5's input methods while it runs (E6.12): those in its current group and those it could add, as
-/// (unique name, name). Its keyboard layouts (`keyboard-us`) are left out: `[keyboard] layout` has those.
+/// The engine's input methods while it runs (E6.12): fcitx5's current group or ibus's `preload-engines`, and those
+/// it could add, as (unique name, name). Its keyboard layouts (`keyboard-us`, `xkb:us::eng`) are left out:
+/// `[keyboard] layout` has those.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Methods {
     pub chosen: Vec<(String, String)>,
@@ -88,26 +89,38 @@ pub struct Methods {
 }
 
 fn is_method(id: &str) -> bool {
-    !id.starts_with("keyboard-")
+    !id.starts_with("keyboard-") && !id.starts_with("xkb:")
 }
 
-/// Splits fcitx5's methods into the group's and the rest.
-fn sort_methods(group: &[(String, String)], available: Vec<Method>) -> Methods {
+/// Splits the engine's methods, as (unique name, name), into the group's and the rest.
+fn sort_methods(group: &[(String, String)], available: Vec<(String, String)>) -> Methods {
     let mut methods = Methods::default();
     for m in available.into_iter().filter(|m| is_method(&m.0)) {
         let list = if group.iter().any(|(id, _)| *id == m.0) { &mut methods.chosen } else { &mut methods.offered };
-        list.push((m.0, m.1));
+        list.push(m);
     }
     methods
 }
 
-/// `None` while fcitx5 isn't on the session bus.
-pub async fn methods() -> Option<Methods> {
-    let bus = zbus::Connection::session().await.ok()?;
-    let proxy = ControllerProxy::new(&bus).await.ok()?;
-    let group = proxy.current_input_method_group().await.ok()?;
-    let (_, items) = proxy.input_method_group_info(&group).await.ok()?;
-    Some(sort_methods(&items, proxy.available_input_methods().await.ok()?))
+/// `engine` is `[keyboard] input_method` resolved (`crate::ibus::engine`); `None` while it isn't running.
+pub async fn methods(engine: &str) -> Option<Methods> {
+    match engine {
+        "ibus" => Some(sort_methods(&ibus_group(), crate::ibus::engines()?)),
+        "fcitx5" => {
+            let bus = zbus::Connection::session().await.ok()?;
+            let proxy = ControllerProxy::new(&bus).await.ok()?;
+            let group = proxy.current_input_method_group().await.ok()?;
+            let (_, items) = proxy.input_method_group_info(&group).await.ok()?;
+            let available = proxy.available_input_methods().await.ok()?;
+            Some(sort_methods(&items, available.into_iter().map(|m| (m.0, m.1)).collect()))
+        }
+        _ => None,
+    }
+}
+
+/// ibus's `preload-engines` in fcitx5's group shape.
+fn ibus_group() -> Vec<(String, String)> {
+    crate::ibus::preloaded().into_iter().map(|id| (id, String::new())).collect()
 }
 
 /// The group's items with method `id` added at the end (`add`) or taken out.
@@ -119,9 +132,16 @@ fn with_method(items: &[(String, String)], id: &str, add: bool) -> Vec<(String, 
     items
 }
 
-/// Adds method `id` to fcitx5's current group, or takes it out, through its controller; then the methods again,
-/// and what went wrong.
-pub async fn set_method(id: String, add: bool) -> (Option<Methods>, Option<String>) {
+/// Adds method `id` to fcitx5's current group (through its controller) or ibus's `preload-engines`, or takes it out;
+/// then the methods again, and what went wrong.
+pub async fn set_method(engine: &'static str, id: String, add: bool) -> (Option<Methods>, Option<String>) {
+    if engine == "ibus" {
+        let list: Vec<_> = with_method(&ibus_group(), &id, add).into_iter().map(|(id, _)| format!("'{id}'")).collect();
+        let list = format!("[{}]", list.join(", "));
+        let saved = crate::ibus::run("gsettings", &["set", crate::ibus::SCHEMA, "preload-engines", &list]);
+        let error = saved.is_none().then(|| "Couldn't change ibus's input methods".to_owned());
+        return (methods(engine).await, error);
+    }
     let result = async {
         let bus = zbus::Connection::session().await?;
         let proxy = ControllerProxy::new(&bus).await?;
@@ -130,7 +150,7 @@ pub async fn set_method(id: String, add: bool) -> (Option<Methods>, Option<Strin
         proxy.set_input_method_group_info(&group, &layout, &with_method(&items, &id, add)).await
     }
     .await;
-    (methods().await, result.err().map(|err| format!("Couldn't change fcitx5's input methods: {err}")))
+    (methods(engine).await, result.err().map(|err| format!("Couldn't change fcitx5's input methods: {err}")))
 }
 
 /// Caps Lock's dropdown: the option written, the label shown.
@@ -199,9 +219,9 @@ mod tests {
     }
     #[test]
     fn fcitx_methods() {
-        let m = |id: &str, name: &str| (id.to_owned(), name.to_owned(), String::new(), String::new(), String::new(), String::new(), false);
+        let m = |id: &str, name: &str| (id.to_owned(), name.to_owned());
         let group = vec![("keyboard-us".to_owned(), String::new()), ("pinyin".to_owned(), String::new())];
-        let sorted = sort_methods(&group, vec![m("keyboard-us", "English (US)"), m("pinyin", "Pinyin"), m("mozc", "Mozc")]);
+        let sorted = sort_methods(&group, vec![m("keyboard-us", "English (US)"), m("pinyin", "Pinyin"), m("mozc", "Mozc"), m("xkb:us::eng", "English (US)")]);
         assert_eq!(sorted.chosen, [("pinyin".to_owned(), "Pinyin".to_owned())]);
         assert_eq!(sorted.offered, [("mozc".to_owned(), "Mozc".to_owned())]);
         let ids = |items: Vec<(String, String)>| items.into_iter().map(|i| i.0).collect::<Vec<_>>();
