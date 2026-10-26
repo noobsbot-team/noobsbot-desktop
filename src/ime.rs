@@ -39,6 +39,40 @@ pub struct Layouts {
     pub fcitx: bool,
     /// fcitx5's input methods while it is on the bus.
     pub methods: Option<crate::services::fcitx::Fcitx>,
+    /// `[keyboard] per_window_source`: each surface's layout when it lost focus.
+    pub remembered: Remembered<WlSurface>,
+}
+
+/// The layout each window had when it lost focus, and the window with focus now.
+#[derive(Debug)]
+pub struct Remembered<K> {
+    focused: Option<K>,
+    by: Vec<(K, usize)>,
+}
+
+impl<K> Default for Remembered<K> {
+    fn default() -> Self {
+        Self { focused: None, by: Vec::new() }
+    }
+}
+
+impl<K: PartialEq + Clone> Remembered<K> {
+    /// Focus moves to `to` while layout `active` is on: the window losing focus keeps `active`; `to`'s own layout,
+    /// if it has one, comes back.
+    pub fn focus(&mut self, to: Option<&K>, active: usize) -> Option<usize> {
+        if let Some(from) = self.focused.take() {
+            match self.by.iter_mut().find(|(k, _)| *k == from) {
+                Some(entry) => entry.1 = active,
+                None => self.by.push((from, active)),
+            }
+        }
+        self.focused = to.cloned();
+        to.and_then(|to| self.by.iter().find(|(k, _)| k == to)).map(|(_, i)| *i)
+    }
+
+    pub fn retain(&mut self, keep: impl Fn(&K) -> bool) {
+        self.by.retain(|(k, _)| keep(k));
+    }
 }
 
 /// One text-input-v3 object as its requests left it. smithay drops every request while no input method runs, so we
@@ -148,7 +182,22 @@ impl State {
             let xkb = ctx.xkb().lock().unwrap();
             xkb.layouts().map(|l| xkb.layout_name(l).to_owned()).collect()
         });
-        self.layouts = Layouts { list: pair(codes, names), active: 0, fcitx: on_path("fcitx5"), methods: self.layouts.methods.take() };
+        let methods = self.layouts.methods.take();
+        self.layouts = Layouts { list: pair(codes, names), fcitx: on_path("fcitx5"), methods, ..Default::default() };
+    }
+
+    /// Keyboard focus moved to `focused`: with `[keyboard] per_window_source`, it gets its own layout back.
+    pub fn layout_focus(&mut self, focused: Option<&WlSurface>) {
+        if !self.config.keyboard.per_window_source {
+            return;
+        }
+        let remembered = &mut self.layouts.remembered;
+        remembered.retain(WlSurface::is_alive);
+        let index = remembered.focus(focused, self.layouts.active).filter(|&i| i != self.layouts.active && i < self.layouts.list.len());
+        if let (Some(index), Some(keyboard)) = (index, self.seat.get_keyboard()) {
+            keyboard.with_xkb_state(self, |mut ctx| ctx.set_layout(Layout(index as u32)));
+            self.layouts.active = index;
+        }
     }
 
     /// Switches to layout `index` (past the last one wraps round), or the next one (Super+Ctrl+Space), and says which
@@ -317,6 +366,20 @@ mod tests {
         let names = || vec!["English (US)".to_string(), "Nepali".to_string()];
         assert_eq!(pair("us, np", names()), [("us".into(), "English (US)".into()), ("np".into(), "Nepali".into())]);
         assert_eq!(pair("", names()), [("en".into(), "English (US)".into()), ("ne".into(), "Nepali".into())]);
+    }
+
+    #[test]
+    fn each_window_keeps_its_layout() {
+        let mut r = Remembered::default();
+        assert_eq!(r.focus(Some(&"editor"), 0), None, "new: stays as is");
+        // Switched to layout 1 in the editor, then to the terminal: it hasn't one of its own.
+        assert_eq!(r.focus(Some(&"terminal"), 1), None);
+        assert_eq!(r.focus(Some(&"editor"), 0), Some(1));
+        assert_eq!(r.focus(None, 1), None, "the shell has focus");
+        assert_eq!(r.focus(Some(&"terminal"), 1), Some(0));
+        // The editor closed.
+        r.retain(|k| *k != "editor");
+        assert_eq!(r.focus(Some(&"editor"), 0), None, "forgotten");
     }
 
     #[test]

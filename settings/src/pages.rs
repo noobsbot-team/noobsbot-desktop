@@ -433,6 +433,14 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Dock, "Hot Corners", "hot_corners.bottom_right", "Bottom right", "", Kind::Menu(CORNER_ACTIONS)),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_rate", "Key repeat rate", "", Kind::Slider { min: 0.0, max: 60.0, step: 1.0 }),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_delay", "Delay until repeat", "", Kind::Slider { min: 150.0, max: 1500.0, step: 50.0 }),
+    s(
+        Page::Keyboard,
+        "Input source switching",
+        "keyboard.per_window_source",
+        "Remember the input source per window",
+        "Each window switches back to the layout it was typed in",
+        Kind::Toggle,
+    ),
     s(Page::Keyboard, "Modifier keys", "keyboard.options", "Caps Lock key", "", Kind::XkbOption(crate::xkb::is_caps, crate::xkb::CAPS)),
     s(
         Page::Keyboard,
