@@ -1617,7 +1617,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 |---|---|---|
 | ~~`[windows] double_click_title` is shown in Settings but ignored~~ | `src/decorations.rs` | Done: Zoom / Minimise / Nothing honoured |
 | ~~`[windows] snapping` is on by default, has a toggle and a README line, but nothing reads it~~ | `src/grabs.rs` | Done: gates edge tiling while dragging (E8.5) |
-| ~~`[keyboard] mac_keys` toggle is parsed but never applied~~ Done: the key is gone | `src/config.rs` only | implement the E1.6 swap or hide the toggle. Partly: no Settings row any more; the key is still parsed and unused |
+| ~~`[keyboard] mac_keys` toggle is parsed but never applied~~ Done: the key is gone | `src/config.rs` only | implement the E1.6 swap or hide the toggle. |
 | ~~Window rule `opacity` is documented but not drawn~~ | `src/render/mod.rs` | Done: fades the app's content; title bar and shadow stay solid |
 | ~~Minimise from apps that draw their own title bar (GTK4, libadwaita) does nothing~~ | `src/state.rs` | Done: `minimize_request` calls `minimise` |
 | ~~Trackpad tap-to-click and natural scroll apply only when the device is re-plugged~~ | `src/backend/udev.rs` | Done: `configure_inputs` re-applies trackpad and mouse settings on reload |
@@ -1731,14 +1731,14 @@ Rows live on the Appearance page (E8.2). Behind them:
   ⚠ on conflicts (today the first match wins silently).~~ Done: Settings ▸ Keyboard ▸ Keyboard Shortcuts…
   (`settings/src/shortcuts.rs`); recording asks the desktop to pass every key through; conflicts are also logged.
 - Default keys: log out (Super+Shift+Q), sleep key, keyboard backlight (UPower), touchpad toggle, display key
-  (Settings › Displays until mirroring exists), calculator / mail / web / explorer / search keys (default-app,
+  (Settings › Displays, where mirroring lives), calculator / mail / web / explorer / search keys (default-app,
   Spotlight), media stop / seek / eject, Shift+Alt+volume quarter steps, Alt+Print window screenshot, Super+Alt+5
   screen recording. Done.
 - Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout. Done.
 
 ### E8.8 Menu bar, tray, widgets and session
 - ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row (flipped left at the edge), one level deep; deeper ones list inline. Every shell menu takes the keyboard (arrows skip dead rows, Return/Right run or open, Left/Esc back out, letters jump, Left/Right walk the bar menus); a diagonal move toward an open submenu keeps it (aim triangle, 300 ms); the window menu's Move to lists the other displays by name.
-- Menu bar on every display; auto-hide option; a Recent Items menu with Clear.
+- ~~Menu bar on every display; auto-hide option; a Recent Items menu with Clear.~~ Done: `src/backend/winit.rs`, `src/state.rs`, `src/shell/mod.rs`.
 - ~~Trash at the dock's right end; Launchpad folders and drag to rearrange.~~ Done: Trash after the separator (Open, Empty Trash,
   drop to trash, `[dock] show_trash`); Launchpad icons drag to reorder and onto each other to make folders (saved in
   `launchpad.json`).
