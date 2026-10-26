@@ -118,6 +118,8 @@ pub struct State {
     pub rules: Vec<CompiledRule>,
     /// Built from `config.bindings`.
     pub bindings: Vec<(Binding, Action)>,
+    /// Settings is recording a shortcut: none matches.
+    pub recording: shortcuts::Recording<Window>,
     /// Keys whose press was a shortcut; their release is kept from the app too, so nothing sticks.
     pub suppressed: Vec<Keycode>,
     /// The key a shell surface is seeing held down (D14), and the timer repeating it.
@@ -378,6 +380,10 @@ impl State {
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
                     crate::services::Update::Resumed => state.idle_activity(),
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
+                    crate::services::Update::Record(on) => {
+                        let focus = state.focused_window();
+                        state.recording.set(on, focus, std::time::Instant::now());
+                    }
                 }
                 state.schedule_redraw();
             }
@@ -434,6 +440,7 @@ impl State {
             weather_settings,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
+            recording: Default::default(),
             config,
             suppressed: Vec::new(),
             key_repeat: None,
