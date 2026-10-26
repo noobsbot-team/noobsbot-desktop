@@ -1,0 +1,6 @@
+# Helium's own apt repository (pkg.helium.computer), written by install.sh when Helium is the browser.
+Types: deb
+URIs: https://pkg.helium.computer/deb
+Suites: stable
+Components: main
+Signed-By: /usr/share/keyrings/noobsbot-helium.asc
