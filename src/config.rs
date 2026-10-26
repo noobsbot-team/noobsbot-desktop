@@ -221,6 +221,8 @@ pub struct Clock {
     pub format: crate::clock::Format,
     /// The calendar's first column (E2.5).
     pub week_start: WeekStart,
+    /// ISO week numbers in a column at the calendar's left.
+    pub week_numbers: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]

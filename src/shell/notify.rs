@@ -259,7 +259,7 @@ pub fn center(
     store: &Store,
     output: Size<i32, Logical>,
     dnd: bool,
-    rows: usize,
+    (rows, weeks): (usize, bool),
     up_next: usize,
     batteries: usize,
     weather: bool,
@@ -320,7 +320,7 @@ pub fn center(
         (card, (0..up_next as i32).map(|i| row(inner_x + 12, card.loc.y + top + i * each, inner_w - 24, each - 6)).collect())
     });
     let cal_h = super::calendar::height(rows);
-    let calendar = (row(inner_x, y, inner_w, cal_h), calendar_layout(inner_x + (inner_w - super::calendar::WIDTH) / 2, y, rows));
+    let calendar = (row(inner_x, y, inner_w, cal_h), calendar_layout(inner_x + (inner_w - super::calendar::WIDTH) / 2, y, rows, weeks));
     y += cal_h + GAP;
     let weather = weather.then(|| {
         let card = row(inner_x, y, inner_w, ts(WEATHER_H));
@@ -468,7 +468,17 @@ impl State {
         let up_next = self.calendar_view(year, month, self.config.clock.week_start.into()).1.len();
         let widgets: Vec<bool> = self.shown_widgets(false).iter().map(|w| w.medium).collect();
         let (dnd, batteries, weather) = (self.config.notifications.dnd, self.batteries().len(), self.weather.is_some());
-        Some(center(&self.notifications, self.popup_size(), dnd, rows, up_next, batteries, weather, &widgets, self.previews()))
+        Some(center(
+            &self.notifications,
+            self.popup_size(),
+            dnd,
+            (rows, self.config.clock.week_numbers),
+            up_next,
+            batteries,
+            weather,
+            &widgets,
+            self.previews(),
+        ))
     }
 
     /// Bodies shown: `[notifications] previews`, and whether the screen is locked.
@@ -870,7 +880,7 @@ mod tests {
             store.banners.insert(0, id);
         }
         store.hovered = Some(3);
-        let lay = || (banners(&store, 1280, false, true).0, center(&store, Size::from((1280, 3000)), true, 6, 2, 2, true, &[true, false], true));
+        let lay = || (banners(&store, 1280, false, true).0, center(&store, Size::from((1280, 3000)), true, (6, false), 2, 2, true, &[true, false], true));
         let (small, small_c) = lay();
         let (big, big_c) = crate::text::with_scale(1.5, lay);
         // Line heights at 1.5: headline and body 24, subheadline 21, caption 20 (19.5 rounded), title3 30.
@@ -913,7 +923,7 @@ mod tests {
             store.insert(note(id, app));
         }
         let size = Size::from((1280, 720));
-        let center = center(&store, size, true, 5, 0, 1, true, &[true], true);
+        let center = center(&store, size, true, (5, false), 0, 1, true, &[true], true);
         assert_eq!(center.rect, Rectangle::new((1280 - 8 - 360, 28).into(), (360, 720 - 28 - 8).into()));
         assert_eq!(center.groups.iter().map(|g| (g.app.as_str(), g.count, g.cards.len())).collect::<Vec<_>>(), vec![("A", 3, 1), ("B", 1, 1)]);
         assert!(center.groups[0].plate.is_some() && center.groups[1].plate.is_none());
@@ -923,25 +933,25 @@ mod tests {
         assert!(weather.loc.y > center.calendar.0.loc.y && center.batteries.as_ref().unwrap().0.loc.y == weather.loc.y + WEATHER_H + GAP);
         let at = |r: Rect| r.to_f64().loc + Point::from((3.0, 3.0));
         assert_eq!(center.widgets[0].loc.y, center.batteries.as_ref().unwrap().0.loc.y + 68 + GAP);
-        let tall = super::center(&store, Size::from((1280, 2000)), true, 5, 0, 1, true, &[true], true);
+        let tall = super::center(&store, Size::from((1280, 2000)), true, (5, false), 0, 1, true, &[true], true);
         assert_eq!(center_hit(&tall, at(tall.widgets[0])), Some(Hit::Widget(0)));
         assert_eq!(center_hit(&center, at(center.groups[0].cards[0].rect)), Some(Hit::Expand("A".into())));
         assert_eq!(center_hit(&center, at(center.groups[1].cards[0].rect)), Some(Hit::Card(2)));
         assert_eq!(center_hit(&center, at(center.header.unwrap().1)), Some(Hit::ClearAll));
         // Opened out: every card, newest first, and Show Less.
         store.expanded = Some("A".into());
-        let open = super::center(&store, size, false, 5, 0, 0, false, &[], true);
+        let open = super::center(&store, size, false, (5, false), 0, 0, false, &[], true);
         assert_eq!(open.groups[0].cards.iter().map(|c| c.id).collect::<Vec<_>>(), vec![4, 3, 1]);
         assert_eq!(center_hit(&open, at(open.groups[0].header.unwrap().1)), Some(Hit::Collapse));
         // Too tall for a short screen: it scrolls, and what scrolled out is not hit.
-        let short = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false, &[], true);
+        let short = super::center(&store, Size::from((1280, 400)), false, (5, false), 0, 0, false, &[], true);
         assert!(short.max_scroll > 0);
         store.scroll = short.max_scroll;
-        let scrolled = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false, &[], true);
+        let scrolled = super::center(&store, Size::from((1280, 400)), false, (5, false), 0, 0, false, &[], true);
         assert!(!scrolled.visible(scrolled.date));
         assert!(scrolled.visible(scrolled.calendar.0));
         // Up Next sits above the calendar, its rows inside its card.
-        let next = super::center(&store, size, false, 5, 2, 0, false, &[], true);
+        let next = super::center(&store, size, false, (5, false), 2, 0, false, &[], true);
         let (card, rows) = next.up_next.clone().unwrap();
         assert!(rows.len() == 2 && rows.iter().all(|r| card.contains_rect(*r)) && !rows[0].overlaps(rows[1]));
         assert!(card.loc.y + card.size.h < next.calendar.0.loc.y);

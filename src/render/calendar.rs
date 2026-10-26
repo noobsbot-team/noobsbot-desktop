@@ -1,5 +1,6 @@
 //! The calendar widget in Notification Center (E2.5, E4.2): a `card`, radius 12. Title and ‹ › on top, weekday
-//! initials, then the month grid; today in an accent circle, other months' days at `label-tertiary`.
+//! initials, then the month grid; today in an accent circle, other months' days at `label-tertiary`. Week numbers,
+//! when on, in a narrow column at the left.
 
 use chrono::{Datelike, NaiveDate, Weekday};
 use smithay::{
@@ -118,12 +119,18 @@ impl CalendarWidget {
             };
             pieces.push(text.label(&date.day().to_string(), Style { color, ..body }, 30, scale));
         }
+        // Week numbers: caption-sized, label-tertiary, one per row while the layout has their column.
+        for row in grid.iter().take(layout.weeks.len()) {
+            let number = crate::calendar::week_number(row).to_string();
+            pieces.push(text.label(&number, Style { color: tertiary, tabular: true, ..caption }, shell::calendar::WEEK_W as u32, scale));
+        }
         self.labels = keep_buffers(&self.labels, pieces);
 
         // The title is left-aligned: its rect shrinks to the text.
         let title_w = self.labels.first().map_or(0, |(r, _)| (f64::from(r.width) / scale).round() as i32);
         let title_rect = Rectangle::new(layout.title.loc, (title_w.min(layout.title.size.w), layout.title.size.h).into());
-        let rects = [title_rect, layout.prev, layout.next].into_iter().chain(layout.header).chain(layout.cells.iter().copied());
+        let rects =
+            [title_rect, layout.prev, layout.next].into_iter().chain(layout.header).chain(layout.cells.iter().copied()).chain(layout.weeks.iter().copied());
         let mut out: Vec<SceneElement> = self.labels.iter().zip(rects).filter_map(|(label, rect)| label_element(renderer, label, rect, scale)).collect();
         if let Some((_, glass)) = &self.glass {
             out.extend(glass.iter().cloned().map(SceneElement::Shader));

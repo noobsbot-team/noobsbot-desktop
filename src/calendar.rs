@@ -22,6 +22,11 @@ pub fn month_grid(year: i32, month: u32, week_start: Weekday) -> Option<Vec<[Nai
         .collect()
 }
 
+/// The ISO week number of a grid row: the week its Monday falls in, whichever day the row starts on.
+pub fn week_number(row: &[NaiveDate; 7]) -> u32 {
+    row.iter().find(|d| d.weekday() == Weekday::Mon).unwrap_or(&row[0]).iso_week().week()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -83,9 +88,22 @@ mod tests {
 
     #[test]
     fn week_numbers_are_iso() {
-        // Week numbers in the grid are `NaiveDate::iso_week` of each row's first day: 2026 has 53 ISO weeks.
-        assert_eq!(date(2027, 1, 1).iso_week().week(), 53);
-        assert_eq!(date(2027, 2, 1).iso_week().week(), 5);
+        // 2026 starts on a Thursday, so it has 53 ISO weeks; New Year's Day 2027 (a Friday) is still in week 53.
+        let weeks = |y, m, start| month_grid(y, m, start).unwrap().iter().map(week_number).collect::<Vec<_>>();
+        for start in [Weekday::Sun, Weekday::Mon, Weekday::Sat] {
+            let dec = month_grid(2026, 12, start).unwrap();
+            let last = dec.iter().find(|row| row.contains(&date(2026, 12, 31))).unwrap();
+            assert_eq!(week_number(last), 53);
+            let jan = month_grid(2027, 1, start).unwrap();
+            let first = jan.iter().find(|row| row.contains(&date(2027, 1, 1))).unwrap();
+            assert_eq!(week_number(first), 53);
+        }
+        assert_eq!(weeks(2027, 1, Weekday::Mon), [53, 1, 2, 3, 4]);
+        // A Sunday start: the row's Sunday belongs to the week before, its Monday decides.
+        assert_eq!(weeks(2026, 10, Weekday::Sun), [40, 41, 42, 43, 44]);
+        // 2020 (leap year from a Wednesday) also has 53 weeks; 2021 has 52.
+        assert_eq!(week_number(&month_grid(2020, 12, Weekday::Mon).unwrap()[4]), 53);
+        assert_eq!(week_number(&month_grid(2021, 12, Weekday::Mon).unwrap()[4]), 52);
     }
 
     #[test]
