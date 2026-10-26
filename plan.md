@@ -1670,11 +1670,16 @@ The dock stays per app, by design. Every per-window job a taskbar does gets a su
 ### E8.4 Appearance and themes (priority 1)
 Rows live on the Appearance page (E8.2). Behind them:
 - Wallpaper: gallery, fit modes, slideshow and crossfade in the wallpaper renderer (built: `[appearance] wallpaper_folder`, `wallpaper_interval`, `wallpaper_shuffle`; 1 s crossfade on every change).
-- Auto-dark from configurable hours or sunset (needs the location the user typed for weather; no geoclue, E2.6).
-- Night Light as an output colour-temperature shader with schedule, as designed in E6.2.
+- ~~Auto-dark from configurable hours or sunset (needs the location the user typed for weather; no geoclue, E2.6).~~
+  Done: `[appearance] dark_from`, `dark_until`, `auto_sunset` (`src/sun.rs`, from the weather place).
+- ~~Night Light as an output colour-temperature shader with schedule, as designed in E6.2.~~ Done: `[night_light]`
+  (custom hours or sunset, temperature), a final multiply pass fading over a minute (`src/render/night.rs`); Settings
+  rows on Displays.
 - Text size and pointer size applied to the shell and exported to apps and XWayland (`XCURSOR_SIZE` today).
-- Genie minimise as the alternative to Scale (E5.5).
-- Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow.
+- ~~Genie minimise as the alternative to Scale (E5.5).~~ Done: `[dock] minimise_effect = "genie"` (`src/render/genie.frag`).
+- Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow. Built: `noobsbot-desktop theme
+  --write` (Kvantum, Qt colour scheme with accent, kdeglobals font; gsettings colour scheme, theme, Inter, text and
+  cursor size). Missing: accent for GTK, monospace font.
 
 ### E8.5 Window management
 - **Tiling:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
