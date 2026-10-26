@@ -213,6 +213,8 @@ pub const SETTINGS: &[Setting] = &[
         "",
         Kind::Choice(&[("zoom", "Zoom"), ("minimise", "Minimise"), ("nothing", "Nothing")]),
     ),
+    s(Page::Keyboard, "Key repeat", "keyboard.repeat_rate", "Key repeat rate", "", Kind::Slider { min: 0.0, max: 60.0, step: 1.0 }),
+    s(Page::Keyboard, "Key repeat", "keyboard.repeat_delay", "Delay until repeat", "", Kind::Slider { min: 150.0, max: 1500.0, step: 50.0 }),
     s(Page::Keyboard, "Input", "keyboard.layout", "Layouts", "Like us,np; empty = the system's", Kind::Text("System")),
     s(Page::Keyboard, "Input", "keyboard.variant", "Variants", "", Kind::Text("None")),
     s(Page::Keyboard, "Input", "keyboard.options", "Options", "Like caps:escape", Kind::Text("None")),
@@ -263,6 +265,9 @@ fn shown(key: &str, value: f64) -> String {
         "dock.icon_size" => format!("{value:.0} px"),
         "windows.spaces" if whole(key, value) == 0 => "Dynamic".into(),
         "sound.output" | "sound.input" => format!("{value:.0}%"),
+        "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
+        "keyboard.repeat_rate" => format!("{value:.0}/s"),
+        "keyboard.repeat_delay" => format!("{value:.0} ms"),
         k if k.starts_with("idle.") => match value.round() as u32 {
             0 => "Never".into(),
             s if s < 60 => format!("{s} s"),
