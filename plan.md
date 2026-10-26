@@ -1308,8 +1308,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Built with:** drawn **by the compositor itself**; while locked no app is drawn and no input reaches apps.
   Password checked with **PAM** (`pam-client` crate) through our own PAM service file `/etc/pam.d/noobsbot-desktop`
   (installed by `install.sh`; includes `pam_faillock`, so guessing is throttled like at login). `ext-session-lock` is
-  also supported so external lockers work. A **watchdog** in the session wrapper (`noobsbot-desktop-session`, E6.13): the compositor sends a heartbeat over a
-  pipe on every loop iteration (at least once per second); with no heartbeat for 10 s the wrapper kills it, which
+  also supported so external lockers work. A **watchdog** in the session wrapper (`noobsbot-desktop-session` runs the compositor under `noobsbot-desktop-watchdog`, E6.13): the compositor
+  writes a heartbeat byte over a pipe once a second from an event-loop timer; once it has beaten and a 30 s startup grace is over, with no heartbeat for 10 s
+  (monotonic clock, so suspend doesn't count) the watchdog kills it (SIGTERM, SIGKILL after 2 s), which
   ends the session and returns to greetd, so a hang while locked can never expose the desktop. The PAM check runs on a worker thread
   (PAM can take a second with faillock or fingerprint), so the lock screen keeps animating and typing stays responsive.
 - **Why built in:** the compositor owns the screen, so it's the safest place. If Noobsbot Desktop crashes while locked, the
@@ -1529,8 +1530,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | **Installed from AUR instead** (Open-3) | the updater detects it (`pacman -Qo /usr/bin/noobsbot-desktop`) and only *notifies*, pointing to the package manager, so it never fights pacman |
 - **Built with:** `release-plz` + GitHub Actions (CI); `ureq` (small blocking HTTP client, run on a worker thread so the
   compositor loop never blocks), `semver`, `minisign-verify`, `zstd`/`tar` crates; `polkit` action + a 100-line
-  privileged helper (`src/bin/update-helper.rs` → binary `noobsbot-desktop-update`); the session wrapper is a second
-  tiny Rust binary (`src/bin/session.rs` → `noobsbot-desktop-session`) because it also runs the heartbeat watchdog (E6.4).
+  privileged helper (`src/bin/update-helper.rs` → binary `noobsbot-desktop-update`); the session wrapper is a shell
+  script (`noobsbot-desktop-session`) that runs the compositor under a tiny Rust binary (`src/bin/watchdog.rs` → `noobsbot-desktop-watchdog`, shipped
+  in each version dir) for the heartbeat watchdog (E6.4).
 - **Why this way:** GitHub Releases is free, already where the code lives, and needs no server of ours; release-plz
   removes human version bumps and keeps the changelog honest; minisign is the smallest proven signing scheme (used for
   Zig and libsodium releases, among others), and it is what stops a hijacked download from becoming a root
@@ -2056,7 +2058,7 @@ custom-desktop-environemt/
     ui/            D8 components: panel, label, icon, button, toggle, slider, list, menu, popover, field, alert, tooltip, badge, progress, segmented
     shell/         menubar · control · calendar · notifications (banners + center) · dock · spotlight · launchpad · switcher · mission · lock · osd · screenshot · forcequit · alerts
     services/      zbus: power · network (+ NM SecretAgent) · bluetooth (+ BlueZ Agent1) · audio · brightness · media (MPRIS) · tray (+ SNI watcher) · notifications (server) · launcher-entry (badges) · time · session · disks · update (E6.13)
-    bin/           update-helper.rs → noobsbot-desktop-update (privileged installer, polkit) · session.rs → noobsbot-desktop-session (watchdog + rollback)
+    bin/           update-helper.rs → noobsbot-desktop-update (privileged installer, polkit) · watchdog.rs → noobsbot-desktop-watchdog (heartbeat watchdog)
   assets/          Phosphor symbols (SVG), noobsbot-desktop logo
   data/            config.toml (commented defaults) · helium-browser-flags.conf · wallpapers/ · system/ (mirrors `/`: greetd config, pam.d/noobsbot-desktop, portals.conf, UPower.conf.d drop-in, wayland-sessions .desktop, session target, polkit action)
   themes/          Noobsbot Glass Kvantum + colour scheme + GTK (GPL-3.0, generated from theme.rs)
