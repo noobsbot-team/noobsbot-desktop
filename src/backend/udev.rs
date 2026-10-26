@@ -21,6 +21,7 @@ use smithay::{
             compositor::{DrmCompositor, FrameFlags, RenderFrameError},
             exporter::gbm::GbmFramebufferExporter,
         },
+        egl::EGLError,
         input::{AbsolutePositionEvent, Event, InputEvent, PointerMotionEvent, Switch, SwitchState, SwitchToggleEvent},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
@@ -34,7 +35,7 @@ use smithay::{
                 utils::{Relocate, RelocateRenderElement, RescaleRenderElement},
             },
             gles::{GlesRenderer, GlesTexture},
-            multigpu::{ApiDevice, GpuManager, MultiRenderer, gbm::GbmGlesBackend},
+            multigpu::{ApiDevice, Error as MultiError, GpuManager, MultiRenderer, gbm::GbmGlesBackend},
             utils::{CommitCounter, DamageSet, OpaqueRegions},
         },
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
@@ -91,8 +92,7 @@ pub struct Udev {
     cursors: Cursors,
     /// Plugged-in input devices, so a config reload reaches them at once.
     inputs: Vec<InputDevice>,
-    /// Frames failed in a row, and when the GPU was last rebuilt (`gpu_verdict`).
-    failures: u32,
+    /// When the GPU was last rebuilt (`gpu_verdict`).
     resets: Vec<Instant>,
 }
 
@@ -123,6 +123,9 @@ struct Screen {
     mirrored: Option<Mirrored>,
     /// Percent the frame is drawn smaller, centred (`underscan`).
     underscan: u8,
+    /// Frames in a row that failed to draw (`Fail::Render`), and whether the current run of failures was logged.
+    failures: u32,
+    failed: bool,
 }
 
 /// A mirror's copy of its source's frame: drawn offscreen at the source's size, redrawn where the source changed.
@@ -133,15 +136,30 @@ struct Mirrored {
     id: Id,
 }
 
-/// Failed frames in a row before they count as a GPU reset (the error said nothing of a lost context).
+/// Failed frames in a row, on every display, before they count as a GPU reset (EGL said nothing of a lost context).
 const FAILURES: u32 = 3;
 /// Rebuilds within `RESET_WINDOW` before giving up.
 const MAX_RESETS: usize = 3;
 const RESET_WINDOW: Duration = Duration::from_secs(60);
 
+/// Why a frame failed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Fail {
+    /// EGL says the context is lost: a GPU reset.
+    Lost,
+    /// Drawing failed otherwise: a reset only if it keeps failing on every display.
+    Render,
+    /// Worth another go at once (no free buffer, an import across GPUs).
+    Temporary,
+    /// This display's scanout (DRM, allocator, a GPU gone): it stays dark until its next frame.
+    Display,
+}
+
 /// What a failed frame calls for.
 #[derive(Debug, PartialEq)]
 enum Gpu {
+    /// Leave this display be.
+    Skip,
     /// Try the next frame as is.
     Retry,
     /// Remake the EGL contexts, the shell's textures and the scanout buffers.
@@ -150,17 +168,38 @@ enum Gpu {
     GiveUp,
 }
 
-/// A frame failed: `lost` when the error says the context is gone, `failures` the failed frames in a row (this one
-/// included), `resets` when the GPU was rebuilt before.
+/// A frame failed: `failures` the fewest failed frames in a row of any lit display, `resets` when the GPU was
+/// rebuilt before.
 // ponytail: Smithay 0.7 makes its EGL contexts without EGL_EXT_create_context_robustness, so a reset is seen only
-// as failing frames (or `ContextLost`); a driver that keeps "succeeding" after a reset draws garbage until restart.
-fn gpu_verdict(lost: bool, failures: u32, resets: &[Instant], now: Instant) -> Gpu {
-    if !lost && failures < FAILURES {
-        return Gpu::Retry;
+// as failing frames (or EGL_CONTEXT_LOST); a driver that keeps "succeeding" after a reset draws garbage until restart.
+fn gpu_verdict(fail: Fail, failures: u32, resets: &[Instant], now: Instant) -> Gpu {
+    match fail {
+        Fail::Display => return Gpu::Skip,
+        Fail::Temporary => return Gpu::Retry,
+        Fail::Render if failures < FAILURES => return Gpu::Retry,
+        Fail::Render | Fail::Lost => {}
     }
     match resets.iter().filter(|t| now.duration_since(**t) < RESET_WINDOW).count() >= MAX_RESETS {
         true => Gpu::GiveUp,
         false => Gpu::Rebuild,
+    }
+}
+
+/// Sorts a renderer error. Smithay calls many errors `ContextLost`; only EGL_CONTEXT_LOST is a GPU reset.
+fn multi_fail(err: MultiError<Api, Api>) -> Fail {
+    match err {
+        MultiError::NoDevice(_) | MultiError::DeviceMissing | MultiError::AllocatorError(_) => Fail::Display,
+        err => match SwapBuffersError::from(err) {
+            SwapBuffersError::ContextLost(err) => {
+                match std::iter::successors(Some(&*err as &(dyn std::error::Error + 'static)), |e| e.source())
+                    .any(|e| matches!(e.downcast_ref(), Some(EGLError::ContextLost)))
+                {
+                    true => Fail::Lost,
+                    false => Fail::Render,
+                }
+            }
+            _ => Fail::Temporary,
+        },
     }
 }
 
@@ -202,7 +241,6 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         cards: HashMap::new(),
         cursors: HashMap::new(),
         inputs: Vec::new(),
-        failures: 0,
         resets: Vec::new(),
     })));
     for (dev, path) in udev.device_list() {
@@ -479,9 +517,12 @@ impl State {
         let mut renderer = match renderer {
             Ok(renderer) => renderer,
             Err(err) => {
-                tracing::warn!("{}: no renderer: {err}", screen.output.name());
-                let lost = matches!(SwapBuffersError::from(err), SwapBuffersError::ContextLost(_));
-                return self.frame_failed(udev, lost);
+                if !std::mem::replace(&mut screen.failed, true) {
+                    tracing::warn!("{}: no renderer: {err}", screen.output.name());
+                }
+                let fail = multi_fail(err);
+                screen.failures += u32::from(fail == Fail::Render);
+                return self.frame_failed(udev, fail);
             }
         };
         let drawn = match &source {
@@ -528,6 +569,9 @@ impl State {
         drop(renderer);
         let (output, damaged) = (screen.output.clone(), frame.as_ref().ok().map(|empty| !empty));
         let mut failed = None;
+        if damaged.is_some() {
+            (screen.failures, screen.failed) = (0, false);
+        }
         screen.render_time = started.elapsed();
         match frame {
             // A mirror's apps are its source's: they get their frame callbacks from there.
@@ -566,13 +610,19 @@ impl State {
                 }
             }
             Err(err) => {
-                tracing::warn!("{}: render: {err}", screen.output.name());
-                let swap = match err {
-                    RenderFrameError::PrepareFrame(err) => Some(SwapBuffersError::from(err)),
-                    RenderFrameError::RenderFrame(OutputDamageTrackerError::Rendering(err)) => Some(SwapBuffersError::from(err)),
-                    RenderFrameError::RenderFrame(_) => None,
+                if !std::mem::replace(&mut screen.failed, true) {
+                    tracing::warn!("{}: render: {err}", screen.output.name());
+                }
+                let fail = match err {
+                    RenderFrameError::PrepareFrame(err) => match SwapBuffersError::from(err) {
+                        SwapBuffersError::TemporaryFailure(_) => Fail::Temporary,
+                        _ => Fail::Display,
+                    },
+                    RenderFrameError::RenderFrame(OutputDamageTrackerError::Rendering(err)) => multi_fail(err),
+                    RenderFrameError::RenderFrame(_) => Fail::Display,
                 };
-                failed = Some(matches!(swap, Some(SwapBuffersError::ContextLost(_))));
+                screen.failures += u32::from(fail == Fail::Render);
+                failed = Some(fail);
             }
         }
         if animating || self.pointer_assist.animating(self.frame_time, self.dwell_wait()) {
@@ -582,23 +632,23 @@ impl State {
             udev.redraw_mirrors(&self.loop_handle, &output.name());
         }
         if let Some(damaged) = damaged {
-            udev.failures = 0;
             self.after_frame(&output, pixels, damaged);
         }
         self.frame_done();
-        if let Some(lost) = failed {
-            self.frame_failed(udev, lost);
+        if let Some(fail) = failed {
+            self.frame_failed(udev, fail);
         }
     }
 
     /// A frame failed: retried, or taken as a GPU reset (`gpu_verdict`).
-    fn frame_failed(&mut self, udev: &mut Udev, lost: bool) {
-        udev.failures += 1;
+    fn frame_failed(&mut self, udev: &mut Udev, fail: Fail) {
         let now = Instant::now();
-        match gpu_verdict(lost, udev.failures, &udev.resets, now) {
+        let failures = udev.cards.values().flat_map(|c| c.screens.values()).map(|s| s.failures).min().unwrap_or(0);
+        match gpu_verdict(fail, failures, &udev.resets, now) {
+            Gpu::Skip => {}
             Gpu::Retry => udev.redraw_all(&self.loop_handle),
             Gpu::Rebuild => {
-                tracing::warn!("GPU reset (or {} failed frames): starting the renderer again", udev.failures);
+                tracing::warn!("GPU reset (or {failures} failed frames on every display): starting the renderer again");
                 udev.resets.retain(|t| now.duration_since(*t) < RESET_WINDOW);
                 udev.resets.push(now);
                 if let Err(err) = self.rebuild_gpu(udev) {
@@ -626,12 +676,12 @@ impl State {
             for screen in card.screens.values_mut() {
                 screen.compositor.reset_buffers();
                 screen.mirrored = None;
+                screen.failures = 0;
             }
         }
         udev.cursors.clear();
         let renderer = udev.renderer().ok_or("the primary GPU did not start (EGL)")?;
         self.backend = Some(Views::new(renderer, wallpaper)?);
-        udev.failures = 0;
         udev.redraw_all(&self.loop_handle);
         Ok(())
     }
@@ -900,6 +950,8 @@ fn light(
             mirror_of: None,
             mirrored: None,
             underscan: 0,
+            failures: 0,
+            failed: false,
         },
     ))
 }
@@ -1115,6 +1167,10 @@ impl<'a> RenderElement<Multi<'a>> for OnGpu<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use smithay::backend::{
+        egl,
+        renderer::{gles::GlesError, multigpu::gbm},
+    };
 
     #[test]
     fn secondary_click_maps_to_libinput() {
@@ -1168,15 +1224,30 @@ mod tests {
     #[test]
     fn gpu_resets_rebuild_then_give_up() {
         let now = Instant::now() + Duration::from_secs(600);
-        assert_eq!(gpu_verdict(false, 1, &[], now), Gpu::Retry);
-        assert_eq!(gpu_verdict(false, FAILURES, &[], now), Gpu::Rebuild);
-        assert_eq!(gpu_verdict(true, 1, &[], now), Gpu::Rebuild);
+        assert_eq!(gpu_verdict(Fail::Render, 1, &[], now), Gpu::Retry);
+        assert_eq!(gpu_verdict(Fail::Render, FAILURES, &[], now), Gpu::Rebuild);
+        assert_eq!(gpu_verdict(Fail::Lost, 0, &[], now), Gpu::Rebuild);
         let recent = [now - Duration::from_secs(50), now - Duration::from_secs(20), now - Duration::from_secs(1)];
-        assert_eq!(gpu_verdict(true, 1, &recent, now), Gpu::GiveUp);
-        assert_eq!(gpu_verdict(false, 1, &recent, now), Gpu::Retry);
+        assert_eq!(gpu_verdict(Fail::Lost, 0, &recent, now), Gpu::GiveUp);
+        assert_eq!(gpu_verdict(Fail::Render, 1, &recent, now), Gpu::Retry);
         // Resets more than a minute ago no longer count.
         let old = [now - Duration::from_secs(120), now - Duration::from_secs(20), now - Duration::from_secs(1)];
-        assert_eq!(gpu_verdict(true, 1, &old, now), Gpu::Rebuild);
+        assert_eq!(gpu_verdict(Fail::Lost, 0, &old, now), Gpu::Rebuild);
+    }
+
+    #[test]
+    fn display_and_temporary_failures_never_rebuild() {
+        let now = Instant::now();
+        // A DRM error on one display (addfb2 EINVAL every frame) leaves it dark, however often.
+        assert_eq!(gpu_verdict(Fail::Display, 1000, &[], now), Gpu::Skip);
+        assert_eq!(gpu_verdict(Fail::Temporary, 1000, &[], now), Gpu::Retry);
+        assert_eq!(multi_fail(MultiError::DeviceMissing), Fail::Display);
+        assert_eq!(multi_fail(MultiError::ImportFailed), Fail::Temporary);
+        assert_eq!(multi_fail(MultiError::Render(GlesError::ShaderCompileError)), Fail::Render);
+        let lost = GlesError::ContextActivationError(EGLError::ContextLost.into());
+        assert_eq!(multi_fail(MultiError::Render(lost)), Fail::Lost);
+        assert_eq!(multi_fail(MultiError::RenderApiError(gbm::Error::Egl(egl::Error::CreationFailed(EGLError::ContextLost)))), Fail::Lost);
+        assert_eq!(multi_fail(MultiError::RenderApiError(gbm::Error::Egl(egl::Error::CreationFailed(EGLError::BadAlloc)))), Fail::Render);
     }
 
     #[test]
