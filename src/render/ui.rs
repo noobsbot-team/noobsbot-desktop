@@ -56,6 +56,9 @@ const TITLE2: Style = Style { size: 17, line_height: 22, weight: 600, ..BODY };
 const WHITE: [u8; 4] = [255; 4];
 /// D2 red (light): badges, recording, not responding.
 pub const RED: [u8; 4] = [0xFF, 0x3B, 0x30, 0xFF];
+/// D5 radii: button, text field, selected row; menu, popover, small tile.
+pub const CONTROL_RADIUS: f64 = 6.0;
+pub const POPOVER_RADIUS: f64 = 8.0;
 
 pub struct Ui<'a> {
     pub shaders: &'a Shaders,
