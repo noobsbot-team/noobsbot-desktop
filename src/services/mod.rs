@@ -85,6 +85,8 @@ pub enum Update {
     Fcitx(Option<fcitx::Fcitx>),
     /// Settings starts or stops recording a shortcut (`org.noobsbot.Desktop.Shortcuts.Record`).
     Record(bool),
+    /// The keyboard backlight after a key changed it, in percent.
+    KbdBacklight(u8),
 }
 
 /// Requests from the frame loop.
@@ -111,6 +113,8 @@ pub enum Command {
     },
     /// Percent.
     Brightness(u8),
+    /// The keyboard backlight one step up, down, or (`None`) off and on.
+    KbdBacklight(Option<bool>),
     /// Percent of the default output (`true`) or input.
     Volume {
         output: bool,
@@ -345,6 +349,7 @@ async fn handle(
             (Command::Timezone(zone), Some(bus), _) => set_timezone(bus, &zone).await,
             (Command::PowerProfile(profile), Some(bus), _) => profiles::set(bus, &profile).await,
             (Command::Brightness(percent), Some(bus), _) => brightness::set(bus, percent, updates).await,
+            (Command::KbdBacklight(change), Some(bus), _) => power::kbd_backlight(bus, change, updates).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
             (Command::TrayActivate { service, path, x, y }, _, Some(bus)) => tray::activate(bus, &service, &path, x, y).await,
             (Command::TrayMenu { service, menu }, _, Some(bus)) => tray::menu(bus, service, menu, updates).await,

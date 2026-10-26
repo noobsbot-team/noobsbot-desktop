@@ -333,6 +333,8 @@ fn parse_system_keyboard(text: &str) -> Keyboard {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Touchpad {
+    /// Off: the trackpad does nothing (the touchpad-toggle key flips it until the next reload).
+    pub enabled: bool,
     pub tap_to_click: bool,
     pub natural_scroll: bool,
     /// Fingers of the Space / Mission Control swipes (E5.3): 3, or 4 to leave 3-finger swipes to apps.
@@ -805,6 +807,7 @@ impl Default for Appearance {
 impl Default for Touchpad {
     fn default() -> Self {
         Self {
+            enabled: true,
             tap_to_click: true,
             natural_scroll: true,
             swipe_fingers: 3,
@@ -890,17 +893,37 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Shift+5", "screenshot-toolbar"),
         ("Print", "screenshot-toolbar"),
         ("Shift+Print", "screenshot-region"),
+        ("Alt+Print", "screenshot-window"),
+        ("Super+Alt+5", "screen-record"),
         ("F12", "quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),
+        ("Shift+Alt+XF86AudioRaiseVolume", "volume up-fine"),
+        ("Shift+Alt+XF86AudioLowerVolume", "volume down-fine"),
         ("XF86AudioMute", "mute"),
         ("XF86AudioMicMute", "mic-mute"),
         ("XF86MonBrightnessUp", "brightness up"),
         ("XF86MonBrightnessDown", "brightness down"),
+        ("XF86KbdBrightnessUp", "keyboard-backlight up"),
+        ("XF86KbdBrightnessDown", "keyboard-backlight down"),
+        ("XF86KbdLightOnOff", "keyboard-backlight toggle"),
+        ("XF86TouchpadToggle", "touchpad toggle"),
+        ("XF86TouchpadOn", "touchpad on"),
+        ("XF86TouchpadOff", "touchpad off"),
         ("XF86AudioPlay", "media play-pause"),
         ("XF86AudioPause", "media play-pause"),
         ("XF86AudioNext", "media next"),
         ("XF86AudioPrev", "media previous"),
+        ("XF86AudioStop", "media stop"),
+        ("XF86AudioForward", "media forward"),
+        ("XF86AudioRewind", "media rewind"),
+        ("XF86Eject", "eject"),
+        ("XF86WWW", "default-app x-scheme-handler/https"),
+        ("XF86Mail", "default-app x-scheme-handler/mailto"),
+        ("XF86Explorer", "default-app inode/directory"),
+        ("XF86Calculator", "default-app Calculator"),
+        ("XF86Search", "spotlight"),
+        ("XF86Display", "exec noobsbot-desktop-settings --page displays"),
         ("XF86PowerOff", "shut-down"),
         ("XF86Sleep", "sleep"),
         ("Super+Shift+Q", "log-out"),

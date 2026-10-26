@@ -20,6 +20,8 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Spawn(String),
+    /// Opens the default app for a MIME type (`x-scheme-handler/https`), or the first app in a category (`Calculator`).
+    DefaultApp(String),
     /// Close every window of the focused app (Super+Q).
     QuitApp,
     CloseWindow,
@@ -51,14 +53,22 @@ pub enum Action {
     Quake,
     /// The default output's volume by one step; `true`: up (E2.7).
     Volume(bool),
+    /// A quarter step (Shift+Alt+volume keys).
+    VolumeFine(bool),
     /// Mutes or unmutes the default output.
     Mute,
     /// Mutes or unmutes the default microphone.
     MicMute,
     /// The display backlight by one step; `true`: up.
     Brightness(bool),
+    /// The keyboard backlight one step up or down, or (`None`) off and on.
+    KbdBacklight(Option<bool>),
+    /// The trackpad on (`true`), off, or (`None`) the other way; until the config is next reloaded.
+    Touchpad(Option<bool>),
     /// To the Now Playing player.
     Media(MediaAction),
+    /// Ejects the last mounted removable drive.
+    Eject,
     /// A row of the open tray menu, by dbusmenu id.
     TrayMenu(i32),
     /// Opens or closes Notification Center (Super+N).
@@ -120,12 +130,16 @@ pub enum Action {
     WindowMenu(crate::decorations::Command),
     /// Screen Zoom on or off (None, Super+Alt+8), in (true, Super+Alt+=) or out (Super+Alt+-) (E8.6).
     ScreenZoom(Option<bool>),
+    /// Starts or stops recording the screen (Super+Alt+5).
+    ScreenRecord,
     /// Super+Shift+3 / 4 / 5 (E6.8).
     Screenshot(crate::shell::screenshot::Start),
 }
 
 /// A volume or brightness key press, in percent (about macOS's 1/16 steps).
 const STEP: u8 = 6;
+/// About a quarter of `STEP`.
+const FINE_STEP: u8 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Binding {
@@ -168,6 +182,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
     match text.split_once(' ').map_or((text, ""), |(a, rest)| (a, rest.trim())) {
         ("terminal", "") => Some(Action::Spawn(config.terminal.clone())),
         ("exec", command) if !command.is_empty() => Some(Action::Spawn(command.into())),
+        ("default-app", kind) if !kind.is_empty() => Some(Action::DefaultApp(kind.into())),
         ("quit", "") => Some(Action::QuitApp),
         ("close", "") => Some(Action::CloseWindow),
         ("minimise" | "minimize", "") => Some(Action::Minimise),
@@ -187,13 +202,25 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("quake", "") => Some(Action::Quake),
         ("volume", "up") => Some(Action::Volume(true)),
         ("volume", "down") => Some(Action::Volume(false)),
+        ("volume", "up-fine") => Some(Action::VolumeFine(true)),
+        ("volume", "down-fine") => Some(Action::VolumeFine(false)),
         ("mute", "") => Some(Action::Mute),
         ("mic-mute", "") => Some(Action::MicMute),
         ("brightness", "up") => Some(Action::Brightness(true)),
         ("brightness", "down") => Some(Action::Brightness(false)),
+        ("keyboard-backlight", "up") => Some(Action::KbdBacklight(Some(true))),
+        ("keyboard-backlight", "down") => Some(Action::KbdBacklight(Some(false))),
+        ("keyboard-backlight", "toggle") => Some(Action::KbdBacklight(None)),
+        ("touchpad", "toggle") => Some(Action::Touchpad(None)),
+        ("touchpad", "on") => Some(Action::Touchpad(Some(true))),
+        ("touchpad", "off") => Some(Action::Touchpad(Some(false))),
         ("media", "play-pause") => Some(Action::Media(MediaAction::PlayPause)),
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
+        ("eject", "") => Some(Action::Eject),
+        ("media", "stop") => Some(Action::Media(MediaAction::Stop)),
+        ("media", "forward") => Some(Action::Media(MediaAction::Seek(true))),
+        ("media", "rewind") => Some(Action::Media(MediaAction::Seek(false))),
         ("notification-center", "") => Some(Action::NotificationCenter),
         ("spotlight", "") => Some(Action::Spotlight),
         ("emoji", "") => Some(Action::Emoji),
@@ -224,6 +251,8 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("screen-zoom", "in") => Some(Action::ScreenZoom(Some(true))),
         ("screen-zoom", "out") => Some(Action::ScreenZoom(Some(false))),
         ("screenshot", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Screen)),
+        ("screen-record", "") => Some(Action::ScreenRecord),
+        ("screenshot-window", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Window)),
         ("screenshot-region", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Region)),
         ("screenshot-toolbar", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Toolbar)),
         _ => None,
@@ -305,9 +334,9 @@ impl<W: PartialEq> Recording<W> {
     }
 }
 
-/// One key step from `percent`, within 0–100; a level already above 100 (PipeWire allows 150) is only turned down.
-fn step(percent: u8, up: bool) -> u8 {
-    if up { percent.saturating_add(STEP).min(percent.max(100)) } else { percent.saturating_sub(STEP) }
+/// One key step of `by` from `percent`, within 0–100; a level already above 100 (PipeWire allows 150) is only turned down.
+fn step(percent: u8, up: bool, by: u8) -> u8 {
+    if up { percent.saturating_add(by).min(percent.max(100)) } else { percent.saturating_sub(by) }
 }
 
 impl State {
@@ -319,6 +348,19 @@ impl State {
                 self.spawn(&command.split_whitespace().map(String::from).collect::<Vec<_>>());
             }
             Action::Quake => self.toggle_quake(),
+            Action::DefaultApp(kind) => {
+                let app = if kind.contains('/') {
+                    // ponytail: xdg-mime runs on the frame loop (tens of ms, once per key press); a worker thread if it shows.
+                    let id = std::process::Command::new("xdg-mime").args(["query", "default", &kind]).output();
+                    let id = id.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
+                    (!id.is_empty()).then(|| self.apps.find(&id).cloned()).flatten()
+                } else {
+                    self.apps.list().iter().find(|a| !a.no_display && a.categories.contains(&kind)).cloned()
+                };
+                if !self.launch(app.as_ref()) {
+                    tracing::warn!("no app for {kind}");
+                }
+            }
             Action::CloseWindow => {
                 if let Some(window) = focused {
                     self.close_window(&window);
@@ -380,14 +422,14 @@ impl State {
             Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
             // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
-            Action::Volume(up) => {
+            Action::Volume(up) | Action::VolumeFine(up) => {
                 let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
                 if up && output.muted {
                     // As on macOS: turning it up unmutes.
                     output.muted = false;
                     self.services.send(Command::Mute { output: true, muted: false });
                 }
-                output.volume = step(output.volume, up);
+                output.volume = step(output.volume, up, if matches!(action, Action::VolumeFine(_)) { FINE_STEP } else { STEP });
                 self.services.send(Command::Volume { output: true, percent: output.volume });
                 self.show_volume();
             }
@@ -408,7 +450,7 @@ impl State {
             Action::Brightness(up) => {
                 let Some(percent) = self.brightness.as_mut() else { return };
                 // Never to 0: a black screen leaves no way to see what happened.
-                *percent = step(*percent, up).max(1);
+                *percent = step(*percent, up, STEP).max(1);
                 let percent = *percent;
                 self.services.send(Command::Brightness(percent));
                 self.show_osd(Osd { symbol: Symbol::Sun, level: Some(percent), text: None });
@@ -419,13 +461,26 @@ impl State {
                 let symbol = match media {
                     MediaAction::PlayPause if now.playing => Symbol::Pause,
                     MediaAction::PlayPause => Symbol::Play,
-                    MediaAction::Next => Symbol::SkipForward,
-                    MediaAction::Previous => Symbol::SkipBack,
+                    MediaAction::Next | MediaAction::Seek(true) => Symbol::SkipForward,
+                    MediaAction::Previous | MediaAction::Seek(false) => Symbol::SkipBack,
+                    MediaAction::Stop => Symbol::Stop,
                 };
                 let osd = Osd { symbol, level: None, text: Some(now.title.clone()).filter(|t| !t.is_empty()) };
                 self.services.send(Command::Media { player: now.player.clone(), action: media });
                 self.show_osd(osd);
             }
+            Action::Eject => self.eject_last(),
+            Action::Touchpad(on) => {
+                let touchpad = &mut self.config.touchpad;
+                touchpad.enabled = on.unwrap_or(!touchpad.enabled);
+                let text = if touchpad.enabled { "Trackpad On" } else { "Trackpad Off" };
+                if let Some(crate::backend::Device::Udev(udev)) = self.device.as_mut() {
+                    udev.configure_inputs(&self.config.touchpad, &self.config.mouse);
+                }
+                self.show_osd(Osd { symbol: Symbol::Toggle, level: None, text: Some(text.into()) });
+            }
+            // The OSD comes with UPower's answer (`Update::KbdBacklight`).
+            Action::KbdBacklight(change) => self.services.send(Command::KbdBacklight(change)),
             Action::SwitchSpace(delta) => self.switch_space(delta),
             Action::ShowSpace(n) => self.show_space(n),
             Action::MoveToSpace(delta) => self.move_to_space(delta),
@@ -486,6 +541,17 @@ impl State {
             Action::AppDrawer => self.toggle_drawer(crate::shell::drawer::Anchor::Corner),
             Action::Drawer(command) => self.drawer_command(command),
             Action::Screenshot(start) => self.screenshot(start),
+            Action::ScreenRecord => {
+                let was = self.screenshots.recording.is_some();
+                self.toggle_recording();
+                // Nothing in the menu bar shows it yet, so say so.
+                let (symbol, text) = match (was, self.screenshots.recording.is_some()) {
+                    (_, true) => (Symbol::Record, "Recording"),
+                    (true, false) => (Symbol::Stop, "Recording Stopped"),
+                    (false, false) => (Symbol::Record, "Recording needs wf-recorder"),
+                };
+                self.show_osd(Osd { symbol, level: None, text: Some(text.into()) });
+            }
             Action::InstallUpdate => self.install_update(),
         }
     }
@@ -647,11 +713,12 @@ mod tests {
 
     #[test]
     fn steps() {
-        assert_eq!(step(50, true), 56);
-        assert_eq!(step(98, true), 100);
-        assert_eq!(step(3, false), 0);
-        assert_eq!(step(130, true), 130, "above 100 only goes down");
-        assert_eq!(step(130, false), 124);
+        assert_eq!(step(50, true, STEP), 56);
+        assert_eq!(step(98, true, STEP), 100);
+        assert_eq!(step(3, false, STEP), 0);
+        assert_eq!(step(130, true, STEP), 130, "above 100 only goes down");
+        assert_eq!(step(130, false, STEP), 124);
+        assert_eq!(step(50, true, FINE_STEP), 52);
     }
 
     #[test]
@@ -662,6 +729,26 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioMicMute, false), Some(&Action::MicMute));
         assert_eq!(lookup(&table, &none, Keysym::XF86_MonBrightnessDown, false), Some(&Action::Brightness(false)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioPlay, false), Some(&Action::Media(MediaAction::PlayPause)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_AudioStop, false), Some(&Action::Media(MediaAction::Stop)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_AudioRewind, false), Some(&Action::Media(MediaAction::Seek(false))));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Eject, false), Some(&Action::Eject));
+        let shift_alt = ModifiersState { alt: true, shift: true, ..Default::default() };
+        assert_eq!(lookup(&table, &shift_alt, Keysym::XF86_AudioLowerVolume, false), Some(&Action::VolumeFine(false)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_KbdBrightnessUp, false), Some(&Action::KbdBacklight(Some(true))));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_KbdLightOnOff, false), Some(&Action::KbdBacklight(None)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_TouchpadToggle, false), Some(&Action::Touchpad(None)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_TouchpadOff, false), Some(&Action::Touchpad(Some(false))));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Display, false), Some(&Action::Spawn("noobsbot-desktop-settings --page displays".into())));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_WWW, false), Some(&Action::DefaultApp("x-scheme-handler/https".into())));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Mail, false), Some(&Action::DefaultApp("x-scheme-handler/mailto".into())));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Explorer, false), Some(&Action::DefaultApp("inode/directory".into())));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Calculator, false), Some(&Action::DefaultApp("Calculator".into())));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Search, false), Some(&Action::Spotlight));
+        let alt = ModifiersState { alt: true, ..Default::default() };
+        assert_eq!(lookup(&table, &alt, Keysym::Print, false), Some(&Action::Screenshot(crate::shell::screenshot::Start::Window)));
+        assert_eq!(lookup(&table, &ModifiersState { logo: true, alt: true, ..Default::default() }, Keysym::_5, false), Some(&Action::ScreenRecord));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
+        assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
 
     #[test]

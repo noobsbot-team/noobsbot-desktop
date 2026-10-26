@@ -261,15 +261,28 @@ settings file.
 | Super+Shift+Left / Right | move the window to the previous / next Space |
 | Super+Ctrl+Left / Right / Up / Down | tile the window to the left / right / top / bottom half |
 | Super+` | next window of the same app |
-| Super+Shift+3 / 4 / 5 | screenshot: screen / region / toolbar |
+| Super+Shift+3 / 4 / 5 | screenshot: screen / region (Space: a window) / toolbar |
+| Alt+Print | screenshot of the focused window |
+| Super+Alt+5 | start or stop recording the screen |
 | Super+Ctrl+Q | lock screen |
 | Super+Alt+8, Super+Alt+= / - | Zoom on or off, in, out |
+| Super+Shift+Q | log out (asks first) |
 | Super+Alt+Esc | Force Quit |
 | Super+Ctrl+Space | next keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
 | F12 | quake terminal |
-| Volume, mute, mic, brightness and media keys | as labelled, with an on-screen display |
+| Volume, mute, mic, brightness, keyboard backlight and media keys | as labelled, with an on-screen display |
+| Trackpad key | trackpad off or on |
+| Shift+Alt+volume keys | volume in quarter steps |
+| Web key | the default browser |
+| Mail key | the default mail app |
+| Explorer key | the default file manager |
+| Calculator key | a calculator app |
+| Search key | Spotlight |
+| Display key | System Settings › Displays |
 | Power button | asks before shutting down |
+| Sleep key | lock, then sleep |
+| Eject key | ejects the last mounted USB drive or disc |
 | Ctrl+Alt+F1 … F12 | switch to a text console and back |
 
 ## Touchpad gestures
@@ -298,7 +311,7 @@ doesn't understand is skipped and reported in the journal.
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
 | `[accessibility]` | Zoom style (whole screen or a lens), colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
-| `[touchpad]` | tap to click, natural scrolling, three or four-finger swipes, gesture sensitivity |
+| `[touchpad]` | on or off, tap to click, natural scrolling, three or four-finger swipes, gesture sensitivity |
 | `[hot_corners]` | an action for each screen corner (off by default) |
 | `[display]` | which GPU draws the desktop, scale for every screen |
 | `[[display.outputs]]` | one screen by connector name: on or off, resolution, refresh rate, scale, rotation, position, which shows the menu bar and Dock (System Settings › Displays asks to keep or revert) |
