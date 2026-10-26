@@ -268,6 +268,7 @@ settings file.
 | Volume, mute, mic, brightness and media keys | as labelled, with an on-screen display |
 | Power button | asks before shutting down |
 | Sleep key | lock, then sleep |
+| Eject key | ejects the last mounted USB drive or disc |
 | Ctrl+Alt+F1 … F12 | switch to a text console and back |
 
 ## Touchpad gestures

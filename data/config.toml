@@ -253,7 +253,7 @@ super_tap = true
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
-# "brightness up|down", "media play-pause|next|previous|stop|forward|rewind", "space left|right|1…9", "move-to-space left|right|1…16",
+# "brightness up|down", "media play-pause|next|previous|stop|forward|rewind", eject, "space left|right|1…9", "move-to-space left|right|1…16",
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows,
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
@@ -346,6 +346,8 @@ super_tap = true
 # Ten seconds on or back.
 "XF86AudioForward" = "media forward"
 "XF86AudioRewind" = "media rewind"
+# Ejects the last mounted USB drive or disc.
+"XF86Eject" = "eject"
 # The power button asks before shutting down (the system's own power-key action is held off while the desktop runs).
 "XF86PowerOff" = "shut-down"
 "XF86Sleep" = "sleep"

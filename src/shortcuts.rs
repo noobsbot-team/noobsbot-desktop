@@ -59,6 +59,8 @@ pub enum Action {
     Brightness(bool),
     /// To the Now Playing player.
     Media(MediaAction),
+    /// Ejects the last mounted removable drive.
+    Eject,
     /// A row of the open tray menu, by dbusmenu id.
     TrayMenu(i32),
     /// Opens or closes Notification Center (Super+N).
@@ -190,6 +192,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("media", "play-pause") => Some(Action::Media(MediaAction::PlayPause)),
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
+        ("eject", "") => Some(Action::Eject),
         ("media", "stop") => Some(Action::Media(MediaAction::Stop)),
         ("media", "forward") => Some(Action::Media(MediaAction::Seek(true))),
         ("media", "rewind") => Some(Action::Media(MediaAction::Seek(false))),
@@ -385,6 +388,7 @@ impl State {
                 self.services.send(Command::Media { player: now.player.clone(), action: media });
                 self.show_osd(osd);
             }
+            Action::Eject => self.eject_last(),
             Action::SwitchSpace(delta) => self.switch_space(delta),
             Action::ShowSpace(n) => self.show_space(n),
             Action::MoveToSpace(delta) => self.move_to_space(delta),
@@ -595,6 +599,7 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioPlay, false), Some(&Action::Media(MediaAction::PlayPause)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioStop, false), Some(&Action::Media(MediaAction::Stop)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioRewind, false), Some(&Action::Media(MediaAction::Seek(false))));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Eject, false), Some(&Action::Eject));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
