@@ -271,7 +271,10 @@ fn picture(
     alpha: f32,
     backdrop: &mut Cached,
 ) -> Vec<SceneElement> {
-    let rects = if fit == WallpaperFit::Tile { tiles(image, size, scale) } else { vec![place(fit, image, size, scale)] };
+    // A pattern too small to tile (see `MAX_TILES`) fills instead.
+    let rects = Some(tiles(image, size, scale))
+        .filter(|t| fit == WallpaperFit::Tile && !t.is_empty())
+        .unwrap_or_else(|| vec![place(if fit == WallpaperFit::Tile { WallpaperFit::Fill } else { fit }, image, size, scale)]);
     let (_, dst) = rects[0];
     let mut out: Vec<SceneElement> = rects
         .into_iter()
@@ -352,7 +355,7 @@ pub fn place(fit: WallpaperFit, image: Size<i32, Buffer>, output: Size<i32, Logi
             let s = (ow / iw).min(oh / ih);
             (whole, centred(iw * s, ih * s))
         }
-        WallpaperFit::Tile => tiles(image, output, scale).first().copied().unwrap_or_default(),
+        WallpaperFit::Tile => tiles(image, output, scale).first().copied().unwrap_or_else(|| place(WallpaperFit::Fill, image, output, scale)),
         WallpaperFit::Centre => {
             // One picture pixel per screen pixel; cropped where it is bigger than the output.
             let (w, h) = ((iw / scale).min(ow), (ih / scale).min(oh));
@@ -362,13 +365,20 @@ pub fn place(fit: WallpaperFit, image: Size<i32, Buffer>, output: Size<i32, Logi
     }
 }
 
+/// Copies of a tiled wallpaper, one texture element each.
+const MAX_TILES: f64 = 1024.0;
+
 /// Tile: the picture at one pixel per screen pixel, repeated rightwards and down from the top-left corner, the last
 /// row and column cropped to the output; (part of the picture, where it goes) for each copy.
-// ponytail: one texture element per copy, so a tiny pattern on a big screen makes thousands; repeat it into a bigger
-// texture on upload if that shows.
+/// None (empty) past `MAX_TILES` copies.
+// ponytail: one texture element per copy, so a pattern past `MAX_TILES` fills instead; repeat it into a bigger
+// texture on upload to tile those too.
 pub fn tiles(image: Size<i32, Buffer>, output: Size<i32, Logical>, scale: f64) -> Vec<(Rectangle<f64, Logical>, Rectangle<f64, Logical>)> {
     let (tw, th) = (f64::from(image.w).max(1.0) / scale, f64::from(image.h).max(1.0) / scale);
     let (ow, oh) = (f64::from(output.w), f64::from(output.h));
+    if (ow / tw).ceil() * (oh / th).ceil() > MAX_TILES {
+        return Vec::new();
+    }
     let steps = |tile: f64, end: f64| (0..).map(move |i| f64::from(i) * tile).take_while(move |at| *at < end);
     steps(th, oh)
         .flat_map(|y| steps(tw, ow).map(move |x| (x, y)))
@@ -517,6 +527,7 @@ mod tests {
         assert_eq!(tiles[0], (Rectangle::from_size((400.0, 300.0).into()), Rectangle::from_size((200.0, 150.0).into())));
         assert_eq!(tiles[5], (Rectangle::from_size((200.0, 300.0).into()), Rectangle::new((400.0, 150.0).into(), (100.0, 150.0).into())));
         assert_eq!(place(WallpaperFit::Tile, Size::from((400, 300)), Size::from((500, 300)), 2.0), tiles[0]);
+        assert!(super::tiles(Size::from((1, 1)), Size::from((3840, 2160)), 1.0).is_empty(), "a 1 px pattern doesn't make 8 million copies");
     }
 
     fn png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
