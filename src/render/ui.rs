@@ -293,17 +293,22 @@ impl Ui<'_> {
     /// pill with white text; shortcuts right in `label-secondary`; separators 1 px with 5 px margins; submenus ›.
     /// Returns its rect.
     pub fn menu(&mut self, at: Point<i32, smithay::utils::Logical>, width: i32, rows: &[MenuItem], hovered: Option<usize>) -> Rect {
-        use menu::{PAD, ROW, SEPARATOR, SIDE};
-        let height = rows.iter().map(|r| if r.is_some() { ROW } else { SEPARATOR }).sum::<i32>() + 2 * PAD;
+        use menu::{PAD, SEPARATOR};
+        let (row_h, side_pad) = (crate::text::ts(menu::ROW), crate::text::ts(menu::SIDE));
+        let height = rows.iter().map(|r| if r.is_some() { row_h } else { SEPARATOR }).sum::<i32>() + 2 * PAD;
         let rect = Rectangle::new(at, (width, height).into());
         self.material(rect, Material::Popover, None);
         let mut y = at.y + PAD;
         for (i, row) in rows.iter().enumerate() {
-            let cell = Rectangle::new((at.x + PAD, y).into(), (width - 2 * PAD, if row.is_some() { ROW } else { SEPARATOR }).into());
+            let cell = Rectangle::new((at.x + PAD, y).into(), (width - 2 * PAD, if row.is_some() { row_h } else { SEPARATOR }).into());
             y += cell.size.h;
             let Some((label, shortcut, enabled, submenu)) = *row else {
                 let line = if self.dark { [1.0, 1.0, 1.0, 0.10] } else { [0.0, 0.0, 0.0, 0.10] };
-                self.shape(Rectangle::new((cell.loc.x + SIDE - PAD, cell.loc.y + SEPARATOR / 2).into(), (cell.size.w - 2 * (SIDE - PAD), 1).into()), line, 0.0);
+                self.shape(
+                    Rectangle::new((cell.loc.x + side_pad - PAD, cell.loc.y + SEPARATOR / 2).into(), (cell.size.w - 2 * (side_pad - PAD), 1).into()),
+                    line,
+                    0.0,
+                );
                 continue;
             };
             let hot = enabled && hovered == Some(i);
@@ -315,10 +320,10 @@ impl Ui<'_> {
                 (false, true) => (self.label(), self.secondary()),
                 (false, false) => (fade(self.label(), 0.4), fade(self.label(), 0.4)),
             };
-            let text = Rectangle::new((cell.loc.x + SIDE - PAD, cell.loc.y).into(), (cell.size.w - 2 * (SIDE - PAD), ROW).into());
+            let text = Rectangle::new((cell.loc.x + side_pad - PAD, cell.loc.y).into(), (cell.size.w - 2 * (side_pad - PAD), row_h).into());
             self.text(label, Style { color: main, ..BODY }, text, Align::Left);
             if submenu {
-                let at = Rectangle::new((text.loc.x + text.size.w - 10, cell.loc.y + (ROW - 10) / 2).into(), (10, 10).into());
+                let at = Rectangle::new((text.loc.x + text.size.w - 10, cell.loc.y + (row_h - 10) / 2).into(), (10, 10).into());
                 self.symbol(Symbol::CaretRight, Weight::Regular, 10, at, side);
             } else if !shortcut.is_empty() {
                 self.text(shortcut, Style { color: side, ..BODY }, text, Align::Right);

@@ -296,7 +296,7 @@ pub fn layout(anchor: Anchor, output: Size<i32, Logical>, dock: i32, categories:
         Anchor::Corner => output.h - dock - GAP,
         Anchor::Dock(p) => p.y - GAP,
     };
-    let top = menubar::HEIGHT + GAP;
+    let top = menubar::height() + GAP;
     let h = HEIGHT.min(bottom - top).max(PAD + FIELD + PAD + HEADER + ROW + PAD);
     let x = match anchor {
         Anchor::Corner => GAP,
@@ -1075,7 +1075,7 @@ mod tests {
         }
         // A short screen: it shrinks below the menu bar, with fewer rows and tighter categories; shorter still, fewer.
         let short = layout(Anchor::Corner, Size::from((1280, 600)), 101, 15);
-        assert_eq!(short.rect.loc.y, menubar::HEIGHT + layout::GAP);
+        assert_eq!(short.rect.loc.y, menubar::height() + layout::GAP);
         assert!(short.rows.len() < 8 && short.categories.len() == 15 && short.categories[0].size.h < layout::CATEGORY);
         assert!(short.categories.iter().chain(&short.rows).all(|r| short.rect.contains_rect(*r)));
         let tiny = layout(Anchor::Corner, Size::from((1280, 400)), 101, 15);
