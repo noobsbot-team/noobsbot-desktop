@@ -440,8 +440,12 @@ impl State {
         location - origin.to_f64()
     }
 
-    /// The display the open popup shows on: a bar popup on its bar's (`bar_output`), the others on the first.
+    /// The display the open popup shows on: a bar popup on its bar's (`bar_output`), the dock's menu on its dock's
+    /// (`dock_output`), the others on the first.
     pub fn popup_output(&self) -> Option<smithay::output::Output> {
+        if self.popup == Some(Popup::Menu(Menu::Dock)) {
+            return self.dock_output();
+        }
         let first = self.space.outputs().next();
         let bar = self.bar_output.as_ref().filter(|o| self.space.outputs().any(|x| x == *o));
         if self.popup.is_some_and(|p| p.item().is_none()) { first } else { bar.or(first) }.cloned()
