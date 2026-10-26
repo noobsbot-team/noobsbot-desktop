@@ -1,6 +1,6 @@
 //! Software Update (E6.13): once at start and every 24 h, ask GitHub for the newest release on the chosen channel
 //! and compare it with the running version. No account, no identifier: the request carries only the version in its
-//! User-Agent. Fails silently when offline. Off in nested mode and with `check_updates = false`.
+//! User-Agent. Fails silently when offline. Off in nested mode and with `check_updates = false` (applied on reload).
 //!
 //! A newer release on an install.sh install (versions under `/usr/lib/noobsbot-desktop/versions/`, release key
 //! installed) is downloaded in the background to `~/.cache/noobsbot-desktop/updates/<v>/` and verified (minisign
@@ -65,19 +65,27 @@ pub enum Download {
 }
 
 /// Its own thread: the check and download block on the network, and between checks it only sleeps (no wakeups).
-/// A changed `[update] channel` sent to it checks again at once on the new channel.
-pub fn spawn(found: Sender<Release>, mut channel: Channel) -> mpsc::Sender<Channel> {
+/// A changed `[update] channel` sent to it checks again at once on the new channel; `None` (`check_updates` off)
+/// idles it until the next `Some`.
+pub fn spawn(found: Sender<Release>, channel: Channel) -> mpsc::Sender<Option<Channel>> {
     let (tx, rx) = mpsc::channel();
     let thread = std::thread::Builder::new().name("update".into()).spawn(move || {
+        let mut channel = Some(channel);
         loop {
-            if let Some(mut release) = latest(channel) {
+            if let Some(channel) = channel
+                && let Some(mut release) = latest(channel)
+            {
                 release.download = download(&release);
                 tracing::info!("Noobsbot Desktop {} is available ({:?}): {}", release.version, release.download, release.url);
                 if found.send(release).is_err() {
                     return;
                 }
             }
-            match rx.recv_timeout(EVERY) {
+            let next = match channel {
+                Some(_) => rx.recv_timeout(EVERY),
+                None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
+            };
+            match next {
                 Ok(new) => channel = new,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -251,6 +259,38 @@ fn check(dir: &Path, key: &str, version: &Version, arch: &str) -> Result<(), Str
 }
 
 impl crate::state::State {
+    /// Matches the update thread to `check_updates` and `[update] channel`: starts it the first time it is on, tells
+    /// it the new channel (a check at once) or to idle. Turning it off also withdraws a pending notice. Off nested
+    /// (a dev session: no network).
+    pub fn update_checks(&mut self) {
+        if self.nested {
+            return;
+        }
+        let on = self.config.check_updates.then_some(self.config.update.channel);
+        if let Some(tx) = &self.update_channel {
+            let _ = tx.send(on);
+        } else if let Some(channel) = on {
+            let (found_tx, found_rx) = smithay::reexports::calloop::channel::channel();
+            let inserted = self.loop_handle.insert_source(found_rx, |event, _, state| {
+                // A check already running when the setting went off still reports.
+                if let smithay::reexports::calloop::channel::Event::Msg(release) = event
+                    && state.config.check_updates
+                {
+                    state.notify(notice(&release));
+                    state.update = Some(release);
+                    state.schedule_redraw();
+                }
+            });
+            match inserted {
+                Ok(_) => self.update_channel = Some(spawn(found_tx, channel)),
+                Err(err) => tracing::warn!("update check off: {err}"),
+            }
+        }
+        if on.is_none() && self.update.take().is_some() {
+            self.close_notification(NOTICE_ID, super::notifications::Reason::Dismissed);
+        }
+    }
+
     /// A verified download is waiting for "Restart to Update" (logo menu, notification).
     pub fn update_ready(&self) -> bool {
         matches!(self.update, Some(Release { download: Download::Ready(_), .. }))
