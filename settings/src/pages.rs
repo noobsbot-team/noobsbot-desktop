@@ -31,13 +31,14 @@ pub enum Page {
     DateTime,
     Spaces,
     Notifications,
+    Battery,
     LockScreen,
     General,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 15] = [
+    pub const ALL: [Page; 16] = [
         Page::Wifi,
         Page::Bluetooth,
         Page::Sound,
@@ -50,6 +51,7 @@ impl Page {
         Page::DateTime,
         Page::Spaces,
         Page::Notifications,
+        Page::Battery,
         Page::LockScreen,
         Page::General,
         Page::About,
@@ -69,6 +71,7 @@ impl Page {
             Page::DateTime => "Date & Time",
             Page::Spaces => "Spaces",
             Page::Notifications => "Notifications",
+            Page::Battery => "Battery",
             Page::LockScreen => "Lock Screen",
             Page::General => "General",
             Page::About => "About",
@@ -83,7 +86,7 @@ impl Page {
 
     /// Pages that read the system services when opened.
     pub fn is_system(self) -> bool {
-        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime)
+        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery)
     }
 
     /// A little space starts a new block in the sidebar, as in macOS.
@@ -106,6 +109,7 @@ impl Page {
             Page::DateTime => ("clock", 0x007AFF),
             Page::Spaces => ("squares-four", 0x5856D6),
             Page::Notifications => ("bell", 0xFF3B30),
+            Page::Battery => ("battery-high", 0x34C759),
             Page::LockScreen => ("lock-simple", 0x3A3A3C),
             Page::General => ("gear-six", 0x8E8E93),
             Page::About => ("info", 0x8E8E93),
@@ -134,6 +138,7 @@ symbols![
     "clock",
     "squares-four",
     "bell",
+    "battery-high",
     "lock-simple",
     "gear-six",
     "info",
@@ -284,8 +289,8 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::LockScreen, "", "idle.dim", "Dim the display when inactive", "", Kind::Slider { min: 0.0, max: 600.0, step: 30.0 }),
     s(Page::LockScreen, "", "idle.screen_off", "Turn display off when inactive", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::LockScreen, "", "idle.lock", "Lock when the display turns off", "It always locks before sleeping", Kind::Toggle),
-    s(Page::LockScreen, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
-    s(Page::LockScreen, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
+    s(Page::Battery, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
+    s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
     s(Page::General, "Software Update", "check_updates", "Check for updates daily", "Sends nothing but the version; installs at next login", Kind::Toggle),
 ];
@@ -585,10 +590,59 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             let rows = crate::system::about().into_iter().map(|(label, value)| fact(t, label, value)).collect();
             vec![container(head).center_x(Length::Fill).into(), group(t, "", rows)]
         }
+        Page::Battery => {
+            let rows = match &status.battery {
+                Some(b) => {
+                    let mut rows = vec![fact(t, "Battery level", format!("{}%", b.percent)), fact(t, "Power source", power_source(b.state).into())];
+                    if b.seconds > 0 {
+                        rows.push(fact(t, if b.state == 1 { "Until full" } else { "Time remaining" }, duration(b.seconds)));
+                    }
+                    rows
+                }
+                None => vec![fact(t, "No battery", String::new())],
+            };
+            let mode = match &status.power_mode {
+                Some(mode) => {
+                    let items = mode.available.iter().map(|p| (profile_name(p).to_owned(), *p == mode.active, Message::PowerMode(p.clone()))).collect();
+                    line(t, "Power mode", "Low Power saves energy; Performance runs faster and warmer", segments(t, items))
+                }
+                None => fact(t, "Power mode", "Needs power-profiles-daemon".into()),
+            };
+            vec![group(t, "", rows), group(t, "", vec![mode])]
+        }
         Page::Notifications => vec![note(t, "Per-app banners and the Do Not Disturb schedule come here.")],
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
         Page::Appearance => vec![gallery(app)],
         _ => Vec::new(),
+    }
+}
+
+/// UPower's state as the power source.
+fn power_source(state: u32) -> &'static str {
+    match state {
+        1 => "Charging",
+        2 | 6 => "Battery",
+        4 => "Power adapter, fully charged",
+        _ => "Power adapter",
+    }
+}
+
+/// `11400` s → `3 h 10 min`.
+fn duration(seconds: i64) -> String {
+    let minutes = seconds / 60;
+    match (minutes / 60, minutes % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
+fn profile_name(profile: &str) -> &str {
+    match profile {
+        "power-saver" => "Low Power",
+        "balanced" => "Balanced",
+        "performance" => "Performance",
+        other => other,
     }
 }
 
@@ -886,6 +940,7 @@ mod tests {
         assert_eq!(Page::parse("desktop-dock"), Some(Page::Dock));
         assert_eq!(Page::parse("date-time"), Some(Page::DateTime));
         assert_eq!(Page::parse("wi-fi"), Some(Page::Wifi));
+        assert_eq!(Page::parse("battery"), Some(Page::Battery));
         assert_eq!(Page::parse("nope"), None);
     }
 
@@ -910,6 +965,15 @@ mod tests {
         assert_eq!(percent(1.25), "125%");
         assert_eq!(display_name("eDP-1"), "Built-in display");
         assert_eq!(display_name("HDMI-A-1"), "HDMI-A-1");
+    }
+
+    #[test]
+    fn battery_words() {
+        assert_eq!(duration(11_400), "3 h 10 min");
+        assert_eq!(duration(7_200), "2 h");
+        assert_eq!(duration(300), "5 min");
+        assert_eq!(power_source(2), "Battery");
+        assert_eq!(profile_name("power-saver"), "Low Power");
     }
 
     #[test]

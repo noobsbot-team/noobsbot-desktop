@@ -113,6 +113,8 @@ pub enum Message {
     Status(system::Status),
     Wifi(bool),
     Bluetooth(bool),
+    /// A power-profiles-daemon profile.
+    PowerMode(String),
     /// Output (`true`) or input muted.
     Mute(bool, bool),
     /// Date & Time ▸ Set time and date automatically.
@@ -244,6 +246,7 @@ impl App {
             }
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
+            Message::PowerMode(profile) => return Task::perform(system::set_power_mode(profile), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
             Message::Ntp(on) => return Task::perform(system::set_ntp(on), Message::Status),
             Message::Reload => {
