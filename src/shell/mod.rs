@@ -270,7 +270,7 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool, 
             None,
             row(format!("Quit {app}"), "⌘Q", Some(Action::QuitApp)),
         ],
-        Menu::Tray(_) => tray_rows(tray, 0),
+        Menu::Tray(_) => tray_rows(tray),
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
         Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow | Menu::Battery(_) => Vec::new(),
     }
@@ -288,31 +288,17 @@ pub fn recent_rows(apps: &[(String, String)], docs: &[(String, String)]) -> Vec<
     rows
 }
 
-/// A dbusmenu's rows: submenus open beside the menu, and from `depth` 1 on (a submenu's submenu) are listed inline
-/// under their row, indented. An empty submenu shows "Empty".
-// ponytail: one level of side submenus; deeper ones inline.
-fn tray_rows(tray: &[Option<MenuRow>], depth: usize) -> Vec<Option<Row>> {
-    let mut rows = Vec::new();
-    for r in tray {
-        let Some(r) = r else {
-            rows.push(None);
-            continue;
-        };
-        let indent = "    ".repeat(depth.saturating_sub(1));
+/// A dbusmenu's rows, one per entry, submenus nested; an empty submenu shows "Empty".
+fn tray_rows(tray: &[Option<MenuRow>]) -> Vec<Option<Row>> {
+    let row = |r: &MenuRow| {
         let action = (r.enabled && r.submenu.is_none()).then_some(Action::TrayMenu(r.id));
-        let mut sub = match &r.submenu {
-            Some(kids) if depth == 0 => tray_rows(kids, 1),
-            _ => Vec::new(),
-        };
-        if r.submenu.is_some() && depth == 0 && sub.is_empty() {
+        let mut sub = r.submenu.as_deref().map(tray_rows).unwrap_or_default();
+        if r.submenu.is_some() && sub.is_empty() {
             sub.push(Some(Row { label: "Empty".into(), shortcut: "", action: None, sub: Vec::new() }));
         }
-        rows.push(Some(Row { label: format!("{indent}{}", r.label), shortcut: "", action, sub }));
-        if let (Some(kids), 1..) = (&r.submenu, depth) {
-            rows.extend(tray_rows(kids, depth + 1));
-        }
-    }
-    rows
+        Row { label: r.label.clone(), shortcut: "", action, sub }
+    };
+    tray.iter().map(|r| r.as_ref().map(row)).collect()
 }
 
 /// A menu's height with `rows`.
@@ -1344,16 +1330,25 @@ mod tests {
     }
 
     #[test]
-    fn tray_submenus_nest_one_level() {
+    fn tray_submenus_nest() {
         let row = |id, label: &str, submenu| Some(MenuRow { id, label: label.into(), enabled: true, submenu });
-        let deep = row(3, "Deep", Some(vec![row(4, "Leaf", None)]));
+        let deep = row(3, "Deep", Some(vec![None, row(4, "Leaf", None)]));
         let tray = [row(1, "Open", None), row(2, "More", Some(vec![deep])), row(5, "Lazy", Some(Vec::new()))];
-        let rows = tray_rows(&tray, 0);
+        let rows = tray_rows(&tray);
         let labels = |rows: &[Option<Row>]| rows.iter().flatten().map(|r| r.label.clone()).collect::<Vec<_>>();
         assert_eq!(rows[0].as_ref().unwrap().action, Some(Action::TrayMenu(1)));
         let more = rows[1].as_ref().unwrap();
-        assert_eq!((more.action.clone(), labels(&more.sub)), (None, vec!["Deep".to_owned(), "    Leaf".to_owned()]));
+        assert_eq!((more.action.clone(), labels(&more.sub)), (None, vec!["Deep".to_owned()]));
+        // Two levels down, rows line up with the app's, so a path finds the same row in both.
+        let leaf = sub_rows(&rows, &[1, 0])[1].as_ref().unwrap();
+        assert_eq!((leaf.label.as_str(), &leaf.action), ("Leaf", &Some(Action::TrayMenu(4))));
+        assert_eq!(tray_row(&tray, &[1, 0, 1]).map(|r| r.id), Some(4));
+        assert_eq!(sub_rows(&rows, &[0, 3]), [], "a path off the rows: none");
         assert_eq!(labels(&rows[2].as_ref().unwrap().sub), ["Empty"]);
+        // A lazy submenu two levels down is filled in where it is.
+        let mut tray = tray.to_vec();
+        tray_find(&mut tray, 3).unwrap().submenu = Some(vec![row(6, "New", None)]);
+        assert_eq!(tray_row(&tray, &[1, 0, 0]).map(|r| r.id), Some(6));
     }
 
     #[test]
