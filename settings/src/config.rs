@@ -44,6 +44,11 @@ impl Config {
         lookup(&self.doc, key).or_else(|| lookup(&self.defaults, key))
     }
 
+    /// The shipped default for `key`, whatever the user's file says.
+    pub fn default_of(&self, key: &str) -> Option<&str> {
+        lookup(&self.defaults, key)?.as_str()
+    }
+
     pub fn bool(&self, key: &str) -> bool {
         self.get(key).and_then(Value::as_bool).unwrap_or(false)
     }
