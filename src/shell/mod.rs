@@ -141,8 +141,8 @@ pub struct Row {
 }
 
 /// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows, `update`: a verified
-/// update is waiting (E6.13).
-pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) -> Vec<Option<Row>> {
+/// update is waiting (E6.13), `recent` the Recent Items submenu (`recent_rows`).
+pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool, recent: &[Option<Row>]) -> Vec<Option<Row>> {
     let row = |label: String, shortcut, action| Some(Row { sub: Vec::new(), label, shortcut, action });
     let settings = |page: &str| Some(Action::Spawn(format!("noobsbot-desktop-settings --page {page}")));
     match menu {
@@ -155,6 +155,8 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) 
             } else {
                 row("Software Update…".into(), "", settings("general"))
             },
+            None,
+            Some(Row { label: "Recent Items".into(), shortcut: "", action: None, sub: recent.to_vec() }),
             None,
             row("Force Quit…".into(), "⌥⌘⎋", Some(Action::ForceQuit)),
             None,
@@ -178,6 +180,18 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) 
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
         Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow => Vec::new(),
     }
+}
+
+/// The logo menu's Recent Items: recent `apps` (name, desktop-file id) and `docs` (name, URI), then Clear Menu.
+pub fn recent_rows(apps: &[(String, String)], docs: &[(String, String)]) -> Vec<Option<Row>> {
+    let row = |label: &str, action| Some(Row { label: label.to_owned(), shortcut: "", action, sub: Vec::new() });
+    let mut rows = vec![row("Applications", None)];
+    rows.extend(apps.iter().map(|(name, id)| row(name, Some(Action::Launch(id.clone())))));
+    rows.extend([None, row("Documents", None)]);
+    rows.extend(docs.iter().map(|(name, uri)| row(name, Some(Action::Spawn(format!("xdg-open {uri}"))))));
+    let empty = apps.is_empty() && docs.is_empty();
+    rows.extend([None, row("Clear Menu", (!empty).then_some(Action::ClearRecent))]);
+    rows
 }
 
 /// A dbusmenu's rows: submenus open beside the menu, and from `depth` 1 on (a submenu's submenu) are listed inline
@@ -497,8 +511,37 @@ impl State {
             Menu::Drawer => self.drawer_menu_rows(),
             Menu::Window => self.window_menu_rows(),
             Menu::Overflow => self.overflow_menu_rows(),
-            _ => menu_rows(menu, "", tray, self.update_ready()),
+            _ => menu_rows(menu, "", tray, self.update_ready(), self.recent_menu.as_deref().unwrap_or_default()),
         }
+    }
+
+    /// Reads the Recent Items when the logo menu opens and drops them when it closes, so it reads the file once.
+    pub fn refresh_recent(&mut self) {
+        if self.popup != Some(Popup::Menu(Menu::Logo)) {
+            self.recent_menu = None;
+            return;
+        }
+        if self.recent_menu.is_some() {
+            return;
+        }
+        // ponytail: five of each, files that no longer exist skipped; the recent-files age setting comes later.
+        let (names, uris) = dock::recent_items(&std::fs::read_to_string(dock::recent_path()).unwrap_or_default());
+        let mut apps: Vec<(String, String)> = Vec::new();
+        for app in names.iter().filter_map(|n| self.apps.find(n)).filter(|a| !a.no_display) {
+            if apps.len() < 5 && !apps.iter().any(|(_, id)| *id == app.id) {
+                apps.push((app.name.clone(), app.id.clone()));
+            }
+        }
+        let docs: Vec<(String, String)> = uris
+            .into_iter()
+            .filter_map(|uri| {
+                let path = crate::apps::file_path(&uri)?;
+                let name = std::path::Path::new(&path).file_name()?.to_string_lossy().into_owned();
+                std::path::Path::new(&path).exists().then_some((name, uri))
+            })
+            .take(5)
+            .collect();
+        self.recent_menu = Some(recent_rows(&apps, &docs));
     }
 
     /// The tray items hidden under "»", by title; a click opens the item's menu or activates it.
@@ -682,8 +725,25 @@ mod tests {
     }
 
     #[test]
+    fn recent_items_list_apps_and_documents() {
+        let label = |r: &Option<Row>| r.as_ref().map(|r| r.label.clone());
+        let rows = recent_rows(&[("Kate".into(), "org.kde.kate".into())], &[("a.txt".into(), "file:///a.txt".into())]);
+        let labels: Vec<_> = rows.iter().map(label).collect();
+        let s = |t: &str| Some(t.to_owned());
+        assert_eq!(labels, [s("Applications"), s("Kate"), None, s("Documents"), s("a.txt"), None, s("Clear Menu")]);
+        assert_eq!(rows[1].as_ref().unwrap().action, Some(Action::Launch("org.kde.kate".into())));
+        assert_eq!(rows[4].as_ref().unwrap().action, Some(Action::Spawn("xdg-open file:///a.txt".into())));
+        assert_eq!(rows[6].as_ref().unwrap().action, Some(Action::ClearRecent));
+        // Nothing to clear: Clear Menu is greyed.
+        assert_eq!(recent_rows(&[], &[]).last().unwrap().as_ref().unwrap().action, None);
+        // The logo menu carries them as its Recent Items submenu.
+        let logo = menu_rows(Menu::Logo, "", &[], false, &rows);
+        assert_eq!(logo.iter().flatten().find(|r| r.label == "Recent Items").map(|r| r.sub.len()), Some(rows.len()));
+    }
+
+    #[test]
     fn menus_stay_on_screen_and_stack_rows() {
-        let rows = menu_rows(Menu::App, "Kate", &[], false);
+        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
         let output = Size::from((1280, 1200));
         let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
@@ -725,7 +785,7 @@ mod tests {
 
     #[test]
     fn submenus_open_beside_their_row_and_flip_at_the_edge() {
-        let rows = menu_rows(Menu::App, "Kate", &[], false);
+        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
         let output = Size::from((1280, 800));
         // The parent spans x 100..300; its row is at y 60.
         let row = Rectangle::new((100, 60).into(), (200, 22).into());

@@ -20,6 +20,10 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Spawn(String),
+    /// Opens an app by desktop-file id (Recent Items).
+    Launch(String),
+    /// Empties `recently-used.xbel` (Recent Items › Clear Menu).
+    ClearRecent,
     /// Opens the default app for a MIME type (`x-scheme-handler/https`), or the first app in a category (`Calculator`).
     DefaultApp(String),
     /// Close every window of the focused app (Super+Q).
@@ -353,6 +357,18 @@ impl State {
                 self.spawn(&command.split_whitespace().map(String::from).collect::<Vec<_>>());
             }
             Action::Quake => self.toggle_quake(),
+            Action::Launch(id) => {
+                let app = self.apps.find(&id).cloned();
+                if !self.launch(app.as_ref()) {
+                    tracing::warn!("no app {id}");
+                }
+            }
+            Action::ClearRecent => {
+                let path = crate::shell::dock::recent_path();
+                if let Some(empty) = std::fs::read_to_string(&path).ok().as_deref().and_then(crate::shell::dock::cleared) {
+                    let _ = std::fs::write(&path, empty).inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
+                }
+            }
             Action::DefaultApp(kind) => {
                 let app = if kind.contains('/') {
                     // ponytail: xdg-mime runs on the frame loop (tens of ms, once per key press); a worker thread if it shows.
