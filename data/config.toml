@@ -238,6 +238,9 @@ minimise_into_icon = false
 minimise_effect = "scale"
 # The Trash at the dock's right end, after a separator: click opens it, drop files on it to trash them.
 show_trash = true
+# The dock menu's Options ▸ Assign To, per app: "all" puts its windows on every Space; "<display>:<n>" opens its new
+# windows on Space n of that display. E.g. assign = { "org.kde.kate" = "all", "kitty" = "DP-1:2" }
+assign = {}
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.

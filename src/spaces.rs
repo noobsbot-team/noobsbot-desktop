@@ -193,7 +193,48 @@ pub fn new_row(row: i32, old: usize, current: usize, map: impl Fn(usize) -> usiz
     if stay { 0 } else { row_of(map(desk_of(row, old)), current) }
 }
 
+/// An app's `[dock] assign` choice (Options ▸ Assign To).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Assign {
+    /// Its windows show on every Space.
+    All,
+    /// Its new windows open on Space `desk` (from 0) of the display named `display`.
+    Space { display: String, desk: usize },
+}
+
+impl Assign {
+    /// `"all"` or `"<display>:<n>"` (n from 1).
+    pub fn parse(value: &str) -> Option<Self> {
+        if value == "all" {
+            return Some(Assign::All);
+        }
+        let (display, n) = value.rsplit_once(':')?;
+        let n: usize = n.parse().ok().filter(|n| *n > 0)?;
+        Some(Assign::Space { display: display.to_owned(), desk: n - 1 })
+    }
+
+    pub fn value(&self) -> String {
+        match self {
+            Assign::All => "all".to_owned(),
+            Assign::Space { display, desk } => format!("{display}:{}", desk + 1),
+        }
+    }
+}
+
+/// Where a new window of an app assigned to `assign` opens: (index in `outputs`, Space). It opened on display
+/// `here`, which it stays on when the assigned one is gone. `None`: where it opened (All Spaces).
+pub fn assigned_place(assign: &Assign, outputs: &[String], here: usize) -> Option<(usize, usize)> {
+    let Assign::Space { display, desk } = assign else { return None };
+    Some((outputs.iter().position(|o| o == display).unwrap_or(here), *desk))
+}
+
 impl State {
+    /// The `[dock] assign` choice of `window`'s app.
+    pub fn assigned(&self, window: &Window) -> Option<Assign> {
+        let (key, _) = self.dock_key(window)?;
+        Assign::parse(self.config.dock.assign.get(&key)?)
+    }
+
     /// The display under the pointer, else the first: the one Space keys, swipes and Mission Control clicks act on.
     pub fn pointer_output(&self) -> Option<Output> {
         let at = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default();
@@ -279,9 +320,11 @@ impl State {
         self.space.elements().rev().find(|w| self.on_current(w) && self.holds(key, w)).cloned()
     }
 
-    /// On every Space: `space = "all"` (the quake terminal).
+    /// On every Space: `space = "all"` (the quake terminal), or its app assigned to All Spaces.
     fn sticky(&self, window: &Window) -> bool {
-        self.is_quake(window) || crate::state::ruled(window).is_some_and(|a| matches!(a.space, Some(rules::Space::All(_))))
+        self.is_quake(window)
+            || crate::state::ruled(window).is_some_and(|a| matches!(a.space, Some(rules::Space::All(_))))
+            || self.assigned(window) == Some(Assign::All)
     }
 
     /// Moves the windows of the Spaces under `key` to the rows their Space gets: `map` renumbers Spaces, `current` is
@@ -514,10 +557,25 @@ impl State {
         }
     }
 
-    /// `space = n` in a window rule: the window opens on Space n of its display, made if Spaces are dynamic.
+    /// A new window's Space: `space = n` in a window rule, else its app's `[dock] assign` Space.
     pub fn apply_space_rule(&mut self, window: &Window) {
-        let Some(rules::Space::Number(n)) = crate::state::ruled(window).and_then(|a| a.space) else { return };
-        let desk = (n.max(1) - 1) as usize;
+        match crate::state::ruled(window).and_then(|a| a.space) {
+            Some(rules::Space::Number(n)) => self.open_on_space(window, (n.max(1) - 1) as usize),
+            Some(rules::Space::All(_)) => {}
+            None => {
+                let Some(assign) = self.assigned(window) else { return };
+                let outputs: Vec<Output> = self.space.outputs().cloned().collect();
+                let names: Vec<String> = outputs.iter().map(Output::name).collect();
+                let here = self.window_output(window).and_then(|o| outputs.iter().position(|x| *x == o)).unwrap_or(0);
+                let Some((to, desk)) = assigned_place(&assign, &names, here) else { return };
+                self.move_to_display(window, to as i32 - here as i32);
+                self.open_on_space(window, desk);
+            }
+        }
+    }
+
+    /// Puts a new window on Space `desk` of its display, made if Spaces are dynamic, else the last one.
+    fn open_on_space(&mut self, window: &Window, desk: usize) {
         let dynamic = self.config.windows.spaces == 0;
         let key = self.window_key(window);
         let desks = self.desks_at(&key);
@@ -690,6 +748,20 @@ mod tests {
         assert_eq!(edge_side(p(999.0, 700.0), screen, &[right]), Some(1), "below the neighbour the edge is free");
         assert_eq!(edge_side(p(0.0, 400.0), screen, &[right]), Some(-1));
         assert_eq!(edge_side(p(1000.0, 400.0), screen, &[right]), None, "on the other display");
+    }
+
+    #[test]
+    fn assigned_apps_open_on_their_space_and_display() {
+        let space = |display: &str, desk| Assign::Space { display: display.into(), desk };
+        assert_eq!(Assign::parse("all"), Some(Assign::All));
+        assert_eq!(Assign::parse("DP-1:2"), Some(space("DP-1", 1)));
+        assert_eq!(Assign::parse("DP-1:0"), None);
+        assert_eq!(Assign::parse("nowhere"), None);
+        assert_eq!(space("HDMI-A-1", 3).value(), "HDMI-A-1:4");
+        let outputs = ["eDP-1".to_owned(), "DP-1".to_owned()];
+        assert_eq!(assigned_place(&space("DP-1", 1), &outputs, 0), Some((1, 1)), "to the display it was chosen on");
+        assert_eq!(assigned_place(&space("DP-9", 2), &outputs, 1), Some((1, 2)), "that display gone: where it opened");
+        assert_eq!(assigned_place(&Assign::All, &outputs, 0), None, "all Spaces: where it opened");
     }
 
     #[test]

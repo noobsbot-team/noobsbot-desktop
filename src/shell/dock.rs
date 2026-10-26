@@ -16,7 +16,10 @@ use std::{
 
 use smithay::{
     desktop::Window,
-    reexports::wayland_server::protocol::wl_data_source::WlDataSource,
+    reexports::{
+        calloop::timer::{TimeoutAction, Timer},
+        wayland_server::protocol::wl_data_source::WlDataSource,
+    },
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::{compositor::with_states, selection::data_device::with_source_metadata, shell::xdg::XdgToplevelSurfaceData},
 };
@@ -26,6 +29,7 @@ use crate::{
     config::{self, Dock, DockClick, DockMiddle, DockScroll},
     shell::{Row, dock_fx::CLICK_TIME, drawer, launchpad},
     shortcuts::Action,
+    spaces::Assign,
     state::State,
     wm::Rect,
 };
@@ -344,6 +348,38 @@ const BTN_MIDDLE: u32 = 0x112;
 const BTN_RIGHT: u32 = 0x111;
 /// Plank's LONG_PRESS_TIME: a press held this long without moving clicks nothing.
 const LONG_PRESS: Duration = Duration::from_millis(750);
+
+/// How long a dragged file rests on an icon before its app springs forward.
+const SPRING_DELAY: Duration = Duration::from_millis(600);
+
+/// A file dragged (DnD) over the dock: the icon it rests on and since when; `sprung` once that app came forward.
+#[derive(Debug, Default)]
+pub struct Spring {
+    over: Option<(String, Instant)>,
+    sprung: bool,
+}
+
+impl Spring {
+    /// The drag is over icon `key` (`None`: off the icons) at `now`; true when it arrived on another icon.
+    fn over(&mut self, key: Option<&str>, now: Instant) -> bool {
+        if self.over.as_ref().map(|(k, _)| k.as_str()) == key {
+            return false;
+        }
+        self.over = key.map(|k| (k.to_owned(), now));
+        self.sprung = false;
+        key.is_some()
+    }
+
+    /// The icon whose app springs forward at `now`: rested on for `SPRING_DELAY`, once per visit.
+    fn due(&mut self, now: Instant) -> Option<String> {
+        let (key, since) = self.over.as_ref()?;
+        if self.sprung || now < *since + SPRING_DELAY {
+            return None;
+        }
+        self.sprung = true;
+        Some(key.clone())
+    }
+}
 
 /// What a window resolved to under one `Apps` load (`State::apps_epoch`): its `app_key`, the item key and the app.
 #[derive(Default)]
@@ -731,6 +767,7 @@ impl State {
     /// and lightens the icon under the pointer.
     pub fn dock_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         self.dock_drag_motion(to);
+        self.dock_spring_motion(to);
         // On the previews the dock stays as it is (shown, zoomed where it was); only the hovered thumbnail changes.
         if let Some((hit, _)) = self.dock_peek_at(to) {
             let hover = match hit {
@@ -789,6 +826,8 @@ pub struct Ui {
     /// The open menu's recent files (URIs) and Open at Login state, read as it opens.
     recent: Vec<String>,
     login: Option<bool>,
+    /// While an app's drag (DnD) is on.
+    spring: Option<Spring>,
 }
 
 /// An icon with several windows, hovered.
@@ -858,8 +897,14 @@ pub enum Command {
     Login,
     /// Shows the app's desktop file in the file manager.
     ShowInFiles,
+    /// Options ▸ Assign To: `ASSIGN[n]`.
+    Assign(usize),
+    /// Options ▸ Move to Display: the app's windows go to the n-th display.
+    ToDisplay(usize),
     /// Close / Close All.
     Close,
+    /// Closes every other app's windows, as Quit does.
+    CloseOthers,
     /// The app's n-th desktop action.
     Action(usize),
     /// The Trash's Open: what a click does.
@@ -868,33 +913,61 @@ pub enum Command {
     EmptyTrash,
 }
 
+/// Options ▸ Assign To, in order: `[dock] assign` "all", the Space it was chosen on, nothing.
+pub const ASSIGN: [&str; 3] = ["All Spaces", "This Space", "None"];
+
+/// What the Options submenu shows for an app.
+#[derive(Debug, Default)]
+pub struct Options {
+    /// Keep in Dock, ticked while pinned; `None` when it can't be pinned.
+    pub pinned: Option<bool>,
+    /// Open at Login, ticked while on; `None` without a desktop file, which also hides Show in Files.
+    pub login: Option<bool>,
+    /// Assign To with `ASSIGN[n]` ticked; `None` hides it (a builtin, a minimised window's tile).
+    pub assign: Option<usize>,
+    /// Move to Display: every display by name, and whether the app's windows can go there (not the one its front
+    /// window is on). Shown with more than one display.
+    pub displays: Vec<(String, bool)>,
+}
+
 /// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
-/// actions, the Options section (Keep in Dock, `pinned` `None` when it can't be pinned; Open at Login, `login` `None`
-/// without a desktop file, which also hides Show in Files), then Close (Close All with several windows).
-// ponytail: Options is an inline section, since dock menu rows have no submenus yet.
-pub fn menu_rows(
-    titles: &[String],
-    active: Option<usize>,
-    recent: &[String],
-    actions: &[String],
-    pinned: Option<bool>,
-    login: Option<bool>,
-) -> Vec<Option<Row>> {
+/// actions, the Options submenu (Keep in Dock, Open at Login, Show in Files, Assign To), then Close (Close All with
+/// several windows) and Close Others while `others` (other apps have windows).
+pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], actions: &[String], options: &Options, others: bool) -> Vec<Option<Row>> {
     let row =
         |label: &str, shortcut, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
     let tick = |on: bool| if on { "✓" } else { "" };
     let windows = titles.iter().enumerate().map(|(i, t)| row(t, "", (active != Some(i)).then_some(Command::Window(i)))).collect();
     let recent = recent.iter().enumerate().map(|(i, r)| row(r, "", Some(Command::Recent(i)))).collect();
     let actions = actions.iter().enumerate().map(|(i, a)| row(a, "", Some(Command::Action(i)))).collect();
-    let mut options = Vec::new();
-    if let Some(pinned) = pinned {
-        options.push(row("Keep in Dock", tick(pinned), Some(Command::Pin)));
+    let mut sub = Vec::new();
+    if let Some(pinned) = options.pinned {
+        sub.push(row("Keep in Dock", tick(pinned), Some(Command::Pin)));
     }
-    if let Some(login) = login {
-        options.push(row("Open at Login", tick(login), Some(Command::Login)));
-        options.push(row("Show in Files", "", Some(Command::ShowInFiles)));
+    if let Some(login) = options.login {
+        sub.push(row("Open at Login", tick(login), Some(Command::Login)));
+        sub.push(row("Show in Files", "", Some(Command::ShowInFiles)));
     }
-    let close = if titles.is_empty() { Vec::new() } else { vec![row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close))] };
+    // ponytail: a greyed heading, since a submenu row can't open another submenu.
+    if let Some(on) = options.assign {
+        if !sub.is_empty() {
+            sub.push(None);
+        }
+        sub.push(row("Assign To", "", None));
+        sub.extend(ASSIGN.iter().enumerate().map(|(i, name)| row(name, tick(i == on), Some(Command::Assign(i)))));
+    }
+    if options.displays.len() > 1 {
+        if !sub.is_empty() {
+            sub.push(None);
+        }
+        sub.push(row("Move to Display", "", None));
+        sub.extend(options.displays.iter().enumerate().map(|(i, (name, can))| row(name, "", can.then_some(Command::ToDisplay(i)))));
+    }
+    let options = if sub.is_empty() { Vec::new() } else { vec![Some(Row { sub, label: "Options".to_owned(), shortcut: "", action: None })] };
+    let mut close = if titles.is_empty() { Vec::new() } else { vec![row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close))] };
+    if others {
+        close.push(row("Close Others", "", Some(Command::CloseOthers)));
+    }
     let mut rows = Vec::new();
     for group in [windows, recent, actions, options, close] {
         if group.is_empty() {
@@ -1013,6 +1086,13 @@ pub fn set_items(text: &str, items: &[String]) -> String {
     config::set_array(text, "dock", "items", items)
 }
 
+/// `map` as a one-line TOML inline table.
+fn inline_table(map: &std::collections::BTreeMap<String, String>) -> String {
+    let q = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    let pairs: Vec<String> = map.iter().map(|(k, v)| format!("{} = {}", q(k), q(v))).collect();
+    if pairs.is_empty() { "{}".to_owned() } else { format!("{{ {} }}", pairs.join(", ")) }
+}
+
 /// The URIs of a `text/uri-list` (comments and blank lines skipped).
 pub fn uri_list(text: &str) -> Vec<String> {
     text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
@@ -1071,7 +1151,23 @@ impl State {
         let actions: Vec<String> = item.app.as_ref().map(|a| crate::apps::actions(&a.id).into_iter().map(|(n, _)| n).collect()).unwrap_or_default();
         let name_of = |uri: &String| crate::apps::file_path(uri).and_then(|p| Some(std::path::Path::new(&p).file_name()?.to_string_lossy().into_owned()));
         let recent: Vec<String> = self.dock_ui.recent.iter().map(|u| name_of(u).unwrap_or_else(|| u.clone())).collect();
-        menu_rows(&titles, active, &recent, &actions, pinned, self.dock_ui.login)
+        let assign =
+            (!item.is_tile() && Builtin::of(&item.key).is_none()).then(|| match self.config.dock.assign.get(&item.key).and_then(|v| Assign::parse(v)) {
+                Some(Assign::All) => 0,
+                Some(Assign::Space { .. }) => 1,
+                None => 2,
+            });
+        let outputs: Vec<_> = self.space.outputs().collect();
+        let here = item.windows.first().and_then(|w| self.window_output(w));
+        let displays = if item.windows.is_empty() { Vec::new() } else { outputs.iter().map(|o| (o.name(), here.as_ref() != Some(*o))).collect() };
+        menu_rows(
+            &titles,
+            active,
+            &recent,
+            &actions,
+            &Options { pinned, login: self.dock_ui.login, assign, displays },
+            Builtin::of(&item.key).is_none() && !self.dock_others(&item.key).is_empty(),
+        )
     }
 
     /// Right click: icon `i`'s menu, centred over it.
@@ -1151,7 +1247,30 @@ impl State {
                               org.freedesktop.FileManager1.ShowItems array:string:\"$1\" string: >/dev/null 2>&1 || xdg-open \"$2\"";
                 self.spawn(&["sh", "-c", script, "sh", &uri, &dir].map(String::from));
             }
+            Command::Assign(i) => {
+                let here = self.pointer_output().map(|o| (o.name(), self.output_key(&o)));
+                let assign = match (i, here) {
+                    (0, _) => Some(Assign::All),
+                    (1, Some((display, key))) => Some(Assign::Space { display, desk: self.desks_at(&key).current }),
+                    _ => None,
+                };
+                match assign {
+                    Some(a) => self.config.dock.assign.insert(item.key.clone(), a.value()),
+                    None => self.config.dock.assign.remove(&item.key),
+                };
+                let table = inline_table(&self.config.dock.assign);
+                self.dock_save(move |text| config::set_key(text, "dock", "assign", &table));
+            }
+            Command::ToDisplay(to) => {
+                let outputs: Vec<_> = self.space.outputs().cloned().collect();
+                for window in &item.windows {
+                    if let Some(from) = self.window_output(window).and_then(|o| outputs.iter().position(|x| *x == o)) {
+                        self.move_to_display(window, to as i32 - from as i32);
+                    }
+                }
+            }
             Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
+            Command::CloseOthers => self.dock_others(&item.key).iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             Command::Open => self.dock_click(item, false),
             Command::EmptyTrash => self.open_ask(crate::shell::alert::Kind::EmptyTrash),
             Command::Action(i) => {
@@ -1161,6 +1280,12 @@ impl State {
             }
         }
         self.schedule_redraw();
+    }
+
+    /// The windows, shown and minimised, of every dock app but `key` (not the quake terminal).
+    fn dock_others(&self, key: &str) -> Vec<Window> {
+        let all = self.space.elements().chain(self.hidden.iter().map(|(w, _)| w));
+        all.filter(|w| !self.is_quake(w) && self.dock_key(w).is_some_and(|(k, _)| k != key)).cloned().collect()
     }
 
     /// Rewrites config.toml with `edit`, in the file the user edits (through a dotfiles symlink), so the live
@@ -1247,6 +1372,7 @@ impl State {
     /// An app started a drag: its `text/uri-list`, if it offers one, is read now, since a drop on the dock (no client
     /// surface) gets cancelled before we could ask.
     pub fn dock_drag_started(&mut self, source: Option<WlDataSource>) {
+        self.dock_ui.spring = Some(Spring::default());
         let uris = self.dock_ui.uris.clone();
         *uris.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let Some(source) = source else { return };
@@ -1261,6 +1387,47 @@ impl State {
                 *uris.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
             }
         });
+    }
+
+    /// An app's drag ended, dropped or not.
+    pub fn dock_drag_ended(&mut self) {
+        self.dock_ui.spring = None;
+    }
+
+    /// An app's drag moved to `to`: resting on an icon arms its spring.
+    fn dock_spring_motion(&mut self, to: Point<f64, Logical>) {
+        if self.dock_ui.spring.is_none() {
+            return;
+        }
+        let items = self.dock_items();
+        let key = self.dock_layout(&items).and_then(|l| hit(&l, to)).filter(|_| self.dock_shown()).map(|i| items[i].key.as_str());
+        if self.dock_ui.spring.as_mut().is_some_and(|s| s.over(key, Instant::now())) {
+            let timer = Timer::from_duration(SPRING_DELAY);
+            let _ = self.loop_handle.insert_source(timer, |_, _, state| {
+                state.dock_spring();
+                TimeoutAction::Drop
+            });
+        }
+    }
+
+    /// Spring-loading: a file rested on an icon brings its app's front window up, or App Exposé with several.
+    fn dock_spring(&mut self) {
+        let Some(key) = self.dock_ui.spring.as_mut().and_then(|s| s.due(Instant::now())) else { return };
+        let Some(item) = self.dock_item(&key) else { return };
+        let shown: Vec<&Window> = item.windows.iter().filter(|w| !self.hidden.iter().any(|(h, _)| h == *w)).collect();
+        if shown.len() > 1 {
+            if !self.mission_open() {
+                let app = self.app_key(shown[0]);
+                self.open_mission(app);
+            }
+        } else if let Some(window) = item.windows.first().cloned() {
+            if let Some(at) = self.hidden.iter().position(|(w, _)| *w == window) {
+                let (_, loc) = self.hidden.remove(at);
+                self.set_visible_loc(&window, loc);
+            }
+            self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
+        }
+        self.schedule_redraw();
     }
 
     /// An app's drag ended over no window: on the Trash, files are trashed; elsewhere on the dock, `.desktop` files
@@ -1458,7 +1625,14 @@ mod tests {
         let actions = ["New Window".to_owned()];
         let recent = ["notes.md".to_owned()];
         assert_eq!(
-            labels(menu_rows(&two, Some(0), &recent, &actions, Some(true), Some(false))),
+            labels(menu_rows(
+                &two,
+                Some(0),
+                &recent,
+                &actions,
+                &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() },
+                false
+            )),
             [
                 s("a.txt", "", false),
                 s("◆ b.txt", "", true),
@@ -1467,23 +1641,80 @@ mod tests {
                 None,
                 s("New Window", "", true),
                 None,
-                s("Keep in Dock", "✓", true),
-                s("Open at Login", "", true),
-                s("Show in Files", "", true),
+                s("Options", "", false),
                 None,
                 s("Close All", "", true)
             ]
         );
-        // Not running; locked items, no desktop file: nothing to pin, no login item.
+        let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() }, false);
         assert_eq!(
-            labels(menu_rows(&[], None, &[], &[], Some(true), Some(true))),
-            [s("Keep in Dock", "✓", true), s("Open at Login", "✓", true), s("Show in Files", "", true)]
+            labels(rows[7].clone().unwrap().sub),
+            [
+                s("Keep in Dock", "✓", true),
+                s("Open at Login", "", true),
+                s("Show in Files", "", true),
+                None,
+                s("Assign To", "", false),
+                s("All Spaces", "", true),
+                s("This Space", "", true),
+                s("None", "✓", true)
+            ]
         );
-        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], None, None)), [s("a.txt", "", true), None, s("Close", "", true)]);
-        let rows = menu_rows(&two, None, &recent, &actions, None, None);
+        // Not running; locked items, no desktop file, a builtin: no Options at all.
+        let options = |rows: Vec<Option<Row>>| rows.into_iter().flatten().find(|r| r.label == "Options").map(|r| labels(r.sub));
+        assert_eq!(menu_rows(&[], None, &[], &[], &Options::default(), false), []);
+        assert_eq!(
+            options(menu_rows(&[], None, &[], &[], &Options { pinned: Some(true), login: Some(true), ..Options::default() }, false)),
+            Some(vec![s("Keep in Dock", "✓", true), s("Open at Login", "✓", true), s("Show in Files", "", true)])
+        );
+        let all = options(menu_rows(&[], None, &[], &[], &Options { assign: Some(0), ..Options::default() }, false)).unwrap();
+        assert_eq!(all[0], s("Assign To", "", false), "no separator at the top");
+        assert_eq!(all[1], s("All Spaces", "✓", true));
+        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], &Options::default(), false)), [s("a.txt", "", true), None, s("Close", "", true)]);
+        // Close Others while other apps have windows, even for an app with none.
+        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], &Options::default(), true))[2..], [s("Close", "", true), s("Close Others", "", true)]);
+        assert_eq!(labels(menu_rows(&[], None, &[], &[], &Options::default(), true)), [s("Close Others", "", true)]);
+        // Move to Display only with more than one display; not to the one the app is on.
+        let one = Options { displays: vec![("eDP-1".into(), false)], ..Options::default() };
+        assert_eq!(menu_rows(&two[..1], None, &[], &[], &one, false).len(), 3, "one display: no Options");
+        let two_displays = Options { assign: Some(2), displays: vec![("eDP-1".into(), false), ("DP-1".into(), true)], ..Options::default() };
+        let sub = options(menu_rows(&two[..1], None, &[], &[], &two_displays, false)).unwrap();
+        assert_eq!(sub[4..], [None, s("Move to Display", "", false), s("eDP-1", "", false), s("DP-1", "", true)]);
+        let rows = menu_rows(&two[..1], None, &[], &[], &two_displays, false);
+        assert_eq!(rows[2].as_ref().unwrap().sub[7].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::ToDisplay(1))));
+        let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() }, false);
         assert_eq!(rows[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
         assert_eq!(rows[3].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Recent(0))));
         assert_eq!(rows[5].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Action(0))));
+    }
+
+    #[test]
+    fn spring_fires_once_after_resting_on_an_icon() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut spring = Spring::default();
+        assert!(spring.over(Some("kate"), t0), "arriving arms it");
+        assert!(!spring.over(Some("kate"), ms(300)), "moving on the same icon doesn't");
+        assert_eq!(spring.due(ms(599)), None);
+        assert_eq!(spring.due(ms(600)).as_deref(), Some("kate"));
+        assert_eq!(spring.due(ms(900)), None, "once per visit");
+        assert!(spring.over(Some("kitty"), ms(1000)));
+        assert!(!spring.over(None, ms(1300)), "leaving arms nothing");
+        assert_eq!(spring.due(ms(1700)), None, "left before the delay");
+        spring.over(Some("kate"), ms(2000));
+        assert_eq!(spring.due(ms(2600)).as_deref(), Some("kate"), "coming back springs again");
+    }
+
+    #[test]
+    fn assign_saves_as_one_line() {
+        let mut map = std::collections::BTreeMap::new();
+        assert_eq!(inline_table(&map), "{}");
+        map.insert("org.kde.kate".to_owned(), "all".to_owned());
+        map.insert("kitty".to_owned(), "DP-1:2".to_owned());
+        let line = inline_table(&map);
+        assert_eq!(line, r#"{ "kitty" = "DP-1:2", "org.kde.kate" = "all" }"#);
+        let back: toml::Table = toml::from_str(&format!("assign = {line}")).unwrap();
+        assert_eq!(back["assign"]["org.kde.kate"].as_str(), Some("all"));
     }
 
     #[test]
