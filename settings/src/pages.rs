@@ -139,6 +139,7 @@ symbols![
     "info",
     "magnifying-glass",
     "user-circle",
+    "check",
 ];
 
 /// A Phosphor fill symbol, loaded once.
@@ -501,7 +502,20 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         },
         Page::Sound => {
             let mut parts = Vec::new();
-            for (output, header, device) in [(true, "Output", &status.output), (false, "Input", &status.input)] {
+            for (output, header, device, choices) in [(true, "Output", &status.output, &status.outputs), (false, "Input", &status.input, &status.inputs)] {
+                // More than one: pick the default, a check by the current one (macOS's device table).
+                if choices.len() > 1 {
+                    let rows = choices
+                        .iter()
+                        .map(|c| {
+                            let mark: Element<'_, Message> =
+                                if c.current { svg(icon("check")).width(14).height(14).style(Tokens::tint(t.accent)).into() } else { space().width(14).into() };
+                            let item = row![text(&c.name).size(13).width(Length::Fill), mark].spacing(12).align_y(Alignment::Center);
+                            button(item).padding([8, 12]).width(Length::Fill).style(t.sidebar_row(false)).on_press(Message::DefaultDevice(c.id)).into()
+                        })
+                        .collect();
+                    parts.push(group(t, if output { "Output device" } else { "Input device" }, rows));
+                }
                 let Some(device) = device else {
                     parts.push(group(t, header, vec![fact(t, if output { "No output device" } else { "No microphone" }, String::new())]));
                     continue;
