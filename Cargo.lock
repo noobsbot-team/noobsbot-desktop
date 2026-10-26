@@ -2099,6 +2099,7 @@ dependencies = [
 name = "noobsbot-desktop-settings"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "futures-lite",
  "iced",
  "notify",

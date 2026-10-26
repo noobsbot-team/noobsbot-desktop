@@ -151,8 +151,17 @@ impl App {
     }
 
     fn retheme(&mut self) {
-        // ponytail: `auto` is light, as in the desktop, until the Auto schedule exists.
-        self.tokens = Tokens::new(self.config.str("appearance.mode") == "dark", self.config.str("appearance.accent"));
+        // `auto` follows the hours the desktop uses (render::dark_at).
+        let dark = match self.config.str("appearance.mode") {
+            "dark" => true,
+            "auto" => {
+                let (from, until) = (self.config.num("appearance.dark_from") as u32 % 24, self.config.num("appearance.dark_until") as u32 % 24);
+                let hour = chrono::Timelike::hour(&chrono::Local::now());
+                if from <= until { (from..until).contains(&hour) } else { hour >= from || hour < until }
+            }
+            _ => false,
+        };
+        self.tokens = Tokens::new(dark, self.config.str("appearance.accent"));
     }
 
     fn save(&mut self, key: &str, value: impl Into<toml_edit::Value>) {
