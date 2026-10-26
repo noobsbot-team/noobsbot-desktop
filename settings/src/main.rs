@@ -222,6 +222,10 @@ pub enum Message {
     Users(users::Users),
     /// An account change finished: the accounts again and what went wrong.
     UsersActed((users::Users, Option<String>)),
+    /// Users ▸ Change Picture…: the chooser opens or closes.
+    PictureChooser,
+    /// This file becomes the account's picture.
+    Picture(std::path::PathBuf),
 }
 
 impl App {
@@ -364,6 +368,16 @@ impl App {
             }
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Users(users) => self.users = Some(users),
+            Message::PictureChooser => {
+                if self.texts.remove(users::PICTURE_FILE).is_none() {
+                    self.texts.insert(users::PICTURE_FILE.into(), String::new());
+                }
+            }
+            Message::Picture(file) => {
+                let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
+                self.texts.remove(users::PICTURE_FILE);
+                return Task::perform(users::set_picture(me.path.clone(), file), Message::UsersActed);
+            }
             Message::UsersActed((users, error)) => {
                 self.users = Some(users);
                 self.error = error;
