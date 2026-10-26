@@ -1,4 +1,4 @@
-//! The on-screen keyboard (E8.6): a `panel` glass slab, radius 14, with keys on `fill` × 2 (radius 6) and their
+//! The on-screen keyboard (E8.6): a `panel` glass slab (radius 16), with keys on `fill` × 2 (radius 6) and their
 //! labels; latched modifiers on the accent.
 
 use smithay::backend::renderer::gles::{GlesRenderer, element::PixelShaderElement};
@@ -9,7 +9,7 @@ use super::{
     ui::{Align, BODY, CALLOUT, Ui},
 };
 use crate::{
-    shell::osk::{self, RADIUS},
+    shell::osk,
     symbols::Symbols,
     text::{Rendered, Style, Text},
     wm::Rect,
@@ -45,7 +45,7 @@ impl OnScreenKeyboard {
         let key = ((output.w, output.h), key_labels, latched.to_vec(), dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.cache.as_ref().is_none_or(|(k, ..)| *k != key) {
             let mut ui = Ui { shaders, text, symbols, dark, accent, glass_opacity, scale, glass: Vec::new(), pieces: Vec::new() };
-            ui.material(osk::panel(output), Material::Panel, Some(RADIUS));
+            ui.material(osk::panel(output), Material::Panel, None);
             let [r, g, b] = accent.map(|c| f32::from(c) / 255.0);
             for ((rect, (code, _, own)), label) in osk::key_rects(output).into_iter().zip(osk::keys()).zip(&key.1) {
                 let on = latched.contains(&code);
