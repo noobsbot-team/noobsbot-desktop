@@ -65,7 +65,7 @@ pub enum Update {
     /// Shown tray items, left to right.
     Tray(Vec<tray::TrayItem>),
     /// The rows of a tray item's menu, after `Command::TrayMenu`.
-    TrayMenu { service: String, menu: String, rows: Vec<Option<tray::MenuRow>> },
+    TrayMenu { service: String, menu: String, parent: i32, rows: Vec<Option<tray::MenuRow>> },
     /// A new notification, or one replacing the notification with its id.
     Notify(Box<notifications::Notification>),
     /// An app's `CloseNotification`.
@@ -147,10 +147,11 @@ pub enum Command {
         x: i32,
         y: i32,
     },
-    /// Fetch a tray item's dbusmenu.
+    /// Fetch a tray item's dbusmenu, or (`parent` ≠ 0) one of its submenus.
     TrayMenu {
         service: String,
         menu: String,
+        parent: i32,
     },
     /// A row of that menu was clicked.
     TrayClicked {
@@ -363,7 +364,7 @@ async fn handle(
             (Command::KbdBacklight(change), Some(bus), _) => power::kbd_backlight(bus, change, updates).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
             (Command::TrayActivate { service, path, x, y }, _, Some(bus)) => tray::activate(bus, &service, &path, x, y).await,
-            (Command::TrayMenu { service, menu }, _, Some(bus)) => tray::menu(bus, service, menu, updates).await,
+            (Command::TrayMenu { service, menu, parent }, _, Some(bus)) => tray::menu(bus, service, menu, parent, updates).await,
             (Command::TrayClicked { service, menu, id }, _, Some(bus)) => tray::clicked(bus, &service, &menu, id).await,
             (Command::Suspend | Command::Reboot | Command::PowerOff, Some(bus), _) => power(bus, &name).await,
             (Command::Wifi(on), Some(bus), _) => network::set_wifi(bus, on).await,

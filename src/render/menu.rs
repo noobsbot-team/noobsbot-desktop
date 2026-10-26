@@ -42,6 +42,11 @@ impl MenuPopover {
         self.layout.as_ref().map(|(rect, _)| *rect)
     }
 
+    /// Row `i`'s rect as last drawn.
+    pub fn cell(&self, i: usize) -> Option<Rect> {
+        self.layout.as_ref()?.1.get(i).copied()
+    }
+
     /// The row (separators count) under `location`.
     pub fn row_at(&self, location: Point<f64, Logical>) -> Option<usize> {
         self.layout.as_ref()?.1.iter().position(|r| r.to_f64().contains(location))
@@ -62,7 +67,7 @@ impl MenuPopover {
     }
 
     /// Front to back: labels, the hover pill, the card with its separators, its shadow. `hover` is the pointer,
-    /// output-relative.
+    /// output-relative; row `open` (its submenu is open) stays lit while the pointer is elsewhere.
     #[allow(clippy::too_many_arguments)]
     pub fn elements(
         &mut self,
@@ -73,6 +78,7 @@ impl MenuPopover {
         anchor: shell::Anchor,
         output: Size<i32, Logical>,
         hover: Point<f64, Logical>,
+        open: Option<usize>,
         dark: bool,
         accent: [u8; 3],
         glass_opacity: f32,
@@ -86,15 +92,18 @@ impl MenuPopover {
 
         // Sized to the widest label plus its shortcut.
         let mut width = MIN_WIDTH;
+        // A submenu row shows a chevron where a shortcut would be.
+        let side = |row: &Row| if row.sub.is_empty() { row.shortcut } else { "›" };
+        let live = |row: &Row| row.action.is_some() || !row.sub.is_empty();
         for row in rows.iter().flatten() {
-            let shortcut = if row.shortcut.is_empty() { 0 } else { SHORTCUT_GAP + logical(text.label(row.shortcut, body, 200, scale).width) };
+            let shortcut = if side(row).is_empty() { 0 } else { SHORTCUT_GAP + logical(text.label(side(row), body, 200, scale).width) };
             width = width.max(logical(text.label(&row.label, body, 400, scale).width) + shortcut + 2 * (SIDE + PAD));
         }
         if self.scroll.2 != Some((anchor, rows.len())) {
             self.scroll = (0, 0.0, Some((anchor, rows.len())));
         }
         let (rect, cells) = shell::menu_layout(anchor, output, width, rows, self.scroll.0);
-        let hovered = cells.iter().position(|c| c.to_f64().contains(hover)).filter(|&i| rows[i].as_ref().is_some_and(|r| r.action.is_some()));
+        let hovered = cells.iter().position(|c| c.to_f64().contains(hover)).filter(|&i| rows[i].as_ref().is_some_and(live)).or(open);
 
         let separators: Vec<Rect> = rows
             .iter()
@@ -127,13 +136,13 @@ impl MenuPopover {
         let mut pieces = Vec::new();
         for (i, row) in rows.iter().enumerate() {
             let Some(row) = row else { continue };
-            let (main, side) = match (Some(i) == hovered, row.action.is_some()) {
+            let (main, second) = match (Some(i) == hovered, live(row)) {
                 (true, _) => (white, white),
                 (false, true) => (label, secondary),
                 (false, false) => (disabled, disabled),
             };
             pieces.push(text.label(&row.label, Style { color: main, ..body }, 400, scale));
-            pieces.push(text.label(row.shortcut, Style { color: side, ..body }, 200, scale));
+            pieces.push(text.label(side(row), Style { color: second, ..body }, 200, scale));
         }
         self.labels = keep_buffers(&self.labels, pieces);
 
