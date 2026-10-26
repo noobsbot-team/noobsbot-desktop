@@ -184,6 +184,7 @@ scale = 0.0
 # primary = true          # the menu bar and dock go on this one (else the first display)
 # mirror = ""             # a connector ("eDP-1"): show that display's picture here; "" = extend the desktop
 # vrr = false             # variable refresh rate (adaptive sync), where the display supports it
+# underscan = 0           # percent (0-10) the picture shrinks by, black around it, for TVs that crop the edges
 
 [windows]
 # Hold this key and drag anywhere in a window to move it: "super" or "alt".

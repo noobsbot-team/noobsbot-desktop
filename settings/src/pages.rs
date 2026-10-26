@@ -2214,6 +2214,16 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
         if d.vrr_capable {
             rows.push(line(t, "Variable refresh rate", "", toggle(t, d.vrr, move |on| change(vec![("vrr", on.into())]))));
         }
+        // TVs crop the picture's edges (overscan); they come on HDMI.
+        if d.name.starts_with("HDMI-") {
+            let key = format!("display.underscan.{}", d.name);
+            let value = app.drafts.get(&key).copied().unwrap_or(f64::from(d.underscan));
+            let slide = key.clone();
+            let bar =
+                slider(0.0..=10.0, value, move |v| Message::Slide(slide.clone(), v)).step(1.0).on_release(Message::Release(key)).width(150).style(t.slider());
+            let shown = text(format!("{value:.0}%")).size(12).color(t.secondary()).width(48).align_x(iced::alignment::Horizontal::Right);
+            rows.push(line(t, "Underscan", "Shrinks the picture when a TV cuts off its edges", row![bar, shown].spacing(8).align_y(Alignment::Center).into()));
+        }
     }
     // The entry's own scale; 0 or none = the default ([display] scale, else auto). A mirror is drawn in its own pixels.
     if d.mirror.is_empty() {

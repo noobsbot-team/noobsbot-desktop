@@ -422,6 +422,10 @@ impl App {
             }
             Message::Release(key) => {
                 let Some(value) = self.drafts.remove(&key) else { return Task::none() };
+                if let Some(name) = key.strip_prefix("display.underscan.") {
+                    self.change_outputs(vec![(name.to_owned(), "underscan", (value.round() as i64).into())], false);
+                    return Task::none();
+                }
                 match key.as_str() {
                     "sound.output" | "sound.input" => return Task::perform(system::set_volume(key == "sound.output", value.round() as u8), Message::Status),
                     "sound.balance" => return Task::perform(system::set_balance((value / 100.0) as f32), Message::Status),
