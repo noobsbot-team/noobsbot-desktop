@@ -586,6 +586,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     event_loop.run(None, &mut state, |state| {
         state.access_frame();
         state.sync_toplevel_list();
+        state.sync_workspaces();
         let _ = state.display_handle.flush_clients();
     })?;
     Ok(())
