@@ -14,6 +14,7 @@ use smithay::{
 use super::{
     Material, SceneElement, Shaders,
     titlebar::{Label, keep_buffers},
+    ui::{self, Ui},
 };
 use crate::{
     apps::Icons,
@@ -30,7 +31,7 @@ const FALLBACK_ICON: &str = "application-x-executable";
 /// and keeps white names above 4.5:1 on the brightest wallpaper (D2).
 const DIM: [f32; 4] = [0.08, 0.08, 0.08, 0.6];
 const WHITE: [u8; 4] = [255, 255, 255, 255];
-const CALLOUT: Style = Style { size: 12, line_height: 15, weight: 400, color: WHITE, tabular: false };
+const CALLOUT: Style = Style { color: WHITE, ..ui::CALLOUT };
 
 /// What one frame shows.
 pub struct Frame<'a> {
@@ -160,7 +161,7 @@ impl LaunchpadView {
                 let caret = x + logical(text.label(&name.text[..name.caret], style, 4000, scale).width).min(w);
                 front.push((Rectangle::new((caret, f.loc.y + 4).into(), (1, f.size.h - 8).into()), [ar, ag, ab, alpha], 0.0, false));
             }
-            front.push((panel, tint(alpha), 20.0, true));
+            front.push((panel, tint(alpha), spec.radius, true));
             let [r, g, b, a] = DIM;
             front.push((Rectangle::from_size(output), [r, g, b, a * alpha], 0.0, false));
         }
@@ -191,13 +192,16 @@ impl LaunchpadView {
         }
 
         // The search pill: magnifier and "Search" centred while empty, else the magnifier left and the text after it.
-        let ink = |a: f32| if dark { [255, 255, 255, (a * 255.0) as u8] } else { [0, 0, 0, (a * 255.0) as u8] };
-        let body = Style { size: 13, line_height: 16, weight: 400, color: ink(0.85), tabular: false };
+        // D2 ink from a `Ui` made for the purpose (this view draws without one).
+        let (label, secondary, tertiary) = {
+            let ui = Ui { shaders, text: &mut *text, symbols: &mut *symbols, dark, accent, glass_opacity, scale, glass: Vec::new(), pieces: Vec::new() };
+            (ui.label(), ui.secondary(), ui.tertiary())
+        };
+        let body = Style { color: label, ..ui::BODY };
         let f = grid.field;
-        let glyph = symbols.get(Symbol::MagnifyingGlass, Weight::Regular, 14, scale, ink(if dark { 0.55 } else { 0.5 }));
+        let glyph = symbols.get(Symbol::MagnifyingGlass, Weight::Regular, 14, scale, secondary);
         let shown_text = field.display();
-        let (words, style) =
-            if shown_text.is_empty() { ("Search", Style { color: ink(if dark { 0.25 } else { 0.26 }), ..body }) } else { (shown_text.as_str(), body) };
+        let (words, style) = if shown_text.is_empty() { ("Search", Style { color: tertiary, ..body }) } else { (shown_text.as_str(), body) };
         let room = f.size.w - 2 * 10 - 14 - 6;
         let label = text.label(words, style, room as u32, scale);
         let w = logical(label.width).min(room);
