@@ -474,10 +474,13 @@ impl State {
     }
 
     /// The display the open popup shows on: a bar popup on its bar's (`bar_output`), the dock's menu on its dock's
-    /// (`dock_output`), the others on the first.
+    /// (`dock_output`), the app drawer's menu on the drawer's, the others on the first.
     pub fn popup_output(&self) -> Option<smithay::output::Output> {
         if self.popup == Some(Popup::Menu(Menu::Dock)) {
             return self.dock_output();
+        }
+        if self.popup == Some(Popup::Menu(Menu::Drawer)) {
+            return self.drawer_output();
         }
         let first = self.space.outputs().next();
         let bar = self.bar_output.as_ref().filter(|o| self.space.outputs().any(|x| x == *o));
@@ -558,7 +561,7 @@ impl State {
         if self.force_quit.is_some() && self.force_quit_layout(0).is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
-        if self.launchpad_open() || self.drawer_layout().is_some_and(|l| l.rect.to_f64().contains(location)) {
+        if self.launchpad_open() || self.drawer_layout().is_some_and(|l| l.rect.to_f64().contains(self.to_drawer(location))) {
             return true;
         }
         // The screenshot thumbnail, unless it is being dragged (then the app under it is the drop target).
@@ -1076,6 +1079,18 @@ mod tests {
         let local = rebase(pointer, screens[0].loc, screens[at].loc);
         assert_eq!(local, (1270.0, 700.0).into());
         assert!(Rectangle::from_size(screens[at].size).to_f64().contains(local));
+    }
+
+    #[test]
+    fn drawer_sits_over_its_dock_icon_on_that_display() {
+        use drawer::{Anchor, layout, layout::GAP};
+        let [_, left] = two_displays();
+        // The icon's centre and top, relative to the left display's dock (and so to that display).
+        let l = layout(Anchor::Dock((1200, 960).into()), left.size, 80, 8);
+        assert_eq!(l.rect.loc.y + l.rect.size.h, 960 - GAP);
+        assert_eq!(l.rect.loc.x + l.rect.size.w, left.size.w - GAP, "pushed in from the display's right edge");
+        let global = Rectangle::new(l.rect.loc + left.loc, l.rect.size);
+        assert_eq!(global.intersection(left), Some(global), "wholly on the left display");
     }
 
     #[test]

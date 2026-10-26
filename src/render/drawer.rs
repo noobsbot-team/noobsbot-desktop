@@ -44,6 +44,8 @@ pub struct DrawerView {
     labels: Vec<Label>,
     entrance: Option<Entrance>,
     fade: Fading,
+    /// The display it was last drawn on, by name: its fade-out plays there.
+    pub output: Option<String>,
 }
 
 impl DrawerView {
