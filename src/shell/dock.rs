@@ -771,6 +771,9 @@ pub struct Ui {
     uris: Arc<Mutex<Option<String>>>,
     /// The icon whose window previews show (after PEEK_DELAY).
     pub peek: Option<Peeking>,
+    /// The open menu's recent files (URIs) and Open at Login state, read as it opens.
+    recent: Vec<String>,
+    login: Option<bool>,
 }
 
 /// An icon with several windows, hovered.
@@ -830,41 +833,91 @@ impl Ui {
 /// A row of a dock icon's menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
-    /// Brings the app's n-th window forward.
+    /// Brings the app's n-th window forward (restoring it if minimised).
     Window(usize),
+    /// Opens the n-th of the app's recent files with it.
+    Recent(usize),
     /// Keep in Dock, ticked while pinned.
     Pin,
+    /// Open at Login: a copy of the app's desktop file in `~/.config/autostart`.
+    Login,
+    /// Shows the app's desktop file in the file manager.
+    ShowInFiles,
     /// Close / Close All.
     Close,
     /// The app's n-th desktop action.
     Action(usize),
 }
 
-/// Plank's menu: Keep in Dock (`pinned`: `None` when it can't be pinned) and Close (Close All with several windows),
-/// then the app's desktop actions, then its windows when there are several, the `active` one greyed.
-pub fn menu_rows(titles: &[String], active: Option<usize>, pinned: Option<bool>, actions: &[String]) -> Vec<Option<Row>> {
+/// The menu in macOS's order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
+/// actions, the Options section (Keep in Dock, `pinned` `None` when it can't be pinned; Open at Login, `login` `None`
+/// without a desktop file, which also hides Show in Files), then Close (Close All with several windows).
+// ponytail: Options is an inline section, since dock menu rows have no submenus yet.
+pub fn menu_rows(
+    titles: &[String],
+    active: Option<usize>,
+    recent: &[String],
+    actions: &[String],
+    pinned: Option<bool>,
+    login: Option<bool>,
+) -> Vec<Option<Row>> {
     let row = |label: &str, shortcut, command: Option<Command>| Some(Row { label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
-    let mut first = Vec::new();
+    let tick = |on: bool| if on { "✓" } else { "" };
+    let windows = titles.iter().enumerate().map(|(i, t)| row(t, "", (active != Some(i)).then_some(Command::Window(i)))).collect();
+    let recent = recent.iter().enumerate().map(|(i, r)| row(r, "", Some(Command::Recent(i)))).collect();
+    let actions = actions.iter().enumerate().map(|(i, a)| row(a, "", Some(Command::Action(i)))).collect();
+    let mut options = Vec::new();
     if let Some(pinned) = pinned {
-        first.push(row("Keep in Dock", if pinned { "✓" } else { "" }, Some(Command::Pin)));
+        options.push(row("Keep in Dock", tick(pinned), Some(Command::Pin)));
     }
-    if !titles.is_empty() {
-        first.push(row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close)));
+    if let Some(login) = login {
+        options.push(row("Open at Login", tick(login), Some(Command::Login)));
+        options.push(row("Show in Files", "", Some(Command::ShowInFiles)));
     }
-    let actions: Vec<Option<Row>> = actions.iter().enumerate().map(|(i, a)| row(a, "", Some(Command::Action(i)))).collect();
-    let windows: Vec<Option<Row>> = if titles.len() > 1 {
-        titles.iter().enumerate().map(|(i, t)| row(t, "", (active != Some(i)).then_some(Command::Window(i)))).collect()
-    } else {
-        Vec::new()
-    };
+    let close = if titles.is_empty() { Vec::new() } else { vec![row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close))] };
     let mut rows = Vec::new();
-    for group in [first, actions, windows].into_iter().filter(|g| !g.is_empty()) {
+    for group in [windows, recent, actions, options, close] {
+        if group.is_empty() {
+            continue;
+        }
         if !rows.is_empty() {
             rows.push(None);
         }
         rows.extend(group);
     }
     rows
+}
+
+/// The `href`s in a `recently-used.xbel` whose bookmark names one of `apps` (any case), most recently used first.
+// ponytail: a string scan, not an XML parser; enough for the files GLib and KDE write.
+pub fn recent_files(xbel: &str, apps: &[&str]) -> Vec<String> {
+    let attr = |tag: &str, key: &str| -> Option<String> {
+        let start = tag.find(&format!(" {key}=\""))? + key.len() + 3;
+        let value = &tag[start..start + tag[start..].find('"')?];
+        Some(value.replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&apos;", "'").replace("&amp;", "&"))
+    };
+    // The tag up to `>`, with a space before its first attribute, which the split ate.
+    let head = |s: &str| format!(" {}", &s[..s.find('>').unwrap_or(s.len())]);
+    let mut found: Vec<(String, String)> = Vec::new();
+    for bookmark in xbel.split("<bookmark ").skip(1) {
+        let Some(href) = attr(&head(bookmark), "href") else { continue };
+        let used = bookmark
+            .split("<bookmark:application ")
+            .skip(1)
+            .map(head)
+            .filter(|a| attr(a, "name").is_some_and(|n| apps.iter().any(|app| app.eq_ignore_ascii_case(&n))));
+        if let Some(at) = used.map(|a| attr(&a, "modified").unwrap_or_default()).max() {
+            found.push((at, href));
+        }
+    }
+    // ISO 8601 times in UTC sort as text.
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    found.into_iter().map(|(_, href)| href).collect()
+}
+
+/// `~/.config/autostart/<id>.desktop`.
+fn autostart_path(id: &str) -> std::path::PathBuf {
+    config::xdg_dir("XDG_CONFIG_HOME", ".config").join("autostart").join(format!("{id}.desktop"))
 }
 
 /// The slot an icon dragged to `x` lands in: the column under it, clamped to `0..=max`.
@@ -937,7 +990,8 @@ impl State {
                 let title = w
                     .toplevel()
                     .and_then(|t| with_states(t.wl_surface(), |s| s.data_map.get::<XdgToplevelSurfaceData>().and_then(|d| d.lock().ok()?.title.clone())));
-                title.filter(|t| !t.is_empty()).map_or_else(|| name.clone(), |t| short_title(&t, &name))
+                let title = title.filter(|t| !t.is_empty()).map_or_else(|| name.clone(), |t| short_title(&t, &name));
+                if self.hidden.iter().any(|(h, _)| h == w) { format!("◆ {title}") } else { title }
             })
             .collect();
         let focused = self.focused_window();
@@ -945,13 +999,24 @@ impl State {
         let pinnable = !self.config.dock.lock_items && !item.is_tile() && (item.app.is_some() || Builtin::of(&item.key).is_some());
         let pinned = pinnable.then(|| self.dock_pinned().iter().any(|(_, id)| *id == item.key));
         let actions: Vec<String> = item.app.as_ref().map(|a| crate::apps::actions(&a.id).into_iter().map(|(n, _)| n).collect()).unwrap_or_default();
-        menu_rows(&titles, active, pinned, &actions)
+        let name_of = |uri: &String| crate::apps::file_path(uri).and_then(|p| Some(std::path::Path::new(&p).file_name()?.to_string_lossy().into_owned()));
+        let recent: Vec<String> = self.dock_ui.recent.iter().map(|u| name_of(u).unwrap_or_else(|| u.clone())).collect();
+        menu_rows(&titles, active, &recent, &actions, pinned, self.dock_ui.login)
     }
 
     /// Right click: icon `i`'s menu, centred over it.
     fn dock_open_menu(&mut self, key: String, layout: &Layout, i: usize) {
         let (left, right) = layout.columns[i];
         let at = Point::from((((left + right) / 2.0).round() as i32, layout.icons[i].loc.y.round() as i32));
+        // An app with a desktop file (not a builtin) gets Open at Login, Show in Files and its recent files.
+        let app = self.apps.find(&key).filter(|a| Builtin::of(&key).is_none() && !a.path.as_os_str().is_empty());
+        self.dock_ui.login = app.map(|a| std::fs::read_to_string(autostart_path(&a.id)).is_ok_and(|t| !t.contains("Hidden=true")));
+        self.dock_ui.recent = app.map_or_else(Vec::new, |a| {
+            let xbel = std::fs::read_to_string(config::xdg_dir("XDG_DATA_HOME", ".local/share").join("recently-used.xbel")).unwrap_or_default();
+            let program = a.program();
+            let files = recent_files(&xbel, &[&a.id, &a.name, &program]);
+            files.into_iter().filter(|u| crate::apps::file_path(u).is_none_or(|p| std::path::Path::new(&p).exists())).take(5).collect()
+        });
         self.dock_ui.menu = Some((key, at));
         self.dock_fx.tip_hidden = true;
         self.popup = Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock));
@@ -992,6 +1057,29 @@ impl State {
                 let pinned = self.dock_pinned();
                 let to = (!pinned.iter().any(|(_, id)| *id == item.key)).then_some(pinned.len());
                 self.dock_repin(&item.key, to);
+            }
+            Command::Recent(i) => {
+                let (Some(app), Some(uri)) = (item.app, self.dock_ui.recent.get(i).cloned()) else { return };
+                self.spawn(&app.command_with(&[uri]));
+            }
+            Command::Login => {
+                let Some(app) = item.app else { return };
+                let path = autostart_path(&app.id);
+                let done = if self.dock_ui.login == Some(true) {
+                    std::fs::remove_file(&path)
+                } else {
+                    path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::copy(&app.path, &path).map(drop))
+                };
+                let _ = done.inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
+            }
+            Command::ShowInFiles => {
+                let Some(app) = item.app else { return };
+                let dir = app.path.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+                let uri = format!("file://{}", app.path.display());
+                // The file manager's ShowItems selects it; without one, its folder opens.
+                let script = "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 /org/freedesktop/FileManager1 \
+                              org.freedesktop.FileManager1.ShowItems array:string:\"$1\" string: >/dev/null 2>&1 || xdg-open \"$2\"";
+                self.spawn(&["sh", "-c", script, "sh", &uri, &dir].map(String::from));
             }
             Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             Command::Action(i) => {
@@ -1281,23 +1369,67 @@ mod tests {
     }
 
     #[test]
-    fn menu_is_planks() {
+    fn menu_is_macs() {
         let labels = |rows: Vec<Option<Row>>| rows.into_iter().map(|r| r.map(|r| (r.label, r.shortcut, r.action.is_some()))).collect::<Vec<_>>();
         let s = |l: &str, tick: &'static str, on: bool| Some((l.to_owned(), tick, on));
-        let two = ["a.txt".to_owned(), "b.txt".to_owned()];
+        let two = ["a.txt".to_owned(), "◆ b.txt".to_owned()];
         let actions = ["New Window".to_owned()];
+        let recent = ["notes.md".to_owned()];
         assert_eq!(
-            labels(menu_rows(&two, Some(1), Some(true), &actions)),
-            [s("Keep in Dock", "✓", true), s("Close All", "", true), None, s("New Window", "", true), None, s("a.txt", "", true), s("b.txt", "", false)]
+            labels(menu_rows(&two, Some(0), &recent, &actions, Some(true), Some(false))),
+            [
+                s("a.txt", "", false),
+                s("◆ b.txt", "", true),
+                None,
+                s("notes.md", "", true),
+                None,
+                s("New Window", "", true),
+                None,
+                s("Keep in Dock", "✓", true),
+                s("Open at Login", "", true),
+                s("Show in Files", "", true),
+                None,
+                s("Close All", "", true)
+            ]
         );
-        // One window: Close, and no window list.
-        assert_eq!(labels(menu_rows(&two[..1], Some(0), Some(false), &[])), [s("Keep in Dock", "", true), s("Close", "", true)]);
-        // Not running; locked items (or no desktop entry): nothing to pin.
-        assert_eq!(labels(menu_rows(&[], None, Some(true), &[])), [s("Keep in Dock", "✓", true)]);
-        assert_eq!(labels(menu_rows(&two[..1], None, None, &[])), [s("Close", "", true)]);
-        let rows = menu_rows(&two, None, None, &actions);
-        assert_eq!(rows[2].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Action(0))));
-        assert_eq!(rows[5].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
+        // Not running; locked items, no desktop file: nothing to pin, no login item.
+        assert_eq!(
+            labels(menu_rows(&[], None, &[], &[], Some(true), Some(true))),
+            [s("Keep in Dock", "✓", true), s("Open at Login", "✓", true), s("Show in Files", "", true)]
+        );
+        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], None, None)), [s("a.txt", "", true), None, s("Close", "", true)]);
+        let rows = menu_rows(&two, None, &recent, &actions, None, None);
+        assert_eq!(rows[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
+        assert_eq!(rows[3].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Recent(0))));
+        assert_eq!(rows[5].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Action(0))));
+    }
+
+    #[test]
+    fn recent_files_of_an_app() {
+        let xbel = r#"<?xml version="1.0" encoding="UTF-8"?>
+<xbel version="1.0" xmlns:bookmark="http://www.freedesktop.org/standards/desktop-bookmarks">
+  <bookmark href="file:///home/u/old.txt" added="2026-01-01T00:00:00Z" modified="2026-01-01T00:00:00Z">
+    <info><metadata owner="http://freedesktop.org"><bookmark:applications>
+      <bookmark:application name="Kate" exec="&apos;kate %u&apos;" modified="2026-01-02T00:00:00Z" count="1"/>
+    </bookmark:applications></metadata></info>
+  </bookmark>
+  <bookmark href="file:///home/u/a%20b&amp;c.txt" added="2026-01-01T00:00:00Z" modified="2026-03-01T00:00:00Z">
+    <info><metadata owner="http://freedesktop.org"><bookmark:applications>
+      <bookmark:application name="gedit" exec="&apos;gedit %U&apos;" modified="2026-05-01T00:00:00Z" count="2"/>
+      <bookmark:application name="org.kde.kate" exec="&apos;kate %u&apos;" modified="2026-02-01T00:00:00Z" count="1"/>
+    </bookmark:applications></metadata></info>
+  </bookmark>
+  <bookmark href="file:///home/u/pic.png" modified="2026-09-01T00:00:00Z">
+    <info><metadata owner="http://freedesktop.org"><bookmark:applications>
+      <bookmark:application name="gwenview" exec="gwenview %u" modified="2026-09-01T00:00:00Z" count="1"/>
+    </bookmark:applications></metadata></info>
+  </bookmark>
+</xbel>"#;
+        // Ordered by when this app used them, not by another app's later use.
+        assert_eq!(recent_files(xbel, &["org.kde.kate", "kate"]), ["file:///home/u/a%20b&c.txt", "file:///home/u/old.txt"]);
+        assert_eq!(recent_files(xbel, &["GEDIT"]), ["file:///home/u/a%20b&c.txt"]);
+        assert!(recent_files(xbel, &["dolphin"]).is_empty());
+        assert!(recent_files("", &["kate"]).is_empty());
     }
 
     #[test]
