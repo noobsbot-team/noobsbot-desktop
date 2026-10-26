@@ -343,7 +343,10 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         }
         Some("alert-wifi") => {
             let field = ui::field::TextField { text: "hunter22".into(), caret: 8, secure: true, all: false };
-            state.alert = Some(shell::alert::Alert { kind: shell::alert::Kind::Wifi { ssid: "Home Network".into(), join: None, field }, deadline: None });
+            state.alert = Some(shell::alert::Alert {
+                kind: shell::alert::Kind::Wifi { ssid: "Home Network".into(), join: None, field, secret: services::network::Secret::Psk },
+                deadline: None,
+            });
         }
         Some("alert-pin") => {
             let field = ui::field::TextField { text: "0000".into(), caret: 4, secure: false, all: false };
