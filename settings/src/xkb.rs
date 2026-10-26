@@ -52,6 +52,13 @@ pub fn lists(sources: &[(String, String)]) -> (String, String) {
     (layouts, variants)
 }
 
+/// `sources` with entry `i` swapped with its neighbour `to` (the ↑ / ↓ buttons).
+pub fn moved(sources: &[(String, String)], i: usize, to: usize) -> Vec<(String, String)> {
+    let mut list = sources.to_vec();
+    list.swap(i, to);
+    list
+}
+
 /// A source's name, or its codes when the rules list doesn't have it.
 pub fn name(layout: &str, variant: &str) -> String {
     ALL.iter()
@@ -109,6 +116,14 @@ mod tests {
         assert_eq!(lists(&sources), ("us,np,de".into(), "intl,,".into()));
         assert_eq!(lists(&chosen("us,np", "")), ("us,np".into(), String::new()));
         assert!(chosen("", "").is_empty());
+    }
+
+    #[test]
+    fn reorder_moves_the_variant_along() {
+        let sources = chosen("us,np,de", "intl,,");
+        assert_eq!(lists(&moved(&sources, 0, 1)), ("np,us,de".into(), ",intl,".into()));
+        assert_eq!(lists(&moved(&sources, 2, 1)), ("us,de,np".into(), "intl,,".into()));
+        assert_eq!(lists(&moved(&chosen("us,np", ""), 1, 0)), ("np,us".into(), String::new()));
     }
     #[test]
     fn options() {
