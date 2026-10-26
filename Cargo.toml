@@ -20,6 +20,11 @@ path = "src/bin/update-helper.rs"
 name = "noobsbot-desktop-watchdog"
 path = "src/bin/watchdog.rs"
 
+# The "System" widget (CPU, memory, disk) for Notification Center or the desktop (E8.8), started by the shell.
+[[bin]]
+name = "noobsbot-desktop-widget-system"
+path = "src/bin/widget-system.rs"
+
 [dependencies]
 smithay = { version = "=0.7.0", default-features = false, features = ["backend_drm", "backend_gbm", "backend_libinput", "backend_session_libseat", "backend_udev", "backend_winit", "desktop", "renderer_gl", "renderer_multi", "wayland_frontend"] }
 notify = "8.2.0"
