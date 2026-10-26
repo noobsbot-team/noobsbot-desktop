@@ -507,7 +507,7 @@ impl State {
     }
 
     /// Shows Space `to` under `key`, focusing its frontmost window.
-    fn show_space_at(&mut self, key: &str, to: usize) {
+    pub(crate) fn show_space_at(&mut self, key: &str, to: usize) {
         if self.go_to(key, to, None) {
             let top = self.top_window_at(key);
             self.focus_window(top, SERIAL_COUNTER.next_serial());
