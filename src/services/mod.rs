@@ -275,17 +275,17 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         .ok();
     brightness::send_current(&updates);
     let (pairing, secret, entry, admin) = (Answer::default(), Answer::default(), Answer::default(), Answer::default());
-    if let (true, Some(bus)) = (agents, &system) {
-        bluetooth::serve_agent(bus, &updates, &pairing, &entry).await;
-        network::serve_agent(bus, &updates, &secret).await;
-        if !polkit::serve(bus, &updates, &admin).await {
-            polkit::fallback();
-        }
+    if let (true, Some(bus)) = (agents, &system)
+        && !polkit::serve(bus, &updates, &admin).await
+    {
+        polkit::fallback();
     }
-    // Inhibitors and Thunderbolt only in a real session: nested, the host keeps its own sleep, power key and docks.
+    // Inhibitors, Thunderbolt and the pairing and password agents only in a real session: nested, the host keeps its
+    // own sleep, power key, docks and agents.
     let logind = async {
         if let (true, Some(bus)) = (agents, &system) {
-            future::zip(login::watch(bus, &updates), bolt::watch(bus, &updates)).await;
+            let agents = future::zip(bluetooth::serve_agent(bus, &updates, &pairing, &entry), network::serve_agent(bus, &updates, &secret));
+            future::zip(future::zip(login::watch(bus, &updates), bolt::watch(bus, &updates)), agents).await;
         }
     };
     let system_clients = async {
@@ -348,6 +348,24 @@ async fn follow<'a, T, F>(
     match streams.await {
         Ok(events) => relay(bus, events, service, updates, wrap, read).await,
         Err(err) => tracing::warn!("{service} off: {err}"),
+    }
+}
+
+/// Runs `register` now and again whenever `service` comes back (it restarted and forgot our agent), for good.
+async fn keep_registered<F: Future<Output = zbus::Result<()>>>(bus: &Connection, service: &str, what: &str, register: impl Fn() -> F) {
+    // Subscribed before the first registration, so a restart in between isn't missed.
+    let owners = async { fdo::DBusProxy::new(bus).await?.receive_name_owner_changed_with_args(&[(0, service)]).await };
+    let owners = owners.await.inspect_err(|err| tracing::warn!("{what}: not re-registered after a restart: {err}")).ok();
+    if let Err(err) = register().await {
+        tracing::warn!("{what} off: {err}");
+    }
+    let Some(owners) = owners else { return };
+    let mut back = owners.filter(|change| change.args().is_ok_and(|a| a.new_owner.is_some()));
+    while back.next().await.is_some() {
+        match register().await {
+            Ok(()) => tracing::info!("{what} registered again"),
+            Err(err) => tracing::warn!("{what} off: {err}"),
+        }
     }
 }
 
