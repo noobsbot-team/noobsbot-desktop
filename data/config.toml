@@ -54,6 +54,16 @@ schedule = "custom"
 from = 19
 until = 7
 
+[accessibility]
+# Zoom (Super+Alt+8 on/off, Super+Alt+= / Super+Alt+- in and out, 1x … 16x): "full" magnifies the whole screen
+# following the pointer, "lens" a window around the pointer.
+zoom_style = "full"
+# The whole screen through a filter: "none", "invert", "invert-hue" (light and dark swap, colours keep their hue) or
+# "greyscale". Screenshots and screen sharing stay true to colour.
+colour_filter = "none"
+# Glass panels, menus and buttons near-opaque, with a visible 1 px border.
+increase_contrast = false
+
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).
 # Example: layout = "us,np"  options = "grp:alt_shift_toggle,caps:escape"
