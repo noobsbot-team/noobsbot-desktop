@@ -85,7 +85,28 @@ impl Popup {
 }
 
 /// How long a submenu stays open while the pointer heads for it across other rows of its menu.
+// ponytail: a fixed grace while the pointer aims at it; a speed-aware one if it feels sticky.
 const AIM_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+/// How long the pointer rests on a row before its submenu opens (or the open one closes); a click opens it at once.
+const OPEN_DELAY: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// The rows of the submenu at the end of `path` (the row of `rows` whose submenu is open, then that submenu's, …);
+/// an empty path: `rows`.
+pub fn sub_rows<'a>(rows: &'a [Option<Row>], path: &[usize]) -> &'a [Option<Row>] {
+    path.iter().try_fold(rows, |rows, &i| Some(&rows.get(i)?.as_ref()?.sub[..])).unwrap_or_default()
+}
+
+/// The tray menu row at the end of `path` (as `sub_rows`).
+fn tray_row<'a>(rows: &'a [Option<MenuRow>], path: &[usize]) -> Option<&'a MenuRow> {
+    let (&last, init) = path.split_last()?;
+    let rows = init.iter().try_fold(rows, |rows, &i| rows.get(i)?.as_ref()?.submenu.as_deref())?;
+    rows.get(last)?.as_ref()
+}
+
+/// The tray menu row with dbusmenu id `id`, at any depth.
+fn tray_find(rows: &mut [Option<MenuRow>], id: i32) -> Option<&mut MenuRow> {
+    rows.iter_mut().flatten().find_map(|r| if r.id == id { Some(r) } else { tray_find(r.submenu.as_deref_mut()?, id) })
+}
 
 /// The pointer going from `from` to `to` heads for submenu `sub`: `to` is in the triangle between `from` and the
 /// submenu's near edge, so a diagonal move across the parent's other rows keeps it open.
@@ -548,11 +569,11 @@ impl State {
         }
     }
 
-    /// The open popup or its open submenu is under `location` (first-output-relative).
+    /// The open popup or one of its open submenus is under `location` (first-output-relative).
     pub fn in_popup(&self, location: Point<f64, Logical>) -> bool {
         let location = self.to_popup(location);
-        let sub = self.open_submenu().and(self.backend.as_ref()).and_then(|b| b.submenu.rect());
-        self.popup_rect().into_iter().chain(sub).any(|r| r.to_f64().contains(location))
+        let subs = (1..=self.open_path().len()).filter_map(|d| self.level_view(d)?.rect());
+        self.popup_rect().into_iter().chain(subs).any(|r| r.to_f64().contains(location))
     }
 
     /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar, an open popup or the dock.
@@ -628,6 +649,7 @@ impl State {
             (None, None) => self.shell_covers(location),
         };
         if self.popup != open {
+            self.submenu = None;
             self.schedule_redraw();
         }
         taken
@@ -672,20 +694,14 @@ impl State {
             Popup::Notifications { .. } => self.center_press(location),
             Popup::Menu(menu) => {
                 let rows = self.open_menu_rows(menu);
-                let Some(backend) = self.backend.as_ref() else { return };
-                let main = backend.menu.row_at(location);
-                let row = match self.open_submenu() {
-                    Some(i) if backend.submenu.rect().is_some_and(|r| r.to_f64().contains(location)) => {
-                        backend.submenu.row_at(location).and_then(|j| rows.get(i)?.as_ref()?.sub.get(j).cloned()).flatten()
-                    }
-                    _ => main.and_then(|i| rows.into_iter().nth(i)).flatten(),
-                };
-                // Separators and disabled rows keep the menu open; a submenu row opens its submenu.
+                let Some((d, Some(i))) = self.menu_level_at(location) else { return };
+                let row = sub_rows(&rows, &self.open_path()[..d]).get(i).cloned().flatten();
+                // Separators and disabled rows keep the menu open; a submenu row opens its submenu at once.
                 if let Some(action) = row.and_then(|row| row.action) {
                     self.popup = None;
                     self.run_action(action);
-                } else if let Some(i) = main {
-                    self.menu_hover(menu, i);
+                } else {
+                    self.menu_hover(menu, d, i);
                 }
             }
             Popup::Control | Popup::Module(..) => self.control_press(location),
@@ -704,27 +720,26 @@ impl State {
         let Some(open) = self.popup else { return };
         let (from, to) = (self.to_popup(from), self.to_popup(to));
         let bar = self.popup_output().and_then(|o| self.bar_view(&o));
-        let Some(backend) = self.backend.as_ref() else { return };
         if let Some(next) = bar.and_then(|b| b.hit(to)).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(|item| self.bar_popup(item)) {
             self.popup = Some(next);
             if matches!(next, Popup::Module(..)) {
                 self.module_opened();
             }
             self.schedule_redraw();
-        } else if let Popup::Menu(menu) = open {
-            let (row, moved) = (backend.menu.row_at(to), backend.menu.row_at(from) != backend.menu.row_at(to));
-            let sub = backend.submenu.row_at(from) != backend.submenu.row_at(to);
-            // Heading for the open submenu across other rows keeps it open a moment.
-            let open = self.open_submenu();
-            let aiming = open.is_some() && row != open && backend.submenu.rect().is_some_and(|r| aims_at(from, to, r));
-            if aiming && row.is_some() {
-                self.aim_wait();
-            } else if let Some(i) = row.filter(|_| moved || self.aim_timer.is_some()) {
-                // A row of the parent opens its submenu or closes the open one.
-                self.aim_cancel();
-                self.menu_hover(menu, i);
+        } else if let Popup::Menu(_) = open {
+            let (here, before) = (self.menu_level_at(to), self.menu_level_at(from));
+            // Heading for an open submenu across other rows of its parent keeps it open a moment.
+            let path = self.open_path();
+            let aiming = here.is_some_and(|(d, row)| {
+                path.get(d).is_some_and(|&o| row != Some(o)) && self.level_view(d + 1).and_then(|v| v.rect()).is_some_and(|r| aims_at(from, to, r))
+            });
+            match here {
+                Some((_, Some(_))) if aiming => self.hover_later(AIM_GRACE, false),
+                // Resting on a row opens its submenu or closes the open one (`menu_hover`).
+                Some((_, Some(_))) if here != before => self.hover_later(OPEN_DELAY, true),
+                _ => {}
             }
-            if moved || (sub && self.open_submenu().is_some()) {
+            if here != before {
                 self.menu_cursor = None;
                 self.schedule_redraw();
             }
@@ -803,25 +818,41 @@ impl State {
             .collect()
     }
 
-    /// The row of the open menu whose submenu is open.
-    pub fn open_submenu(&self) -> Option<usize> {
-        self.submenu.filter(|(popup, _)| Some(*popup) == self.popup).map(|(_, i)| i)
+    /// The open submenus (`State::submenu`) while their menu is the popup.
+    pub fn open_path(&self) -> &[usize] {
+        self.submenu.as_ref().filter(|(popup, _)| Some(*popup) == self.popup).map_or(&[], |(_, path)| path)
     }
 
-    /// Starts the aim grace timer unless it runs: then the row under the pointer gets its submenu (`menu_hover`).
-    fn aim_wait(&mut self) {
-        if self.aim_timer.is_some() {
+    /// Level `d` of the open menu as last drawn: the menu, or its d-th open submenu.
+    fn level_view(&self, d: usize) -> Option<&crate::render::MenuPopover> {
+        let b = self.backend.as_ref()?;
+        if d == 0 { Some(&b.menu) } else { b.submenu.get(d - 1) }
+    }
+
+    /// The deepest open level of the menu under `at` (popup-relative) and its row there.
+    fn menu_level_at(&self, at: Point<f64, Logical>) -> Option<(usize, Option<usize>)> {
+        (0..=self.open_path().len()).rev().find_map(|d| {
+            let view = self.level_view(d)?;
+            view.rect()?.to_f64().contains(at).then(|| (d, view.row_at(at)))
+        })
+    }
+
+    /// After `delay` the row under the pointer gets its submenu (`menu_hover`); `restart`: a running timer starts
+    /// over, else it is left to run.
+    fn hover_later(&mut self, delay: std::time::Duration, restart: bool) {
+        if self.aim_timer.is_some() && !restart {
             return;
         }
-        let timer = self.loop_handle.insert_source(Timer::from_duration(AIM_GRACE), |_, _, state| {
+        self.aim_cancel();
+        let timer = self.loop_handle.insert_source(Timer::from_duration(delay), |_, _, state| {
             state.aim_timer = None;
             let at = state.seat.get_pointer().map(|p| state.to_popup(state.to_output(p.current_location())));
-            if let (Some(Popup::Menu(menu)), Some(i)) = (state.popup, at.and_then(|at| state.backend.as_ref()?.menu.row_at(at))) {
-                state.menu_hover(menu, i);
+            if let (Some(Popup::Menu(menu)), Some((d, Some(i)))) = (state.popup, at.and_then(|at| state.menu_level_at(at))) {
+                state.menu_hover(menu, d, i);
             }
             TimeoutAction::Drop
         });
-        self.aim_timer = timer.inspect_err(|err| tracing::warn!("menu aim timer: {err}")).ok();
+        self.aim_timer = timer.inspect_err(|err| tracing::warn!("menu hover timer: {err}")).ok();
     }
 
     fn aim_cancel(&mut self) {
@@ -830,25 +861,32 @@ impl State {
         }
     }
 
-    /// The pointer or a click is on row `i` of the open `menu`: its submenu opens, any other closes.
-    fn menu_hover(&mut self, menu: Menu, i: usize) {
-        let has_sub = self.open_menu_rows(menu).get(i).and_then(Option::as_ref).is_some_and(|r| !r.sub.is_empty());
-        let next = has_sub.then_some(i);
-        if next == self.open_submenu() {
+    /// The pointer or a click is on row `i` of level `d` of the open `menu`: its submenu opens, any other on that
+    /// level or deeper closes.
+    fn menu_hover(&mut self, menu: Menu, d: usize, i: usize) {
+        self.aim_cancel();
+        let rows = self.open_menu_rows(menu);
+        let mut path = self.open_path().to_vec();
+        path.truncate(d);
+        let opens = sub_rows(&rows, &path).get(i).and_then(Option::as_ref).is_some_and(|r| !r.sub.is_empty());
+        if opens {
+            path.push(i);
+        }
+        if path == self.open_path() {
             return;
         }
-        self.submenu = next.zip(self.popup).map(|(i, popup)| (popup, i));
         // The app may fill a submenu in only when asked (AboutToShow).
-        if let (Some(i), Menu::Tray(_), Some((service, path, rows))) = (next, menu, &self.tray_menu)
-            && let Some(Some(row)) = rows.get(i)
+        if let (true, Menu::Tray(_), Some((service, menu, all))) = (opens, menu, &self.tray_menu)
+            && let Some(row) = tray_row(all, &path)
         {
-            self.services.send(Command::TrayMenu { service: service.clone(), menu: path.clone(), parent: row.id });
+            self.services.send(Command::TrayMenu { service: service.clone(), menu: menu.clone(), parent: row.id });
         }
+        self.submenu = self.popup.map(|popup| (popup, path));
         self.schedule_redraw();
     }
 
     /// The keys of an open menu: Up/Down light the next live row, Right or Return open its submenu or run it, Left
-    /// or Esc back out of a submenu, a letter (`letters`: no shortcut has it) lights the next row starting with it.
+    /// or Esc back out of one submenu, a letter (`letters`: no shortcut has it) lights the next row starting with it.
     /// Left/Right on a bar menu with no submenu in the way go to the neighbouring bar menu. `true`: used.
     pub fn menu_key(&mut self, sym: smithay::input::keyboard::Keysym, letters: bool) -> bool {
         use smithay::input::keyboard::Keysym;
@@ -858,20 +896,19 @@ impl State {
         }
         let Some(popup @ Popup::Menu(menu)) = self.popup else { return false };
         let rows = self.open_menu_rows(menu);
-        let open = self.open_submenu();
-        let (in_sub, at) = self.menu_at();
-        let level = match open.filter(|_| in_sub) {
-            Some(i) => rows.get(i).cloned().flatten().map(|r| r.sub).unwrap_or_default(),
-            None => rows,
-        };
+        let path = self.open_path().to_vec();
+        let (d, at) = self.menu_at();
+        let level = sub_rows(&rows, &path[..d]).to_vec();
         let row = at.and_then(|i| level.get(i).cloned().flatten());
         let has_sub = row.as_ref().is_some_and(|r| !r.sub.is_empty());
-        let bar = popup.item().filter(|_| !in_sub);
+        let bar = popup.item().filter(|_| d == 0);
         match sym {
-            Keysym::Up | Keysym::Down => self.menu_cursor_to(popup, in_sub, menu_step(&level, at, sym == Keysym::Down)),
-            Keysym::Left | Keysym::Escape if open.is_some() => {
-                self.submenu = None;
-                self.menu_cursor = open.map(|i| (popup, false, i));
+            Keysym::Up | Keysym::Down => self.menu_cursor_to(popup, d, menu_step(&level, at, sym == Keysym::Down)),
+            // One level back: the deepest open submenu closes and the row that opened it is lit.
+            Keysym::Left | Keysym::Escape if !path.is_empty() => {
+                let t = d.min(path.len() - 1);
+                self.submenu = Some((popup, path[..t].to_vec()));
+                self.menu_cursor = Some((popup, t, path[t]));
                 self.schedule_redraw();
             }
             // Esc with no submenu closes the menu (`close_popup`).
@@ -882,17 +919,18 @@ impl State {
                 }
             }
             Keysym::Right | Keysym::Return | Keysym::KP_Enter => match (row, at) {
-                (Some(row), Some(i)) if has_sub && !in_sub => {
-                    self.menu_hover(menu, i);
+                (Some(row), Some(i)) if has_sub => {
+                    self.menu_hover(menu, d, i);
                     // Into its first live row; a tray submenu still being filled in keeps the parent lit.
                     self.menu_cursor = Some(match menu_step(&row.sub, None, true) {
-                        Some(j) => (popup, true, j),
-                        None => (popup, false, i),
+                        Some(j) => (popup, d + 1, j),
+                        None => (popup, d, i),
                     });
                     self.schedule_redraw();
                 }
                 (Some(Row { action: Some(action), .. }), _) => {
                     self.popup = None;
+                    self.submenu = None;
                     self.menu_cursor = None;
                     self.run_action(action);
                     self.schedule_redraw();
@@ -901,7 +939,7 @@ impl State {
             },
             Keysym::Left => {}
             _ => match sym.key_char().filter(|c| letters && c.is_alphanumeric()) {
-                Some(c) => self.menu_cursor_to(popup, in_sub, menu_jump(&level, at, c)),
+                Some(c) => self.menu_cursor_to(popup, d, menu_jump(&level, at, c)),
                 None => return false,
             },
         }
@@ -924,31 +962,30 @@ impl State {
         true
     }
 
-    /// The level the keyboard is in (`true`: the open submenu) and its lit row: the keyboard's, else the pointer's.
-    fn menu_at(&self) -> (bool, Option<usize>) {
-        let open = self.open_submenu().is_some();
+    /// The level the keyboard is in (0: the menu, n: its n-th open submenu) and its lit row: the keyboard's, else the
+    /// pointer's.
+    fn menu_at(&self) -> (usize, Option<usize>) {
         match self.menu_cursor {
-            Some((popup, sub, i)) if Some(popup) == self.popup && (open || !sub) => return (sub, Some(i)),
+            Some((popup, d, i)) if Some(popup) == self.popup && d <= self.open_path().len() => return (d, Some(i)),
             _ => {}
         }
-        let Some(backend) = self.backend.as_ref() else { return (false, None) };
         let at = self.seat.get_pointer().map(|p| self.to_popup(self.to_output(p.current_location()))).unwrap_or_default();
-        match backend.submenu.row_at(at).filter(|_| open) {
-            Some(j) => (true, Some(j)),
-            None => (false, backend.menu.row_at(at)),
-        }
+        self.menu_level_at(at).unwrap_or((0, None))
     }
 
-    /// Lights row `to` (if any) of the menu (`in_sub` false; its open submenu closes) or of its submenu, scrolled
-    /// into view.
-    fn menu_cursor_to(&mut self, popup: Popup, in_sub: bool, to: Option<usize>) {
+    /// Lights row `to` (if any) of level `d` of the menu, scrolled into view; deeper submenus close.
+    fn menu_cursor_to(&mut self, popup: Popup, d: usize, to: Option<usize>) {
         let Some(i) = to else { return };
-        if !in_sub {
-            self.submenu = None;
+        if let Some((_, path)) = &mut self.submenu {
+            path.truncate(d);
         }
-        self.menu_cursor = Some((popup, in_sub, i));
+        self.menu_cursor = Some((popup, d, i));
         if let Some(b) = self.backend.as_mut() {
-            if in_sub { b.submenu.reveal(i) } else { b.menu.reveal(i) }
+            if d == 0 {
+                b.menu.reveal(i)
+            } else if let Some(sub) = b.submenu.get_mut(d - 1) {
+                sub.reveal(i)
+            }
         }
         self.schedule_redraw();
     }
@@ -1001,7 +1038,7 @@ impl State {
     pub fn show_tray_menu(&mut self, service: String, menu: String, parent: i32, rows: Vec<Option<MenuRow>>) {
         if parent != 0 {
             let open = self.tray_menu.as_mut().filter(|(s, m, _)| *s == service && *m == menu);
-            if let Some(row) = open.and_then(|(_, _, all)| all.iter_mut().flatten().find(|r| r.id == parent)) {
+            if let Some(row) = open.and_then(|(_, _, all)| tray_find(all, parent)) {
                 row.submenu = Some(rows);
                 self.schedule_redraw();
             }
@@ -1035,6 +1072,7 @@ impl State {
     pub fn close_popup(&mut self) -> bool {
         self.shell_drag = None;
         let open = self.popup.take().is_some();
+        self.submenu = None;
         self.menu_cursor = None;
         if open {
             self.schedule_redraw();
