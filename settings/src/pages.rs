@@ -1027,6 +1027,118 @@ fn notifying_apps(app: &App) -> Vec<Element<'_, Message>> {
     vec![group(t, "Applications", rows)]
 }
 
+/// `[widgets]` as the desktop reads it: Notification Center's order, the desktop's, and the hidden ids.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Widgets {
+    pub center: Vec<String>,
+    pub desktop: Vec<String>,
+    pub hidden: Vec<String>,
+}
+
+impl Widgets {
+    pub const KEYS: [&str; 3] = ["widgets.center", "widgets.desktop", "widgets.hidden"];
+
+    pub fn read(config: &crate::config::Config) -> Widgets {
+        let [center, desktop, hidden] = Self::KEYS.map(|key| config.list(key).into_iter().map(str::to_owned).collect());
+        Widgets { center, desktop, hidden }
+    }
+
+    /// What one editor shows, in order, as the desktop places it: the desktop's list, or Notification Center's
+    /// then every `live` id listed nowhere. Ids not on the bus stay where they are.
+    pub fn shown(&self, live: &[String], desktop: bool) -> Vec<String> {
+        if desktop {
+            return self.desktop.clone();
+        }
+        let listed = |id: &String| [&self.center, &self.desktop, &self.hidden].iter().any(|list| list.contains(id));
+        let mut shown = self.center.clone();
+        shown.extend(live.iter().filter(|id| !listed(id)).cloned());
+        shown.dedup();
+        shown
+    }
+
+    /// One editor's rows: (id, shown), the shown in order, then every other known id, sorted.
+    pub fn rows(&self, live: &[String], desktop: bool) -> Vec<(String, bool)> {
+        let shown = self.shown(live, desktop);
+        let mut rest: Vec<String> = [live, &self.center, &self.desktop, &self.hidden].concat().into_iter().filter(|id| !shown.contains(id)).collect();
+        rest.sort();
+        rest.dedup();
+        shown.into_iter().map(|id| (id, true)).chain(rest.into_iter().map(|id| (id, false))).collect()
+    }
+
+    /// `id` shown at the end of the editor's list, or taken out of it (out of Notification Center: into `hidden`).
+    pub fn toggled(&self, live: &[String], desktop: bool, id: &str, on: bool) -> Widgets {
+        let mut new = self.clone();
+        let mut list = self.shown(live, desktop);
+        list.retain(|i| i != id);
+        if on {
+            list.push(id.to_owned());
+            new.hidden.retain(|i| i != id);
+        } else if !desktop && !self.desktop.iter().any(|i| i == id) && !self.hidden.iter().any(|i| i == id) {
+            new.hidden.push(id.to_owned());
+        }
+        *new.list(desktop) = list;
+        new
+    }
+
+    /// `id` one place up (`-1`) or down in the editor's list.
+    pub fn moved(&self, live: &[String], desktop: bool, id: &str, by: isize) -> Widgets {
+        let mut new = self.clone();
+        let mut list = self.shown(live, desktop);
+        if let Some(i) = list.iter().position(|i| i == id)
+            && let Some(j) = i.checked_add_signed(by).filter(|&j| j < list.len())
+        {
+            list.swap(i, j);
+        }
+        *new.list(desktop) = list;
+        new
+    }
+
+    fn list(&mut self, desktop: bool) -> &mut Vec<String> {
+        if desktop { &mut self.desktop } else { &mut self.center }
+    }
+
+    /// The keys to save, as TOML arrays (the same writer as `Kind::List`).
+    pub fn values(&self) -> [(&'static str, toml_edit::Value); 3] {
+        let array = |list: &Vec<String>| list.iter().collect::<toml_edit::Array>().into();
+        [(Self::KEYS[0], array(&self.center)), (Self::KEYS[1], array(&self.desktop)), (Self::KEYS[2], array(&self.hidden))]
+    }
+}
+
+/// Notifications ▸ Notification Center widgets and Desktop widgets: a switch per widget; ↑/↓ on the shown ones.
+fn widget_editors(app: &App) -> Vec<Element<'_, Message>> {
+    let t = app.tokens;
+    let places = Widgets::read(&app.config);
+    let live = &app.widget_ids;
+    [("Notification Center widgets", false), ("Desktop widgets", true)]
+        .into_iter()
+        .map(|(title, desktop)| {
+            let rows = places.rows(live, desktop);
+            let count = rows.iter().filter(|(_, on)| *on).count();
+            let mut lines: Vec<Element<'_, Message>> = rows
+                .into_iter()
+                .enumerate()
+                .map(|(i, (id, on))| {
+                    let arrow = |label, by: isize, enabled: bool| {
+                        let b = button(text(label).size(12)).padding([3, 8]).style(t.push(false));
+                        b.on_press_maybe(enabled.then(|| Message::Widgets(places.moved(live, desktop, &id, by))))
+                    };
+                    let (yes, no) = (places.toggled(live, desktop, &id, true), places.toggled(live, desktop, &id, false));
+                    let mut controls = row![].spacing(6).align_y(Alignment::Center);
+                    if on {
+                        controls = controls.push(arrow("↑", -1, i > 0)).push(arrow("↓", 1, i + 1 < count));
+                    }
+                    controls = controls.push(toggle(t, on, move |v| Message::Widgets(if v { yes.clone() } else { no.clone() })));
+                    line(t, id, "", controls.into())
+                })
+                .collect();
+            if lines.is_empty() {
+                lines.push(note(t, "Widgets show here once an app adds one."));
+            }
+            group(t, title, lines)
+        })
+        .collect()
+}
+
 /// Sound ▸ Input's live level: 16 bars, lit up to `level` (0 … 1).
 fn meter<'a>(t: Tokens, level: f32) -> Element<'a, Message> {
     let lit = (level * 16.0).round() as usize;
@@ -1759,7 +1871,11 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             parts.push(group(t, "Shortcuts", vec![line(t, "Keyboard shortcuts", "Change, turn off or add the desktop's keys", open.into())]));
             parts
         }
-        Page::Notifications => notifying_apps(app),
+        Page::Notifications => {
+            let mut parts = notifying_apps(app);
+            parts.extend(widget_editors(app));
+            parts
+        }
         Page::Dock => vec![default_apps(app)],
         Page::General => {
             let clear = button(text("Clear").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ClearRecent);
@@ -2123,6 +2239,47 @@ fn note<'a>(t: Tokens, words: &'a str) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn widget_lists_toggle_move_and_keep_unknown_ids() {
+        let live: Vec<String> = ["ci", "music", "mail"].map(String::from).into();
+        let w = Widgets { center: vec!["gone".into(), "mail".into()], desktop: vec!["music".into()], hidden: vec![] };
+        let ids = |rows: Vec<(String, bool)>| rows.into_iter().map(|(id, on)| format!("{id}{}", if on { "" } else { "-" })).collect::<Vec<_>>();
+        assert_eq!(ids(w.rows(&live, false)), ["gone", "mail", "ci", "music-"]);
+        assert_eq!(ids(w.rows(&live, true)), ["music", "ci-", "gone-", "mail-"]);
+        // Off in Notification Center: hidden, so it doesn't come back as unlisted.
+        let off = w.toggled(&live, false, "ci", false);
+        assert_eq!((off.center.clone(), off.hidden.clone()), (vec!["gone".into(), "mail".into()], vec!["ci".into()]));
+        assert_eq!(ids(off.rows(&live, false)), ["gone", "mail", "ci-", "music-"]);
+        // On again: last, and no longer hidden.
+        let on = off.toggled(&live, false, "ci", true);
+        assert_eq!((on.center, on.hidden), (vec!["gone".into(), "mail".into(), "ci".into()], vec![]));
+        // Unknown "gone" keeps its place as others move around it.
+        let moved = w.moved(&live, false, "ci", -1);
+        assert_eq!(moved.center, ["gone", "ci", "mail"]);
+        assert_eq!(moved.moved(&live, false, "gone", -1), moved, "the first goes nowhere");
+        assert_eq!(w.moved(&live, false, "ci", 1).center, ["gone", "mail", "ci"], "the last goes nowhere");
+        // The desktop: on appends, off just removes (Notification Center takes it back).
+        let desk = w.toggled(&live, true, "ci", true);
+        assert_eq!((desk.desktop.clone(), desk.hidden.clone()), (vec!["music".into(), "ci".into()], vec![]));
+        assert_eq!(desk.moved(&live, true, "ci", -1).desktop, ["ci", "music"]);
+        assert_eq!(w.toggled(&live, true, "music", false).desktop, Vec::<String>::new());
+        assert_eq!(ids(w.toggled(&live, true, "music", false).rows(&live, false)), ["gone", "mail", "ci", "music"]);
+    }
+
+    #[test]
+    fn widget_lists_round_trip() {
+        let dir = std::env::temp_dir().join(format!("noobsbot-settings-widgets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.toml");
+        std::fs::write(&path, "[widgets]\ncenter = [\"gone\", \"mail\"]\n").unwrap();
+        let (mut config, _) = crate::config::Config::load(path.clone());
+        let w = Widgets::read(&config).toggled(&["ci".into()], false, "ci", false);
+        config.set_all(w.values()).unwrap();
+        assert_eq!(Widgets::read(&crate::config::Config::load(path).0), w);
+        assert_eq!(w, Widgets { center: vec!["gone".into(), "mail".into()], desktop: vec![], hidden: vec!["ci".into()] });
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn app_rules_read_and_write_both_forms() {

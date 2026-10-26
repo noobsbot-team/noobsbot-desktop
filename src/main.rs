@@ -218,6 +218,10 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             let spaces = config.spaces != state.config.spaces;
             let reader = config.accessibility.screen_reader != state.config.accessibility.screen_reader;
             let updates = config.check_updates != state.config.check_updates || config.update != state.config.update;
+            // Widgets are placed from the config every frame; one frame applies a new `[widgets]`.
+            if config.widgets != state.config.widgets {
+                state.schedule_redraw();
+            }
             state.config = config;
             if updates {
                 state.update_checks();

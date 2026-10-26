@@ -360,6 +360,12 @@ pub async fn set_grant(device: String, app: String, allowed: bool) -> Status {
     read().await
 }
 
+/// The desktop's widget ids (`org.noobsbot.Desktop.Widgets.Ids`); none when it isn't running.
+pub async fn widget_ids() -> Vec<String> {
+    let ids = async { property(&session().await?, "org.noobsbot.Desktop", "/org/noobsbot/Desktop", "org.noobsbot.Desktop.Widgets", "Ids").await };
+    ids.await.ok().and_then(|v| Vec::try_from(v).ok()).unwrap_or_default()
+}
+
 async fn session() -> zbus::Result<Connection> {
     zbus::connection::Builder::session()?.method_timeout(Duration::from_secs(2)).build().await
 }

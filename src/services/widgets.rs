@@ -71,7 +71,7 @@ pub fn shown<'a>(all: &'a [Widget], places: &crate::config::Widgets, desktop: bo
     if desktop {
         return places.desktop.iter().filter_map(find).collect();
     }
-    let rest = all.iter().filter(|w| !places.center.contains(&w.id) && !places.desktop.contains(&w.id));
+    let rest = all.iter().filter(|w| ![&places.center, &places.desktop, &places.hidden].iter().any(|list| list.contains(&w.id)));
     places.center.iter().filter_map(find).chain(rest).collect()
 }
 
@@ -134,6 +134,12 @@ impl Server {
         if self.store.drop_where(&sender(&header), |w| w.id == id) {
             self.changed();
         }
+    }
+
+    /// Every widget's id, in the order they first came (Settings lists them).
+    #[zbus(property)]
+    fn ids(&self) -> Vec<String> {
+        self.store.0.iter().map(|w| w.id.clone()).collect()
     }
 
     /// The widget was clicked; sent to its owner only.
@@ -210,9 +216,11 @@ mod tests {
     #[test]
     fn placed_in_config_order() {
         let all: Vec<Widget> = ["a", "b", "c", "d"].map(|id| Widget { id: id.into(), ..Default::default() }).into();
-        let places = crate::config::Widgets { center: vec!["c".into(), "gone".into(), "a".into()], desktop: vec!["d".into()] };
-        let ids = |desktop| shown(&all, &places, desktop).iter().map(|w| w.id.as_str()).collect::<Vec<_>>();
-        assert_eq!((ids(false), ids(true)), (vec!["c", "a", "b"], vec!["d"]));
+        let mut places = crate::config::Widgets { center: vec!["c".into(), "gone".into(), "a".into()], desktop: vec!["d".into()], hidden: vec![] };
+        let ids = |places: &_, desktop| shown(&all, places, desktop).iter().map(|w| w.id.as_str()).collect::<Vec<_>>();
+        assert_eq!((ids(&places, false), ids(&places, true)), (vec!["c", "a", "b"], vec!["d"]));
+        places.hidden = vec!["b".into(), "c".into()];
+        assert_eq!(ids(&places, false), ["c", "a"], "hidden only drops the unlisted");
     }
 
     #[test]
