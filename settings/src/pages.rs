@@ -1332,7 +1332,7 @@ fn connection_details<'a>(app: &'a App, k: &'a crate::network::Known) -> Element
     rows.push(line(t, "DNS servers", "Comma separated; empty = from the network", field("dns", "1.1.1.1, 9.9.9.9")));
     let forget = push(if k.wifi { "Forget This Network" } else { "Forget This Connection" }, false, Message::ForgetNetwork(k.path.clone()));
     let buttons =
-        row![forget, space().width(Length::Fill), push("Cancel", false, Message::NetDetails(None)), push("Update", true, Message::UpdateIp4)].spacing(8);
+        row![forget, space().width(Length::Fill), push("Cancel", false, Message::NetDetails(None)), push("Update", true, Message::UpdateIp)].spacing(8);
     rows.push(container(buttons).padding([8, 12]).into());
     group(t, &k.ssid, rows)
 }
