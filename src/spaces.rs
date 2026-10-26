@@ -158,6 +158,19 @@ pub fn after_remove(desk: usize, removed: usize) -> usize {
     if desk > removed || (desk == removed && desk > 0) { desk - 1 } else { desk }
 }
 
+/// Where Space `desk` goes when Space `from` is dragged to place `to` (the others close up behind it).
+pub fn after_move(desk: usize, from: usize, to: usize) -> usize {
+    if desk == from {
+        to
+    } else if from < desk && desk <= to {
+        desk - 1
+    } else if to <= desk && desk < from {
+        desk + 1
+    } else {
+        desk
+    }
+}
+
 /// `current + delta` if that Space exists.
 pub fn step(current: usize, delta: i32, count: usize) -> Option<usize> {
     let to = current as i64 + i64::from(delta);
@@ -375,6 +388,19 @@ impl State {
         }
     }
 
+    /// A Space dragged in Mission Control's bar from `from` to `to`: windows keep their Space, the shown one stays shown.
+    pub fn move_space(&mut self, from: usize, to: usize) {
+        let Some((current, count)) = self.desks().map(|d| (d.current, d.list.len())) else { return };
+        if from == to || from >= count || to >= count {
+            return;
+        }
+        self.rearrange(|d| after_move(d, from, to), after_move(current, from, to), None);
+        if let Some(desks) = self.desks() {
+            let space = desks.list.remove(from);
+            desks.list.insert(to, space);
+        }
+    }
+
     /// Fullscreen = its own Space, right after the shown one (the green light, E5.1).
     pub fn fullscreen_space(&mut self, window: &Window) {
         let Some(current) = self.desks().map(|d| d.current) else { return };
@@ -573,6 +599,18 @@ mod tests {
         assert_eq!([0, 1, 2, 3].map(|d| after_remove(d, 2)), [0, 1, 1, 2]);
         // Remove the first: its windows go to the new first.
         assert_eq!([0, 1, 2].map(|d| after_remove(d, 0)), [0, 0, 1]);
+    }
+
+    #[test]
+    fn moving_a_space_matches_a_list_move() {
+        for (from, to) in [(0, 3), (3, 0), (1, 2), (2, 1), (2, 2)] {
+            let mut list = vec![0, 1, 2, 3];
+            let space = list.remove(from);
+            list.insert(to, space);
+            for desk in 0..4 {
+                assert_eq!(list[after_move(desk, from, to)], desk, "{from} → {to}: Space {desk}");
+            }
+        }
     }
 
     #[test]
