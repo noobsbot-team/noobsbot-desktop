@@ -249,7 +249,7 @@ impl State {
         self.open_mission(Some(app));
     }
 
-    fn open_mission(&mut self, app: Option<String>) {
+    pub(crate) fn open_mission(&mut self, app: Option<String>) {
         let now = Instant::now();
         match self.mission.as_mut() {
             Some(m) if m.progress.target() == 1.0 && m.app == app => m.progress = Tween::new(m.progress.value(now), 0.0),
