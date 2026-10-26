@@ -703,13 +703,12 @@ impl State {
     }
 
     /// Starts `app` from its `Exec` line, with Plank's launch bounce. `false`: it didn't start (no bounce either).
-    // ponytail: Terminal=true apps start without a terminal (noobsbot terminal has no `-e`; wrap once it does).
     pub fn launch(&mut self, app: Option<&App>) -> bool {
         let Some(app) = app else { return false };
         tracing::info!(app = app.id, "dock: launch");
         self.dock_fx.tip_hidden = true;
         self.schedule_redraw();
-        let started = self.spawn(&app.command()).is_some();
+        let started = self.spawn(&app.command(&self.config.terminal)).is_some();
         if started {
             self.dock_fx.launched(app.id.clone());
         }
@@ -1192,7 +1191,7 @@ impl State {
         if item.key == TRASH_KEY {
             let row =
                 |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Dock) });
-            let full = super::trash::is_full(&super::trash::dir());
+            let full = super::trash::any_full();
             return vec![row("Open", Some(Command::Open)), None, row("Empty Trash", full.then_some(Command::EmptyTrash))];
         }
         let name = item.title().to_owned();
@@ -1284,7 +1283,7 @@ impl State {
             }
             Command::Recent(i) => {
                 let (Some(app), Some(uri)) = (item.app, self.dock_ui.recent.get(i).cloned()) else { return };
-                self.spawn(&app.command_with(&[uri]));
+                self.spawn(&app.command_with(&[uri], &self.config.terminal));
             }
             Command::Login => {
                 let Some(app) = item.app else { return };
@@ -1330,7 +1329,7 @@ impl State {
             Command::Action(i) => {
                 let Some(app) = item.app else { return };
                 let Some((_, exec)) = crate::apps::actions(&app.id).into_iter().nth(i) else { return };
-                self.spawn(&App { exec, ..app }.command());
+                self.spawn(&App { exec, ..app }.command(&self.config.terminal));
             }
         }
         self.schedule_redraw();
@@ -1528,7 +1527,7 @@ impl State {
             }
         } else if let Some(app) = hit(&layout, location).and_then(|i| items.into_iter().nth(i)).and_then(|i| i.app) {
             tracing::info!(app = app.id, files = uris.len(), "dock: open dropped files");
-            self.spawn(&app.command_with(&uris));
+            self.spawn(&app.command_with(&uris, &self.config.terminal));
         }
     }
 }
