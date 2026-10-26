@@ -954,6 +954,8 @@ pub struct Idle {
     /// The screen turns off: on the power adapter, and on battery.
     pub screen_off: u32,
     pub screen_off_on_battery: u32,
+    /// The keyboard backlight goes off (back on at the next input); at the latest when the screen dims.
+    pub keyboard_backlight_off: u32,
     pub sleep_on_battery: u32,
     pub sleep_on_ac: u32,
     /// Lock when the screen turns off.
@@ -969,6 +971,7 @@ impl Default for Idle {
         Self {
             dim: 120,
             screen_off: 300,
+            keyboard_backlight_off: 30,
             screen_off_on_battery: 180,
             sleep_on_battery: 900,
             sleep_on_ac: 0,

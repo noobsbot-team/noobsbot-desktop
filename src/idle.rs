@@ -33,6 +33,8 @@ use crate::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Stage {
     Active,
+    /// The keyboard backlight is off (when `keyboard_backlight_off` is set; every later stage keeps it off).
+    KeysOff,
     Dim,
     Off,
     /// Off and locked (`lock_delay` after `Off`).
@@ -80,7 +82,8 @@ pub fn next(config: &config::Idle, on_battery: bool, stage: Stage, idle: Duratio
     let (off, sleep) = if on_battery { (config.screen_off_on_battery, config.sleep_on_battery) } else { (config.screen_off, config.sleep_on_ac) };
     let lock = if config.lock && off > 0 { off.saturating_add(config.lock_delay) } else { 0 };
     // On a tie the earlier stage comes first (`min_by_key` keeps the first), so Off still precedes Locked.
-    [(Stage::Dim, config.dim), (Stage::Off, off), (Stage::Locked, lock), (Stage::Asleep, sleep)]
+    // ponytail: past Dim the KeysOff step is skipped, so a backlight time longer than `dim` turns it off with the dim.
+    [(Stage::KeysOff, config.keyboard_backlight_off), (Stage::Dim, config.dim), (Stage::Off, off), (Stage::Locked, lock), (Stage::Asleep, sleep)]
         .into_iter()
         .filter(|&(s, secs)| s > stage && secs > 0)
         .min_by_key(|&(_, secs)| secs)
@@ -112,6 +115,8 @@ impl State {
         self.idle.notifier.notify_activity(&seat);
         if self.idle.stage != Stage::Active {
             self.idle.stage = Stage::Active;
+            // Back to the level before; a no-op when it wasn't turned off.
+            self.services.send(crate::services::Command::KbdBacklightIdle(false));
             self.schedule_redraw();
             self.idle_arm();
         } else if self.idle.timer.is_none() {
@@ -142,6 +147,7 @@ impl State {
             self.idle.last_input = Instant::now();
         }
         let on_battery = self.battery.is_some_and(|b| b.on_battery);
+        let before = self.idle.stage;
         while let Some((stage, Duration::ZERO)) = next(&self.config.idle, on_battery, self.idle.stage, self.idle.last_input.elapsed()) {
             tracing::debug!(?stage, "idle");
             self.idle.stage = stage;
@@ -151,6 +157,9 @@ impl State {
                 Stage::Asleep => self.sleep(),
                 _ => {}
             }
+        }
+        if before < Stage::KeysOff && self.idle.stage >= Stage::KeysOff && self.config.idle.keyboard_backlight_off > 0 {
+            self.services.send(crate::services::Command::KbdBacklightIdle(true));
         }
         self.idle_arm();
     }
@@ -191,7 +200,7 @@ impl State {
     /// ponytail: `Dim` is drawn, not the backlight; wire it to brightness when the panel's dim looks wrong.
     pub fn idle_shade(&self) -> Option<f32> {
         match self.idle.stage {
-            Stage::Active => None,
+            Stage::Active | Stage::KeysOff => None,
             Stage::Dim => Some(0.5),
             Stage::Off | Stage::Locked | Stage::Asleep => Some(1.0),
         }
@@ -274,8 +283,9 @@ mod tests {
     #[test]
     fn steps_in_order_and_on_time() {
         let c = config::Idle { screen_off_on_battery: 300, ..Default::default() };
-        assert_eq!(next(&c, true, Stage::Active, secs(0)), Some((Stage::Dim, secs(120))));
-        assert_eq!(next(&c, true, Stage::Active, secs(150)), Some((Stage::Dim, Duration::ZERO)));
+        assert_eq!(next(&c, true, Stage::Active, secs(0)), Some((Stage::KeysOff, secs(30))));
+        assert_eq!(next(&c, true, Stage::KeysOff, secs(30)), Some((Stage::Dim, secs(90))));
+        assert_eq!(next(&c, true, Stage::KeysOff, secs(150)), Some((Stage::Dim, Duration::ZERO)));
         assert_eq!(next(&c, true, Stage::Dim, secs(150)), Some((Stage::Off, secs(150))));
         assert_eq!(next(&c, true, Stage::Dim, secs(300)), Some((Stage::Off, Duration::ZERO)));
         assert_eq!(next(&c, true, Stage::Off, secs(300)), Some((Stage::Locked, Duration::ZERO)), "locks with the screen by default");
@@ -286,9 +296,18 @@ mod tests {
 
     #[test]
     fn zero_is_never_and_order_follows_the_times() {
-        let c = config::Idle { dim: 0, screen_off: 60, sleep_on_battery: 30, ..Default::default() };
+        let c = config::Idle { dim: 0, screen_off: 60, keyboard_backlight_off: 0, sleep_on_battery: 30, ..Default::default() };
         assert_eq!(next(&c, true, Stage::Active, secs(0)), Some((Stage::Asleep, secs(30))), "sleep first when it comes first");
-        let off = config::Idle { dim: 0, screen_off: 0, screen_off_on_battery: 0, sleep_on_battery: 0, sleep_on_ac: 0, lock: true, ..Default::default() };
+        let off = config::Idle {
+            dim: 0,
+            screen_off: 0,
+            screen_off_on_battery: 0,
+            keyboard_backlight_off: 0,
+            sleep_on_battery: 0,
+            sleep_on_ac: 0,
+            lock: true,
+            ..Default::default()
+        };
         assert_eq!(next(&off, true, Stage::Active, secs(0)), None);
     }
 
@@ -299,6 +318,14 @@ mod tests {
         assert_eq!(next(&c, false, Stage::Dim, secs(120)), Some((Stage::Off, secs(480))));
         let never = config::Idle { screen_off_on_battery: 0, lock: true, sleep_on_battery: 0, ..c };
         assert_eq!(next(&never, true, Stage::Dim, secs(120)), None, "0: never off, nor locked with it");
+    }
+
+    #[test]
+    fn keyboard_backlight_goes_off_first_or_with_the_dim() {
+        let c = config::Idle { keyboard_backlight_off: 300, ..Default::default() };
+        assert_eq!(next(&c, false, Stage::Active, secs(0)), Some((Stage::Dim, secs(120))), "longer than dim: skipped");
+        let never = config::Idle { keyboard_backlight_off: 0, ..Default::default() };
+        assert_eq!(next(&never, false, Stage::Active, secs(0)), Some((Stage::Dim, secs(120))));
     }
 
     #[test]

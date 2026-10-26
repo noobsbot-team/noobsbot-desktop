@@ -66,6 +66,26 @@ pub async fn kbd_backlight(bus: &Connection, change: Option<bool>, updates: &Sen
     }
 }
 
+/// Idleness turns the keyboard backlight off (`off`), remembering its level in `saved`, or back to that level.
+pub async fn kbd_idle(bus: &Connection, off: bool, saved: &mut Option<i32>) {
+    let result = async {
+        let kbd = KbdBacklightProxy::new(bus).await?;
+        if off {
+            let now = kbd.get_brightness().await?;
+            if now > 0 {
+                kbd.set_brightness(0).await?;
+                *saved = Some(now);
+            }
+        } else if let Some(level) = saved.take() {
+            kbd.set_brightness(level).await?;
+        }
+        zbus::Result::Ok(())
+    };
+    if let Err(err) = result.await {
+        tracing::debug!("keyboard backlight: {err}");
+    }
+}
+
 /// About 1/16 of the range per step (most keyboards have only 2 or 3 levels: one each).
 // ponytail: toggling back on goes to full, not the level before; remember it if that annoys.
 fn kbd_level(now: i32, max: i32, change: Option<bool>) -> i32 {
