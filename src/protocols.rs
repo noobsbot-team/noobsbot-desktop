@@ -1,6 +1,7 @@
 //! The rest of the E1.1/E1.7 protocols: layer shell, presentation time, pointer constraints, shortcut inhibiting,
 //! cursor shapes, fractional scale, tearing hints, security contexts, pointer gestures and text input (the input
-//! method behind it is E6.12, see ime.rs).
+//! method behind it is E6.12, see ime.rs). The E6.11 lists and remote controls are in the submodules: toplevel list,
+//! virtual pointer, output management, workspaces.
 
 use std::sync::{
     Arc,
