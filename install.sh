@@ -329,7 +329,7 @@ arch_packages() {
         libinput libxkbcommon seatd
         wayland xorg-xwayland xwayland-satellite mesa
         greetd greetd-tuigreet
-        upower power-profiles-daemon udisks2 polkit polkit-kde-agent gnome-keyring openssl
+        upower power-profiles-daemon udisks2 polkit polkit-kde-agent gnome-keyring openssl plocate
         xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr xdg-utils xdg-user-dirs xdg-terminal-exec slurp
         dolphin kio-extras kdegraphics-thumbnailers ffmpegthumbs kimageformats qt6-imageformats kio-admin ark
         archlinux-xdg-menu kconfig kate nano partitionmanager filelight plasma-systemmonitor btop
@@ -369,7 +369,7 @@ debian_packages() {
         libinput10 libxkbcommon0 seatd libseat1 libpam0g libgbm1 libudev1 libegl1 libgles2 libgl1-mesa-dri
         xwayland libxcb1 libxcb-cursor0
         greetd tuigreet dbus-user-session systemd-timesyncd
-        upower power-profiles-daemon udisks2 polkitd pkexec polkit-kde-agent-1 gnome-keyring libpam-gnome-keyring openssl
+        upower power-profiles-daemon udisks2 polkitd pkexec polkit-kde-agent-1 gnome-keyring libpam-gnome-keyring openssl plocate
         xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr xdg-utils xdg-user-dirs xdg-terminal-exec slurp
         libglib2.0-bin dolphin kio-extras kdegraphics-thumbnailers ffmpegthumbs kimageformat6-plugins
         qt6-image-formats-plugins kio-admin ark libkf6config-bin kate nano partitionmanager filelight
@@ -753,6 +753,8 @@ install_system_files() {
 enable_services() {
     say "Enabling services"
     as_root systemctl enable NetworkManager.service bluetooth.service power-profiles-daemon.service systemd-timesyncd.service
+    # Spotlight's file results come from plocate; build its index now, then daily.
+    as_root systemctl enable --now plocate-updatedb.timer && as_root systemctl start --no-block plocate-updatedb.service
     if debian; then
         # Sound goes through PipeWire (the volume menu talks to it). PulseAudio from an earlier desktop stays
         # installed, but is masked for every user.
