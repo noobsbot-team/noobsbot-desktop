@@ -1172,7 +1172,8 @@ fn default_apps(app: &App) -> Element<'_, Message> {
         })
         .collect();
     let terminal = app.config.str("terminal");
-    let selected = app.terminals.iter().find(|(_, c)| c == terminal).map(|(a, _)| a.clone());
+    // `noobsbot` is also the entry's `/usr/bin/noobsbot`.
+    let selected = app.terminals.iter().find(|(_, c)| c == terminal || c.rsplit_once('/').is_some_and(|(_, p)| p == terminal)).map(|(a, _)| a.clone());
     let apps = app.terminals.iter().map(|(a, _)| a.clone()).collect();
     rows.push(line(t, "Terminal", "Opened by Super+Return", pick(apps, selected, terminal.to_owned(), Box::new(Message::Terminal)).into()));
     group(t, "Default Apps", rows)
