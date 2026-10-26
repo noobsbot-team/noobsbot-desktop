@@ -669,6 +669,10 @@ impl State {
         if let (Some(((position, shown, field, page), grid)), Some(l)) = (&pad, self.launchpad.as_ref()) {
             let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &field.text);
             let (lifted, offsets) = (l.lifted(grid, now), l.offsets(now));
+            let open = l.folder.as_ref().and_then(|(i, name)| match tiles.get(*i) {
+                Some(crate::shell::launchpad::Tile::Folder(_, apps)) => Some((crate::shell::launchpad::folder_grid(grid, apps.len()), name, *i)),
+                _ => None,
+            });
             let frame = LaunchpadFrame {
                 tiles: &tiles,
                 grid,
@@ -680,6 +684,7 @@ impl State {
                 lifted,
                 offsets: &offsets,
                 onto: l.press.as_ref().and_then(|p| p.onto),
+                folder: open.as_ref().map(|((panel, inner), name, i)| (*panel, inner, *name, *i)),
             };
             bar.extend(pad_view.elements(
                 renderer,
