@@ -54,6 +54,7 @@ pub struct Config {
     /// App name (as it sends notifications) → how they show.
     pub notification_apps: BTreeMap<String, AppStyle>,
     pub app_drawer: AppDrawer,
+    pub accessibility: Accessibility,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -429,6 +430,7 @@ impl Default for Config {
             notifications: Notifications::default(),
             notification_apps: BTreeMap::new(),
             app_drawer: AppDrawer::default(),
+            accessibility: Accessibility::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -593,6 +595,35 @@ impl Default for AppDrawer {
     fn default() -> Self {
         Self { super_tap: true }
     }
+}
+
+/// Accessibility (E8.6).
+#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[serde(default)]
+pub struct Accessibility {
+    /// A tapped modifier holds for the next key; tapped twice it stays until tapped again.
+    pub sticky_keys: bool,
+    /// Pressing Shift five times turns sticky keys on or off.
+    pub sticky_keys_shortcut: bool,
+    /// A key counts only once held this long, in ms; 0 = off.
+    pub slow_keys_ms: u32,
+    /// A key pressed again within this many ms of letting it go is ignored; 0 = off.
+    pub bounce_keys_ms: u32,
+    /// The keypad moves the pointer: 1–9 move, 5 clicks, 0 holds the button, . lets it go, * right-clicks.
+    pub mouse_keys: bool,
+    /// What an app ringing the bell does.
+    pub bell: Bell,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Bell {
+    #[default]
+    Sound,
+    /// The screen flashes white.
+    Flash,
+    Both,
+    Off,
 }
 
 /// Screen-recording answers (E6.11), by program path; the "would like to record this screen" alert fills them in.
