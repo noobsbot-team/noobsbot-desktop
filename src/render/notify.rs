@@ -400,6 +400,10 @@ impl NotificationViews {
                 for (card, w) in center.widgets.iter().zip(widgets).filter(|(c, _)| shown(**c)) {
                     widget_pieces(&mut pieces, &mut shapes, text, symbols, &ink, w, *card, scale);
                 }
+                if shown(center.edit) {
+                    pieces.put(text.label("Edit Widgets…", ink.button(), row_w(center.edit), scale), center.edit, Align::Centre);
+                    shapes.push((center.edit, Shape::Button));
+                }
                 shapes.push((center.rect, Shape::Panel));
             }
         }
