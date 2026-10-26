@@ -178,6 +178,8 @@ pub struct Layout {
     pub buttons: [Rect; 3],
     /// Keyboard layout and battery, right-aligned in it.
     pub status: Rect,
+    /// The Now Playing card, above the user block; `None` when the screen is too short for it.
+    pub media: Option<Rect>,
 }
 
 pub const AVATAR: i32 = 64;
@@ -186,6 +188,10 @@ pub const FIELD_H: i32 = 30;
 const BUTTON_W: i32 = 84;
 const BUTTON_H: i32 = 28;
 const EDGE: i32 = 24;
+pub const MEDIA_W: i32 = 320;
+pub const MEDIA_H: i32 = 64;
+/// The album art's side in the Now Playing card.
+pub const ART: i32 = 48;
 
 pub fn layout(size: Size<i32, Logical>) -> Layout {
     let (w, h) = (size.w, size.h);
@@ -205,7 +211,16 @@ pub fn layout(size: Size<i32, Logical>) -> Layout {
     let row = 3 * BUTTON_W + 2 * 8;
     let buttons = [0, 1, 2].map(|i| Rectangle::new(((w - row) / 2 + i * (BUTTON_W + 8), y).into(), (BUTTON_W, BUTTON_H).into()));
     let status = Rectangle::new((w - EDGE - 200, y).into(), (200, BUTTON_H).into());
-    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status }
+    let media = centred(MEDIA_W.min(w - 2 * EDGE), avatar_y - 16 - MEDIA_H, MEDIA_H);
+    let media = (media.loc.y >= message.loc.y + message.size.h + 8).then_some(media);
+    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status, media }
+}
+
+/// The Now Playing button under `location` in `card`: previous, play/pause, next (the control centre's spots).
+pub fn media_hit(card: Rect, location: Point<f64, Logical>) -> Option<crate::services::media::Action> {
+    use crate::services::media::Action;
+    let buttons = crate::shell::control::media_buttons(card);
+    [Action::Previous, Action::PlayPause, Action::Next].into_iter().zip(buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(a, _)| a)
 }
 
 impl State {
@@ -528,6 +543,22 @@ mod tests {
             assert!(l.buttons[0].loc.x + l.buttons[0].size.w < l.buttons[1].loc.x);
             assert!(l.buttons.iter().all(|b| b.loc.y + b.size.h <= size.h - EDGE));
             assert_eq!(l.field.size, (FIELD_W, FIELD_H).into());
+            let media = l.media.unwrap();
+            assert!((mid(media) - size.w / 2).abs() <= 1 && media.loc.y > l.message.loc.y + 15, "{size:?}");
+            assert!(media.loc.y + MEDIA_H < l.avatar.loc.y, "{size:?}: the card sits above the user block");
         }
+        assert_eq!(layout(Size::from((800, 400))).media, None, "no room under the clock: no card");
+    }
+
+    #[test]
+    fn media_buttons_hit() {
+        use crate::services::media::Action;
+        let card = layout(Size::from((1280, 800))).media.unwrap();
+        let centre = |r: Rect| Point::from((f64::from(r.loc.x + r.size.w / 2), f64::from(r.loc.y + r.size.h / 2)));
+        let buttons = crate::shell::control::media_buttons(card);
+        assert_eq!(buttons.map(|b| media_hit(card, centre(b))), [Some(Action::Previous), Some(Action::PlayPause), Some(Action::Next)]);
+        assert!(buttons.iter().all(|b| card.contains_rect(*b)), "inside the card");
+        assert!(buttons[0].loc.x > card.loc.x + 8 + ART + 100, "room for the art and the words");
+        assert_eq!(media_hit(card, centre(card) - Point::from((100.0, 0.0))), None, "the words take no click");
     }
 }
