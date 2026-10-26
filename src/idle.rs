@@ -119,8 +119,8 @@ impl State {
     /// The timer fired: take every step that is due (input meanwhile only moved the deadline), then re-arm.
     fn idle_due(&mut self) {
         self.idle.inhibitors.retain(IsAlive::alive);
-        if !self.idle.inhibitors.is_empty() {
-            // A video is playing: that counts as being used.
+        if self.idle_inhibited() {
+            // A video is playing, or Keep Awake is on: that counts as being used.
             self.idle.last_input = Instant::now();
         }
         let on_battery = self.battery.is_some_and(|b| b.on_battery);
@@ -135,6 +135,37 @@ impl State {
             }
         }
         self.idle_arm();
+    }
+
+    /// An app's idle inhibitor or Keep Awake holds idleness off.
+    fn idle_inhibited(&self) -> bool {
+        self.keep_awake || !self.idle.inhibitors.is_empty()
+    }
+
+    /// Keep Awake on or off; either way the countdown starts again now.
+    pub fn set_keep_awake(&mut self, on: bool) {
+        self.keep_awake = on;
+        let inhibited = self.idle_inhibited();
+        self.idle.notifier.set_is_inhibited(inhibited);
+        self.idle_activity();
+    }
+
+    /// The apps whose windows hold an idle inhibitor, by name, once each.
+    // ponytail: reads their `.desktop` names on every call; cache per surface if the open list shows in a profile.
+    pub fn idle_blockers(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for surface in self.idle.inhibitors.iter().filter(|s| s.alive()) {
+            // A video often plays in a subsurface: its window is the root's.
+            let mut root = surface.clone();
+            while let Some(parent) = smithay::wayland::compositor::get_parent(&root) {
+                root = parent;
+            }
+            let name = self.window_for(&root).and_then(|w| self.app_id(w)).map_or_else(|| "Unknown App".to_owned(), |id| crate::render::menubar::app_name(&id));
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
     }
 
     /// How dark the idle shade over everything is: dimmed, or black while the screen is "off". On a real screen the
@@ -184,7 +215,7 @@ impl IdleInhibitHandler for State {
 
     fn uninhibit(&mut self, surface: WlSurface) {
         self.idle.inhibitors.retain(|s| *s != surface && s.alive());
-        let inhibited = !self.idle.inhibitors.is_empty();
+        let inhibited = self.idle_inhibited();
         self.idle.notifier.set_is_inhibited(inhibited);
         if !inhibited {
             // The countdown starts when the video stops.

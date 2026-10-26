@@ -34,10 +34,14 @@ pub struct Views {
     /// The `--show gallery` component gallery (E2.1), over the whole output under the bar and popups.
     pub components: Option<Components>,
     pub menu_bar: MenuBar,
+    /// The other displays' bars, by output name: drawn only, the first display's takes the clicks.
+    pub bars: std::collections::HashMap<String, MenuBar>,
     pub notifications: NotificationViews,
     /// The banner sliding in, drawn apart from the stack under it.
     pub entering: NotificationViews,
     pub menu: MenuPopover,
+    /// The open menu's submenu.
+    pub submenu: MenuPopover,
     pub osd: OsdPopover,
     pub control: ControlCenter,
     pub alert: AlertSheet,
@@ -58,6 +62,8 @@ pub struct Views {
     pub lock: LockView,
     pub screenshot: ScreenshotView,
     pub desktop: DesktopView,
+    /// Other apps' widgets on the desktop (E8.8).
+    pub widgets: NotificationViews,
 }
 
 impl Views {
@@ -69,9 +75,11 @@ impl Views {
             gallery: None,
             components: None,
             menu_bar: MenuBar::default(),
+            bars: Default::default(),
             notifications: NotificationViews::default(),
             entering: NotificationViews::default(),
             menu: MenuPopover::default(),
+            submenu: MenuPopover::default(),
             osd: OsdPopover::default(),
             control: ControlCenter::default(),
             alert: AlertSheet::default(),
@@ -90,6 +98,7 @@ impl Views {
             lock: LockView::default(),
             screenshot: ScreenshotView::default(),
             desktop: DesktopView::default(),
+            widgets: NotificationViews::default(),
         })
     }
 }

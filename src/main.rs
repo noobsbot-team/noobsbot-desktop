@@ -31,6 +31,7 @@ mod protocols;
 mod render;
 mod rules;
 mod services;
+mod session;
 mod sheets;
 mod shell;
 mod shortcuts;
@@ -200,11 +201,15 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             {
                 udev.configure_inputs(&config.touchpad, &config.mouse);
             }
+            let bar = config.menu_bar != state.config.menu_bar;
             let idle = config.idle != state.config.idle;
             let reader = config.accessibility.screen_reader != state.config.accessibility.screen_reader;
             state.config = config;
             if reader {
                 state.apply_screen_reader();
+            }
+            if bar {
+                state.refit_filled();
             }
             if displays {
                 state.apply_displays();
@@ -537,6 +542,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         if state.config.accessibility.screen_reader {
             state.apply_screen_reader();
         }
+        state.session_restore();
     }
     if !command.is_empty() {
         state.spawn(&command);

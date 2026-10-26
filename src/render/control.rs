@@ -1,5 +1,6 @@
 //! Control Center (E2.3): a `panel` glass column under the bar at the top right with `card` modules: Wi-Fi and
-//! Bluetooth toggles, Do Not Disturb, Dark Mode, Display and Sound sliders, Now Playing, battery and power mode.
+//! Bluetooth toggles, Do Not Disturb, Dark Mode, Keep Awake (with the apps blocking sleep), Display and Sound sliders,
+//! Now Playing, battery and power mode.
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
@@ -156,6 +157,46 @@ impl ControlCenter {
                 false,
             );
         }
+        {
+            let card = layout.awake;
+            let toggle = layout.rect_of(control::Control::KeepAwake).unwrap_or_default();
+            put(symbols.get(Symbol::Monitor, Weight::Fill, 16, scale, if status.awake { white } else { label }), centred(toggle, 16), false);
+            let x = toggle.loc.x + TOGGLE + 10;
+            let right = card.loc.x + card.size.w - 32;
+            put(text.label("Keep Awake", title, (right - x) as u32, scale), row(x, toggle.loc.y - 1, right, 16), true);
+            let mut sub = (if status.awake { "On" } else { "Off" }).to_owned();
+            match status.blockers.len() {
+                0 => {}
+                1 => sub.push_str(" · 1 app blocking sleep"),
+                n => sub.push_str(&format!(" · {n} apps blocking sleep")),
+            }
+            put(text.label(&sub, small, (right - x) as u32, scale), row(x, toggle.loc.y + 15, right, 14), true);
+            let caret = if status.expanded == Some(Module::Awake) { Symbol::CaretDown } else { Symbol::CaretRight };
+            put(
+                symbols.get(caret, Weight::Regular, 12, scale, secondary),
+                Rectangle::new((card.loc.x + card.size.w - 24, toggle.loc.y + 8).into(), (12, 12).into()),
+                false,
+            );
+            if status.blockers.is_empty()
+                && let Some(first) = layout.blockers.first()
+            {
+                put(
+                    text.label("No Apps Blocking Sleep", Style { color: secondary, ..body }, 240, scale),
+                    row_rect(first.loc.x + 6, first.loc.y, first.loc.x + first.size.w, LIST_ROW),
+                    true,
+                );
+            }
+            for (rect, (who, why)) in layout.blockers.iter().zip(&status.blockers) {
+                let (x, end) = (rect.loc.x + 6, rect.loc.x + rect.size.w - 6);
+                let piece = text.label(who, body, ((end - x) / 2) as u32, scale);
+                let w = (f64::from(piece.width) / scale).round() as i32;
+                put(piece, row_rect(x, rect.loc.y, end, LIST_ROW), true);
+                if !why.is_empty() {
+                    let x = x + w + 8;
+                    put(text.label(why, Style { color: secondary, ..body }, (end - x).max(1) as u32, scale), row_rect(x, rect.loc.y, end, LIST_ROW), true);
+                }
+            }
+        }
         if let Some((_, rows)) = &layout.list {
             if status.rows.is_empty() {
                 let empty = if status.expanded == Some(Module::Wifi) { "No Networks" } else { "No Devices" };
@@ -283,6 +324,7 @@ fn glass(shaders: &Shaders, layout: &Layout, status: &Status, dark: bool, accent
         (toggle_in(layout.network, 1), status.bluetooth.as_ref().is_some_and(|b| b.0)),
         (tile_toggle(layout.dnd), status.dnd),
         (tile_toggle(layout.dark), status.dark),
+        (layout.rect_of(control::Control::KeepAwake).unwrap_or_default(), status.awake),
     ];
     let night = layout.display.map(|card| (night_toggle(card), status.night));
     for (rect, state) in toggles.into_iter().chain(night) {

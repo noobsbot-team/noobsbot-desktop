@@ -102,12 +102,13 @@ impl DeactivationHandler for Quiet {
 }
 
 /// Control Center's toggles, in reading order.
-const TOGGLES: [(Control, &str); 5] = [
+const TOGGLES: [(Control, &str); 6] = [
     (Control::Wifi, "Wi-Fi"),
     (Control::Bluetooth, "Bluetooth"),
     (Control::Dnd, "Do Not Disturb"),
     (Control::Dark, "Dark Mode"),
     (Control::NightLight, "Night Light"),
+    (Control::KeepAwake, "Keep Awake"),
 ];
 
 impl State {
@@ -149,7 +150,14 @@ impl State {
         }
         let dock = self.dock_items().iter().map(|i| (i.title().to_owned(), !i.windows.is_empty())).collect();
         let controls = matches!(self.popup, Some(crate::shell::Popup::Control)).then(|| {
-            let on = [status.wifi.as_ref().map(|w| w.0), status.bluetooth.as_ref().map(|b| b.0), Some(status.dnd), Some(status.dark), Some(status.night)];
+            let on = [
+                status.wifi.as_ref().map(|w| w.0),
+                status.bluetooth.as_ref().map(|b| b.0),
+                Some(status.dnd),
+                Some(status.dark),
+                Some(status.night),
+                Some(status.awake),
+            ];
             TOGGLES.iter().zip(on).filter_map(|((_, name), on)| Some(((*name).to_owned(), on?))).collect()
         });
         Shell { bar, dock, controls }
@@ -183,7 +191,7 @@ impl State {
         } else if let Some(i) = id.checked_sub(CONTROL_ITEM) {
             // The shown toggles skip a missing service: count only those.
             let status = self.control_status();
-            let present = [status.wifi.is_some(), status.bluetooth.is_some(), true, true, true];
+            let present = [status.wifi.is_some(), status.bluetooth.is_some(), true, true, true, true];
             let control = TOGGLES.iter().zip(present).filter(|(_, p)| *p).nth(i as usize).map(|((c, _), _)| *c);
             if let Some(rect) = control.and_then(|c| self.control_layout().rect_of(c)) {
                 self.control_press(rect.to_f64().loc + rect.to_f64().size.downscale(2.0));

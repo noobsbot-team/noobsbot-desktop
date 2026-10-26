@@ -11,12 +11,16 @@ use zbus::Connection;
 
 use super::Update;
 
+/// A `ListInhibitors` row: what, who, why, mode, uid, pid.
+type Row = (String, String, String, String, u32, u32);
+
 /// The sleep inhibitor's fd; closing it lets the sleep go ahead.
 static SLEEP: Mutex<Option<OwnedFd>> = Mutex::new(None);
 
 #[zbus::proxy(interface = "org.freedesktop.login1.Manager", default_service = "org.freedesktop.login1", default_path = "/org/freedesktop/login1")]
 trait Manager {
     fn inhibit(&self, what: &str, who: &str, why: &str, mode: &str) -> zbus::Result<zbus::zvariant::OwnedFd>;
+    fn list_inhibitors(&self) -> zbus::Result<Vec<Row>>;
     #[zbus(signal)]
     fn prepare_for_sleep(&self, start: bool) -> zbus::Result<()>;
 }
@@ -39,6 +43,27 @@ pub fn release_sleep() {
     }
 }
 
+/// An app keeping the machine awake: who, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Inhibitor {
+    pub who: String,
+    pub why: String,
+}
+
+/// logind's inhibitors that block sleep or idle; `delay` ones (ours, NetworkManager's) only postpone it.
+fn blocking(list: Vec<Row>) -> Vec<Inhibitor> {
+    list.into_iter()
+        .filter(|(what, who, _, mode, _, _)| mode == "block" && who != "Noobsbot Desktop" && what.split(':').any(|w| w == "sleep" || w == "idle"))
+        .map(|(_, who, why, ..)| Inhibitor { who, why })
+        .collect()
+}
+
+/// Who blocks sleep now; empty without logind.
+pub async fn inhibitors(bus: &Connection) -> Vec<Inhibitor> {
+    let list = async { ManagerProxy::new(bus).await?.list_inhibitors().await };
+    list.await.inspect_err(|err| tracing::debug!("logind inhibitors: {err}")).map(blocking).unwrap_or_default()
+}
+
 /// Holds the inhibitors and relays `PrepareForSleep`: `start` → `Update::PrepareForSleep`, back awake →
 /// `Update::Resumed` (and the sleep inhibitor again).
 pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
@@ -55,5 +80,25 @@ pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
             take_sleep(&login).await;
             let _ = updates.send(Update::Resumed);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_sleep_and_idle_blockers_count() {
+        let row = |what: &str, who: &str, mode: &str| (what.into(), who.into(), "because".into(), mode.into(), 1000, 42);
+        let list = vec![
+            row("sleep", "NetworkManager", "delay"),
+            row("handle-power-key", "Noobsbot Desktop", "block"),
+            row("sleep", "Noobsbot Desktop", "block"),
+            row("shutdown:sleep", "Transmission", "block"),
+            row("idle", "Videos", "block"),
+            row("handle-lid-switch", "Docked", "block"),
+        ];
+        let who: Vec<_> = blocking(list).into_iter().map(|i| i.who).collect();
+        assert_eq!(who, ["Transmission", "Videos"]);
     }
 }
