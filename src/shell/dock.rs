@@ -1039,6 +1039,8 @@ pub enum Command {
     CloseOthers,
     /// The app's n-th desktop action.
     Action(usize),
+    /// Separate Items on This Display: the dock's display gets its own pinned list, or goes back to the shared one.
+    Separate,
     /// The Trash's Open: what a click does.
     Open,
     /// Asks, then erases everything in the Trash.
@@ -1053,6 +1055,9 @@ pub const ASSIGN: [&str; 3] = ["All Spaces", "This Space", "None"];
 pub struct Options {
     /// Keep in Dock, ticked while pinned; `None` when it can't be pinned.
     pub pinned: Option<bool>,
+    /// Separate Items on This Display, ticked while the display has its own list; `None` hides it (one display, or
+    /// items locked).
+    pub separate: Option<bool>,
     /// Open at Login, ticked while on; `None` without a desktop file, which also hides Show in Files.
     pub login: Option<bool>,
     /// Assign To with `ASSIGN[n]` ticked; `None` hides it (a builtin, a minimised window's tile).
@@ -1075,6 +1080,9 @@ pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], ac
     let mut sub = Vec::new();
     if let Some(pinned) = options.pinned {
         sub.push(row("Keep in Dock", tick(pinned), Some(Command::Pin)));
+    }
+    if let Some(on) = options.separate {
+        sub.push(row("Separate Items on This Display", tick(on), Some(Command::Separate)));
     }
     if let Some(login) = options.login {
         sub.push(row("Open at Login", tick(login), Some(Command::Login)));
@@ -1255,6 +1263,16 @@ pub fn set_outputs(text: &str, lists: &BTreeMap<String, Vec<String>>) -> String 
     config::set_key(&config::set_section(text, "dock.outputs", ""), "dock", "outputs", &table)
 }
 
+/// Separate Items on This Display: `display` gets a copy of the shared list, or loses its own; returns the edit that
+/// saves it.
+pub fn separate(dock: &mut config::Dock, display: &str) -> Edit {
+    if dock.outputs.remove(display).is_none() {
+        dock.outputs.insert(display.to_owned(), dock.items.clone());
+    }
+    let lists = dock.outputs.clone();
+    Box::new(move |text| set_outputs(text, &lists))
+}
+
 /// Puts `items` in `display`'s dock list (its own, else the shared `[dock] items`); returns the edit that saves it.
 pub fn store_pins(dock: &mut config::Dock, display: Option<&str>, items: Vec<String>) -> Edit {
     match display.and_then(|d| dock.outputs.get_mut(d)) {
@@ -1344,6 +1362,8 @@ impl State {
                 None => 2,
             });
         let outputs: Vec<_> = self.space.outputs().collect();
+        let own = self.dock_output().is_some_and(|o| self.config.dock.outputs.contains_key(&o.name()));
+        let separate = (!self.config.dock.lock_items && (own || outputs.len() > 1)).then_some(own);
         let here = item.windows.first().and_then(|w| self.window_output(w));
         let displays = if item.windows.is_empty() { Vec::new() } else { outputs.iter().map(|o| (o.name(), here.as_ref() != Some(*o))).collect() };
         menu_rows(
@@ -1351,7 +1371,7 @@ impl State {
             active,
             &recent,
             &actions,
-            &Options { pinned, login: self.dock_ui.login, assign, displays },
+            &Options { pinned, separate, login: self.dock_ui.login, assign, displays },
             Builtin::of(&item.key).is_none() && !self.dock_others(&item.key).is_empty(),
         )
     }
@@ -1404,6 +1424,11 @@ impl State {
                 let pinned = self.dock_pinned();
                 let to = (!pinned.iter().any(|(_, id)| *id == item.key)).then_some(pinned.len());
                 self.dock_repin(&item.key, to);
+            }
+            Command::Separate => {
+                let Some(output) = self.dock_output() else { return };
+                let edit = separate(&mut self.config.dock, &output.name());
+                self.dock_save(edit);
             }
             Command::Recent(i) => {
                 let (Some(app), Some(uri)) = (item.app, self.dock_ui.recent.get(i).cloned()) else { return };
@@ -1935,6 +1960,26 @@ mod tests {
         let saved: toml::Table = toml::from_str(&saved).unwrap();
         assert_eq!(saved["dock"]["assign"]["kitty"].as_str(), Some("DP-1:2"));
         assert_eq!(saved["clock"]["hour24"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn separating_copies_the_shared_list_and_back() {
+        let mut dock = config::parse(config::DEFAULT_TOML).unwrap().dock;
+        dock.outputs.insert("DP-1".into(), vec!["kitty".into()]);
+        let edit = separate(&mut dock, "HDMI-A-1");
+        assert_eq!(dock.outputs["HDMI-A-1"], dock.items, "on: a copy of the shared list");
+        let saved = edit(config::DEFAULT_TOML);
+        let back = config::parse(&saved).unwrap().dock;
+        assert_eq!(back.outputs, dock.outputs);
+        // Off again: only that display's list goes; another display's (connected or not) stays.
+        let edit = separate(&mut dock, "HDMI-A-1");
+        let back = config::parse(&edit(&saved)).unwrap().dock;
+        assert_eq!(back.outputs.keys().collect::<Vec<_>>(), ["DP-1"]);
+        assert_eq!(back.items, config::Dock::default().items);
+        let rows = menu_rows(&[], None, &[], &[], &Options { pinned: Some(true), separate: Some(true), ..Options::default() }, false);
+        let sub = &rows[0].as_ref().unwrap().sub;
+        assert_eq!((sub[1].as_ref().unwrap().label.as_str(), sub[1].as_ref().unwrap().shortcut), ("Separate Items on This Display", "✓"));
+        assert_eq!(sub[1].as_ref().unwrap().action, Some(Action::Dock(Command::Separate)));
     }
 
     #[test]
