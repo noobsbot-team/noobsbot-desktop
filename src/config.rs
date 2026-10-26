@@ -466,6 +466,8 @@ pub struct Windows {
     pub spaces: u8,
     /// Which window gets the keyboard: the one clicked, or (advanced) the one under the pointer.
     pub focus: FocusMode,
+    /// The Log Out alert's "Reopen windows when logging back in" box, as last left (E8.8).
+    pub reopen_at_login: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -604,6 +606,8 @@ pub struct Dock {
     pub minimise_into_icon: bool,
     /// How a window goes into the dock and comes back (E5.5).
     pub minimise_effect: MinimiseEffect,
+    /// The Trash at the dock's right end, after a separator (E8.8).
+    pub show_trash: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -773,6 +777,7 @@ impl Default for Dock {
             scroll: DockScroll::On,
             minimise_into_icon: false,
             minimise_effect: MinimiseEffect::Scale,
+            show_trash: true,
         }
     }
 }
@@ -849,7 +854,15 @@ impl Default for Touchpad {
 
 impl Default for Windows {
     fn default() -> Self {
-        Self { move_modifier: Modifier::Super, magnetic_edges: true, snapping: true, double_click_title: TitleAction::Zoom, spaces: 0, focus: FocusMode::Click }
+        Self {
+            move_modifier: Modifier::Super,
+            magnetic_edges: true,
+            snapping: true,
+            double_click_title: TitleAction::Zoom,
+            spaces: 0,
+            focus: FocusMode::Click,
+            reopen_at_login: true,
+        }
     }
 }
 
