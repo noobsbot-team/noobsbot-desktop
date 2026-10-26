@@ -297,6 +297,14 @@ pub const SETTINGS: &[Setting] = &[
         "Super+Alt+8 turns Zoom on or off, Super+Alt+= and Super+Alt+- zoom in and out",
         Kind::Choice(&[("full", "Full Screen"), ("lens", "Picture-in-Picture")]),
     ),
+    s(
+        Page::Accessibility,
+        "Zoom",
+        "accessibility.zoom_follows_focus",
+        "Follow keyboard focus",
+        "Zoom follows the text cursor and the focused window, not only the pointer",
+        Kind::Toggle,
+    ),
     s(Page::Accessibility, "Keyboard", "accessibility.sticky_keys", "Sticky keys", "Tap a modifier for the next key; tap twice to keep it", Kind::Toggle),
     s(Page::Accessibility, "Keyboard", "accessibility.sticky_keys_shortcut", "Press Shift five times for sticky keys", "", Kind::Toggle),
     s(

@@ -123,8 +123,16 @@ impl State {
         let scale = output.current_scale().fractional_scale();
         let zooming = self.zoom.advance(self.frame_time, self.config.appearance.reduce_motion);
         let pointer = self.seat.get_pointer().map(|p| p.current_location()).filter(|p| geo.to_f64().contains(*p)).map(|p| p - geo.loc.to_f64());
+        // The focused text field's caret and the focused window, if Zoom follows them and they are on this output.
+        let relative = |r: smithay::utils::Rectangle<i32, smithay::utils::Logical>| {
+            r.intersection(geo).map(|_| smithay::utils::Rectangle::new(r.loc - geo.loc, r.size).to_f64())
+        };
+        let follow = self.config.accessibility.zoom_follows_focus;
+        let caret = self.text_cursor().filter(|_| follow).and_then(relative);
+        let window = self.focused_window().filter(|_| follow).and_then(|w| self.space.element_geometry(&w)).and_then(relative);
         let views = self.backend.as_ref()?;
-        let mut elements = self.zoom.apply(renderer, &views.shaders, elements, &output.name(), geo.size.to_f64(), pointer, &self.config.accessibility, scale);
+        let mut elements =
+            self.zoom.apply(renderer, &views.shaders, elements, &output.name(), geo.size.to_f64(), pointer, caret, window, &self.config.accessibility, scale);
         let size = geo.size.to_physical_precise_round(scale);
         let (tint, fading) = self.night_light.element(&self.config.night_light, self.frame_time, size);
         elements.splice(0..0, self.osk_elements(renderer, output));

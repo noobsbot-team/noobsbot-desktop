@@ -138,6 +138,8 @@ pub enum NightSchedule {
 pub struct Accessibility {
     /// Zoom (Super+Alt+8) magnifies the whole screen, or a lens around the pointer.
     pub zoom_style: ZoomStyle,
+    /// Zoom also follows the text caret and keyboard focus, not only the pointer.
+    pub zoom_follows_focus: bool,
     /// The whole screen through a colour filter; screenshots stay true.
     pub colour_filter: ColourFilter,
     /// Glass near-opaque, with a visible 1 px border.
@@ -170,6 +172,7 @@ impl Default for Accessibility {
     fn default() -> Self {
         Self {
             zoom_style: ZoomStyle::Full,
+            zoom_follows_focus: true,
             colour_filter: ColourFilter::None,
             increase_contrast: false,
             sticky_keys: false,
