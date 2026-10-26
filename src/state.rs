@@ -1351,6 +1351,7 @@ impl ClientDndGrabHandler for State {
     }
 
     fn dropped(&mut self, _target: Option<WlSurface>, validated: bool, _seat: Seat<Self>) {
+        self.dock_drag_ended();
         if !validated {
             self.dock_drop();
         }
