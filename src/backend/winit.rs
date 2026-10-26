@@ -489,6 +489,38 @@ impl State {
         }
     }
 
+    /// Launchpad, when it shows on `output` (it then covers that display's menu bar and windows).
+    fn launchpad_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<Vec<SceneElement>> {
+        let l = self.launchpad.as_ref().filter(|l| self.overlay_output(l.output.as_ref()).as_ref() == Some(output))?;
+        let grid = self.launchpad_grid()?;
+        let size = self.space.output_geometry(output)?.size;
+        let now = self.frame_time;
+        let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &l.field.text);
+        let (lifted, offsets) = (l.lifted(&grid, now), l.offsets(now));
+        let open = l.folder.as_ref().and_then(|f| match tiles.get(f.index) {
+            Some(crate::shell::launchpad::Tile::Folder(_, apps)) => Some((crate::shell::launchpad::folder_grid(&grid, apps.len()), f)),
+            _ => None,
+        });
+        let frame = LaunchpadFrame {
+            tiles: &tiles,
+            grid: &grid,
+            output: size,
+            position: l.position(now),
+            page: l.page,
+            shown: l.shown.at(now),
+            field: &l.field,
+            lifted,
+            offsets: &offsets,
+            onto: l.press.as_ref().and_then(|p| p.onto(now)),
+            folder: open.as_ref().map(|((panel, inner), f)| (*panel, inner, *f, f.shown.at(now))),
+        };
+        let appearance = &self.config.appearance;
+        let (dark, glass, scale) = (render::is_dark(appearance), appearance.glass_opacity, output.current_scale().fractional_scale());
+        let accent = render::accent(appearance.accent, dark);
+        let views = self.backend.as_mut()?;
+        Some(views.launchpad.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, &mut self.icons, &frame, dark, accent, glass, scale))
+    }
+
     /// Spotlight, on `output` when it shows there.
     fn spotlight_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
         let Some(open) = self.spotlight.clone().filter(|s| self.overlay_output(s.output.as_ref()).as_ref() == Some(output)) else { return Vec::new() };
@@ -548,8 +580,10 @@ impl State {
             let slide = if overview.is_none() { self.slide_frame(output) } else { None };
             let indicator = self.space_indicator(output);
             let animating = animating || overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
+            // Launchpad when it shows here, covering the menu bar and the windows.
+            let pad = self.launchpad_elements(renderer, output);
             // Its own menu bar and the popups opened from it.
-            let (strip, popups) = self.bar_elements(renderer, output, locked);
+            let (strip, popups) = self.bar_elements(renderer, output, locked || pad.is_some());
             let mut ripple = self.alert_elements(renderer, output);
             ripple.extend(self.spotlight_elements(renderer, output));
             ripple.extend(self.ripple_elements(output));
@@ -572,6 +606,8 @@ impl State {
                 front.extend(popups);
                 front.extend(strip);
                 front.extend(dock);
+                let pad_here = pad.is_some();
+                front.extend(pad.into_iter().flatten());
                 front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
                 let appearance = &self.config.appearance;
                 let mission = views.missions.entry(output.name()).or_default();
@@ -585,6 +621,7 @@ impl State {
                         Some(mission.windows(renderer, &views.shaders, text, &self.space, overview, geo, dark, accent, glass, scale))
                     }
                     (None, Some(slide)) => Some(render::sliding(renderer, &views.shaders, &mut self.text, &self.space, slide, scale, dark)),
+                    (None, None) if pad_here => Some(Vec::new()),
                     (None, None) => None,
                 };
                 render::scene(
@@ -623,7 +660,7 @@ impl State {
         let (dock_elements, dock_animating) = self.dock_elements(renderer, output);
         let now = self.frame_time;
         self.launchpad_frame(now);
-        let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
+        let pad = self.launchpad_elements(renderer, output);
         let desktop_frame = self.desktop_frame();
         let desktop_widgets = self.desktop_widgets();
         let drawer_frame = self.drawer_frame();
@@ -661,7 +698,7 @@ impl State {
             spotlight: _,
             emoji: emoji_view,
             osk: _,
-            launchpad: pad_view,
+            launchpad: _,
             drawer: drawer_view,
             mission,
             missions: _,
@@ -786,39 +823,8 @@ impl State {
         // The dock: behind the bar and popups, above windows.
         bar.extend(dock_elements);
         // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.
-        if let (Some(((position, shown, field, page), grid)), Some(l)) = (&pad, self.launchpad.as_ref()) {
-            let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &field.text);
-            let (lifted, offsets) = (l.lifted(grid, now), l.offsets(now));
-            let open = l.folder.as_ref().and_then(|f| match tiles.get(f.index) {
-                Some(crate::shell::launchpad::Tile::Folder(_, apps)) => Some((crate::shell::launchpad::folder_grid(grid, apps.len()), f)),
-                _ => None,
-            });
-            let frame = LaunchpadFrame {
-                tiles: &tiles,
-                grid,
-                output: size,
-                position: *position,
-                page: *page,
-                shown: *shown,
-                field,
-                lifted,
-                offsets: &offsets,
-                onto: l.press.as_ref().and_then(|p| p.onto(now)),
-                folder: open.as_ref().map(|((panel, inner), f)| (*panel, inner, *f, f.shown.at(now))),
-            };
-            bar.extend(pad_view.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                &mut self.icons,
-                &frame,
-                dark,
-                accent,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
+        let pad_here = pad.is_some();
+        bar.extend(pad.into_iter().flatten());
         // Ghosts of closing and minimising windows: behind the dock, in front of windows.
         ghosts.retain(|g| !g.anim.done(now));
         bar.extend(ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, shaders, now, scale)));
@@ -840,7 +846,7 @@ impl State {
             }
             (None, Some(slide)) => Some(render::sliding(renderer, shaders, &mut self.text, &self.space, slide, scale, dark)),
             // Launchpad shows only the wallpaper.
-            (None, None) if pad.is_some() => Some(Vec::new()),
+            (None, None) if pad_here => Some(Vec::new()),
             (None, None) => None,
         };
         let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows, now);
