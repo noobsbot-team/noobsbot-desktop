@@ -489,7 +489,7 @@ impl State {
     }
 
     /// Bodies shown: `[notifications] previews`, and whether the screen is locked.
-    fn previews(&self) -> bool {
+    pub(crate) fn previews(&self) -> bool {
         self.config.notifications.previews.show(self.locked())
     }
 
@@ -602,7 +602,7 @@ impl State {
         }
     }
 
-    fn invoke(&mut self, id: u32, key: String) {
+    pub(crate) fn invoke(&mut self, id: u32, key: String) {
         let resident = self.notifications.get(id).is_some_and(|n| n.resident);
         if id == crate::services::update::NOTICE_ID {
             if key == "install" {
@@ -625,7 +625,7 @@ impl State {
     }
 
     /// A click on the notification: its default action, else the app's window comes forward and the banner goes.
-    fn activate(&mut self, id: u32) {
+    pub(crate) fn activate(&mut self, id: u32) {
         let Some(n) = self.notifications.get(id) else { return };
         if n.actions.iter().any(|(key, _)| key == "default") {
             return self.invoke(id, "default".into());

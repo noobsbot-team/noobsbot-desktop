@@ -785,10 +785,14 @@ impl State {
             (Some(j), Some((_, inner))) => inner.hit(p.at) == Some(j),
             _ => grid.hit(p.at).map(|i| page * grid.per_page() + i) == Some(p.index),
         };
-        if !same {
-            return;
+        if same {
+            self.launchpad_activate(p.index, p.inner);
         }
-        let app = match (self.launchpad_tiles().into_iter().nth(p.index), p.inner) {
+    }
+
+    /// Tile `index` was chosen (`inner`: an app inside that folder): an app starts, a folder opens.
+    pub(crate) fn launchpad_activate(&mut self, index: usize, inner: Option<usize>) {
+        let app = match (self.launchpad_tiles().into_iter().nth(index), inner) {
             (Some(Tile::App(a)), _) => a.clone(),
             (Some(Tile::Folder(_, apps)), Some(j)) => match apps.get(j) {
                 Some(a) => (*a).clone(),
@@ -796,7 +800,7 @@ impl State {
             },
             (Some(Tile::Folder(name, _)), None) => {
                 if let Some(l) = self.launchpad.as_mut() {
-                    l.folder = Some((p.index, TextField { caret: name.len(), text: name, ..Default::default() }));
+                    l.folder = Some((index, TextField { caret: name.len(), text: name, ..Default::default() }));
                 }
                 return;
             }

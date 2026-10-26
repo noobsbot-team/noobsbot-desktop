@@ -1714,7 +1714,8 @@ Rows live on the Appearance page (E8.2). Behind them:
   lock screen gets it too; `zwp_virtual_keyboard_v1` is served for other keyboards.
 - ~~**Screen reader** path: AT-SPI for our shell widgets and an Orca key monitor. Size L.~~ Done: menu bar, dock and
   Control Center over AT-SPI (`src/access.rs`), the `KeyboardMonitor` key monitor (`src/services/a11y.rs`),
-  `[accessibility] screen_reader`. Other shell surfaces (Spotlight, Launchpad, notifications) are not exposed yet.
+  `[accessibility] screen_reader`; also Spotlight, Launchpad, banners (critical ones assertive) and Notification
+  Center, alerts, polkit and Force Quit, the app switcher and the lock screen.
 
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
