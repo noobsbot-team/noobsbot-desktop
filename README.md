@@ -321,6 +321,7 @@ doesn't understand is skipped and reported in the journal.
 | `[idle]` | when to dim, turn the screen off and sleep (battery and AC), locking |
 | `[privacy]` | which programs may record the screen |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
+| `[widgets]` | order of other apps' widgets in Notification Center, and which go on the desktop instead |
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
 | `[desktop]` | desktop icons on or off |
