@@ -39,6 +39,8 @@ pub struct Mission {
     pub bar_hover: Option<usize>,
     /// A window pressed: where, and where the pointer is once it moved past the drag threshold.
     pub press: Option<Press>,
+    /// A Space pressed in the bar: its place now, where the press was, and whether it is being dragged (E8.7).
+    pub space_press: Option<(usize, Point<f64, Logical>, bool)>,
 }
 
 /// The pressed window, where the press was, and the pointer once it dragged past the threshold.
@@ -71,6 +73,12 @@ pub fn bar(output: Size<i32, Logical>, count: usize, expanded: bool, dynamic: bo
         Rectangle::new((output.w - 2 * BAR_GAP - side, BAR_TOP + (if expanded { THUMB_H } else { PILL.1 + 8 } - side) / 2).into(), (side, side).into())
     });
     Bar { cells, plus, expanded }
+}
+
+/// The place among `cells` a Space dragged to `x` takes: the cell with the nearest centre.
+pub fn slot(cells: &[Rect], x: f64) -> usize {
+    let centre = |c: &Rect| f64::from(c.loc.x) + f64::from(c.size.w) / 2.0;
+    (0..cells.len()).min_by(|a, b| (centre(&cells[*a]) - x).abs().total_cmp(&(centre(&cells[*b]) - x).abs())).unwrap_or(0)
 }
 
 /// The ✕ that removes the Space in `cell`: over its top-left corner.
@@ -196,7 +204,8 @@ impl State {
             None => {
                 self.popup = None;
                 self.spaces.slide = None;
-                self.mission = Some(Mission { app, progress: Tween::new(0.0, 1.0), hover: None, expanded: false, bar_hover: None, press: None });
+                self.mission =
+                    Some(Mission { app, progress: Tween::new(0.0, 1.0), hover: None, expanded: false, bar_hover: None, press: None, space_press: None });
             }
         }
         self.schedule_redraw();
@@ -206,6 +215,7 @@ impl State {
         if let Some(m) = self.mission.as_mut().filter(|m| m.progress.target() == 1.0) {
             m.progress = Tween::new(m.progress.value(Instant::now()), 0.0);
             m.press = None;
+            m.space_press = None;
             self.schedule_redraw();
         }
     }
@@ -304,9 +314,11 @@ impl State {
         match (self.bar_hit(&layout.bar, location), window) {
             (Some(BarHit::Plus), _) => self.add_space(),
             (Some(BarHit::Close(i)), _) => self.remove_space(i),
+            // Shown on release; dragged, it moves along the bar.
             (Some(BarHit::Space(i)), _) => {
-                self.show_space(i);
-                self.close_mission();
+                if let Some(m) = self.mission.as_mut() {
+                    m.space_press = Some((i, location, false));
+                }
             }
             (None, Some(window)) => {
                 if let Some(m) = self.mission.as_mut() {
@@ -338,6 +350,17 @@ impl State {
             *dragging = Some(to);
             changed = true;
         }
+        if let Some((from, at, dragging)) = m.space_press.as_mut()
+            && (*dragging || (to - *at).x.hypot((to - *at).y) > crate::wm::DRAG_THRESHOLD)
+        {
+            *dragging = true;
+            let (from, onto) = (*from, slot(&layout.bar.cells, to.x));
+            if onto != from {
+                m.space_press = m.space_press.map(|(_, at, d)| (onto, at, d));
+                self.move_space(from, onto);
+                changed = true;
+            }
+        }
         if changed {
             self.schedule_redraw();
         }
@@ -346,6 +369,13 @@ impl State {
     /// The left button went up at `location`: a click focuses the window and closes; a drag onto a Space moves the
     /// window there.
     pub fn mission_release(&mut self, location: Point<f64, Logical>) {
+        if let Some((i, _, dragged)) = self.mission.as_mut().and_then(|m| m.space_press.take()) {
+            if !dragged {
+                self.show_space(i);
+                self.close_mission();
+            }
+            return;
+        }
         let Some((window, _, dragged)) = self.mission.as_mut().and_then(|m| m.press.take()) else { return };
         match dragged {
             None => {
@@ -465,6 +495,17 @@ mod tests {
             }
         }
         assert_eq!(bar(Size::from((1280, 800)), 3, true, true).cells[0].size, Size::from((153, THUMB_H)), "roomy bars are unchanged");
+    }
+
+    #[test]
+    fn a_dragged_space_takes_the_nearest_place() {
+        let cells = bar(Size::from((1280, 800)), 3, true, true).cells;
+        let centre = |i: usize| f64::from(cells[i].loc.x + cells[i].size.w / 2);
+        assert_eq!(slot(&cells, 0.0), 0);
+        assert_eq!(slot(&cells, centre(1) + 10.0), 1);
+        assert_eq!(slot(&cells, (centre(1) + centre(2)) / 2.0 + 1.0), 2, "past half way: the next place");
+        assert_eq!(slot(&cells, 5000.0), 2);
+        assert_eq!(slot(&[], 10.0), 0);
     }
 
     #[test]
