@@ -1776,6 +1776,10 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
             }
         };
         rows.insert(2, other);
+        if users.camera.is_some() {
+            let take = button(text("Take Photo…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::TakePhoto(true));
+            rows.insert(3, line(t, "Camera", "", take.into()));
+        }
     }
     let mut parts = vec![container(head).padding([0, 4]).into(), group(t, "", rows)];
     if !users.others.is_empty() {
@@ -1797,12 +1801,32 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
 
 /// Users' Add User… sheet or Delete User… alert over the window, when one is open.
 pub fn users_sheet(app: &App) -> Option<Element<'_, Message>> {
-    use crate::users::NEW;
+    use crate::users::{NEW, Shot};
     let t = app.tokens;
+    let push = |label: &'static str, primary: bool, message: Message| button(text(label).size(13)).padding([4, 14]).style(t.push(primary)).on_press(message);
+    if let Some(shot) = &app.shot {
+        // A 128 px square, as the picture will be cut.
+        let frame = |inner: Element<'static, Message>| container(inner).center(128).style(Tokens::squircle(t.card(), 64.0));
+        let (shown, buttons): (Element<'_, Message>, Vec<Element<'_, Message>>) = match shot {
+            Shot::Count(n) => (frame(text(n.to_string()).size(48).font(font(Weight::Semibold)).into()).into(), Vec::new()),
+            Shot::Taking => (frame(text("Smile").size(15).into()).into(), Vec::new()),
+            Shot::Taken(photo) => (
+                iced::widget::image(photo.clone()).width(128).height(128).border_radius(64.0).into(),
+                vec![push("Retake", false, Message::TakePhoto(true)).into(), push("Use Photo", true, Message::Picture(crate::users::photo_file())).into()],
+            ),
+            Shot::Failed(why) => (text(why).size(12).color(crate::style::rgb(0xFF3B30)).into(), vec![push("Retry", false, Message::TakePhoto(true)).into()]),
+        };
+        let mut buttons = buttons;
+        buttons.insert(0, space().width(Length::Fill).into());
+        buttons.insert(1, push("Cancel", false, Message::TakePhoto(false)).into());
+        let card = column![text("Take Photo").size(15).font(font(Weight::Semibold)), container(shown).center_x(Length::Fill), row(buttons).spacing(8)]
+            .spacing(12)
+            .width(320);
+        let sheet = container(card).padding(18).style(t.sheet());
+        return Some(iced::widget::opaque(container(sheet).center(Length::Fill).style(t.dim())));
+    }
     if let Some(path) = app.texts.get(crate::users::DELETE) {
         let a = app.users.as_ref()?.others.iter().find(|a| &a.path == path)?;
-        let push =
-            |label: &'static str, primary: bool, message: Message| button(text(label).size(13)).padding([4, 14]).style(t.push(primary)).on_press(message);
         let card = column![
             text(format!("Delete the user “{}”?", a.shown())).size(15).font(font(Weight::Semibold)),
             text(format!("{} can't sign in after this. Their home folder can stay, or go with the account.", a.login)).size(12).color(t.secondary()),
