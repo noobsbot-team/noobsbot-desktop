@@ -271,6 +271,7 @@ settings file.
 | Web key | the default browser |
 | Mail key | the default mail app |
 | Explorer key | the default file manager |
+| Calculator key | a calculator app |
 | Display key | System Settings › Displays |
 | Power button | asks before shutting down |
 | Sleep key | lock, then sleep |
