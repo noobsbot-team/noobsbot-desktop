@@ -417,7 +417,7 @@ impl State {
 
     /// The grid on the first output, clear of the bar and the dock.
     fn desktop_grid(&self) -> Option<Grid> {
-        let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
+        let size = self.first_geometry()?.size;
         Some(Grid::new(size, i32::from(self.config.dock.icon_size) + 24))
     }
 
@@ -649,7 +649,7 @@ impl State {
     /// Where the right-click menu opens: its top-left at the click, flipped up when it would run off the bottom.
     pub fn desktop_menu_anchor(&self, rows: &[Option<Row>]) -> Option<Anchor> {
         let (_, at) = self.desktop.menu.as_ref()?;
-        let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(i32::MAX, |g| g.size.h);
+        let height = self.first_geometry().map_or(i32::MAX, |g| g.size.h);
         let tall = super::menu_height(rows);
         let y = if at.y + tall > height - MARGIN { at.y - tall } else { at.y };
         Some(Anchor::At((at.x, y.max(menubar::height())).into()))

@@ -237,7 +237,7 @@ impl State {
     pub fn toggle_emoji(&mut self) {
         if self.emoji.take().is_none() {
             let cursor = self.text_cursor().map(|c| Rectangle::new(self.to_output(c.loc.to_f64()).to_i32_round(), c.size));
-            let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or((1280, 800).into(), |g| g.size);
+            let size = self.first_geometry().map_or((1280, 800).into(), |g| g.size);
             let recent: Vec<String> = std::fs::read_to_string(recent_path()).unwrap_or_default().lines().take(RECENT).map(String::from).collect();
             self.emoji = Some(Picker { recent, at: anchor(cursor, size), ..Picker::default() });
             self.popup = None;

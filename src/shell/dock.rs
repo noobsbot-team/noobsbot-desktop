@@ -439,7 +439,7 @@ impl State {
     /// Whether `window` is on the current Space (shown, or minimised from it) of `output` (`None`: any display's).
     // ponytail: a minimised window counts as on the display its top-left corner was on.
     fn on_current_space(&self, window: &Window, output: Option<&Output>) -> bool {
-        let top = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.loc.y);
+        let top = self.first_origin().y;
         let hidden = || self.hidden.iter().find(|(w, _)| w == window).map(|(_, l)| *l);
         let loc = self.space.element_location(window).or_else(hidden);
         let here = output.is_none_or(|o| match self.window_output(window) {
@@ -520,8 +520,7 @@ impl State {
 
     /// `location` (first-output-relative, as the shell gets it) relative to `dock_output`'s display.
     pub fn to_dock(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
-        let origin = |o: Option<Output>| o.and_then(|o| self.space.output_geometry(&o)).map_or((0, 0).into(), |g| g.loc);
-        location + origin(self.space.outputs().next().cloned()).to_f64() - origin(self.dock_output()).to_f64()
+        self.to_display(self.dock_output().as_ref(), location)
     }
 
     /// The pointer moved to `location` (first-output-relative): onto another display's dock, that one becomes
@@ -530,7 +529,7 @@ impl State {
         if self.popup == Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock)) {
             return;
         }
-        let Some(first) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
+        let Some(first) = self.first_geometry() else { return };
         let at = location + first.loc.to_f64();
         let docks = self.dock_outputs();
         let Some(output) = docks.into_iter().find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(at))) else { return };

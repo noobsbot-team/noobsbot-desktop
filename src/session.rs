@@ -119,7 +119,7 @@ impl State {
 
     /// Every app window, bottom to top (minimised ones too), but not dialogs or the quake terminal.
     fn session_entries(&mut self) -> Vec<Entry> {
-        let top = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.loc.y);
+        let top = self.first_origin().y;
         let shown = self.space.elements().map(|w| (w.clone(), None));
         let windows: Vec<(Window, Option<smithay::utils::Point<i32, smithay::utils::Logical>>)> =
             shown.chain(self.hidden.iter().map(|(w, loc)| (w.clone(), Some(*loc)))).collect();

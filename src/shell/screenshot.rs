@@ -306,6 +306,21 @@ pub fn drag_bytes(mime: &str, path: &Path) -> Option<Vec<u8>> {
     }
 }
 
+/// The display (index into `screens`, global) a click at global `at` is on when that is not the overlay's (`shown`):
+/// a Screen-mode click there captures it, and the toolbar takes none of it.
+pub fn clicked_elsewhere(screens: &[Rect], shown: usize, at: Point<f64, Logical>) -> Option<usize> {
+    screens.iter().position(|s| s.to_f64().contains(at)).filter(|i| *i != shown)
+}
+
+/// wf-recorder's arguments: the file, and `-o` the display picked in the open toolbar (`picked`), else the pointer's.
+fn record_args(path: &Path, picked: Option<String>, pointer: Option<String>) -> Vec<std::ffi::OsString> {
+    let mut args = vec!["-f".into(), path.into()];
+    if let Some(connector) = picked.or(pointer) {
+        args.extend(["-o".into(), connector.into()]);
+    }
+    args
+}
+
 /// Whether `program` is on `$PATH`.
 fn installed(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
@@ -439,17 +454,21 @@ impl State {
     /// A press while the overlay is up: it takes every click.
     pub fn shot_press(&mut self, at: Point<f64, Logical>, left: bool) -> bool {
         let Some(shot) = self.screenshots.shot.clone() else { return self.thumbnail_press(at, left) };
+        let outputs: Vec<_> = self.space.outputs().cloned().collect();
+        let screens: Vec<Rect> = outputs.iter().map(|o| self.space.output_geometry(o).unwrap_or_default()).collect();
+        let shown = self.overlay_output(self.screenshots.output.as_ref()).and_then(|o| outputs.iter().position(|x| *x == o));
+        let elsewhere = clicked_elsewhere(&screens, shown.unwrap_or(0), at + self.first_origin().to_f64()).map(|i| outputs[i].clone());
         let at = self.to_display(self.screenshots.output.as_ref(), at);
         if !left {
             // A right click cancels.
             self.close_shot();
             return true;
         }
-        if let Some(hit) = self.shot_hit(at) {
+        if let Some(hit) = self.shot_hit(at).filter(|_| elsewhere.is_none()) {
             self.shot_button(hit);
             return true;
         }
-        if self.on_toolbar(at) {
+        if elsewhere.is_none() && self.on_toolbar(at) {
             return true;
         }
         if shot.options {
@@ -472,7 +491,12 @@ impl State {
                     self.shoot(Mode::Window, Some(frame));
                 }
             }
-            Mode::Screen => self.shoot(Mode::Screen, None),
+            Mode::Screen => {
+                if elsewhere.is_some() {
+                    self.screenshots.output = elsewhere;
+                }
+                self.shoot(Mode::Screen, None);
+            }
         }
         true
     }
@@ -786,8 +810,8 @@ impl State {
         true
     }
 
-    /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts `wf-recorder` on the whole
-    /// screen (into ~/Videos), or stops it.
+    /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts `wf-recorder` on the toolbar's
+    /// display, else the pointer's (into ~/Videos), or stops it.
     // ponytail: wf-recorder until our own PipeWire recorder (E7.2).
     pub fn toggle_recording(&mut self) {
         if let Some((pid, _)) = self.screenshots.recording.take() {
@@ -802,9 +826,12 @@ impl State {
         let _ = std::fs::create_dir_all(&dir);
         let path = file_name(&dir, "Screen Recording", "mp4", &chrono::Local::now());
         let tx = self.screenshot_channel();
+        let toolbar = self.screenshots.shot.as_ref().is_some_and(|s| s.toolbar);
+        let picked = self.overlay_output(self.screenshots.output.as_ref()).filter(|_| toolbar).map(|o| o.name());
+        let args = record_args(&path, picked, self.pointer_output().map(|o| o.name()));
         // Through the trusted socket, so it doesn't ask for itself (E6.11).
         let mut command = std::process::Command::new("wf-recorder");
-        command.arg("-f").arg(&path).env("WAYLAND_DISPLAY", crate::perms::trusted_socket(&self.socket_name));
+        command.args(args).env("WAYLAND_DISPLAY", crate::perms::trusted_socket(&self.socket_name));
         match command.spawn() {
             Ok(mut child) => {
                 self.screenshots.recording = Some((child.id(), Instant::now()));
@@ -854,6 +881,29 @@ mod tests {
         // The menu opens above the bar.
         let (menu, rows) = options_menu(&bar, (1280, 800).into());
         assert!(menu.loc.y + menu.size.h <= bar.rect.loc.y && rows.len() == OPTION_ROWS.len());
+    }
+
+    #[test]
+    fn records_the_picked_display_else_the_pointers() {
+        let path = Path::new("/v/r.mp4");
+        let args = |picked: Option<&str>, pointer: Option<&str>| record_args(path, picked.map(Into::into), pointer.map(Into::into));
+        assert_eq!(args(Some("HDMI-A-1"), Some("eDP-1")), ["-f", "/v/r.mp4", "-o", "HDMI-A-1"]);
+        assert_eq!(args(None, Some("eDP-1")), ["-f", "/v/r.mp4", "-o", "eDP-1"]);
+        assert_eq!(args(None, None), ["-f", "/v/r.mp4"]);
+    }
+
+    #[test]
+    fn a_click_on_another_display_is_for_that_display() {
+        // The overlay on the right display; the left one sits above-left of it.
+        let screens = [Rectangle::new((0, 0).into(), (1280, 800).into()), Rectangle::new((-1280, -200).into(), (1280, 1024).into())];
+        assert_eq!(clicked_elsewhere(&screens, 0, (-10.0, 700.0).into()), Some(1));
+        // Where the toolbar would be on the overlay's display, but on the other: not the toolbar's.
+        let bar = toolbar(screens[0].size).rect.loc.to_f64() + screens[1].loc.to_f64();
+        assert_eq!(clicked_elsewhere(&screens, 0, bar), Some(1));
+        assert_eq!(clicked_elsewhere(&screens, 0, (640.0, 400.0).into()), None);
+        assert_eq!(clicked_elsewhere(&screens, 1, (640.0, 400.0).into()), Some(0));
+        // Off every display (between them): the overlay's.
+        assert_eq!(clicked_elsewhere(&screens, 0, (-10.0, 900.0).into()), None);
     }
 
     #[test]

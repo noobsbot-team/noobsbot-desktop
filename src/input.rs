@@ -620,7 +620,7 @@ impl State {
         match event {
             InputEvent::Keyboard { event } => self.key_event(event.key_code(), event.state(), event.time_msec()),
             InputEvent::PointerMotionAbsolute { event } => {
-                let Some(output_geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
+                let Some(output_geo) = self.first_geometry() else { return };
                 self.pointer_motion(event.position_transformed(output_geo.size) + output_geo.loc.to_f64(), event.time());
             }
             InputEvent::PointerButton { event } => self.assisted_button(event.button_code(), event.state(), event.time_msec()),
