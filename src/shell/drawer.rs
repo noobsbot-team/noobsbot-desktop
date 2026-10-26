@@ -23,6 +23,7 @@ use crate::{
     shortcuts::Action,
     state::State,
     symbols::Symbol,
+    text::ts,
     ui::field::{Edit, TextField},
     wm::Rect,
 };
@@ -214,7 +215,8 @@ pub fn remember(recent: &[String], id: &str) -> Vec<String> {
     std::iter::once(id.to_owned()).chain(recent.iter().filter(|i| *i != id).cloned()).take(RECENT).collect()
 }
 
-/// Logical px.
+/// Logical px. The width, the field, the sidebar, its rows, the header and the list rows grow with the text size
+/// (`text::ts`); icons, buttons and radii don't.
 pub mod layout {
     pub const WIDTH: i32 = 720;
     pub const HEIGHT: i32 = 560;
@@ -288,16 +290,17 @@ impl Layout {
 }
 
 /// The drawer at `anchor` on an `output`-sized screen with `dock` px kept for the dock, with `categories` in its
-/// sidebar: 720 × 560 or what fits under the menu bar.
+/// sidebar: 720 × 560 (wider with the text size) or what fits under the menu bar.
 pub fn layout(anchor: Anchor, output: Size<i32, Logical>, dock: i32, categories: usize) -> Layout {
     use layout::*;
-    let w = WIDTH.min(output.w - 2 * GAP).max(STRIP + SIDEBAR + 120);
+    let (field_h, sidebar, category, category_min, header_h, row_h) = (ts(FIELD), ts(SIDEBAR), ts(CATEGORY), ts(CATEGORY_MIN), ts(HEADER), ts(ROW));
+    let w = ts(WIDTH).min(output.w - 2 * GAP).max(STRIP + sidebar + 120);
     let bottom = match anchor {
         Anchor::Corner => output.h - dock - GAP,
         Anchor::Dock(p) => p.y - GAP,
     };
     let top = menubar::height() + GAP;
-    let h = HEIGHT.min(bottom - top).max(PAD + FIELD + PAD + HEADER + ROW + PAD);
+    let h = HEIGHT.min(bottom - top).max(PAD + field_h + PAD + header_h + row_h + PAD);
     let x = match anchor {
         Anchor::Corner => GAP,
         Anchor::Dock(p) => p.x - w / 2,
@@ -307,22 +310,22 @@ pub fn layout(anchor: Anchor, output: Size<i32, Logical>, dock: i32, categories:
     let rect = Rectangle::new((x, y).into(), (w, h).into());
     let end = y + h - PAD;
     let left = x + STRIP;
-    let field = Rectangle::new((left, y + PAD).into(), (x + w - PAD - left, FIELD).into());
-    let magnifier = Rectangle::new((left + 10, y + PAD + (FIELD - MAGNIFIER) / 2).into(), (MAGNIFIER, MAGNIFIER).into());
+    let field = Rectangle::new((left, y + PAD).into(), (x + w - PAD - left, field_h).into());
+    let magnifier = Rectangle::new((left + 10, y + PAD + (field_h - MAGNIFIER) / 2).into(), (MAGNIFIER, MAGNIFIER).into());
     let strip_x = x + (STRIP - BUTTON) / 2;
     let logo = Rectangle::new((strip_x, y + PAD).into(), (BUTTON, BUTTON).into());
     let session = std::array::from_fn(|i| Rectangle::new((strip_x, end - (3 - i as i32) * (BUTTON + 8) + 8).into(), (BUTTON, BUTTON).into()));
-    let body = y + PAD + FIELD + PAD;
+    let body = y + PAD + field_h + PAD;
     // Short screen: the sidebar rows tighten (to the text's height) before any category is left out.
-    let row = ((end - body) / categories.max(1) as i32).clamp(CATEGORY_MIN, CATEGORY);
+    let row = ((end - body) / categories.max(1) as i32).clamp(category_min, category);
     let fit = ((end - body) / row).max(0) as usize;
-    let categories = (0..categories.min(fit) as i32).map(|i| Rectangle::new((left, body + i * row).into(), (SIDEBAR - 12, row).into())).collect();
-    let divider = Rectangle::new((left + SIDEBAR - 1, body).into(), (1, end - body).into());
-    let list_x = left + SIDEBAR + 8;
+    let categories = (0..categories.min(fit) as i32).map(|i| Rectangle::new((left, body + i * row).into(), (sidebar - 12, row).into())).collect();
+    let divider = Rectangle::new((left + sidebar - 1, body).into(), (1, end - body).into());
+    let list_x = left + sidebar + 8;
     let list_w = x + w - PAD - list_x;
-    let header = Rectangle::new((list_x, body).into(), (list_w, HEADER).into());
-    let rows_top = body + HEADER;
-    let rows = (0..((end - rows_top) / ROW).max(0)).map(|i| Rectangle::new((list_x, rows_top + i * ROW).into(), (list_w, ROW).into())).collect();
+    let header = Rectangle::new((list_x, body).into(), (list_w, header_h).into());
+    let rows_top = body + header_h;
+    let rows = (0..((end - rows_top) / row_h).max(0)).map(|i| Rectangle::new((list_x, rows_top + i * row_h).into(), (list_w, row_h).into())).collect();
     Layout { rect, logo, field, magnifier, session, categories, divider, header, rows }
 }
 
@@ -768,10 +771,11 @@ impl State {
         let count = self.drawer_apps().len();
         let Some(d) = self.drawer.as_mut() else { return false };
         // A wheel notch (120 in v120 units) is one row; a finger moves by pixels.
-        d.scroll_px += if wheel != 0.0 { wheel / 120.0 * f64::from(layout::ROW) } else { dy };
-        let rows = (d.scroll_px / f64::from(layout::ROW)).trunc();
+        let row = f64::from(l.rows.first().map_or(layout::ROW, |r| r.size.h));
+        d.scroll_px += if wheel != 0.0 { wheel / 120.0 * row } else { dy };
+        let rows = (d.scroll_px / row).trunc();
         if rows != 0.0 {
-            d.scroll_px -= rows * f64::from(layout::ROW);
+            d.scroll_px -= rows * row;
             let before = d.scroll;
             d.scroll_by(rows as isize, count, l.rows.len());
             if d.scroll != before {
@@ -1083,6 +1087,23 @@ mod tests {
         assert!(tiny.categories.iter().all(|r| tiny.rect.contains_rect(*r)));
         // A narrow screen: as wide as fits.
         assert_eq!(layout(Anchor::Corner, Size::from((640, 800)), 101, 3).rect.size.w, 624);
+    }
+
+    #[test]
+    fn layout_grows_with_text_size() {
+        for (size, dock, n) in [((1920, 1080), 101, 12), ((1366, 768), 101, Category::ALL.len()), ((1280, 600), 101, 15)] {
+            let at = |k| crate::text::with_scale(k, || layout(Anchor::Corner, Size::from(size), dock, n));
+            assert_eq!(at(1.0), layout(Anchor::Corner, Size::from(size), dock, n), "1.0 is the default");
+            let big = at(1.5);
+            assert_eq!((big.field.size.h, big.header.size.h), (48, 45), "{size:?}");
+            assert!(big.rows.iter().all(|r| r.size.h == 78) && !big.rows.is_empty(), "{size:?}");
+            // A Body line (16 px) at 1.5 fits every sidebar row, even tightened.
+            assert!(big.categories.iter().all(|c| c.size.h >= 24) && !big.categories.is_empty(), "{size:?}");
+            let parts = big.categories.iter().chain(&big.rows).chain(&big.session).chain([&big.field, &big.header, &big.divider]);
+            assert!(parts.clone().all(|r| big.rect.contains_rect(*r)), "{size:?} {big:?}");
+            assert!(Rectangle::from_size(Size::from(size)).contains_rect(big.rect));
+        }
+        assert_eq!(crate::text::with_scale(1.5, || layout(Anchor::Corner, Size::from((1920, 1080)), 101, 12)).rect.size.w, 1080);
     }
 
     #[test]
