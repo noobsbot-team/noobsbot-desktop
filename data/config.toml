@@ -26,7 +26,7 @@ glass_opacity = 1.0
 wallpaper = ""
 # Used in dark mode; empty = the built-in dark opal gradient.
 wallpaper_dark = ""
-# "fill" (cover the screen), "fit" (the whole picture), "centre" (its own size) or "stretch".
+# "fill" (cover the screen), "fit" (the whole picture), "centre" (its own size), "stretch" or "tile" (repeated).
 wallpaper_fit = "fill"
 # More folders of pictures for Settings' wallpaper gallery ("+ Add Folder…"), separated by ":".
 gallery_folders = ""

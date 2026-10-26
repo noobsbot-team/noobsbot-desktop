@@ -250,7 +250,7 @@ pub const SETTINGS: &[Setting] = &[
         "appearance.wallpaper_fit",
         "Show picture",
         "",
-        Kind::Choice(&[("fill", "Fill"), ("fit", "Fit"), ("centre", "Centre"), ("stretch", "Stretch")]),
+        Kind::Choice(&[("fill", "Fill"), ("fit", "Fit"), ("centre", "Centre"), ("stretch", "Stretch"), ("tile", "Tile")]),
     ),
     s(Page::Appearance, "Wallpaper", "appearance.gallery_folders", "Gallery folders", "Added with + Add Folder…; separate with :", Kind::Text("None")),
     s(Page::Appearance, "Wallpaper", "appearance.wallpaper_folder", "Slideshow folder", "Shows its pictures in turn; empty = off", Kind::Text("Off")),

@@ -250,7 +250,7 @@ impl From<WeekStart> for chrono::Weekday {
     }
 }
 
-/// Wallpaper fit (Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen).
+/// Wallpaper fit (Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen, Tile).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WallpaperFit {
@@ -262,6 +262,8 @@ pub enum WallpaperFit {
     #[serde(alias = "center")]
     Centre,
     Stretch,
+    /// At its own pixel size, repeated from the top-left corner.
+    Tile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
