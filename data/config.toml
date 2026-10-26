@@ -250,6 +250,8 @@ click = "toggle"
 middle = "new"
 # Scrolling on an icon cycles its app's windows: "on", "reverse" or "off".
 scroll = "on"
+# Cycling by click or scroll goes on past an app's last window into the next dock app's, round the dock.
+cycle_across_apps = false
 # Minimised windows go into their app's icon; false: thumbnail tiles at the dock's right end, after a separator.
 minimise_into_icon = false
 # How windows minimise: "scale" (shrink and slide) or "genie" (narrow into the dock, bottom first).
