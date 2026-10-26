@@ -78,6 +78,8 @@ pub struct MoveGrab {
     /// The window's visible rectangle when the grab began.
     pub start: Rect,
     pub started: bool,
+    /// The tile the window drops into (E8.5).
+    pub tile: Option<wm::Tile>,
 }
 
 impl PointerGrab<State> for MoveGrab {
@@ -88,6 +90,12 @@ impl PointerGrab<State> for MoveGrab {
         if !self.started && delta.x.hypot(delta.y) < wm::DRAG_THRESHOLD {
             return;
         }
+        if !self.started
+            && let Some(rect) = data.untile(&self.window, event.location)
+        {
+            // Back at its old size under the pointer; the drag carries on from there.
+            self.start = Rect::new(rect.loc - delta.to_i32_round(), rect.size);
+        }
         self.started = true;
 
         let rect = Rect::new(self.start.loc + delta.to_i32_round(), self.start.size);
@@ -95,9 +103,22 @@ impl PointerGrab<State> for MoveGrab {
         let Some(area) = data.work_area() else { return };
         let loc = wm::move_to(rect, area, &others, data.config.windows.magnetic_edges && !data.modifiers().ctrl);
         data.set_visible_loc(&self.window, loc);
+        let tile = if data.config.windows.snapping && !data.modifiers().ctrl { wm::tile_at(event.location, area) } else { None };
+        if tile != self.tile {
+            self.tile = tile;
+            data.tile_preview = tile.map(|t| t.rect(area));
+            data.schedule_redraw();
+        }
     }
 
-    fn unset(&mut self, _data: &mut State) {}
+    fn unset(&mut self, data: &mut State) {
+        if data.tile_preview.take().is_some() {
+            data.schedule_redraw();
+        }
+        if let Some(tile) = self.tile.take() {
+            data.tile(&self.window, tile);
+        }
+    }
 
     forward_pointer_events!();
 }

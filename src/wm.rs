@@ -55,6 +55,47 @@ pub fn move_to(rect: Rect, area: Rect, others: &[Rect], magnetic: bool) -> Point
     (x, y).into()
 }
 
+/// Where a window dragged against a screen edge tiles (macOS 15): its half at a side, its quarter at a side's top or
+/// bottom quarter, the whole work area (zoom) at the top edge or on the menu bar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tile {
+    Zoom,
+    Part(Rect),
+}
+
+impl Tile {
+    /// The rectangle the window will fill, for the preview.
+    pub fn rect(self, area: Rect) -> Rect {
+        match self {
+            Tile::Zoom => area,
+            Tile::Part(rect) => rect,
+        }
+    }
+}
+
+/// The pointer is this close to a side for a tile.
+pub const TILE_EDGE: f64 = 3.0;
+
+/// The tile for a window dragged with the pointer at `p`, if any.
+pub fn tile_at(p: Point<f64, Logical>, area: Rect) -> Option<Tile> {
+    let (x, y, w, h) = (f64::from(area.loc.x), f64::from(area.loc.y), f64::from(area.size.w), f64::from(area.size.h));
+    let (left, right) = (p.x <= x + TILE_EDGE, p.x >= x + w - 1.0 - TILE_EDGE);
+    if !left && !right {
+        return (p.y <= y + TILE_EDGE).then_some(Tile::Zoom);
+    }
+    let (half_w, half_h) = (area.size.w / 2, area.size.h / 2);
+    let col = if left { area.loc.x } else { area.loc.x + half_w };
+    let width = if left { half_w } else { area.size.w - half_w };
+    let rect = if p.y < y + h / 4.0 {
+        Rect::new((col, area.loc.y).into(), (width, half_h).into())
+    } else if p.y > y + h * 3.0 / 4.0 {
+        Rect::new((col, area.loc.y + half_h).into(), (width, area.size.h - half_h).into())
+    } else {
+        Rect::new((col, area.loc.y).into(), (width, area.size.h).into())
+    };
+    Some(Tile::Part(rect))
+}
+
 /// Which edges a resize drags.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Edges {
@@ -188,6 +229,18 @@ pub fn grow_to(rect: Rect, area: Rect, edges: Edges) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tiles_follow_the_pointer_to_an_edge() {
+        let area = Rect::new((0, 24).into(), (1000, 800).into());
+        let at = |x: f64, y: f64| tile_at((x, y).into(), area);
+        assert_eq!(at(500.0, 400.0), None);
+        assert_eq!(at(500.0, 10.0), Some(Tile::Zoom));
+        assert_eq!(at(0.0, 400.0), Some(Tile::Part(Rect::new((0, 24).into(), (500, 800).into()))));
+        assert_eq!(at(999.0, 400.0), Some(Tile::Part(Rect::new((500, 24).into(), (500, 800).into()))));
+        assert_eq!(at(0.0, 30.0), Some(Tile::Part(Rect::new((0, 24).into(), (500, 400).into()))));
+        assert_eq!(at(999.0, 820.0), Some(Tile::Part(Rect::new((500, 424).into(), (500, 400).into()))));
+    }
 
     fn rect(x: i32, y: i32, w: i32, h: i32) -> Rect {
         Rectangle::new((x, y).into(), (w, h).into())
