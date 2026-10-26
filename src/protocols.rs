@@ -112,6 +112,7 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let delta = self.protocols.last_host_pointer.replace(host).map_or_else(Point::default, |last| host - last);
         let current = pointer.current_location();
+        self.assist_motion(host, delta);
         if self.locked() {
             self.lock_motion(self.to_output(host));
         }

@@ -79,6 +79,12 @@ bell = "sound"
 # The on-screen keyboard always shows at the bottom of the screen (the "on-screen-keyboard" action and the input
 # menu show it for a while). A click types the key; Shift, Ctrl, Alt and Super stay down for the next key.
 on_screen_keyboard = false
+# Shake the pointer quickly to make it big for a moment.
+shake_to_find = true
+# Rest the pointer this many ms to click (a ring shrinks around it meanwhile); 0 = off.
+dwell_click_ms = 0
+# Hold the primary button still this many ms to get a secondary (right) click instead; 0 = off.
+hold_secondary_ms = 0
 
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).

@@ -446,7 +446,7 @@ impl State {
         }
     }
 
-    /// A pointer button, from the device or mouse keys.
+    /// A pointer button, from the device (after the accessibility helpers in pointer_assist.rs) or mouse keys.
     pub fn pointer_button(&mut self, button: u32, state: ButtonState, time: u32) {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let serial = SERIAL_COUNTER.next_serial();
@@ -597,7 +597,7 @@ impl State {
                 let Some(output_geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
                 self.pointer_motion(event.position_transformed(output_geo.size) + output_geo.loc.to_f64(), event.time());
             }
-            InputEvent::PointerButton { event } => self.pointer_button(event.button_code(), event.state(), event.time_msec()),
+            InputEvent::PointerButton { event } => self.assisted_button(event.button_code(), event.state(), event.time_msec()),
             InputEvent::PointerAxis { event } => {
                 let Some(pointer) = self.seat.get_pointer() else { return };
                 let source = event.source();
