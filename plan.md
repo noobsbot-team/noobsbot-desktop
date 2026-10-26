@@ -40,7 +40,7 @@ Arch Linux system.
 Noobsbot Desktop is a whole desktop: everything you see after logging in. That means windows, menu bar, dock,
 Spotlight, Launchpad, Notification Center, Control Center, calendar, Spaces, Mission Control, touchpad gestures,
 lock screen and System Settings. It **looks and behaves like macOS** with a **glassy theme**, is installed on a
-**fresh Arch Linux** system by one script, does not rely on any other desktop (GNOME, KDE Plasma, Cinnamon),
+**fresh Arch Linux** system by one script, does not rely on any other desktop (GNOME, KDE Plasma or others),
 and must be **very fast** while using **as little RAM and CPU as possible**.
 
 ## A2. Requirements (set by the owner)
@@ -1901,7 +1901,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Dev / test only | `qemu-desktop` `virt-manager` (fresh-system VM), `powertop`, `heaptrack` (Part K gates); `paru` is bootstrapped by `install.sh` |
 | Security (optional) | `sbctl` (Secure Boot, E6.6) |
 
-AUR names verified 2026-10-18. Nothing from GNOME, KDE Plasma or Cinnamon desktops is installed.
+AUR names verified 2026-10-18. Nothing from GNOME, KDE Plasma or other desktops is installed.
 
 ## G4b. The same list on Debian 13 (installed with `--no-install-recommends`)
 | Arch | Debian 13 |

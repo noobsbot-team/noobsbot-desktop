@@ -1,4 +1,4 @@
-//! The app drawer: Cinnamon's application menu in our glass. A category sidebar (from the entries' freedesktop
+//! The app drawer: a classic application menu in our glass. A category sidebar (from the entries' freedesktop
 //! `Categories`) beside a list of apps with their icon, name and one-line description; a search field on top that
 //! every typed key goes to; Lock, Log Out and Shut Down in a strip on the left. Right-click an app to add it to
 //! Favorites, the dock or the desktop. Opens with Super+A, a lone tap of Super (`[app_drawer] super_tap`) or the
@@ -35,7 +35,7 @@ pub const ICON: &str = "view-app-grid";
 /// Recent apps kept.
 pub const RECENT: usize = 12;
 
-/// The sidebar, in Cinnamon's order.
+/// The sidebar, in the usual freedesktop order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Category {
     Favorites,
@@ -497,7 +497,7 @@ pub struct Frame {
 }
 
 /// The super-tap detector: Super pressed and released on its own (no other key, click, scroll or gesture in
-/// between, no other modifier held, within `TAP`) is a tap, as Cinnamon's menu key. So Super+key shortcuts, Super+drag
+/// between, no other modifier held, within `TAP`) is a tap, like a classic menu key. So Super+key shortcuts, Super+drag
 /// and holding Super to read the shortcuts never open the drawer.
 #[derive(Debug, Default)]
 pub struct SuperTap {
@@ -713,7 +713,7 @@ impl State {
         true
     }
 
-    /// The pointer moved to `to`: hovering a row selects it, hovering a category shows it (as in Cinnamon).
+    /// The pointer moved to `to`: hovering a row selects it, hovering a category shows it.
     pub fn drawer_motion(&mut self, to: Point<f64, Logical>) {
         if self.popup == Some(Popup::Menu(Menu::Drawer)) {
             return;
