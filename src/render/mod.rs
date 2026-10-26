@@ -27,6 +27,7 @@ mod switcher;
 mod titlebar;
 mod ui;
 mod wallpaper;
+mod zoom;
 
 use std::cell::RefCell;
 
@@ -73,6 +74,7 @@ use smithay::{
 pub use spotlight::SpotlightPanel;
 pub use switcher::SwitcherPanel;
 pub use wallpaper::Wallpaper;
+pub use zoom::Zoom;
 
 use crate::{
     config::{Accent, Appearance, Mode},
@@ -94,6 +96,7 @@ render_elements! {
     Moved=RelocateRenderElement<RescaleRenderElement<WindowElement>>,
     Genie=motion::GenieElement,
     Tint=TintElement,
+    Filter=zoom::FilterElement,
 }
 
 render_elements! {
@@ -170,6 +173,7 @@ pub struct Shaders {
     genie: GlesTexProgram,
     shadow: GlesPixelProgram,
     opal: GlesPixelProgram,
+    filter: GlesTexProgram,
 }
 
 fn floats(names: &[&'static str]) -> Vec<UniformName<'static>> {
@@ -202,6 +206,7 @@ impl Shaders {
                 &floats(&["scale", "margin", "offset_y", "sigma", "radius", "opacity", "hairline"]),
             )?,
             opal: renderer.compile_custom_pixel_shader(include_str!("opal.frag"), &opal)?,
+            filter: renderer.compile_custom_texture_shader(include_str!("filter.frag"), &floats(&["filter"]))?,
         })
     }
 
