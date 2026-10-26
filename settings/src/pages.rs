@@ -654,14 +654,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Steps(&[(0, "Never"), (7, "After 7 days"), (30, "After 30 days"), (90, "After 90 days")]),
     ),
     s(Page::General, "Software Update", "check_updates", "Check for updates daily", "Sends nothing but the version; installs at next login", Kind::Toggle),
-    s(
-        Page::General,
-        "Software Update",
-        "update.channel",
-        "Updates",
-        "Beta also offers pre-releases; from the next login",
-        Kind::Choice(&[("stable", "Stable"), ("beta", "Beta")]),
-    ),
+    s(Page::General, "Software Update", "update.channel", "Updates", "Beta also offers pre-releases", Kind::Choice(&[("stable", "Stable"), ("beta", "Beta")])),
     s(Page::General, "Session", "windows.reopen_at_login", "Reopen windows when logging back in", "Also the Log Out alert's checkbox", Kind::Toggle),
 ];
 

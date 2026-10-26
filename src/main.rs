@@ -196,6 +196,11 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             if config.weather != state.config.weather {
                 let _ = state.weather_settings.send(config.weather.clone());
             }
+            if config.update != state.config.update
+                && let Some(tx) = &state.update_channel
+            {
+                let _ = tx.send(config.update.channel);
+            }
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             let displays = config.display != state.config.display;

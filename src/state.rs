@@ -146,6 +146,8 @@ pub struct State {
     pub widgets: Vec<crate::services::widgets::Widget>,
     /// Every changed `[weather]` goes to the weather thread.
     pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
+    /// Every changed `[update] channel` goes to the update thread, while it runs.
+    pub update_channel: Option<std::sync::mpsc::Sender<crate::services::update::Channel>>,
     pub zones: crate::input::Zones,
     /// Shake to find, dwell click, hold for secondary click (E8.6).
     pub pointer_assist: crate::pointer_assist::Assist,
@@ -379,9 +381,10 @@ impl State {
         let (services_tx, services_rx) = channel::channel();
         let services = crate::services::spawn(services_tx, !nested);
         // Nested is a dev session: no network.
+        let mut update_channel = None;
         if !nested && config.check_updates {
             let (found_tx, found_rx) = channel::channel();
-            crate::services::update::spawn(found_tx, config.update.channel);
+            update_channel = Some(crate::services::update::spawn(found_tx, config.update.channel));
             handle.insert_source(found_rx, |event, _, state| {
                 if let channel::Event::Msg(release) = event {
                     state.notify(crate::services::update::notice(&release));
@@ -516,6 +519,7 @@ impl State {
             weather: None,
             widgets: Vec::new(),
             weather_settings,
+            update_channel,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
             recording: Default::default(),

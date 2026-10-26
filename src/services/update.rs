@@ -12,7 +12,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::LazyLock,
+    sync::{LazyLock, mpsc},
     time::Duration,
 };
 
@@ -65,7 +65,9 @@ pub enum Download {
 }
 
 /// Its own thread: the check and download block on the network, and between checks it only sleeps (no wakeups).
-pub fn spawn(found: Sender<Release>, channel: Channel) {
+/// A changed `[update] channel` sent to it checks again at once on the new channel.
+pub fn spawn(found: Sender<Release>, mut channel: Channel) -> mpsc::Sender<Channel> {
+    let (tx, rx) = mpsc::channel();
     let thread = std::thread::Builder::new().name("update".into()).spawn(move || {
         loop {
             if let Some(mut release) = latest(channel) {
@@ -75,12 +77,17 @@ pub fn spawn(found: Sender<Release>, channel: Channel) {
                     return;
                 }
             }
-            std::thread::sleep(EVERY);
+            match rx.recv_timeout(EVERY) {
+                Ok(new) => channel = new,
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
         }
     });
     if let Err(err) = thread {
         tracing::warn!("update check off: {err}");
     }
+    tx
 }
 
 /// The newest release on `channel` if it is newer than this build, or `None` (up to date or offline).
