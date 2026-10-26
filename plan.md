@@ -1592,6 +1592,10 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
   the system services (NetworkManager, BlueZ, timedated, …) for system-level settings.
 - **Why separate:** it's big and rarely open, so it shouldn't cost RAM all day, and its bugs can't crash the desktop.
 - **Done when:** every setting in Noobsbot Desktop can be changed here and applies live; looks match the mockup.
+  Done: every `config.toml` key has a row (Search finds it) or its own editor (Keyboard Shortcuts for `[bindings]`), and
+  applies live except `display.gpu` (next login, by nature). Left to the desktop, which edits them itself: `widgets.*`
+  (drag in Notification Center), `dock.items` and `dock.assign` (the dock and its menu), and `[[rules]]` (by hand).
+  Looks are not checked against the mockup.
 
 ### E7.2 Optional extras (each its own mini-plan when chosen)
 | Extra | What | Built with |
