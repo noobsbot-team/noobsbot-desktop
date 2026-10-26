@@ -613,11 +613,16 @@ impl State {
     /// Where windows may go: the first output minus the menu bar and what layer surfaces (bars, docks) reserve.
     /// ponytail: a zoomed window keeps its size when a bar appears later; refitting comes with output changes (M6).
     pub fn work_area(&self) -> Option<Rect> {
-        let output = self.space.outputs().next()?;
+        self.output_area(self.space.outputs().next()?)
+    }
+
+    /// The work area of `output`: below its menu bar and its layer surfaces, above the dock on the first output.
+    pub fn output_area(&self, output: &smithay::output::Output) -> Option<Rect> {
         let mut zone = crate::render::menubar::below(layer_map_for_output(output).non_exclusive_zone());
         // Above the dock (E1.2: zoom fills the screen between the menu bar and the dock), when it never hides: Plank
-        // sets struts in that mode alone, and a hiding dock gets overlapped.
-        let never = self.config.dock.hide == crate::config::DockHide::Never;
+        // sets struts in that mode alone, and a hiding dock gets overlapped. The dock is on the first output only.
+        let first = self.space.outputs().next() == Some(output);
+        let never = first && self.config.dock.hide == crate::config::DockHide::Never;
         let bottom = self.space.output_geometry(output)?.size.h - if never { crate::shell::dock::reserve(&self.config.dock) } else { 0 };
         zone.size.h = zone.size.h.min(bottom - zone.loc.y).max(0);
         zone.loc += self.space.output_geometry(output)?.loc;
@@ -744,8 +749,7 @@ impl State {
         let outputs: Vec<_> = self.space.outputs().cloned().collect();
         let Some(from) = self.window_output(window).and_then(|o| outputs.iter().position(|x| *x == o)) else { return };
         let to = (from as i32 + delta).rem_euclid(outputs.len() as i32) as usize;
-        // The first display's area is below the menu bar; the others are whole.
-        let area = |i: usize| if i == 0 { self.work_area() } else { self.space.output_geometry(&outputs[i]) };
+        let area = |i: usize| self.output_area(&outputs[i]);
         let (Some(a), Some(b), Some(frame)) = (area(from), area(to), self.frame(window)) else { return };
         if to == from {
             return;
@@ -757,7 +761,9 @@ impl State {
     /// Zoom (fill the work area) or fullscreen (fill the output), remembering where the window was.
     /// ponytail: one output and no menu bar or dock yet, so both fill the same area; refitting on output resize comes with udev (M6).
     pub fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
-        let (Some(window), Some(area)) = (self.window_for(surface.wl_surface()).cloned(), self.work_area()) else { return };
+        let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
+        // The display the window is on, so zoom fills that one.
+        let Some(area) = self.window_output(&window).map_or_else(|| self.work_area(), |o| self.output_area(&o)) else { return };
         self.window_reframing(&window);
         let restore = window.user_data().get_or_insert(|| Restore(std::sync::Mutex::new(None)));
         if let (Ok(mut saved), Some(frame)) = (restore.0.lock(), self.frame(&window)) {

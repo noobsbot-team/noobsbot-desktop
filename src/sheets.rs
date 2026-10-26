@@ -90,9 +90,8 @@ impl State {
         }
         let saved = std::fs::read_to_string(frames_path()).unwrap_or_default();
         let Some((_, display, frame)) = wm::parse_frames(&saved).into_iter().find(|(a, ..)| *a == app) else { return };
-        let first = self.space.outputs().next().cloned();
         let Some(output) = self.space.outputs().find(|o| o.name() == display).cloned() else { return };
-        let area = if Some(&output) == first.as_ref() { self.work_area() } else { self.space.output_geometry(&output) };
+        let area = self.output_area(&output);
         let Some(frame) = area.and_then(|area| wm::recall(frame, area)) else { return };
         let size = self.content_size(window, frame.size);
         toplevel.with_pending_state(|s| s.size = Some(size));

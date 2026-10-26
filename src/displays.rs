@@ -148,7 +148,7 @@ impl State {
     /// Applies the display settings to every display, live: lights, darkens and modesets them (real screen), sets
     /// scale, rotation and position, puts the primary first (the shell draws on the first output), tells every
     /// window and panel its new scale, and rewrites `displays.json`. At start, on hotplug and on config reload.
-    // ponytail: windows keep their logical size; zoomed ones on another output too, as `work_area` is the first's.
+    // ponytail: windows keep their logical size.
     pub fn apply_displays(&mut self) {
         let shown = match &self.device {
             Some(Device::Udev(_)) => self.udev_displays(),
@@ -204,30 +204,33 @@ impl State {
             let row = self.window_row(&window) * crate::spaces::STRIDE;
             self.set_visible_loc(&window, crate::wm::place(area, frame.size) + smithay::utils::Point::from((0, row)));
         }
-        // Zoomed and fullscreen windows on the first output fill its work area at the new scale or size.
-        let first = self.space.outputs().next().cloned();
-        let filled: Vec<(Window, ToplevelSurface)> = self
-            .space
-            .elements()
-            .filter(|w| first.is_some() && self.window_output(w) == first)
-            .filter_map(|w| {
-                let toplevel = w.toplevel()?;
-                let states = toplevel.current_state().states;
-                (states.contains(xdg_toplevel::State::Maximized) || states.contains(xdg_toplevel::State::Fullscreen)).then(|| (w.clone(), toplevel.clone()))
-            })
-            .collect();
-        if let Some(area) = self.work_area() {
-            for (window, toplevel) in filled {
-                let size = self.content_size(&window, area.size);
-                toplevel.with_pending_state(|s| s.size = Some(size));
-                toplevel.send_pending_configure();
-                let row = self.window_row(&window) * crate::spaces::STRIDE;
-                self.set_visible_loc(&window, area.loc + smithay::utils::Point::from((0, row)));
-            }
-        }
+        self.refit_filled();
         self.send_scales();
         write_info(&shown.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>());
         self.schedule_redraw();
+    }
+
+    /// Zoomed and fullscreen windows fill their display's work area again, at its new scale or size, or after the
+    /// menu bar starts or stops hiding.
+    pub fn refit_filled(&mut self) {
+        let filled: Vec<(Window, ToplevelSurface, Output)> = self
+            .space
+            .elements()
+            .filter_map(|w| {
+                let toplevel = w.toplevel()?;
+                let states = toplevel.current_state().states;
+                let filled = states.contains(xdg_toplevel::State::Maximized) || states.contains(xdg_toplevel::State::Fullscreen);
+                filled.then(|| Some((w.clone(), toplevel.clone(), self.window_output(w)?))).flatten()
+            })
+            .collect();
+        for (window, toplevel, output) in filled {
+            let Some(area) = self.output_area(&output) else { continue };
+            let size = self.content_size(&window, area.size);
+            toplevel.with_pending_state(|s| s.size = Some(size));
+            toplevel.send_pending_configure();
+            let row = self.window_row(&window) * crate::spaces::STRIDE;
+            self.set_visible_loc(&window, area.loc + smithay::utils::Point::from((0, row)));
+        }
     }
 
     /// The output `window` is mostly on (its hidden-Space row folded away); `None` when it is on no output.
