@@ -1698,9 +1698,10 @@ Rows live on the Appearance page (E8.2). Behind them:
   reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space.
 - Keyboard Shortcuts dialog in macOS form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
   ⚠ on conflicts (today the first match wins silently).
-- Default keys still missing: log out (Super+Shift+Q), sleep key, keyboard backlight, touchpad toggle, display switch,
-  calculator / mail / browser / search keys (to the default apps), media stop / seek / eject, fine volume steps,
-  window screenshot and screen recording.
+- Default keys: log out (Super+Shift+Q), sleep key, keyboard backlight (UPower), touchpad toggle, display key
+  (Settings › Displays until mirroring exists), calculator / mail / web / explorer / search keys (default-app,
+  Spotlight), media stop / seek / eject, Shift+Alt+volume quarter steps, Alt+Print window screenshot, Super+Alt+5
+  screen recording. Done.
 - Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout.
 
 ### E8.8 Menu bar, tray, widgets and session
