@@ -1626,11 +1626,11 @@ Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers (lat
 calls the system service, and applies live.
 | Page | Add |
 |---|---|
-| Appearance | wallpaper gallery (thumbnails of `/usr/share/backgrounds`, `~/Pictures`, "+ Add Folder") instead of the path field; Fill / Fit / Centre / Stretch / Tile; slideshow with interval and crossfade; Auto-dark hours or sunset (today fixed 19–07 in `src/render/mod.rs`); Reduce motion and Desktop icons rows; text size; pointer size; minimise effect Scale / Genie; also write the app font, monospace font and scrollbar keys for GTK and Qt apps. Built: gallery, Fill/Fit/Centre/Stretch, slideshow + crossfade, auto-dark hours or sunset, reduce motion, desktop icons, text and pointer size (Accessibility page), Scale/Genie (Dock page), Qt theming. Missing: "+ Add Folder", Tile, app/monospace font and scrollbar keys for GTK and Qt. |
+| Appearance | wallpaper gallery (thumbnails of `/usr/share/backgrounds`, `~/Pictures`, "+ Add Folder") instead of the path field; Fill / Fit / Centre / Stretch / Tile; slideshow with interval and crossfade; Auto-dark hours or sunset (today fixed 19–07 in `src/render/mod.rs`); Reduce motion and Desktop icons rows; text size; pointer size; minimise effect Scale / Genie; also write the app font, monospace font and scrollbar keys for GTK and Qt apps. Built: gallery with "+ Add Folder…" (`gallery_folders`), Fill/Fit/Centre/Stretch/Tile, slideshow + crossfade, auto-dark hours or sunset, reduce motion, desktop icons, text and pointer size (Accessibility page), Scale/Genie (Dock page), Qt theming, monospace font and overlay scrollbars for GTK (gsettings) and Qt (kdeglobals, Kvantum). |
 | Displays | mirroring ("Use as: Mirror for …"); identify (name label on each screen while the page is open); "Reset"; brightness slider; Night Light (designed in E6.2, not built); layouts remembered per set of monitors; clamshell (lid closed + external monitor keeps running); underscan for TVs (later). Built: arrangement, resolution, refresh, scale, rotation, primary, Keep/Revert countdown, Night Light. Missing: mirroring, identify, Reset, brightness slider, per-monitor-set layouts, clamshell. |
 | Sound | output and input device pickers; live input level meter; balance; alert sound and alert volume; "Play user interface sound effects", startup sound, volume-change feedback; per-app volume in the Control Center Sound expansion. Built: output and input pickers, volume and mute. Missing: live input meter, balance, alert sound and volume, UI sounds, per-app volume. |
 | Network (new; Wi-Fi page grows into it) | network list, Known Networks with Forget and Auto-Join; Details sheet (IP, DNS, router, MAC); "Other…" for hidden and WPA-Enterprise networks; Ethernet details and static IP; VPN and WireGuard connect; proxy; captive-portal "!" icon that opens the login page; "Advanced…" opens `nm-connection-editor` until the native sheets exist. VPN stays out of the Control Center card (E2.3). Built: network list with join, Known Networks with Auto-Join and Forget, Wi-Fi/Ethernet details, "Advanced…". Missing: "Other…" (hidden, Enterprise), static IP, VPN/WireGuard, proxy, captive portal. |
-| Bluetooth | Nearby Devices (discovery) with Connect; per-device ⓘ ▸ Forget, Rename (the pairing agent and alerts already exist). Built: Nearby Devices with Connect, Connect/Disconnect, Forget. Missing: Rename. |
+| Bluetooth | Nearby Devices (discovery) with Connect; per-device ⓘ ▸ Forget, Rename (the pairing agent and alerts already exist). Done: Nearby Devices with Connect, Connect/Disconnect, Forget, Rename (BlueZ `Alias`). |
 | Battery (new) | show percentage; time remaining and power source in the battery menu; Low Power Mode; dim on battery; display off and sleep times for battery and for power adapter (today `[idle]` in the config file only); keyboard backlight; low-battery warnings for wireless mouse and keyboard. Built: page with level, power source, time remaining, power mode (Low Power), sleep and display off on battery / adapter; low-battery notification at 20% and 10%; keyboard backlight keys, brightness slider and off after inactivity; show percentage; battery menu with time left, power source and peripherals' batteries (also in the Batteries widget); dim on battery. Missing: low-battery warnings for peripherals. |
 | Keyboard | key repeat delay and rate sliders with an Off stop (now constants in `src/input.rs`, sent live with `set_repeat_info`); Input Sources list with a searchable picker, reorder, IMEs; "previous" and "n-th source" actions; remember the source per window; Modifier Keys dropdowns (Caps Lock, Compose, Ctrl/Alt swap) plus a raw options field; Keyboard Viewer; Keyboard Shortcuts dialog (E8.7). Built: repeat sliders (rate 0 = off), Input Sources with searchable picker, Caps Lock / Compose / raw options, Keyboard Shortcuts dialog, next-source key. Missing: reorder, IME list, previous / n-th source, per-window source, Keyboard Viewer. |
 | Mouse (new, `[mouse]`) | tracking speed; acceleration on/off; primary button left/right; natural scroll (separate from the trackpad); double-click speed (also used by our own title-bar double-click); middle-click emulation; middle-click paste on/off. Done: speed, acceleration, left-handed, natural scroll, middle-click emulation, double-click speed (title bars, edges, desktop icons, GTK), middle-click paste (primary selection withheld, GTK follows). |
@@ -1640,7 +1640,7 @@ calls the system service, and applies live.
 | Notifications | per-app allow, banner or alert, sound, show on lock screen; previews Always / When Unlocked / Never; DND schedule; show while full screen. Built: DND row; per-app rows (Allow, Banners / Alerts / None, sound, badge, show in Notification Center) writing `[notification_apps]`; previews; DND schedule; full-screen option. Missing: per-app show on lock screen (the lock screen shows only a count). |
 | Lock Screen | the `[idle]` timers and lock toggle; password delay (immediately … 1 h); message on the lock screen. Done: dim, display off, lock toggle, password delay (immediately … 1 h), lock message. |
 | Privacy & Security | recent files: remember, how long, Clear; connectivity check; camera and microphone per app; empty Trash after 30 days. Built: recent files Clear and age (General page). Missing: connectivity check, camera and microphone per app. |
-| General | **Login Items** (`~/.config/autostart` and system entries, toggle with `Hidden=true`, + app or command, −); Storage (low-disk warning, Trash and thumbnail cleanup); About ▸ copy System Report. Built: Login Items, Storage (Trash and recent-files ages; low-disk warning in the desktop), Software Update, reopen at login. Missing: copy System Report. |
+| General | **Login Items** (`~/.config/autostart` and system entries, toggle with `Hidden=true`, + app or command, −); Storage (low-disk warning, Trash and thumbnail cleanup); About ▸ copy System Report. Done: Login Items, Storage (Trash and recent-files ages; low-disk warning in the desktop), Software Update, reopen at login, About ▸ Copy System Report. |
 | Users | name, picture (stock, file, camera) and password through AccountsService and our polkit agent. Not built (only the lock screen reads the AccountsService picture). |
 | Accessibility (new) | everything in E8.6 |
 | Printers (later) | CUPS, printer list, queue, Add Printer; print-queue icon in the dock while printing |
@@ -1650,7 +1650,7 @@ The dock stays per app, by design. Every per-window job a taskbar does gets a su
 - ~~**Window previews:** hover (or long-press) an icon with several windows → a glass strip of live thumbnails above it,
   click to focus, × or middle-click to close, hovering a thumbnail fades the other windows. Reuses Mission Control's
   thumbnails and `close_button`.~~ Done: hover an icon with several windows; ✕ or middle-click closes, the hovered
-  window's surroundings dim (`src/shell/dock.rs` `Peek`, `src/render/dock.rs`). Long-press is not built.
+  window's surroundings dim (`src/shell/dock.rs` `Peek`, `src/render/dock.rs`); a still press held 0.5 s shows them too.
 - **Minimised windows** as thumbnail tiles after a separator at the dock's right end (E3); the minimise animation
   lands on the tile. Built; `[dock] minimise_into_icon` turns them off.
 - **One dock per display** with its own filtering (D13, E3).
@@ -1680,7 +1680,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - ~~Genie minimise as the alternative to Scale (E5.5).~~ Done: `[dock] minimise_effect = "genie"` (`src/render/genie.frag`).
 - Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow. Built: `noobsbot-desktop theme
   --write` (Kvantum, Qt colour scheme with accent, kdeglobals font; gsettings colour scheme, theme, Inter, text and
-  cursor size). Missing: accent for GTK, monospace font.
+  cursor size, monospace font, overlay scrolling; the accent as `@define-color` in gtk-3.0 / gtk-4.0 `gtk.css`).
 
 ### E8.5 Window management
 - ~~**Tiling:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
@@ -1700,7 +1700,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 
 ### E8.6 Accessibility
 - **Zoom** (full screen and picture-in-picture), with invert and greyscale filters; keys Super+Alt+8 / = / −. Built
-  (`[accessibility] zoom_style`, `colour_filter`); following the text caret and keyboard focus is left.
+  (`[accessibility] zoom_style`, `colour_filter`), following the text caret and keyboard focus (`zoom_follows_focus`).
 - **Keyboard:** sticky keys, slow keys, bounce keys, mouse keys (in `src/input.rs`). Built: `[accessibility] sticky_keys`,
   `sticky_keys_shortcut` (Shift ×5), `slow_keys_ms`, `bounce_keys_ms`, `mouse_keys`.
 - ~~**Pointer:** dwell click, hold for secondary click, pointer size, shake to find the pointer.~~ Done:
