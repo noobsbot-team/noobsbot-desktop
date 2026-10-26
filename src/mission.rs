@@ -202,11 +202,19 @@ pub fn lerp(a: Rect, b: Rect, t: f64) -> Rect {
     Rectangle::new((mix(a.loc.x, b.loc.x), mix(a.loc.y, b.loc.y)).into(), (mix(a.size.w, b.size.w), mix(a.size.h, b.size.h)).into())
 }
 
-/// One window in the overview: its real frame and where it is drawn this frame (both output-relative).
+/// Where a window with frame `from` and grid place `target` is drawn `p` into opening, and its alpha. Under reduce
+/// motion it stays at its place and only fades in (over its real frame fading out).
+pub fn thumb_place(from: Rect, target: Rect, p: f64, reduce: bool) -> (Rect, f64) {
+    if reduce { (target, p) } else { (lerp(from, target, p), 1.0) }
+}
+
+/// One window in the overview: its real frame and where it is drawn this frame (both output-relative), and its
+/// alpha there.
 pub struct Thumb {
     pub window: Window,
     pub from: Rect,
     pub to: Rect,
+    pub alpha: f64,
 }
 
 /// Everything a Mission Control frame draws.
@@ -369,17 +377,18 @@ impl State {
         let mission = self.mission.as_ref()?;
         let here = mission.output == output.name();
         let all = mission.all;
+        let reduce = self.config.appearance.reduce_motion;
         let dragged = mission.press.as_ref().and_then(|(w, at, to)| to.map(|to| (w.clone(), to - *at)));
         let mut thumbs: Vec<Thumb> = layout
             .windows
             .iter()
             .zip(layout.frames.iter().zip(&layout.targets))
             .map(|(window, (from, target))| {
-                let mut to = lerp(*from, *target, progress);
+                let (mut to, alpha) = thumb_place(*from, *target, progress, reduce);
                 if let Some((_, by)) = dragged.as_ref().filter(|(w, _)| w == window) {
                     to.loc += by.to_i32_round();
                 }
-                Thumb { window: window.clone(), from: *from, to }
+                Thumb { window: window.clone(), from: *from, to, alpha }
             })
             .collect();
         // The dragged window over the others.
@@ -771,5 +780,14 @@ mod tests {
         assert_eq!(lerp(a, b, 0.0), a);
         assert_eq!(lerp(a, b, 1.0), b);
         assert_eq!(lerp(a, b, 0.5), rect(50, 25, 75, 60));
+    }
+
+    #[test]
+    fn reduce_motion_fades_thumbs_in_at_their_place() {
+        let (from, target) = (rect(0, 0, 100, 50), rect(100, 50, 50, 70));
+        for p in [0.0, 0.3, 0.7, 1.0] {
+            assert_eq!(thumb_place(from, target, p, true), (target, p));
+            assert_eq!(thumb_place(from, target, p, false), (lerp(from, target, p), 1.0));
+        }
     }
 }
