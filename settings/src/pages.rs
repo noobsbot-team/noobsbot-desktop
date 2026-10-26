@@ -230,6 +230,16 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(
         Page::Dock,
+        "Dock",
+        "dock.click",
+        "Click the active app to",
+        "Shift-click opens a new window",
+        Kind::Choice(&[("toggle", "Minimise it"), ("cycle", "Show its next window")]),
+    ),
+    s(Page::Dock, "Dock", "dock.middle", "Middle-click an app to", "", Kind::Choice(&[("new", "Open a new window"), ("close", "Close its windows")])),
+    s(Page::Dock, "Dock", "dock.scroll", "Scroll on an app to cycle its windows", "", Kind::Choice(&[("on", "On"), ("reverse", "Reversed"), ("off", "Off")])),
+    s(
+        Page::Dock,
         "Windows",
         "windows.move_modifier",
         "Drag windows with",
