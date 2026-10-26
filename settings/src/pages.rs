@@ -258,6 +258,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Slider { min: 0.0, max: 96.0, step: 8.0 },
     ),
     s(Page::Accessibility, "Display", "appearance.reduce_motion", "Reduce motion", "Windows, menus and banners crossfade instead of moving", Kind::Toggle),
+    s(Page::Accessibility, "Keyboard", "accessibility.on_screen_keyboard", "On-screen keyboard", "Click keys to type, on the lock screen too", Kind::Toggle),
     s(Page::Appearance, "Desktop", "desktop.icons", "Show Desktop folder on the wallpaper", "", Kind::Toggle),
     s(Page::Appearance, "Apps", "appearance.theme_apps", "Theme Qt apps", "Dark Mode also rewrites the Noobsbot Glass theme files", Kind::Toggle),
     s(Page::Displays, "Night Light", "night_light.enabled", "Night Light", "Warmer colours on a schedule; screenshots stay true", Kind::Toggle),

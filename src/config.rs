@@ -54,6 +54,7 @@ pub struct Config {
     /// App name (as it sends notifications) → how they show.
     pub notification_apps: BTreeMap<String, AppStyle>,
     pub app_drawer: AppDrawer,
+    pub accessibility: Accessibility,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -429,6 +430,7 @@ impl Default for Config {
             notifications: Notifications::default(),
             notification_apps: BTreeMap::new(),
             app_drawer: AppDrawer::default(),
+            accessibility: Accessibility::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -593,6 +595,14 @@ impl Default for AppDrawer {
     fn default() -> Self {
         Self { super_tap: true }
     }
+}
+
+/// Accessibility (E8.6).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Accessibility {
+    /// The on-screen keyboard always shows (the `on-screen-keyboard` action shows it for a while).
+    pub on_screen_keyboard: bool,
 }
 
 /// Screen-recording answers (E6.11), by program path; the "would like to record this screen" alert fills them in.

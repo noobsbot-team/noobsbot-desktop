@@ -306,6 +306,7 @@ doesn't understand is skipped and reported in the journal.
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
 | `[desktop]` | desktop icons on or off |
+| `[accessibility]` | on-screen keyboard always shown |
 | `[bindings]` | keyboard shortcuts |
 | `[[rules]]` | window rules: open on a Space, size, position, always on top, no title bar, opacity |
 
