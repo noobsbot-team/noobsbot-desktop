@@ -23,6 +23,16 @@ pub fn place(area: Rect, size: Size<i32, Logical>) -> Point<i32, Logical> {
     (x.max(area.loc.x), y.max(area.loc.y)).into()
 }
 
+/// `rect` moved from work area `from` to `to`: the same place relative to it, its size kept where it fits, else
+/// shrunk to `to`, and wholly inside it.
+pub fn fit_in(rect: Rect, from: Rect, to: Rect) -> Rect {
+    let size = Size::from((rect.size.w.min(to.size.w), rect.size.h.min(to.size.h)));
+    let loc = to.loc + (rect.loc - from.loc);
+    let x = loc.x.min(to.loc.x + to.size.w - size.w).max(to.loc.x);
+    let y = loc.y.min(to.loc.y + to.size.h - size.h).max(to.loc.y);
+    Rect::new((x, y).into(), size)
+}
+
 /// Moves the span `start..start + len` so whichever end is nearest an edge (within SNAP_DISTANCE) sits on it.
 pub fn stick(start: i32, len: i32, edges: &[i32]) -> i32 {
     let mut best: Option<i32> = None;
@@ -289,6 +299,16 @@ pub fn format_frames(frames: &[(String, String, Rect)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_in_keeps_place_and_size_where_it_fits() {
+        let a = Rect::new((0, 30).into(), (1920, 1050).into());
+        let b = Rect::new((1920, 0).into(), (1280, 800).into());
+        let r = |x, y, w, h| Rect::new((x, y).into(), (w, h).into());
+        assert_eq!(fit_in(r(100, 130, 400, 300), a, b), r(2020, 100, 400, 300), "same place, same size");
+        assert_eq!(fit_in(r(1500, 900, 400, 300), a, b), r(2800, 500, 400, 300), "pushed back inside");
+        assert_eq!(fit_in(r(10, 40, 1800, 1000), a, b), b, "too big: shrunk to the area");
+    }
 
     #[test]
     fn nearest_corner_by_quadrant() {
