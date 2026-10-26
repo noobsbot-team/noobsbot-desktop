@@ -161,6 +161,8 @@ pub enum Message {
     Mute(bool, bool),
     /// Date & Time ▸ Set time and date automatically.
     Ntp(bool),
+    /// Date & Time ▸ Set: the typed date and time become the system's.
+    SetTime,
     /// A device (BlueZ path): pair if need be and connect (`true`), or disconnect.
     Device(String, bool),
     /// A paired device is removed.
@@ -370,6 +372,19 @@ impl App {
             Message::PowerMode(profile) => return Task::perform(system::set_power_mode(profile), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
             Message::Ntp(on) => return Task::perform(system::set_ntp(on), Message::Status),
+            Message::SetTime => {
+                let now = chrono::Local::now();
+                let typed = |key: &str, now: String| self.texts.get(key).cloned().unwrap_or(now);
+                let (date, clock) = (typed(system::DATE, now.format("%Y-%m-%d").to_string()), typed(system::CLOCK, now.format("%H:%M").to_string()));
+                match system::manual_time(&date, &clock) {
+                    Some(usec) => {
+                        self.texts.remove(system::DATE);
+                        self.texts.remove(system::CLOCK);
+                        return Task::perform(system::set_time(usec), Message::Status);
+                    }
+                    None => self.error = Some(format!("“{} {}” isn't a date and time like 2026-10-27 14:05", date.trim(), clock.trim())),
+                }
+            }
             Message::Device(path, on) => return Task::perform(system::connect_device(path, on), Message::Acted),
             Message::Forget(path) => return Task::perform(system::forget(path), Message::Acted),
             Message::Acted((status, error)) => {

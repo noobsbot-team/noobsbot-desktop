@@ -956,7 +956,27 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             Some(time) => {
                 let help = if time.can_ntp { "Asks for your password" } else { "No time service is installed" };
                 let ntp = toggler(time.ntp).on_toggle_maybe(time.can_ntp.then_some(Message::Ntp)).size(18).style(t.toggle());
-                vec![group(t, "", vec![line(t, "Set time and date automatically", help, ntp.into()), fact(t, "System time zone", time.zone.clone())])]
+                let mut rows = vec![line(t, "Set time and date automatically", help, ntp.into())];
+                if !time.ntp {
+                    // Shows the time the page was drawn until typed over; Set (or Enter) sends both.
+                    let now = chrono::Local::now();
+                    let field = |key: &'static str, now: String, width| {
+                        let value = app.texts.get(key).cloned().unwrap_or(now);
+                        text_input("", &value)
+                            .on_input(move |v| Message::Type(key.into(), v))
+                            .on_submit(Message::SetTime)
+                            .size(13)
+                            .padding([3, 8])
+                            .width(width)
+                            .style(t.input(false))
+                    };
+                    let date = field(crate::system::DATE, now.format("%Y-%m-%d").to_string(), 100);
+                    let clock = field(crate::system::CLOCK, now.format("%H:%M").to_string(), 64);
+                    let set = button(text("Set").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::SetTime);
+                    rows.push(line(t, "Date and time", "Asks for your password", row![date, clock, set].spacing(8).align_y(Alignment::Center).into()));
+                }
+                rows.push(fact(t, "System time zone", time.zone.clone()));
+                vec![group(t, "", rows)]
             }
             None => missing("systemd-timedated isn't available"),
         },
