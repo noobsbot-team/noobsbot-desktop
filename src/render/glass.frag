@@ -30,6 +30,8 @@ uniform float highlight_top;
 uniform float hairline;
 // Above 0, only the outer `hollow` physical px of the shape are drawn: a ring (focus rings, D7).
 uniform float hollow;
+// Increase contrast (E8.6): a 1 px border just inside the edge, premultiplied rgba.
+uniform vec4 border;
 
 float rrect(vec2 p, vec2 size, float r) {
     vec2 q = abs(p - size * 0.5) - size * 0.5 + r;
@@ -57,6 +59,7 @@ void main() {
     // CSS `inset 0 1px 0`: inside the rect but outside the rect moved down by 1 px.
     float top = clamp(0.5 + rrect(p - vec2(0.0, px), box, radius), 0.0, 1.0);
     c = over(vec4(1.0) * highlight_top * top, c);
+    c = over(border * band(d, -px, 0.0), c);
     c *= inside;
     c = over(c, vec4(0.0, 0.0, 0.0, hairline * band(d, 0.0, 0.5 * px)));
 
