@@ -260,6 +260,7 @@ settings file.
 | Super+` | next window of the same app |
 | Super+Shift+3 / 4 / 5 | screenshot: screen / region (Space: a window) / toolbar |
 | Alt+Print | screenshot of the focused window |
+| Super+Alt+5 | start or stop recording the screen |
 | Super+Ctrl+Q | lock screen |
 | Super+Shift+Q | log out (asks first) |
 | Super+Alt+Esc | Force Quit |

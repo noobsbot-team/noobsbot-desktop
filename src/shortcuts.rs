@@ -126,6 +126,8 @@ pub enum Action {
     InputMethod(String),
     /// A row of the window menu (E8.5).
     WindowMenu(crate::decorations::Command),
+    /// Starts or stops recording the screen (Super+Alt+5).
+    ScreenRecord,
     /// Super+Shift+3 / 4 / 5 (E6.8).
     Screenshot(crate::shell::screenshot::Start),
 }
@@ -241,6 +243,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("show-desktop", "") => Some(Action::ShowDesktop),
         ("input-source", "") => Some(Action::Layout(None)),
         ("screenshot", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Screen)),
+        ("screen-record", "") => Some(Action::ScreenRecord),
         ("screenshot-window", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Window)),
         ("screenshot-region", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Region)),
         ("screenshot-toolbar", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Toolbar)),
@@ -493,6 +496,17 @@ impl State {
             Action::AppDrawer => self.toggle_drawer(crate::shell::drawer::Anchor::Corner),
             Action::Drawer(command) => self.drawer_command(command),
             Action::Screenshot(start) => self.screenshot(start),
+            Action::ScreenRecord => {
+                let was = self.screenshots.recording.is_some();
+                self.toggle_recording();
+                // Nothing in the menu bar shows it yet, so say so.
+                let (symbol, text) = match (was, self.screenshots.recording.is_some()) {
+                    (_, true) => (Symbol::Record, "Recording"),
+                    (true, false) => (Symbol::Stop, "Recording Stopped"),
+                    (false, false) => (Symbol::Record, "Recording needs wf-recorder"),
+                };
+                self.show_osd(Osd { symbol, level: None, text: Some(text.into()) });
+            }
             Action::InstallUpdate => self.install_update(),
         }
     }
@@ -659,6 +673,7 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_Search, false), Some(&Action::Spotlight));
         let alt = ModifiersState { alt: true, ..Default::default() };
         assert_eq!(lookup(&table, &alt, Keysym::Print, false), Some(&Action::Screenshot(crate::shell::screenshot::Start::Window)));
+        assert_eq!(lookup(&table, &ModifiersState { logo: true, alt: true, ..Default::default() }, Keysym::_5, false), Some(&Action::ScreenRecord));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
