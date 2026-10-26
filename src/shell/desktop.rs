@@ -631,7 +631,6 @@ impl State {
     }
 
     /// The right-click menu's rows: an icon's, or the desktop's.
-    // ponytail: Change Wallpaper… stays disabled until System Settings (E7.1) has a wallpaper pane to open.
     pub fn desktop_menu_rows(&self) -> Vec<Option<Row>> {
         let row =
             |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Desktop) });
@@ -640,7 +639,10 @@ impl State {
             Some((Some(_), _)) => {
                 vec![row("Open", Some(Command::Open)), None, row("Rename", Some(Command::Rename)), row("Move to Trash", Some(Command::Trash))]
             }
-            _ => vec![row("New Folder", Some(Command::NewFolder)), None, row("Change Wallpaper…", None)],
+            _ => {
+                let wallpaper = Action::Spawn("noobsbot-desktop-settings --page appearance".into());
+                vec![row("New Folder", Some(Command::NewFolder)), None, Some(Row { action: Some(wallpaper), ..row("Change Wallpaper…", None).unwrap() })]
+            }
         }
     }
 

@@ -1261,14 +1261,9 @@ impl State {
         }
     }
 
-    /// Ctrl+right click: Plank's preferences, which are config.toml's `[dock]` until the Settings app (M7).
+    /// Ctrl+right click: Settings ▸ Desktop & Dock.
     fn dock_settings(&mut self) {
-        let path = config::path();
-        if !path.exists() {
-            let _ = config::save_atomic(&path, config::DEFAULT_TOML).inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
-        }
-        // ponytail: always Kate, the default editor; the Settings app's Dock pane replaces this.
-        self.spawn(&["kate".to_owned(), path.to_string_lossy().into_owned()]);
+        self.spawn(&["noobsbot-desktop-settings".into(), "--page".into(), "desktop-dock".into()]);
     }
 
     pub fn dock_command(&mut self, command: Command) {

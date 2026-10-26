@@ -71,6 +71,17 @@ pub enum Live {
     Mission(bool),
 }
 
+impl Live {
+    /// The gesture whose switch gates this: down over an open overview is the App Exposé swipe, as on release.
+    pub fn gesture(&self) -> Gesture {
+        match self {
+            Live::Space(..) => Gesture::Space(0),
+            Live::Mission(false) => Gesture::MissionControl,
+            Live::Mission(true) => Gesture::AppExpose,
+        }
+    }
+}
+
 /// One system gesture in progress: begin → update* → end.
 #[derive(Debug, Clone)]
 pub struct Tracker {
@@ -283,11 +294,16 @@ impl State {
         true
     }
 
-    /// What follows a swipe that just turned out sideways (or up and down, `dy` so far): nothing under reduce motion.
+    /// What follows a swipe that just turned out sideways (or up and down, `dy` so far): nothing under reduce motion
+    /// or with that gesture switched off.
     fn live(&self, horizontal: bool, dy: f64) -> Option<Live> {
         if self.config.appearance.reduce_motion {
             return None;
         }
+        self.live_any(horizontal, dy).filter(|l| self.config.touchpad.allows(l.gesture()))
+    }
+
+    fn live_any(&self, horizontal: bool, dy: f64) -> Option<Live> {
         // Under Mission Control the Space changes at once, on release.
         if horizontal && self.mission.is_none() {
             let output = self.pointer_output()?;
@@ -420,6 +436,19 @@ mod tests {
             t.update(i * ms, dx, dy, 1.0);
         }
         t.end(steps * ms + release_after, false)
+    }
+
+    #[test]
+    fn live_follows_only_switched_on_gestures() {
+        let mut touchpad = crate::config::Touchpad::default();
+        let (space, open, close) = (Live::Space("k".into(), 1.0), Live::Mission(false), Live::Mission(true));
+        assert!([&space, &open, &close].iter().all(|l| touchpad.allows(l.gesture())));
+        touchpad.gesture_spaces = false;
+        touchpad.gesture_mission_control = false;
+        assert!(!touchpad.allows(space.gesture()) && !touchpad.allows(open.gesture()));
+        assert!(touchpad.allows(close.gesture()));
+        touchpad.gesture_app_expose = false;
+        assert!(!touchpad.allows(close.gesture()));
     }
 
     #[test]

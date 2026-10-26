@@ -202,7 +202,7 @@ impl State {
         let (geo_origin, size, width) = (geo.loc, geo.size, geo.size.w);
         let hidden = self.bar_hidden();
         let content = self.bar_content(output);
-        let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
+        let status = matches!(self.popup, Some(Popup::Control | Popup::Module(..))).then(|| self.control_status());
         let center = self.center_layout();
         let batteries = self.batteries();
         let calendar = match self.popup {
@@ -312,7 +312,6 @@ impl State {
                             crate::shell::Menu::Input => input_menu.clone(),
                             crate::shell::Menu::Overflow => overflow_menu.clone(),
                             crate::shell::Menu::Battery(_) => battery_menu.clone(),
-                            crate::shell::Menu::Network(_) => crate::shell::network_rows(self.network.as_ref().and_then(|n| n.portal.as_deref())),
                             _ => crate::shell::menu_rows(kind, &app, tray, update_ready, self.recent_menu.as_deref().unwrap_or_default()),
                         },
                         // A tray item opened from "»" hangs from it.
@@ -355,7 +354,7 @@ impl State {
                 }
                 popups.extend(main);
             }
-            Some(Popup::Control) => {
+            Some(Popup::Control | Popup::Module(..)) => {
                 if let Some(status) = &status {
                     popups.extend(control.elements(
                         renderer,

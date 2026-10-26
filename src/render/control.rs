@@ -1,6 +1,6 @@
 //! Control Center (E2.3): a `panel` glass column under the bar at the top right with `card` modules: Wi-Fi and
 //! Bluetooth toggles, Do Not Disturb, Dark Mode, Keep Awake (with the apps blocking sleep), Display and Sound sliders,
-//! Now Playing, battery and power mode.
+//! Now Playing, battery and power mode. Opened from a menu bar item, one module of it with its links (`Status::bar`).
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
@@ -14,7 +14,7 @@ use super::{
 use crate::{
     apps::Icons,
     shell::control::{
-        self, Layout, Module, Status, TOGGLE, app_track, label_top, media_buttons, night_toggle, profile_name, slider_fill, tile_toggle, toggle_in, track_in,
+        self, Control, Layout, Module, Status, TOGGLE, app_track, label_top, media_buttons, night_toggle, profile_name, slider_fill, tile_toggle, track_in,
     },
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text, ts},
@@ -128,13 +128,12 @@ impl ControlCenter {
         let mut put = |piece, rect, left| pieces.push((piece, rect, left));
         let row = row_rect;
 
+        let full = status.bar.is_none();
         let unavailable = (false, "Unavailable".to_owned());
-        for (i, (symbol, name, (on, sub))) in [(Symbol::WifiHigh, "Wi-Fi", status.wifi.clone()), (Symbol::Bluetooth, "Bluetooth", status.bluetooth.clone())]
-            .into_iter()
-            .enumerate()
-            .map(|(i, (s, n, v))| (i, (s, n, v.unwrap_or_else(|| unavailable.clone()))))
+        let toggles = [(Control::Wifi, Symbol::WifiHigh, "Wi-Fi", &status.wifi), (Control::Bluetooth, Symbol::Bluetooth, "Bluetooth", &status.bluetooth)];
+        for (toggle, symbol, name, (on, sub)) in
+            toggles.into_iter().filter_map(|(c, s, n, v)| Some((layout.rect_of(c)?, s, n, v.clone().unwrap_or_else(|| unavailable.clone()))))
         {
-            let toggle = toggle_in(layout.network, i as i32);
             put(symbols.get(symbol, Weight::Fill, 16, scale, if on { white } else { label }), centred(toggle, 16), false);
             let x = toggle.loc.x + TOGGLE + 10;
             let right = layout.network.loc.x + layout.network.size.w - 10;
@@ -142,9 +141,8 @@ impl ControlCenter {
             put(text.label(name, title, (right - x) as u32, scale), row(x, top, right, ts(16)), true);
             put(text.label(&sub, small, (right - x) as u32, scale), row(x, top + ts(16), right, ts(14)), true);
         }
-        for (card, symbol, on, lines) in
-            [(layout.dnd, Symbol::Moon, status.dnd, &["Do Not", "Disturb"][..]), (layout.dark, Symbol::CircleHalf, status.dark, &["Dark Mode"][..])]
-        {
+        let tiles = [(layout.dnd, Symbol::Moon, status.dnd, &["Do Not", "Disturb"][..]), (layout.dark, Symbol::CircleHalf, status.dark, &["Dark Mode"][..])];
+        for (card, symbol, on, lines) in tiles.into_iter().filter(|_| full) {
             let toggle = tile_toggle(card);
             put(symbols.get(symbol, Weight::Fill, 16, scale, if on { white } else { label }), centred(toggle, 16), false);
             let x = toggle.loc.x + TOGGLE + 10;
@@ -166,7 +164,7 @@ impl ControlCenter {
             let on = if status.night { white } else { label };
             put(symbols.get(Symbol::Sun, Weight::Fill, 12, scale, on), centred(night_toggle(card), 12), false);
         }
-        if let Some(card) = layout.sound {
+        if let Some(card) = layout.sound.filter(|_| full) {
             let caret = if status.expanded == Some(Module::Sound) { Symbol::CaretDown } else { Symbol::CaretRight };
             put(
                 symbols.get(caret, Weight::Regular, 12, scale, secondary),
@@ -174,7 +172,7 @@ impl ControlCenter {
                 false,
             );
         }
-        {
+        if full {
             let card = layout.awake;
             let toggle = layout.rect_of(control::Control::KeepAwake).unwrap_or_default();
             put(symbols.get(Symbol::Monitor, Weight::Fill, 16, scale, if status.awake { white } else { label }), centred(toggle, 16), false);
@@ -267,30 +265,37 @@ impl ControlCenter {
         }
 
         let media = layout.media;
-        put(
-            symbols.get(Symbol::MusicNote, Weight::Fill, 20, scale, secondary),
-            Rectangle::new((media.loc.x + 12, media.loc.y + (media.size.h - 20) / 2).into(), (20, 20).into()),
-            false,
-        );
-        let x = media.loc.x + 42;
-        match &status.media {
-            Some((song, artist, playing)) => {
-                let buttons = media_buttons(media);
-                let right = buttons[0].loc.x - 8;
-                // No artist (a browser tab): the title alone, centred.
-                let y = if artist.is_empty() { media.loc.y + ts(20) } else { media.loc.y + ts(11) };
-                put(text.label(song, title, (right - x) as u32, scale), row(x, y, right, ts(16)), true);
-                put(text.label(artist, small, (right - x) as u32, scale), row(x, media.loc.y + ts(29), right, ts(14)), true);
-                let middle = if *playing { Symbol::Pause } else { Symbol::Play };
-                for (button, symbol) in buttons.into_iter().zip([Symbol::SkipBack, middle, Symbol::SkipForward]) {
-                    put(symbols.get(symbol, Weight::Fill, 18, scale, label), centred(button, 18), false);
+        if full {
+            put(
+                symbols.get(Symbol::MusicNote, Weight::Fill, 20, scale, secondary),
+                Rectangle::new((media.loc.x + 12, media.loc.y + (media.size.h - 20) / 2).into(), (20, 20).into()),
+                false,
+            );
+            let x = media.loc.x + 42;
+            match &status.media {
+                Some((song, artist, playing)) => {
+                    let buttons = media_buttons(media);
+                    let right = buttons[0].loc.x - 8;
+                    // No artist (a browser tab): the title alone, centred.
+                    let y = if artist.is_empty() { media.loc.y + ts(20) } else { media.loc.y + ts(11) };
+                    put(text.label(song, title, (right - x) as u32, scale), row(x, y, right, ts(16)), true);
+                    put(text.label(artist, small, (right - x) as u32, scale), row(x, media.loc.y + ts(29), right, ts(14)), true);
+                    let middle = if *playing { Symbol::Pause } else { Symbol::Play };
+                    for (button, symbol) in buttons.into_iter().zip([Symbol::SkipBack, middle, Symbol::SkipForward]) {
+                        put(symbols.get(symbol, Weight::Fill, 18, scale, label), centred(button, 18), false);
+                    }
                 }
+                None => put(
+                    text.label("Not Playing", Style { color: secondary, ..title }, 200, scale),
+                    row(x, media.loc.y + ts(20), media.loc.x + media.size.w - 12, ts(16)),
+                    true,
+                ),
             }
-            None => put(
-                text.label("Not Playing", Style { color: secondary, ..title }, 200, scale),
-                row(x, media.loc.y + ts(20), media.loc.x + media.size.w - 12, ts(16)),
-                true,
-            ),
+        }
+
+        let links = control::links(status);
+        for (row, (name, _)) in layout.links.iter().zip(&links) {
+            put(text.label(name, body, (row.size.w - 12) as u32, scale), row_rect(row.loc.x + 6, row.loc.y, row.loc.x + row.size.w - 6, row.size.h), true);
         }
 
         if let Some(card) = layout.power {
@@ -344,14 +349,14 @@ fn glass(shaders: &Shaders, layout: &Layout, status: &Status, dark: bool, accent
     let round = f64::from(TOGGLE) / 2.0;
     let mut out = Vec::new();
     let toggles = [
-        (toggle_in(layout.network, 0), status.wifi.as_ref().is_some_and(|w| w.0)),
-        (toggle_in(layout.network, 1), status.bluetooth.as_ref().is_some_and(|b| b.0)),
-        (tile_toggle(layout.dnd), status.dnd),
-        (tile_toggle(layout.dark), status.dark),
-        (layout.rect_of(control::Control::KeepAwake).unwrap_or_default(), status.awake),
+        (layout.rect_of(Control::Wifi), status.wifi.as_ref().is_some_and(|w| w.0)),
+        (layout.rect_of(Control::Bluetooth), status.bluetooth.as_ref().is_some_and(|b| b.0)),
+        (layout.rect_of(Control::Dnd).map(tile_toggle), status.dnd),
+        (layout.rect_of(Control::Dark).map(tile_toggle), status.dark),
+        (layout.rect_of(Control::KeepAwake), status.awake),
+        (layout.display.map(night_toggle), status.night),
     ];
-    let night = layout.display.map(|card| (night_toggle(card), status.night));
-    for (rect, state) in toggles.into_iter().chain(night) {
+    for (rect, state) in toggles.into_iter().filter_map(|(r, on)| Some((r?, on))) {
         out.push(shaders.light(rect, if state { on } else { off }, false, scale));
     }
     if let Some((_, rows)) = &layout.list {
