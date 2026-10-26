@@ -45,6 +45,8 @@ pub struct Notification {
     pub transient: bool,
     /// Stays after an action is invoked.
     pub resident: bool,
+    /// The `suppress-sound` hint: the app plays its own sound.
+    pub silent: bool,
     /// The `value` hint, percent.
     pub progress: Option<u8>,
     /// The `desktop-entry` hint: the app's id, to find its window on a click.
@@ -113,7 +115,7 @@ impl Server {
     }
 
     fn get_capabilities(&self) -> Vec<&'static str> {
-        vec!["actions", "body", "icon-static", "persistence"]
+        vec!["actions", "body", "icon-static", "persistence", "sound"]
     }
 
     #[zbus(out_args("name", "vendor", "version", "spec_version"))]
@@ -180,6 +182,7 @@ fn parse(
         expire,
         transient: flag("transient"),
         resident: flag("resident"),
+        silent: flag("suppress-sound"),
         progress,
         desktop_entry,
         ..Default::default()
@@ -444,6 +447,7 @@ mod tests {
             ("urgency", Value::U8(2)),
             ("desktop-entry", Value::from("org.kde.dolphin")),
             ("transient", Value::Bool(true)),
+            ("suppress-sound", Value::Bool(true)),
             ("value", Value::I32(140)),
         ]);
         let n = parse(7, String::new(), String::new(), "Copied".into(), "3 files".into(), &actions, &h, 0);
@@ -451,6 +455,7 @@ mod tests {
         assert_eq!(n.icon_name, "org.kde.dolphin");
         assert_eq!(n.actions, vec![("default".into(), "Open".into()), ("reply".into(), "Reply".into())]);
         assert_eq!((n.urgency, n.expire, n.transient, n.resident, n.progress), (2, 0, true, false, Some(100)));
+        assert!(n.silent);
         // image-path wins over app_icon.
         let h = hints(vec![("image-path", Value::from("/tmp/a.png"))]);
         assert_eq!(parse(1, "Helium".into(), "helium".into(), String::new(), String::new(), &[], &h, -1).icon_name, "/tmp/a.png");
