@@ -143,6 +143,7 @@ pub const COMPOSE: &[(&str, &str)] = &[
     ("compose:menu", "Menu"),
     ("compose:caps", "Caps Lock"),
 ];
+pub const CTRL_ALT: &[(&str, &str)] = &[("", "As Labelled"), ("ctrl:swap_lalt_lctl", "Swap Left Control and Alt")];
 
 /// What Caps Lock does (any other choice from the same family replaces it).
 pub fn is_caps(option: &str) -> bool {
@@ -151,6 +152,10 @@ pub fn is_caps(option: &str) -> bool {
 
 pub fn is_compose(option: &str) -> bool {
     option.starts_with("compose:")
+}
+
+pub fn is_ctrl_alt(option: &str) -> bool {
+    option.starts_with("ctrl:swap_") && option.contains("alt")
 }
 
 /// The option of `family` in `options`, or "" for none.
@@ -213,5 +218,10 @@ mod tests {
         assert_eq!(with_option(options, is_caps, ""), "grp:alt_shift_toggle");
         assert_eq!(with_option("", is_compose, "compose:ralt"), "compose:ralt");
         assert_eq!(current(options, is_compose), "");
+        let swapped = with_option(options, is_ctrl_alt, "ctrl:swap_lalt_lctl");
+        assert_eq!(swapped, "grp:alt_shift_toggle,caps:swapescape,ctrl:swap_lalt_lctl");
+        assert_eq!(current(&swapped, is_ctrl_alt), "ctrl:swap_lalt_lctl");
+        assert_eq!(current("ctrl:nocaps", is_ctrl_alt), "", "Caps Lock's, not this one's");
+        assert_eq!(with_option(&swapped, is_ctrl_alt, ""), "grp:alt_shift_toggle,caps:swapescape");
     }
 }

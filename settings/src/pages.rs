@@ -516,7 +516,15 @@ pub const SETTINGS: &[Setting] = &[
         "Then type a sequence, like ' e for é",
         Kind::XkbOption(crate::xkb::is_compose, crate::xkb::COMPOSE),
     ),
-    s(Page::Keyboard, "Modifier keys", "keyboard.options", "Other xkb options", "Like grp:alt_shift_toggle; Caps Lock and Compose above", Kind::Text("None")),
+    s(Page::Keyboard, "Modifier keys", "keyboard.options", "Control and Alt", "", Kind::XkbOption(crate::xkb::is_ctrl_alt, crate::xkb::CTRL_ALT)),
+    s(
+        Page::Keyboard,
+        "Modifier keys",
+        "keyboard.options",
+        "Other xkb options",
+        "Like grp:alt_shift_toggle; Caps Lock, Compose, Control and Alt above",
+        Kind::Text("None"),
+    ),
     s(
         Page::Keyboard,
         "Modifier keys",
