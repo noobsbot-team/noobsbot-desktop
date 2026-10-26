@@ -194,6 +194,8 @@ pub enum Message {
     Tick,
     /// Every display shows its name for 2 s.
     Identify,
+    /// The arrangement goes back to automatic: the built-in display first, the others in a row right of it.
+    ResetArrangement,
     /// A call to the desktop came back: what went wrong, if anything.
     Called(Option<String>),
     Thumbs(Vec<(std::path::PathBuf, iced::widget::image::Handle)>),
@@ -458,6 +460,11 @@ impl App {
                 }
             }
             Message::Identify => return Task::perform(system::displays_call("Identify", ()), Message::Called),
+            Message::ResetArrangement => {
+                if self.ask_keep() {
+                    self.error = self.config.clear_outputs("position").err().map(|err| format!("Couldn't save the display settings: {err}"));
+                }
+            }
             Message::Called(error) => self.error = error,
             Message::Keep => self.keep(),
             Message::Revert => self.revert(),
@@ -520,19 +527,25 @@ impl App {
     /// `[display]` back as it was before the first unkept change (from `display.previous`, set aside here first so
     /// it does so even if we are gone by then).
     fn change_outputs(&mut self, changes: Vec<(String, &'static str, toml_edit::Value)>, ask: bool) {
-        if ask {
-            let previous = self.keep.take().map_or_else(|| self.config.display_text(), |k| k.previous);
-            let set_aside = display_info::previous_path().ok_or_else(|| std::io::Error::other("no XDG_RUNTIME_DIR")).and_then(|p| std::fs::write(p, &previous));
-            if let Err(err) = set_aside {
-                self.error = Some(format!("Couldn't set the display settings aside: {err}"));
-                return;
-            }
-            self.keep = Some(arrange::Keep { previous, since: Instant::now() });
+        if ask && !self.ask_keep() {
+            return;
         }
         match self.config.set_outputs(changes) {
             Ok(()) => self.error = None,
             Err(err) => self.error = Some(format!("Couldn't save the display settings: {err}")),
         }
+    }
+
+    /// Sets `[display]` aside and starts "Keep these display settings?"; `false` (and the error) if it can't.
+    fn ask_keep(&mut self) -> bool {
+        let previous = self.keep.take().map_or_else(|| self.config.display_text(), |k| k.previous);
+        let set_aside = display_info::previous_path().ok_or_else(|| std::io::Error::other("no XDG_RUNTIME_DIR")).and_then(|p| std::fs::write(p, &previous));
+        if let Err(err) = set_aside {
+            self.error = Some(format!("Couldn't set the display settings aside: {err}"));
+            return false;
+        }
+        self.keep = Some(arrange::Keep { previous, since: Instant::now() });
+        true
     }
 
     /// After a Login Items change: the error if it failed, and the list read again.

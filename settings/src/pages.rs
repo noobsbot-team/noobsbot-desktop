@@ -1423,7 +1423,9 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
         },
     ));
     let identify = button(text("Identify").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::Identify);
-    parts.push(row![space().width(Length::Fill), identify].spacing(8).into());
+    let reset =
+        (app.displays.len() > 1).then(|| button(text("Reset Arrangement").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ResetArrangement));
+    parts.push(row![space().width(Length::Fill)].push(reset).push(identify).spacing(8).into());
     // Displays that are off aren't in the arrangement: pick any one here.
     if app.displays.len() > 1 {
         let items =
