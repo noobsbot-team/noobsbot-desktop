@@ -191,6 +191,8 @@ pub struct State {
     pub popup: Option<crate::shell::Popup>,
     /// The open menu's row whose submenu is open, while that menu is the popup.
     pub submenu: Option<(crate::shell::Popup, usize)>,
+    /// The logo menu's Recent Items while it is open (`refresh_recent`).
+    pub recent_menu: Option<Vec<Option<crate::shell::Row>>>,
     pub osd: Option<crate::shell::Osd>,
     /// The power alert that is up.
     pub alert: Option<crate::shell::alert::Alert>,
@@ -507,6 +509,7 @@ impl State {
             tray: Vec::new(),
             tray_menu: None,
             submenu: None,
+            recent_menu: None,
             disks: Default::default(),
             symbols: Default::default(),
             popup: None,

@@ -944,6 +944,11 @@ pub fn recent_items(xbel: &str) -> (Vec<String>, Vec<String>) {
     (names, files.into_iter().map(|(_, href)| href).collect())
 }
 
+/// `~/.local/share/recently-used.xbel`.
+pub fn recent_path() -> std::path::PathBuf {
+    config::xdg_dir("XDG_DATA_HOME", ".local/share").join("recently-used.xbel")
+}
+
 /// A `recently-used.xbel` with every bookmark gone (Clear Menu); `None` if it has no `<xbel>` to keep.
 pub fn cleared(xbel: &str) -> Option<String> {
     let start = xbel.find("<xbel")?;
@@ -1048,7 +1053,7 @@ impl State {
         let app = self.apps.find(&key).filter(|a| Builtin::of(&key).is_none() && !a.path.as_os_str().is_empty());
         self.dock_ui.login = app.map(|a| std::fs::read_to_string(autostart_path(&a.id)).is_ok_and(|t| !t.contains("Hidden=true")));
         self.dock_ui.recent = app.map_or_else(Vec::new, |a| {
-            let xbel = std::fs::read_to_string(config::xdg_dir("XDG_DATA_HOME", ".local/share").join("recently-used.xbel")).unwrap_or_default();
+            let xbel = std::fs::read_to_string(recent_path()).unwrap_or_default();
             let program = a.program();
             let files = recent_files(&xbel, &[&a.id, &a.name, &program]);
             files.into_iter().filter(|u| crate::apps::file_path(u).is_none_or(|p| std::path::Path::new(&p).exists())).take(5).collect()
