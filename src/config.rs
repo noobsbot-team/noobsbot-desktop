@@ -530,6 +530,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Shift+Right", "move-to-space right"),
         ("Super+Up", "mission-control"),
         ("Super+Down", "app-expose"),
+        ("Super+F11", "show-desktop"),
         ("Super+Shift+3", "screenshot"),
         ("Super+Shift+4", "screenshot-region"),
         ("Super+Shift+5", "screenshot-toolbar"),
@@ -547,6 +548,8 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("XF86AudioNext", "media next"),
         ("XF86AudioPrev", "media previous"),
         ("XF86PowerOff", "shut-down"),
+        ("XF86Sleep", "sleep"),
+        ("Super+Shift+Q", "log-out"),
     ]
     .into_iter()
     .map(|(k, v)| (k.into(), v.into()))

@@ -217,6 +217,7 @@ super_tap = true
 "Super+Shift+Right" = "move-to-space right"
 "Super+Up" = "mission-control"
 "Super+Down" = "app-expose"
+"Super+F11" = "show-desktop"
 # Screenshots (E6.8), saved to ~/Pictures/Screenshots and copied to the clipboard.
 "Super+Shift+3" = "screenshot"
 "Super+Shift+4" = "screenshot-region"
@@ -238,6 +239,8 @@ super_tap = true
 "XF86AudioPrev" = "media previous"
 # The power button asks before shutting down (the system's own power-key action is held off while the desktop runs).
 "XF86PowerOff" = "shut-down"
+"XF86Sleep" = "sleep"
+"Super+Shift+Q" = "log-out"
 
 # Window rules, applied when a window appears and again when its title changes.
 # Match on app_id (exact) and/or title (a regular expression, searched anywhere in the title).
