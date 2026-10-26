@@ -1425,9 +1425,9 @@ fn gallery(app: &App) -> Element<'_, Message> {
         let picture = iced::widget::image(handle.clone()).width(w).height(h).border_radius(5.0);
         tiles.push(tile(picture.into(), path.to_string_lossy().into_owned()));
     }
-    // "+ Add Folder…" opens a path field under the pictures; its pictures join the gallery.
+    // "+ Add Folder…" opens the folder chooser (a path field under the pictures without a portal); its pictures join the gallery.
     let add = container(text("+ Add Folder…").size(12)).center_x(w).center_y(h);
-    tiles.push(button(add).padding(3).style(t.tile(false)).on_press(Message::Type(crate::gallery::ADD.into(), String::new())).into());
+    tiles.push(button(add).padding(3).style(t.tile(false)).on_press(Message::OpenFile(crate::gallery::ADD)).into());
     let grid = row(tiles).spacing(8).wrap().vertical_spacing(8);
     let mut rows = vec![container(grid).padding(12).width(Length::Fill).into()];
     if let Some(path) = app.texts.get(crate::gallery::ADD) {
