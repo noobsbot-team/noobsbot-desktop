@@ -191,6 +191,8 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
         ("media", "stop") => Some(Action::Media(MediaAction::Stop)),
+        ("media", "forward") => Some(Action::Media(MediaAction::Seek(true))),
+        ("media", "rewind") => Some(Action::Media(MediaAction::Seek(false))),
         ("notification-center", "") => Some(Action::NotificationCenter),
         ("spotlight", "") => Some(Action::Spotlight),
         ("emoji", "") => Some(Action::Emoji),
@@ -375,8 +377,8 @@ impl State {
                 let symbol = match media {
                     MediaAction::PlayPause if now.playing => Symbol::Pause,
                     MediaAction::PlayPause => Symbol::Play,
-                    MediaAction::Next => Symbol::SkipForward,
-                    MediaAction::Previous => Symbol::SkipBack,
+                    MediaAction::Next | MediaAction::Seek(true) => Symbol::SkipForward,
+                    MediaAction::Previous | MediaAction::Seek(false) => Symbol::SkipBack,
                     MediaAction::Stop => Symbol::Stop,
                 };
                 let osd = Osd { symbol, level: None, text: Some(now.title.clone()).filter(|t| !t.is_empty()) };
@@ -592,6 +594,7 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_MonBrightnessDown, false), Some(&Action::Brightness(false)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioPlay, false), Some(&Action::Media(MediaAction::PlayPause)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioStop, false), Some(&Action::Media(MediaAction::Stop)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_AudioRewind, false), Some(&Action::Media(MediaAction::Seek(false))));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
