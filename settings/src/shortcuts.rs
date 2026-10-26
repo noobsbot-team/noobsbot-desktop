@@ -1,6 +1,123 @@
 //! Keyboard ▸ Keyboard Shortcuts (E8.7): `[bindings]` by category, with labels for the actions the desktop knows
 //! (`src/shortcuts.rs` `action`; this crate doesn't depend on the desktop, so the names are listed again here).
 
+use iced::{
+    Alignment, Element, Length, Task,
+    font::Weight,
+    widget::{button, checkbox, column, container, row, scrollable, space, text, tooltip},
+};
+
+use crate::{App, Message, font, style};
+
+/// The open "Keyboard Shortcuts…" sheet.
+pub struct Editor {
+    pub category: &'static str,
+}
+
+#[derive(Clone, Debug)]
+pub enum Msg {
+    Open,
+    Close,
+    Category(&'static str),
+    /// A shipped binding, by combo: on (its default applies) or off ("none").
+    Enable(String, bool),
+}
+
+/// One row: the combo as written, the action it runs (the default's when switched off), and whether it is on.
+#[derive(Debug, PartialEq)]
+pub struct Row {
+    pub combo: String,
+    pub action: String,
+    pub on: bool,
+    /// Not a shipped binding: − removes it.
+    pub custom: bool,
+}
+
+/// The rows from every binding (`Config::bindings`) and the shipped defaults. A default switched off whose action is
+/// bound to other keys has moved there, and isn't listed.
+pub fn rows(all: &[(String, String)], default: impl Fn(&str) -> Option<String>) -> Vec<Row> {
+    let mut rows = Vec::new();
+    for (combo, action) in all {
+        let shipped = default(combo);
+        let on = action.trim() != "none";
+        let action = if on { action.clone() } else { shipped.clone().unwrap_or_default() };
+        let moved = all.iter().any(|(c, a)| c != combo && *a == action);
+        if on || (shipped.is_some() && !moved) {
+            rows.push(Row { combo: combo.clone(), action, on, custom: shipped.is_none() });
+        }
+    }
+    rows
+}
+
+pub fn update(app: &mut App, msg: Msg) -> Task<Message> {
+    let key = |combo: &str| format!("bindings.{combo}");
+    let done = match msg {
+        Msg::Open => {
+            app.shortcuts = Some(Editor { category: CATEGORIES[0] });
+            Ok(())
+        }
+        Msg::Close => {
+            app.shortcuts = None;
+            Ok(())
+        }
+        Msg::Category(category) => {
+            if let Some(editor) = &mut app.shortcuts {
+                editor.category = category;
+            }
+            Ok(())
+        }
+        Msg::Enable(combo, true) => app.config.change(&[key(&combo)], []),
+        Msg::Enable(combo, false) => app.config.set(&key(&combo), "none"),
+    };
+    app.error = done.err().map(|err| format!("Couldn't save the shortcut: {err}"));
+    Task::none()
+}
+
+/// The sheet: categories left, that category's shortcuts right.
+pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
+    let t = app.tokens;
+    let all = app.config.bindings();
+    let rows = rows(&all, |combo| app.config.default_of(&format!("bindings.{combo}")).map(str::to_owned));
+    let clashes = conflicts(&all);
+    let mut sidebar = column![].spacing(1).width(190);
+    for &name in CATEGORIES {
+        if name == "Other" && !rows.iter().any(|r| category(&r.action) == "Other") {
+            continue;
+        }
+        let item = text(name).size(13);
+        sidebar = sidebar.push(
+            button(item).padding([4, 8]).width(Length::Fill).style(t.sidebar_row(editor.category == name)).on_press(Message::Shortcuts(Msg::Category(name))),
+        );
+    }
+    let mut list = column![].spacing(2);
+    for r in rows.iter().filter(|r| category(&r.action) == editor.category) {
+        let enable: Element<'static, Message> = if r.custom {
+            space().width(16).into()
+        } else {
+            let combo = r.combo.clone();
+            checkbox(r.on).on_toggle(move |on| Message::Shortcuts(Msg::Enable(combo.clone(), on))).size(14).into()
+        };
+        let mut line = row![enable, text(label(&r.action)).size(13).width(Length::Fill)].spacing(8).align_y(Alignment::Center);
+        if let Some(other) = clashes.get(&r.combo) {
+            let tip = container(text(format!("Also bound to {}", label(other))).size(11)).padding([4, 8]).style(t.sheet());
+            line = line.push(tooltip(text("⚠").size(13).color(style::rgb(0xFF9500)), tip, tooltip::Position::Top));
+        }
+        let keys = text(format(&r.combo)).size(13).color(if r.on { t.label() } else { t.tertiary() });
+        line = line.push(keys);
+        list = list.push(container(line).padding([4, 8]));
+    }
+    let body = row![
+        container(scrollable(sidebar).direction(style::thin()).style(t.scroll())).padding(4).height(Length::Fill).style(t.sidebar()),
+        scrollable(list).direction(style::thin()).style(t.scroll()).width(Length::Fill).height(Length::Fill),
+    ]
+    .spacing(12);
+    let bar = row![space().width(Length::Fill), button(text("Done").size(13)).padding([4, 14]).style(t.push(true)).on_press(Message::Shortcuts(Msg::Close))]
+        .spacing(8);
+    let card = column![text("Keyboard Shortcuts").size(15).font(font(Weight::Semibold)), body, bar].spacing(12).max_width(640).height(Length::Fill);
+    let sheet = container(card).padding(18).style(t.sheet());
+    iced::widget::opaque(container(sheet).padding(24).center(Length::Fill).style(t.dim()))
+}
+
 /// The sidebar, in order; anything not listed below goes to "Other".
 pub const CATEGORIES: &[&str] = &["Windows", "Spaces & Mission Control", "Dock", "Screenshots", "Apps & Launchers", "Media & Hardware", "System", "Other"];
 
@@ -225,6 +342,16 @@ mod tests {
         assert_eq!(format("XF86AudioRaiseVolume"), "Volume Up");
         assert_eq!(format("Super+F11"), "Super+F11");
         assert_eq!(format("Super+q"), "Super+Q");
+    }
+
+    #[test]
+    fn moved_defaults_are_not_listed() {
+        let all = [("Super+K", "quit"), ("Super+Q", "none"), ("Super+W", "none"), ("Super+X", "none"), ("Super+Y", "exec foot")];
+        let all: Vec<_> = all.iter().map(|(c, a)| (c.to_string(), a.to_string())).collect();
+        let shipped = |c: &str| ["Super+Q", "Super+W"].contains(&c).then(|| if c == "Super+Q" { "quit" } else { "close" }.to_string());
+        let shown: Vec<_> = rows(&all, shipped).into_iter().map(|r| (r.combo, r.action, r.on, r.custom)).collect();
+        let row = |c: &str, a: &str, on, custom| (c.to_string(), a.to_string(), on, custom);
+        assert_eq!(shown, [row("Super+K", "quit", true, true), row("Super+W", "close", false, false), row("Super+Y", "exec foot", true, true)]);
     }
 
     #[test]
