@@ -399,7 +399,7 @@ impl State {
             Kind::EmptyTrash if button == Button::Cancel => return,
             Kind::EmptyTrash => {
                 // Off the frame thread: a big trash takes a while; the watcher turns the icon empty.
-                let _ = std::thread::Builder::new().name("empty-trash".into()).spawn(|| crate::shell::trash::empty(&crate::shell::trash::dir()));
+                let _ = std::thread::Builder::new().name("empty-trash".into()).spawn(crate::shell::trash::empty_all);
                 self.ui_sound("trash-empty");
                 return;
             }
