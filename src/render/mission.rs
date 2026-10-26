@@ -155,7 +155,13 @@ impl MissionView {
             let factor = f64::from(thumb.to.size.w) / f64::from(thumb.from.size.w);
             let origin = phys(thumb.from.loc);
             let elements = window_elements(renderer, shaders, text, space, &thumb.window, output.loc, scale, dark);
-            out.extend(elements.into_iter().filter_map(|e| transformed(e, origin, factor, phys(thumb.to.loc) - origin)));
+            let moved = elements.into_iter().filter_map(|e| transformed(e, origin, factor, phys(thumb.to.loc) - origin)).collect();
+            out.extend(faded(renderer, moved, thumb.alpha, scale));
+        }
+        // Reduce motion: behind them, the windows where they are, fading out.
+        for thumb in overview.thumbs.iter().filter(|t| t.alpha < 1.0) {
+            let elements = window_elements(renderer, shaders, text, space, &thumb.window, output.loc, scale, dark);
+            out.extend(faded(renderer, elements, 1.0 - thumb.alpha, scale));
         }
 
         let mut back: Vec<Shape> = Vec::new();
@@ -219,7 +225,7 @@ pub fn sliding(
     dark: bool,
 ) -> Vec<SceneElement> {
     let mut out = Vec::new();
-    for (window, origin, alpha) in windows.iter().filter(|w| w.2 > 0.0) {
+    for (window, origin, alpha) in windows {
         let elements = window_elements(renderer, shaders, text, space, window, *origin, scale, dark);
         out.extend(faded(renderer, elements, *alpha, scale));
     }
@@ -230,6 +236,9 @@ pub fn sliding(
 fn faded(renderer: &mut GlesRenderer, elements: Vec<SceneElement>, alpha: f64, scale: f64) -> Vec<SceneElement> {
     if alpha >= 1.0 {
         return elements;
+    }
+    if alpha <= 0.0 {
+        return Vec::new();
     }
     super::motion::transformed(renderer, elements, scale, |rect| crate::anim::Look { rect, alpha })
 }
