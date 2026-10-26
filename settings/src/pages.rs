@@ -1155,23 +1155,22 @@ fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<
     if wifi.enabled && net.wifi_device.is_some() {
         parts.push(other_network(app));
     }
-    if !net.known.is_empty() {
-        let rows = net
+    for (wifi, header) in [(true, "Known Networks"), (false, "Wired Connections")] {
+        let rows: Vec<_> = net
             .known
             .iter()
+            .filter(|k| k.wifi == wifi)
             .map(|k| {
-                let path = k.path.clone();
-                let controls = row![
-                    text("Auto-Join").size(12).color(t.secondary()),
-                    toggle(t, k.auto_join, move |on| Message::AutoJoin(path.clone(), on)),
-                    button(text("Forget").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ForgetNetwork(k.path.clone())),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center);
-                line(t, k.ssid.as_str(), "", controls.into())
+                let details = button(text("Details…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::NetDetails(Some(k.path.clone())));
+                line(t, k.ssid.as_str(), "", details.into())
             })
             .collect();
-        parts.push(group(t, "Known Networks", rows));
+        if !rows.is_empty() {
+            parts.push(group(t, header, rows));
+        }
+    }
+    if let Some(k) = net.known.iter().find(|k| app.texts.get(&format!("{}path", crate::network::DETAILS)) == Some(&k.path)) {
+        parts.push(connection_details(app, k));
     }
     for d in &net.details {
         let rows = [("IP address", &d.ip), ("Router", &d.router), ("DNS", &d.dns), ("MAC address", &d.mac)]
@@ -1189,6 +1188,37 @@ fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<
         parts.push(note(t, error));
     }
     parts
+}
+
+/// A saved connection's Details sheet: Auto-Join, IPv4 (DHCP or manual) and DNS, Forget (fields in `App::texts`).
+fn connection_details<'a>(app: &'a App, k: &'a crate::network::Known) -> Element<'a, Message> {
+    let t = app.tokens;
+    let push = |label: &'static str, primary: bool, message: Message| button(text(label).size(12)).padding([3, 10]).style(t.push(primary)).on_press(message);
+    let key = |field: &str| format!("{}{field}", crate::network::DETAILS);
+    let value = |field: &str| app.texts.get(&key(field)).map_or("", String::as_str);
+    let field = |field: &'static str, placeholder: &'static str| -> Element<'a, Message> {
+        text_input(placeholder, value(field)).on_input(move |v| Message::Type(key(field), v)).size(13).padding([3, 8]).width(180).style(t.input(false)).into()
+    };
+    let path = k.path.clone();
+    let manual = value("method") == "manual";
+    let method = segments(
+        t,
+        [("auto", "Automatic (DHCP)"), ("manual", "Manual")]
+            .map(|(v, label)| (label.to_owned(), value("method") == v, Message::Type(key("method"), v.into())))
+            .to_vec(),
+    );
+    let mut rows = vec![line(t, "Auto-Join", "", toggle(t, k.auto_join, move |on| Message::AutoJoin(path.clone(), on))), line(t, "Configure IPv4", "", method)];
+    if manual {
+        rows.push(line(t, "IP address", "", field("address", "192.168.1.20")));
+        rows.push(line(t, "Prefix length", "24 = subnet mask 255.255.255.0", field("prefix", "24")));
+        rows.push(line(t, "Router", "", field("gateway", "192.168.1.1")));
+    }
+    rows.push(line(t, "DNS servers", "Comma separated; empty = from the network", field("dns", "1.1.1.1, 9.9.9.9")));
+    let forget = push(if k.wifi { "Forget This Network" } else { "Forget This Connection" }, false, Message::ForgetNetwork(k.path.clone()));
+    let buttons =
+        row![forget, space().width(Length::Fill), push("Cancel", false, Message::NetDetails(None)), push("Update", true, Message::UpdateIp4)].spacing(8);
+    rows.push(container(buttons).padding([8, 12]).into());
+    group(t, &k.ssid, rows)
 }
 
 /// Networks ▸ "Other…", or its form for a network that doesn't announce its name (fields in `App::texts`).

@@ -154,6 +154,10 @@ pub enum Message {
     AutoJoin(String, bool),
     /// Known Networks ▸ Forget: a saved connection's path.
     ForgetNetwork(String),
+    /// Known Networks ▸ Details…: a saved connection's path opens its sheet; `None` closes it.
+    NetDetails(Option<String>),
+    /// Details ▸ Update: the typed IPv4 setup is saved.
+    UpdateIp4,
     /// Networks ▸ Other…: opens (`true`) or closes the hidden-network form.
     OtherNetwork(bool),
     /// The hidden-network form ▸ Join.
@@ -388,7 +392,34 @@ impl App {
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Join(ssid) => return self.join(&ssid, None),
             Message::AutoJoin(path, on) => return Task::perform(network::change(move |bus| network::auto_join(bus, path, on)), Message::Status),
-            Message::ForgetNetwork(path) => return Task::perform(network::change(move |bus| network::forget(bus, path)), Message::Status),
+            Message::ForgetNetwork(path) => {
+                self.texts.retain(|k, _| !k.starts_with(network::DETAILS));
+                return Task::perform(network::change(move |bus| network::forget(bus, path)), Message::Status);
+            }
+            Message::NetDetails(path) => {
+                self.texts.retain(|k, _| !k.starts_with(network::DETAILS));
+                let known = self.status.wifi.as_ref().and_then(|w| w.network.known.iter().find(|k| Some(&k.path) == path.as_ref()));
+                if let Some(k) = known {
+                    let ip4 = &k.ip4;
+                    let method = if ip4.manual { "manual" } else { "auto" };
+                    let fields = [("path", &k.path), ("address", &ip4.address), ("prefix", &ip4.prefix), ("gateway", &ip4.gateway), ("dns", &ip4.dns)];
+                    for (field, value) in fields.into_iter().chain([("method", &method.to_owned())]) {
+                        self.texts.insert(format!("{}{field}", network::DETAILS), value.clone());
+                    }
+                }
+            }
+            Message::UpdateIp4 => {
+                let mut take = |field: &str| self.texts.remove(&format!("{}{field}", network::DETAILS)).unwrap_or_default();
+                let path = take("path");
+                let ip4 = network::Ip4 {
+                    manual: take("method") == "manual",
+                    address: take("address"),
+                    prefix: take("prefix"),
+                    gateway: take("gateway"),
+                    dns: take("dns"),
+                };
+                return Task::perform(network::change(move |bus| network::update_ip4(bus, path, ip4)), Message::Status);
+            }
             Message::OtherNetwork(open) => {
                 let fields: Vec<String> = self.texts.keys().filter(|k| k.starts_with(network::OTHER)).cloned().collect();
                 for key in fields {
