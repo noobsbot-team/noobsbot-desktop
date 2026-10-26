@@ -21,6 +21,8 @@ pub struct Display {
     /// From the EDID; empty when unknown.
     pub make: String,
     pub model: String,
+    /// From the EDID (its serial string, else its serial number); empty when unknown.
+    pub serial: String,
     pub width_mm: u32,
     pub height_mm: u32,
     /// A laptop's own panel (eDP, LVDS, DSI).

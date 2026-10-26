@@ -228,6 +228,8 @@ pub struct State {
     pub display_revert: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Displays ▸ Identify shows each display's name until this timer ends it.
     pub identify: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// The set of displays connected at the last `apply_displays` (`displays::layout_key`).
+    pub layout_key: String,
     /// Installed apps (E2.1); empty until the first scan lands.
     pub apps: crate::apps::Apps,
     /// Bumped with every `apps` load, so what windows cached against the last one (`dock_key`) is looked up again.
@@ -565,6 +567,7 @@ impl State {
             caps_lock: false,
             display_revert: None,
             identify: None,
+            layout_key: String::new(),
             apps: Default::default(),
             reopen: Vec::new(),
             apps_epoch: 0,

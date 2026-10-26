@@ -263,7 +263,7 @@ impl State {
     }
 
     /// Reads which displays are connected and drops unplugged ones (E6.2 hotplug); `apply_displays` lights the new.
-    // ponytail: no remembered layouts per monitor set, no 500 ms settle for docks, no clamshell.
+    // ponytail: no 500 ms settle for docks, no clamshell.
     fn scan_connectors(&mut self, node: DrmNode) {
         let Some(Device::Udev(udev)) = self.device.as_mut() else { return };
         let Some(card) = udev.cards.get_mut(&node) else { return };
@@ -285,11 +285,14 @@ impl State {
     /// The real-screen half of `apply_displays`: plans every connected display, darkens the ones turned off, lights
     /// the ones turned on and modesets the ones whose mode changed; returns them all, with the lit ones' outputs.
     pub(crate) fn udev_displays(&mut self) -> Vec<(Display, Option<Output>)> {
-        let Some(Device::Udev(udev)) = self.device.as_mut() else { return Vec::new() };
+        let Some(udev) = self.udev() else { return Vec::new() };
         let mut nodes: Vec<DrmNode> = udev.cards.keys().copied().collect();
         nodes.sort_by_key(|n| n.dev_id());
         let all: Vec<(DrmNode, usize)> = nodes.iter().flat_map(|n| (0..udev.cards[n].connected.len()).map(|i| (*n, i))).collect();
-        let planned = displays::plan(all.iter().map(|(n, i)| udev.cards[n].connected[*i].1.clone()).collect(), &self.config.display);
+        let connected: Vec<Display> = all.iter().map(|(n, i)| udev.cards[n].connected[*i].1.clone()).collect();
+        self.follow_layout(&connected);
+        let planned = displays::plan(connected, &self.config.display);
+        let Some(Device::Udev(udev)) = self.device.as_mut() else { return Vec::new() };
         let mut shown = Vec::new();
         for ((node, i), d) in all.into_iter().zip(planned) {
             let Some(card) = udev.cards.get_mut(&node) else { continue };
@@ -613,7 +616,8 @@ impl State {
 fn describe(drm: &DrmDevice, info: &connector::Info) -> Display {
     let name = format!("{}-{}", info.interface().as_str(), info.interface_id());
     let (width_mm, height_mm) = info.size().unwrap_or((0, 0));
-    let (make, model) = edid(drm, info.handle()).map(|e| displays::edid_names(&e)).unwrap_or_default();
+    let edid = edid(drm, info.handle()).unwrap_or_default();
+    let ((make, model), serial) = (displays::edid_names(&edid), displays::edid_serial(&edid));
     let modes = info
         .modes()
         .iter()
@@ -622,7 +626,7 @@ fn describe(drm: &DrmDevice, info: &connector::Info) -> Display {
             display_info::Mode { width: mode.size.w, height: mode.size.h, refresh: mode.refresh, preferred: m.mode_type().contains(ModeTypeFlags::PREFERRED) }
         })
         .collect();
-    Display { built_in: display_info::built_in(&name), name, make, model, width_mm, height_mm, modes, ..Default::default() }
+    Display { built_in: display_info::built_in(&name), name, make, model, serial, width_mm, height_mm, modes, ..Default::default() }
 }
 
 /// The connector's EDID blob.
