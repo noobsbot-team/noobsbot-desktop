@@ -17,7 +17,7 @@ use super::{
 };
 use crate::{
     apps::Icons,
-    shell::launchpad::{Grid, Tile, pages},
+    shell::launchpad::{Folder, Grid, Tile, pages},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
     ui::field::TextField,
@@ -49,8 +49,8 @@ pub struct Frame<'a> {
     pub offsets: &'a [Point<i32, Logical>],
     /// The tile a dragged icon is held over: dropping makes a folder.
     pub onto: Option<usize>,
-    /// The open folder: its panel, the grid in it, its name and its tile.
-    pub folder: Option<(Rect, &'a Grid, &'a TextField, usize)>,
+    /// The open folder: its panel, the grid in it, the folder and how far it has faded in.
+    pub folder: Option<(Rect, &'a Grid, &'a Folder, f64)>,
 }
 
 /// Size, search field, pages, page, shown, caret x, selection width, dark, opacity, accent, scale.
@@ -128,14 +128,25 @@ impl LaunchpadView {
         // The folder app being dragged leaves its place empty.
         let dragged_in = lifted.and_then(|(_, j, _)| j);
         let lifted = lifted.filter(|(_, j, _)| j.is_none()).map(|(i, ..)| i);
-        if let Some((panel, inner, name, index)) = folder
-            && let Some(Tile::Folder(_, apps)) = tiles.get(index)
+        if let Some((panel, inner, open, faded)) = folder
+            && let Some(Tile::Folder(_, apps)) = tiles.get(open.index)
         {
-            for (j, app) in apps.iter().enumerate().take(inner.per_page()).filter(|(j, _)| dragged_in != Some(*j)) {
-                top.push((icon_image(icons, &app.icon, px), inner.icon_rect(j), true, alpha));
-                top.push((text.label(&app.name, CALLOUT, inner.name_rect(j).size.w as u32, scale), inner.name_rect(j), false, alpha));
+            let (name, alpha) = (&open.name, alpha * faded.clamp(0.0, 1.0) as f32);
+            let (per, first) = (inner.per_page(), open.page * inner.per_page());
+            for (j, app) in apps.iter().enumerate().skip(first).take(per).filter(|(j, _)| dragged_in != Some(*j)) {
+                let k = j - first;
+                top.push((icon_image(icons, &app.icon, px), inner.icon_rect(k), true, alpha));
+                top.push((text.label(&app.name, CALLOUT, inner.name_rect(k).size.w as u32, scale), inner.name_rect(k), false, alpha));
             }
-            // The name, centred, with the caret (it always has the keyboard) or the Ctrl+A selection.
+            let count = pages(apps.len(), per);
+            if count > 1 {
+                for (i, dot) in inner.dots(count).into_iter().enumerate() {
+                    // On the panel's glass: ink of the panel's text colour.
+                    let (c, a) = (if dark { 1.0 } else { 0.0 }, if i == open.page { 0.85 } else { 0.3 });
+                    front.push((dot, [c, c, c, a * alpha], f64::from(dot.size.w) / 2.0, false));
+                }
+            }
+            // The name, centred; once clicked, with the caret or the selection.
             let style = Style { size: 17, line_height: 22, weight: 600, ..CALLOUT };
             let f = inner.field;
             let label = text.label(&name.text, style, f.size.w as u32, scale);
@@ -143,9 +154,9 @@ impl LaunchpadView {
             let x = f.loc.x + (f.size.w - w) / 2;
             top.push((label, Rectangle::new((x, f.loc.y).into(), (w, f.size.h).into()), false, alpha));
             let [ar, ag, ab] = accent.map(|c| f32::from(c) / 255.0);
-            if name.all {
+            if open.editing && name.all {
                 front.push((Rectangle::new((x - 1, f.loc.y + 3).into(), (w + 2, f.size.h - 6).into()), [ar, ag, ab, 0.3 * alpha], 2.0, false));
-            } else {
+            } else if open.editing {
                 let caret = x + logical(text.label(&name.text[..name.caret], style, 4000, scale).width).min(w);
                 front.push((Rectangle::new((caret, f.loc.y + 4).into(), (1, f.size.h - 8).into()), [ar, ag, ab, alpha], 0.0, false));
             }
@@ -161,13 +172,16 @@ impl LaunchpadView {
                 let off = offsets.get(i).copied().unwrap_or_default();
                 let i = i % per_page;
                 let shift = |r: Rect| zoom(Rectangle::new((r.loc.x + dx + off.x, r.loc.y + off.y).into(), r.size), centre, s);
-                let icon = shift(grid.icon_rect(i));
+                let mut icon = shift(grid.icon_rect(i));
                 if icon.loc.x + icon.size.w < 0 || icon.loc.x > output.w {
                     continue;
                 }
+                // A folder target grows a little over a glass well.
                 if onto == Some(p * per_page + i) {
-                    let well = zoom(icon, icon.loc.to_f64() + icon.size.to_f64().downscale(2.0).to_point(), 1.2);
+                    let mid = icon.loc.to_f64() + icon.size.to_f64().downscale(2.0).to_point();
+                    let well = zoom(icon, mid, 1.25);
                     moving.push((well, tint(alpha), f64::from(well.size.w) * 0.225, true));
+                    icon = zoom(icon, mid, 1.1);
                 }
                 let name = art(icons, tile, icon, (px, mini_px), alpha, tint(alpha), &mut pieces, &mut moving);
                 let name_rect = shift(grid.name_rect(i));
