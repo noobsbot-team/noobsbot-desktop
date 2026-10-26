@@ -125,7 +125,7 @@ pub enum NightSchedule {
 }
 
 /// Accessibility (E8.6).
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Accessibility {
     /// Zoom (Super+Alt+8) magnifies the whole screen, or a lens around the pointer.
@@ -148,6 +148,32 @@ pub struct Accessibility {
     pub bell: Bell,
     /// The on-screen keyboard always shows (the `on-screen-keyboard` action shows it for a while).
     pub on_screen_keyboard: bool,
+    /// Shaking the pointer briefly makes it bigger.
+    pub shake_to_find: bool,
+    /// Resting the pointer this long clicks; 0 = off.
+    pub dwell_click_ms: u32,
+    /// Holding the primary button still this long gives a secondary click instead; 0 = off.
+    pub hold_secondary_ms: u32,
+}
+
+impl Default for Accessibility {
+    fn default() -> Self {
+        Self {
+            zoom_style: ZoomStyle::Full,
+            colour_filter: ColourFilter::None,
+            increase_contrast: false,
+            sticky_keys: false,
+            sticky_keys_shortcut: false,
+            slow_keys_ms: 0,
+            bounce_keys_ms: 0,
+            mouse_keys: false,
+            bell: Bell::Sound,
+            on_screen_keyboard: false,
+            shake_to_find: true,
+            dwell_click_ms: 0,
+            hold_secondary_ms: 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]

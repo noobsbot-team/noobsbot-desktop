@@ -296,7 +296,7 @@ doesn't understand is skipped and reported in the journal.
 |---|---|
 | `[appearance]` | light / dark / auto (set hours, or sunset to sunrise at the weather place), accent colour, glass opacity, wallpapers and slideshow, theming Qt apps to match, reduce motion, text size and pointer size (exported to apps) |
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
-| `[accessibility]` | Zoom style (whole screen or a lens), colour filters (invert, greyscale), increase contrast |
+| `[accessibility]` | Zoom style (whole screen or a lens), colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
 | `[touchpad]` | tap to click, natural scrolling, three or four-finger swipes, gesture sensitivity |
 | `[hot_corners]` | an action for each screen corner (off by default) |
@@ -311,7 +311,6 @@ doesn't understand is skipped and reported in the journal.
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
 | `[desktop]` | desktop icons on or off |
-| `[accessibility]` | on-screen keyboard always shown |
 | `[bindings]` | keyboard shortcuts |
 | `[[rules]]` | window rules: open on a Space, size, position, always on top, no title bar, opacity |
 
