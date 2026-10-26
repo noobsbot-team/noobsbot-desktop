@@ -260,12 +260,14 @@ settings file.
 | Super+` | next window of the same app |
 | Super+Shift+3 / 4 / 5 | screenshot: screen / region / toolbar |
 | Super+Ctrl+Q | lock screen |
+| Super+Shift+Q | log out (asks first) |
 | Super+Alt+Esc | Force Quit |
 | Super+Ctrl+Space | next keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
 | F12 | quake terminal |
 | Volume, mute, mic, brightness and media keys | as labelled, with an on-screen display |
 | Power button | asks before shutting down |
+| Sleep key | lock, then sleep |
 | Ctrl+Alt+F1 … F12 | switch to a text console and back |
 
 ## Touchpad gestures
