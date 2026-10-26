@@ -17,7 +17,7 @@ use super::{
     mission::{Shape, material, rgba, shapes},
     titlebar::{Label, keep_buffers, label_element},
     transformed,
-    ui::{CALLOUT, Ui},
+    ui::Ui,
     window_elements,
 };
 use crate::{
@@ -169,7 +169,7 @@ impl DockView {
         if self.tip.as_ref().is_none_or(|(k, _, _)| *k != key) {
             let mut ui = Ui { shaders, text, symbols, dark, accent: [0, 0, 0], glass_opacity: 1.0, scale, glass: Vec::new(), pieces: Vec::new() };
             for (words, at) in tips {
-                let (w, h) = (ui.width(words, CALLOUT) + 16, i32::from(CALLOUT.line_height) + 12);
+                let (w, h) = ui.tooltip_size(words);
                 ui.tooltip((at.x - w / 2, at.y - h).into(), words);
             }
             let (mut glass, pieces) = (ui.glass, ui.pieces);
