@@ -236,7 +236,7 @@ pub fn links(status: &Status) -> Vec<(&'static str, Action)> {
     match status.bar {
         Some((Module::Wifi, _)) => {
             let portal = status.portal.iter().map(|url| ("Sign in to network…", Action::Spawn(format!("xdg-open {url}"))));
-            portal.chain([settings("Wi-Fi Settings…", "wi-fi")]).collect()
+            portal.chain([settings("Network Settings…", "network")]).collect()
         }
         Some((Module::Bluetooth, _)) => vec![settings("Bluetooth Settings…", "bluetooth")],
         Some((Module::Sound, _)) => vec![settings("Sound Settings…", "sound")],
@@ -945,7 +945,7 @@ mod tests {
         assert_eq!((l.display, l.sound, l.power, l.blockers.len()), (None, None, None, 0));
         assert_eq!(l.hits.iter().map(|(c, _)| *c).collect::<Vec<_>>(), [Control::Wifi, Control::Row(0), Control::Row(1), Control::Link(0)]);
         assert!(l.cards.iter().all(|c| l.rect.contains_rect(*c)));
-        assert_eq!(links(&wifi).iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["Wi-Fi Settings…"]);
+        assert_eq!(links(&wifi).iter().map(|(name, _)| *name).collect::<Vec<_>>(), ["Network Settings…"]);
         // Behind a captive portal, signing in comes first.
         let portal = Status { portal: Some("http://check.example/".into()), ..wifi.clone() };
         assert_eq!(links(&portal)[0], ("Sign in to network…", Action::Spawn("xdg-open http://check.example/".into())));
