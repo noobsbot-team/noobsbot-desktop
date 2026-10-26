@@ -1728,7 +1728,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout. Done.
 
 ### E8.8 Menu bar, tray, widgets and session
-- ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row (flipped left at the edge), one level deep; deeper ones list inline.
+- ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row (flipped left at the edge), one level deep; deeper ones list inline. Every shell menu takes the keyboard (arrows skip dead rows, Return/Right run or open, Left/Esc back out, letters jump, Left/Right walk the bar menus); a diagonal move toward an open submenu keeps it (aim triangle, 300 ms); the window menu's Move to lists the other displays by name.
 - Menu bar on every display; auto-hide option; a Recent Items menu with Clear.
 - ~~Trash at the dock's right end; Launchpad folders and drag to rearrange.~~ Done: Trash after the separator (Open, Empty Trash,
   drop to trash, `[dock] show_trash`); Launchpad icons drag to reorder and onto each other to make folders (saved in
