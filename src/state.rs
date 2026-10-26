@@ -167,8 +167,6 @@ pub struct State {
     pub alert: Option<crate::shell::alert::Alert>,
     /// Its once-a-second countdown.
     pub alert_timer: Option<smithay::reexports::calloop::RegistrationToken>,
-    /// Do Not Disturb, from Control Center; the notification server (M4) honours it.
-    pub dnd: bool,
     /// The Control Center module showing its list.
     pub expanded: Option<crate::shell::control::Module>,
     /// How far that list is scrolled, in logical px.
@@ -456,7 +454,6 @@ impl State {
             osd: None,
             alert: None,
             alert_timer: None,
-            dnd: false,
             expanded: None,
             control_scroll: 0.0,
             shell_drag: None,

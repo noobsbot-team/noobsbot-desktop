@@ -48,6 +48,7 @@ pub struct Config {
     pub calendar: Calendar,
     pub update: Update,
     pub desktop: Desktop,
+    pub notifications: Notifications,
     pub app_drawer: AppDrawer,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
@@ -289,6 +290,7 @@ impl Default for Config {
             calendar: Calendar::default(),
             update: Update::default(),
             desktop: Desktop::default(),
+            notifications: Notifications::default(),
             app_drawer: AppDrawer::default(),
             bindings: default_bindings(),
             rules: vec![
@@ -355,6 +357,14 @@ pub struct Dock {
     pub current_workspace_only: bool,
     /// The app's name over the hovered icon.
     pub tooltips: bool,
+}
+
+/// Notifications (E4.1).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Notifications {
+    /// Do Not Disturb: banners stay quiet, Notification Center still collects them.
+    pub dnd: bool,
 }
 
 /// Desktop icons (E7.2): the files in `~/Desktop` on the wallpaper.

@@ -214,7 +214,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         }
         Some("notification-center") => {
             state.restore_notifications(shell::notify::samples());
-            state.dnd = true;
+            state.config.notifications.dnd = true;
             let (year, month) = shell::this_month();
             state.popup = Some(shell::Popup::Notifications { year, month });
         }

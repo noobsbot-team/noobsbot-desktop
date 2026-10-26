@@ -351,7 +351,7 @@ impl State {
         Status {
             wifi,
             bluetooth,
-            dnd: self.dnd,
+            dnd: self.config.notifications.dnd,
             dark: crate::render::is_dark(&self.config.appearance),
             brightness: self.brightness,
             volume: self.sound.as_ref().map(|s| (s.output.volume, s.output.muted)),
@@ -438,8 +438,11 @@ impl State {
                     self.services.send(Command::Bluetooth(bluetooth.powered));
                 }
             }
-            // ponytail: Do Not Disturb lives in memory until it has a schedule in System Settings.
-            Control::Dnd => self.dnd = !self.dnd,
+            Control::Dnd => {
+                let dnd = !self.config.notifications.dnd;
+                self.config.notifications.dnd = dnd;
+                crate::config::save_key("notifications", "dnd", if dnd { "true" } else { "false" });
+            }
             Control::Dark => {
                 let nested = self.nested;
                 let appearance = &mut self.config.appearance;
