@@ -72,6 +72,9 @@ pub struct Appearance {
     pub theme_apps: bool,
     /// Every movement becomes a 150 ms crossfade (D10).
     pub reduce_motion: bool,
+    /// `auto` is dark from this hour until `dark_until` (0 … 23, local time).
+    pub dark_from: u32,
+    pub dark_until: u32,
 }
 
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
@@ -552,6 +555,8 @@ impl Default for Appearance {
             wallpaper_dark: String::new(),
             theme_apps: false,
             reduce_motion: false,
+            dark_from: 19,
+            dark_until: 7,
         }
     }
 }
