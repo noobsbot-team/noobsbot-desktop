@@ -48,6 +48,7 @@ pub struct Config {
     pub idle: Idle,
     pub privacy: Privacy,
     pub weather: Weather,
+    pub widgets: Widgets,
     pub calendar: Calendar,
     pub update: Update,
     pub desktop: Desktop,
@@ -501,6 +502,7 @@ impl Default for Config {
             idle: Idle::default(),
             privacy: Privacy::default(),
             weather: Weather::default(),
+            widgets: Widgets::default(),
             calendar: Calendar::default(),
             update: Update::default(),
             desktop: Desktop::default(),
@@ -541,6 +543,16 @@ pub struct Weather {
     pub latitude: f64,
     pub longitude: f64,
     pub units: Units,
+}
+
+/// Where widgets from other processes show (E8.8), by id, in order.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Widgets {
+    /// Notification Center's order; widgets in neither list follow these.
+    pub center: Vec<String>,
+    /// On the desktop instead, top to bottom.
+    pub desktop: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]

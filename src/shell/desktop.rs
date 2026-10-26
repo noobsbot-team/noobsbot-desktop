@@ -429,9 +429,21 @@ impl State {
         }
     }
 
-    /// A press on the bare desktop (no window or layer there): selects, opens on a double click, starts a drag, or
-    /// opens the right-click menu.
+    /// Other apps' desktop widgets (E8.8): a column down the left, clear of the icons on the right.
+    pub fn desktop_widgets(&self) -> Vec<Rect> {
+        let medium: Vec<bool> = self.shown_widgets(true).iter().map(|w| w.medium).collect();
+        let pad = crate::shell::notify::CENTER_PAD;
+        crate::shell::notify::tiles(&medium, MARGIN + pad, menubar::HEIGHT + 8 + pad, crate::shell::notify::CENTER_W - 2 * pad).0
+    }
+
+    /// A press on the bare desktop (no window or layer there): a widget tells its app; otherwise selects, opens on a
+    /// double click, starts a drag, or opens the right-click menu.
     pub fn desktop_press(&mut self, location: Point<f64, Logical>, button: u32) {
+        if button == crate::input::BTN_LEFT
+            && let Some(i) = self.desktop_widgets().iter().position(|r| r.to_f64().contains(location))
+        {
+            return self.widget_activated(true, i);
+        }
         if !self.desktop_shown() {
             return;
         }

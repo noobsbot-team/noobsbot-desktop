@@ -19,7 +19,10 @@ use super::{
 };
 use crate::{
     events::Upcoming,
-    services::weather::{Weather, condition},
+    services::{
+        weather::{Weather, condition},
+        widgets::Widget,
+    },
     shell::notify::{BODY, CLOSE, Card, Center, LINE, Notification, PLATE, Store, buttons},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
@@ -55,8 +58,24 @@ type Key = (Vec<(Rect, Shape)>, bool, [u8; 3], u32, u64);
 
 /// What is on screen.
 pub enum View<'a> {
-    Banners { cards: &'a [Card], more: Option<(Rect, usize)> },
-    Center { center: &'a Center, month: &'a Month, up_next: &'a [Upcoming], batteries: &'a [(String, u8)], dnd: bool, weather: Option<&'a Weather> },
+    Banners {
+        cards: &'a [Card],
+        more: Option<(Rect, usize)>,
+    },
+    Center {
+        center: &'a Center,
+        month: &'a Month,
+        up_next: &'a [Upcoming],
+        batteries: &'a [(String, u8)],
+        dnd: bool,
+        weather: Option<&'a Weather>,
+        widgets: &'a [&'a Widget],
+    },
+    /// Other apps' widgets on the desktop, each in its rect.
+    Widgets {
+        rects: &'a [Rect],
+        widgets: &'a [&'a Widget],
+    },
 }
 
 /// "22°", never "-0°".
@@ -103,6 +122,28 @@ fn weather_pieces(pieces: &mut Pieces, text: &mut Text, symbols: &mut Symbols, i
         pieces.put(symbols.get(condition(code, day).1, Weight::Fill, 18, scale, ink.label), at(x + (each - 18) / 2, 110, 18, 18), Align::Centre);
         pieces.put(text.label(&degrees(temp), Style { tabular: true, ..ink.body() }, each as u32, scale), at(x, 132, each, 16), Align::Centre);
     }
+}
+
+/// Another app's widget (E8.8): icon and title, up to four lines, and a progress bar along the bottom.
+#[expect(clippy::too_many_arguments, reason = "the widget's pieces in one place")]
+fn widget_pieces(pieces: &mut Pieces, shapes: &mut Vec<(Rect, Shape)>, text: &mut Text, symbols: &mut Symbols, ink: &Ink, w: &Widget, card: Rect, scale: f64) {
+    let at = |x: i32, y: i32, width: i32, h: i32| Rectangle::new((card.loc.x + x, card.loc.y + y).into(), (width.max(1), h).into());
+    let inner = card.size.w - 28;
+    let indent = if w.icon.is_some() { 28 } else { 0 };
+    if let Some(icon) = w.icon {
+        pieces.put(symbols.get(icon, Weight::Fill, 20, scale, ink.label), at(14, 12, 20, 20), Align::Centre);
+    }
+    pieces.put(text.label(&w.title, ink.headline(), (inner - indent).max(1) as u32, scale), at(14 + indent, 14, inner - indent, 16), Align::Left);
+    for (i, line) in w.lines.iter().enumerate() {
+        pieces.put(text.label(line, ink.body(), inner.max(1) as u32, scale), at(14, 42 + i as i32 * 20, inner, 16), Align::Left);
+    }
+    if let Some(value) = w.progress {
+        let track = at(14, card.size.h - 20, inner, 6);
+        let filled = ((f64::from(track.size.w) * value) as i32).max(track.size.h);
+        shapes.push((Rectangle::new(track.loc, (filled, track.size.h).into()), Shape::Bar));
+        shapes.push((track, Shape::Track));
+    }
+    shapes.push((card, Shape::Widget));
 }
 
 #[derive(Default)]
@@ -254,7 +295,12 @@ impl NotificationViews {
                     shapes.push((pill, Shape::Card { shadow: true }));
                 }
             }
-            View::Center { center, month, up_next, batteries, dnd, weather } => {
+            View::Widgets { rects, widgets } => {
+                for (card, w) in rects.iter().zip(widgets) {
+                    widget_pieces(&mut pieces, &mut shapes, text, symbols, &ink, w, *card, scale);
+                }
+            }
+            View::Center { center, month, up_next, batteries, dnd, weather, widgets } => {
                 let shown = |r: Rect| center.visible(r);
                 let row_w = |r: Rect| r.size.w.max(1) as u32;
                 if shown(center.date) {
@@ -343,6 +389,9 @@ impl NotificationViews {
                         pieces.put(text.label(&format!("{name} {percent}%"), Style { tabular: true, ..ink.body() }, row_w(words), scale), words, Align::Left);
                     }
                     shapes.push((*card, Shape::Widget));
+                }
+                for (card, w) in center.widgets.iter().zip(widgets).filter(|(c, _)| shown(**c)) {
+                    widget_pieces(&mut pieces, &mut shapes, text, symbols, &ink, w, *card, scale);
                 }
                 shapes.push((center.rect, Shape::Panel));
             }
