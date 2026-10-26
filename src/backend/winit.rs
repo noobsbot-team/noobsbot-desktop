@@ -312,6 +312,7 @@ impl State {
                             crate::shell::Menu::Input => input_menu.clone(),
                             crate::shell::Menu::Overflow => overflow_menu.clone(),
                             crate::shell::Menu::Battery(_) => battery_menu.clone(),
+                            crate::shell::Menu::Network(_) => crate::shell::network_rows(self.network.as_ref().and_then(|n| n.portal.as_deref())),
                             _ => crate::shell::menu_rows(kind, &app, tray, update_ready, self.recent_menu.as_deref().unwrap_or_default()),
                         },
                         // A tray item opened from "»" hangs from it.
