@@ -1180,6 +1180,16 @@ mod tests {
     }
 
     #[test]
+    fn default_bindings_do_not_conflict() {
+        let mut seen = Vec::new();
+        for combo in default_bindings().keys() {
+            let keys = crate::shortcuts::parse(combo).unwrap_or_else(|| panic!("{combo} parses"));
+            assert!(!seen.contains(&keys), "{combo} repeats another default");
+            seen.push(keys);
+        }
+    }
+
+    #[test]
     fn partial_config_and_bindings_merge() {
         let c =
             parse("[windows]\nsnapping = false\ndouble_click_title = \"minimize\"\n[bindings]\n\"Super+B\" = \"none\"\n\"Super+K\" = \"exec kate\"").unwrap();
