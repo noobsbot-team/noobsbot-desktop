@@ -12,8 +12,10 @@ terminal = "noobsbot"
 check_updates = true
 
 [appearance]
-# "light", "dark" or "auto" (auto follows the schedule set in Settings).
+# "light", "dark" or "auto" (dark from dark_from until dark_until, in whole hours of local time).
 mode = "light"
+dark_from = 19
+dark_until = 7
 # blue, purple, pink, red, orange, yellow, green or graphite.
 accent = "blue"
 # Multiplies the opacity of every glass surface (0.0 … 1.0).

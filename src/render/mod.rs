@@ -128,16 +128,19 @@ pub fn window_title(window: &Window) -> String {
 
 /// Dark mode on? `auto` follows the clock.
 pub fn is_dark(appearance: &Appearance) -> bool {
-    dark_at(appearance.mode, chrono::Timelike::hour(&chrono::Local::now()))
+    dark_at(appearance, chrono::Timelike::hour(&chrono::Local::now()))
 }
 
-/// `mode` at `hour` o'clock: `auto` is dark from 19:00 to 07:00.
-// ponytail: fixed schedule; sunset/sunrise needs geoclue (E2.6) and the hours a Settings page.
-pub fn dark_at(mode: Mode, hour: u32) -> bool {
-    match mode {
+/// Dark at `hour` o'clock? `auto` is dark from `dark_from` until `dark_until` (19 → 7 by default), across midnight
+/// when `from` is the later hour.
+// ponytail: whole hours; sunset/sunrise needs a location (E2.6).
+pub fn dark_at(appearance: &Appearance, hour: u32) -> bool {
+    let (from, until) = (appearance.dark_from % 24, appearance.dark_until % 24);
+    match appearance.mode {
         Mode::Dark => true,
         Mode::Light => false,
-        Mode::Auto => !(7..19).contains(&hour),
+        Mode::Auto if from <= until => (from..until).contains(&hour),
+        Mode::Auto => hour >= from || hour < until,
     }
 }
 
@@ -587,9 +590,12 @@ mod tests {
 
     #[test]
     fn auto_is_dark_at_night() {
-        assert!([0, 6, 19, 23].iter().all(|&h| dark_at(Mode::Auto, h)));
-        assert!([7, 12, 18].iter().all(|&h| !dark_at(Mode::Auto, h)));
-        assert!(dark_at(Mode::Dark, 12) && !dark_at(Mode::Light, 0));
+        let at = |mode, dark_from, dark_until, hour| dark_at(&Appearance { mode, dark_from, dark_until, ..Default::default() }, hour);
+        assert!([0, 6, 19, 23].iter().all(|&h| at(Mode::Auto, 19, 7, h)));
+        assert!([7, 12, 18].iter().all(|&h| !at(Mode::Auto, 19, 7, h)));
+        // A schedule within one day, and an empty one.
+        assert!(at(Mode::Auto, 1, 5, 3) && !at(Mode::Auto, 1, 5, 6) && !at(Mode::Auto, 8, 8, 8));
+        assert!(at(Mode::Dark, 0, 0, 12) && !at(Mode::Light, 19, 7, 0));
     }
 
     #[test]
