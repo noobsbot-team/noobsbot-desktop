@@ -318,7 +318,7 @@ doesn't understand is skipped and reported in the journal.
 
 | Section | What it controls |
 |---|---|
-| `[appearance]` | light / dark / auto (set hours, or sunset to sunrise at the weather place), accent colour, glass opacity, wallpapers and slideshow, theming Qt apps to match, reduce motion, text size and pointer size (exported to apps) |
+| `[appearance]` | light / dark / auto (set hours, or sunset to sunrise at the weather place), accent colour, glass opacity, wallpapers, gallery folders and slideshow, theming Qt apps to match, reduce motion, text size and pointer size (exported to apps) |
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
 | `[accessibility]` | Zoom style (whole screen or a lens), colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown, the Orca screen reader |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |

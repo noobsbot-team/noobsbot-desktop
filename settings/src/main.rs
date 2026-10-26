@@ -254,7 +254,8 @@ impl App {
             (app.default_apps, app.terminals) = defaults::load();
         }
         // Typing searches at once (see `type_ahead`).
-        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs)]))
+        let folders = app.config.str(gallery::FOLDERS).to_owned();
+        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(folders), Message::Thumbs)]))
     }
 
     fn retheme(&mut self) {
@@ -331,6 +332,19 @@ impl App {
                         return Task::none();
                     }
                     return self.join(ssid, Some(value));
+                } else if key == gallery::ADD || key == gallery::FOLDERS {
+                    let folders = if key == gallery::ADD {
+                        if !std::path::Path::new(&gallery::add("", &value)).is_dir() {
+                            self.error = Some(format!("“{}” isn't a folder", value.trim()));
+                            self.texts.insert(key, value);
+                            return Task::none();
+                        }
+                        gallery::add(self.config.str(gallery::FOLDERS), &value)
+                    } else {
+                        value.trim().to_owned()
+                    };
+                    self.save(gallery::FOLDERS, folders.as_str());
+                    return Task::perform(gallery::load(folders), Message::Thumbs);
                 } else if let Some(path) = key.strip_prefix(system::RENAME) {
                     return Task::perform(system::rename_device(path.to_owned(), value.trim().to_owned()), Message::Acted);
                 } else if let Some(name) = key.strip_prefix("display.custom_scale.") {

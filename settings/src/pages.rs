@@ -252,6 +252,7 @@ pub const SETTINGS: &[Setting] = &[
         "",
         Kind::Choice(&[("fill", "Fill"), ("fit", "Fit"), ("centre", "Centre"), ("stretch", "Stretch")]),
     ),
+    s(Page::Appearance, "Wallpaper", "appearance.gallery_folders", "Gallery folders", "Added with + Add Folder…; separate with :", Kind::Text("None")),
     s(Page::Appearance, "Wallpaper", "appearance.wallpaper_folder", "Slideshow folder", "Shows its pictures in turn; empty = off", Kind::Text("Off")),
     s(
         Page::Appearance,
@@ -1227,8 +1228,23 @@ fn gallery(app: &App) -> Element<'_, Message> {
         let picture = iced::widget::image(handle.clone()).width(w).height(h).border_radius(5.0);
         tiles.push(tile(picture.into(), path.to_string_lossy().into_owned()));
     }
+    // "+ Add Folder…" opens a path field under the pictures; its pictures join the gallery.
+    let add = container(text("+ Add Folder…").size(12)).center_x(w).center_y(h);
+    tiles.push(button(add).padding(3).style(t.tile(false)).on_press(Message::Type(crate::gallery::ADD.into(), String::new())).into());
     let grid = row(tiles).spacing(8).wrap().vertical_spacing(8);
-    group(t, "Wallpaper", vec![container(grid).padding(12).width(Length::Fill).into()])
+    let mut rows = vec![container(grid).padding(12).width(Length::Fill).into()];
+    if let Some(path) = app.texts.get(crate::gallery::ADD) {
+        let field = text_input("~/Pictures/Holiday", path)
+            .on_input(|v| Message::Type(crate::gallery::ADD.into(), v))
+            .on_submit(Message::Submit(crate::gallery::ADD.into()))
+            .size(13)
+            .padding([3, 8])
+            .width(220)
+            .style(t.input(false));
+        let save = button(text("Add").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::Submit(crate::gallery::ADD.into()));
+        rows.push(line(t, "Folder", "", row![field, save].spacing(8).align_y(Alignment::Center).into()));
+    }
+    group(t, "Wallpaper", rows)
 }
 
 /// Rows below the config settings.
