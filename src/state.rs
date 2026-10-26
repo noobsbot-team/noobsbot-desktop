@@ -448,6 +448,8 @@ impl State {
         let tick = |state: &Self| crate::clock::until_next_tick(&chrono::Local::now(), state.config.clock.format.seconds);
         // It also moves `auto` dark mode between day and night, apps included.
         let mut was_dark = crate::render::is_dark(&config.appearance);
+        // And Do Not Disturb on its schedule: on as the window opens, off as it closes; the tile overrides between.
+        let mut was_quiet = false;
         handle.insert_source(Timer::from_duration(crate::clock::until_next_tick(&chrono::Local::now(), config.clock.format.seconds)), move |_, _, state| {
             let appearance = &state.config.appearance;
             let dark = crate::render::is_dark(appearance);
@@ -455,6 +457,12 @@ impl State {
                 crate::theme::write_in_background(appearance.clone(), !state.nested);
             }
             was_dark = dark;
+            let quiet = state.config.notifications.dnd_at(chrono::Timelike::hour(&chrono::Local::now()));
+            if quiet != was_quiet && state.config.notifications.dnd != quiet {
+                state.config.notifications.dnd = quiet;
+                crate::config::save_key("notifications", "dnd", if quiet { "true" } else { "false" });
+            }
+            was_quiet = quiet;
             state.schedule_redraw();
             TimeoutAction::ToDuration(tick(state))
         })?;
