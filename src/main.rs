@@ -19,9 +19,9 @@ mod frame;
 mod gestures;
 mod grabs;
 mod housekeep;
+mod ibus;
 mod ical;
 mod idle;
-mod ibus;
 mod ime;
 mod input;
 mod mission;
@@ -330,7 +330,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             let names = ["English (US)", "Nepali", "Hindi (Bolnagri)"].map(String::from).to_vec();
             state.layouts.list = ["us", "np", "in"].map(String::from).into_iter().zip(names).collect();
             state.layouts.active = 1;
-            state.layouts.fcitx = true;
+            state.layouts.ime_settings = Some("fcitx5-configtool");
             state.popup = Some(shell::Popup::Menu(shell::Menu::Input));
         }
         Some("control") => state.popup = Some(shell::Popup::Control),
@@ -574,6 +574,11 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         command.clear();
     } else {
         state.x_display = xwayland::spawn(&state.socket_name, backend::cursor::size(state.config.appearance.pointer_size));
+        // fcitx5 starts from its XDG autostart entry; ibus has none. Started before the session target, so it binds
+        // input-method-v2 ahead of an fcitx5 that is installed too.
+        if state.config.keyboard.engine() == "ibus" {
+            state.spawn(&["ibus", "start", "--type", "wayland"].map(String::from));
+        }
         if state.config.accessibility.screen_reader {
             state.apply_screen_reader();
         }

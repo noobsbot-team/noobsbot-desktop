@@ -138,7 +138,7 @@ pub enum Action {
     Layout(Option<usize>),
     /// The keyboard layout before the active one (Super+Ctrl+Shift+Space).
     PreviousLayout,
-    /// An fcitx5 input method, by unique name (the input menu).
+    /// An fcitx5 (or ibus) input method, by unique name (the input menu).
     InputMethod(String),
     /// A row of the window menu (E8.5).
     WindowMenu(crate::decorations::Command),
@@ -489,7 +489,10 @@ impl State {
             Action::KeyboardViewer => self.toggle_keyboard_viewer(),
             Action::Layout(index) => self.switch_layout(index),
             Action::PreviousLayout => self.switch_layout(Some(crate::ime::step(self.layouts.active, self.layouts.list.len(), -1))),
-            Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
+            Action::InputMethod(name) => {
+                let ibus = self.config.keyboard.engine() == "ibus";
+                self.services.send(crate::services::Command::InputMethod { name, ibus });
+            }
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
             Action::Volume(up) | Action::VolumeFine(up) => {
                 let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
@@ -659,6 +662,10 @@ impl State {
         command.envs(crate::proxy::env(&self.config.network));
         if let Some(display) = &self.x_display {
             command.env("DISPLAY", display);
+        }
+        // X11 apps through XIM; the session script set fcitx5's.
+        if self.config.keyboard.engine() == "ibus" {
+            command.env("XMODIFIERS", "@im=ibus");
         }
         match command.spawn() {
             Ok(mut child) => {

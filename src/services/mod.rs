@@ -86,7 +86,7 @@ pub enum Update {
     PrepareForSleep,
     /// Awake again.
     Resumed,
-    /// fcitx5's input methods; `None`: fcitx5 isn't on the bus.
+    /// fcitx5's (or ibus's) input methods; `None`: it isn't running.
     Fcitx(Option<fcitx::Fcitx>),
     /// Settings starts or stops recording a shortcut (`org.noobsbot.Desktop.Shortcuts.Record`).
     Record(bool),
@@ -216,10 +216,15 @@ pub enum Command {
         blocks: Vec<String>,
         name: String,
     },
-    /// The input menu opened: read fcitx5's methods afresh.
-    FcitxRead,
-    /// Switch fcitx5 to this method (unique name).
-    InputMethod(String),
+    /// The input menu opened: read fcitx5's (or ibus's) methods afresh.
+    ImeRead {
+        ibus: bool,
+    },
+    /// Switch fcitx5 (or ibus) to this method (unique name).
+    InputMethod {
+        name: String,
+        ibus: bool,
+    },
     /// The Thunderbolt alert's Allow: enroll this boltd uid.
     Thunderbolt(String),
     /// Control Center opened: ask logind who blocks sleep.
@@ -445,10 +450,18 @@ async fn handle(
             (Command::SaveNotifications(text), ..) => notifications::save_history(&text),
             (Command::Mount { block, name }, Some(bus), _) => disks::mount(bus, &block, name, updates).await,
             (Command::Eject { drive, blocks, name }, Some(bus), _) => disks::eject(bus, &drive, &blocks, name, updates).await,
-            (Command::FcitxRead, _, Some(bus)) => {
+            // The `ibus` CLI, blocking this thread like wpctl below.
+            (Command::ImeRead { ibus: true }, ..) => {
+                let _ = updates.send(Update::Fcitx(fcitx::read_ibus()));
+            }
+            (Command::InputMethod { name, ibus: true }, ..) => {
+                crate::ibus::set_current(&name);
+                let _ = updates.send(Update::Fcitx(fcitx::read_ibus()));
+            }
+            (Command::ImeRead { ibus: false }, _, Some(bus)) => {
                 let _ = updates.send(Update::Fcitx(fcitx::read(bus).await));
             }
-            (Command::InputMethod(name), _, Some(bus)) => fcitx::set(bus, &name, updates).await,
+            (Command::InputMethod { name, ibus: false }, _, Some(bus)) => fcitx::set(bus, &name, updates).await,
             (Command::Inhibitors, Some(bus), _) => {
                 let _ = updates.send(Update::Inhibitors(login::inhibitors(bus).await));
             }
