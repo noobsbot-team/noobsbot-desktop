@@ -1275,17 +1275,25 @@ fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<
         line(t, v.name.as_str(), if v.active.is_some() { "Connected" } else { "" }, toggle(t, v.active.is_some(), move |_| Message::Vpn(vpn.clone())))
     });
     let mut vpns: Vec<_> = vpns.collect();
-    let typed = app.texts.get(crate::network::WIREGUARD).map_or("", String::as_str);
-    let field = text_input("/path/to/wg0.conf", typed)
-        .on_input(|v| Message::Type(crate::network::WIREGUARD.into(), v))
-        .on_submit(Message::ImportWireGuard)
-        .size(13)
-        .padding([3, 8])
-        .width(180)
-        .style(t.input(false));
-    let import =
-        button(text("Import").size(12)).padding([3, 10]).style(t.push(false)).on_press_maybe((!typed.trim().is_empty()).then_some(Message::ImportWireGuard));
-    vpns.push(line(t, "Import WireGuard", "A wg-quick .conf file", row![field, import].spacing(8).align_y(Alignment::Center).into()));
+    // The file chooser; the path field only when there is no portal.
+    let import: Element<'_, Message> = match app.texts.get(crate::network::WIREGUARD) {
+        Some(typed) => {
+            let field = text_input("/path/to/wg0.conf", typed)
+                .on_input(|v| Message::Type(crate::network::WIREGUARD.into(), v))
+                .on_submit(Message::ImportWireGuard)
+                .size(13)
+                .padding([3, 8])
+                .width(180)
+                .style(t.input(false));
+            let import = button(text("Import").size(12))
+                .padding([3, 10])
+                .style(t.push(false))
+                .on_press_maybe((!typed.trim().is_empty()).then_some(Message::ImportWireGuard));
+            row![field, import].spacing(8).align_y(Alignment::Center).into()
+        }
+        None => button(text("Import…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::OpenFile(crate::network::WIREGUARD)).into(),
+    };
+    vpns.push(line(t, "Import WireGuard", "A wg-quick .conf file", import));
     parts.push(group(t, "VPN", vpns));
     if let Some(k) = net.known.iter().find(|k| app.texts.get(&format!("{}path", crate::network::DETAILS)) == Some(&k.path)) {
         parts.push(connection_details(app, k));
