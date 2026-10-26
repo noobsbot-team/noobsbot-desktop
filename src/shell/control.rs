@@ -471,7 +471,7 @@ impl State {
         }
         let status = self.control_status();
         let layout = layout(self.popup_size(), &status);
-        if !layout.rect.to_f64().contains(location) {
+        if !layout.rect.to_f64().contains(self.to_popup(location)) {
             return false;
         }
         let Some((_, cells)) = &layout.list else { return true };
