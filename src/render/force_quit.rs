@@ -18,7 +18,6 @@ use crate::{
 };
 
 const LIGHTS: [[u8; 3]; 3] = [[0xFF, 0x5F, 0x57], [0xFE, 0xBC, 0x2E], [0x28, 0xC8, 0x40]];
-const RED: [u8; 4] = [0xFF, 0x3B, 0x30, 0xFF];
 
 /// Entries, selected row, the window's rect (it grows with the text size), dark, accent, scale.
 type Key = (Vec<Entry>, Option<usize>, crate::wm::Rect, bool, [u8; 3], u64);
@@ -107,7 +106,7 @@ impl ForceQuitWindow {
             rects.push(place(name_rect, name.width, false));
             pieces.push(name);
             if entry.frozen {
-                let note = text.label("(not responding)", Style { color: if on { white } else { RED }, ..body }, name_rect.size.w as u32, scale);
+                let note = text.label("(not responding)", Style { color: if on { white } else { super::ui::RED }, ..body }, name_rect.size.w as u32, scale);
                 rects.push(place(name_rect, note.width, true));
                 pieces.push(note);
             }
