@@ -1075,8 +1075,8 @@ pub struct Options {
 }
 
 /// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
-/// actions, the Options submenu (Keep in Dock, Open at Login, Show in Files, Assign To), then Close (Close All with
-/// several windows) and Close Others while `others` (other apps have windows).
+/// actions, the Options submenu (Keep in Dock, Open at Login, Show in Files, then the Assign To and Move to Display
+/// submenus), then Close (Close All with several windows) and Close Others while `others` (other apps have windows).
 pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], actions: &[String], options: &Options, others: bool) -> Vec<Option<Row>> {
     let row =
         |label: &str, shortcut, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
@@ -1095,21 +1095,20 @@ pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], ac
         sub.push(row("Open at Login", tick(login), Some(Command::Login)));
         sub.push(row("Show in Files", "", Some(Command::ShowInFiles)));
     }
-    // ponytail: a greyed heading, since a submenu row can't open another submenu.
+    // Assign To and Move to Display open their own submenus, after a line.
+    let nested = |label: &str, sub| Some(Row { sub, label: label.to_owned(), shortcut: "", action: None });
+    let mut more = Vec::new();
     if let Some(on) = options.assign {
-        if !sub.is_empty() {
-            sub.push(None);
-        }
-        sub.push(row("Assign To", "", None));
-        sub.extend(ASSIGN.iter().enumerate().map(|(i, name)| row(name, tick(i == on), Some(Command::Assign(i)))));
+        more.push(nested("Assign To", ASSIGN.iter().enumerate().map(|(i, name)| row(name, tick(i == on), Some(Command::Assign(i)))).collect()));
     }
     if options.displays.len() > 1 {
-        if !sub.is_empty() {
-            sub.push(None);
-        }
-        sub.push(row("Move to Display", "", None));
-        sub.extend(options.displays.iter().enumerate().map(|(i, (name, can))| row(name, "", can.then_some(Command::ToDisplay(i)))));
+        let displays = options.displays.iter().enumerate().map(|(i, (name, can))| row(name, "", can.then_some(Command::ToDisplay(i))));
+        more.push(nested("Move to Display", displays.collect()));
     }
+    if !sub.is_empty() && !more.is_empty() {
+        sub.push(None);
+    }
+    sub.extend(more);
     let options = if sub.is_empty() { Vec::new() } else { vec![Some(Row { sub, label: "Options".to_owned(), shortcut: "", action: None })] };
     let mut close = if titles.is_empty() { Vec::new() } else { vec![row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close))] };
     if others {
@@ -1902,17 +1901,11 @@ mod tests {
         let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() }, false);
         assert_eq!(
             labels(rows[7].clone().unwrap().sub),
-            [
-                s("Keep in Dock", "✓", true),
-                s("Open at Login", "", true),
-                s("Show in Files", "", true),
-                None,
-                s("Assign To", "", false),
-                s("All Spaces", "", true),
-                s("This Space", "", true),
-                s("None", "✓", true)
-            ]
+            [s("Keep in Dock", "✓", true), s("Open at Login", "", true), s("Show in Files", "", true), None, s("Assign To", "", false)]
         );
+        // Assign To is a submenu of its own, its choice ticked.
+        let assign = rows[7].clone().unwrap().sub[4].clone().unwrap();
+        assert_eq!(labels(assign.sub), [s("All Spaces", "", true), s("This Space", "", true), s("None", "✓", true)]);
         // Not running; locked items, no desktop file, a builtin: no Options at all.
         let options = |rows: Vec<Option<Row>>| rows.into_iter().flatten().find(|r| r.label == "Options").map(|r| labels(r.sub));
         assert_eq!(menu_rows(&[], None, &[], &[], &Options::default(), false), []);
@@ -1921,8 +1914,7 @@ mod tests {
             Some(vec![s("Keep in Dock", "✓", true), s("Open at Login", "✓", true), s("Show in Files", "", true)])
         );
         let all = options(menu_rows(&[], None, &[], &[], &Options { assign: Some(0), ..Options::default() }, false)).unwrap();
-        assert_eq!(all[0], s("Assign To", "", false), "no separator at the top");
-        assert_eq!(all[1], s("All Spaces", "✓", true));
+        assert_eq!(all, [s("Assign To", "", false)], "no separator at the top");
         assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], &Options::default(), false)), [s("a.txt", "", true), None, s("Close", "", true)]);
         // Close Others while other apps have windows, even for an app with none.
         assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], &Options::default(), true))[2..], [s("Close", "", true), s("Close Others", "", true)]);
@@ -1932,9 +1924,11 @@ mod tests {
         assert_eq!(menu_rows(&two[..1], None, &[], &[], &one, false).len(), 3, "one display: no Options");
         let two_displays = Options { assign: Some(2), displays: vec![("eDP-1".into(), false), ("DP-1".into(), true)], ..Options::default() };
         let sub = options(menu_rows(&two[..1], None, &[], &[], &two_displays, false)).unwrap();
-        assert_eq!(sub[4..], [None, s("Move to Display", "", false), s("eDP-1", "", false), s("DP-1", "", true)]);
+        assert_eq!(sub, [s("Assign To", "", false), s("Move to Display", "", false)]);
         let rows = menu_rows(&two[..1], None, &[], &[], &two_displays, false);
-        assert_eq!(rows[2].as_ref().unwrap().sub[7].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::ToDisplay(1))));
+        let to = &crate::shell::sub_rows(&rows, &[2, 1]);
+        assert_eq!(labels(to.to_vec()), [s("eDP-1", "", false), s("DP-1", "", true)]);
+        assert_eq!(to[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::ToDisplay(1))));
         let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() }, false);
         assert_eq!(rows[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
         assert_eq!(rows[3].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Recent(0))));

@@ -1687,8 +1687,8 @@ The dock stays per app, by design. Every per-window job a taskbar does gets a su
   `dock-app` / `dock-app-new` actions, number pills, Spaces on Super+Ctrl+1…9.
 - **Right-click menu:** Options ▸ Assign To (All Spaces / This Space / None), Move to Display, Open at Login; Close
   Others; recent files of the app (`recently-used.xbel`); ◆ next to minimised windows. Built: Open at Login, Keep in
-  Dock, Show in Files, recent files, ◆, Close / Close All, and an Options submenu with Assign To (`[dock] assign`;
-  a greyed heading, as submenus don't nest) and Move to Display; Close Others.
+  Dock, Show in Files, recent files, ◆, Close / Close All, and an Options submenu whose Assign To (`[dock] assign`)
+  and Move to Display open their own submenus; Close Others.
 - ~~**Spring-loading:** a file dragged over an icon brings that app's window up (App Exposé when it has several).~~
   Done: held 0.6 s (`src/shell/dock.rs` `Spring`).
 - ~~**Config:** `[dock] click = "toggle" | "cycle"`, `middle = "new" | "close"`, scroll on / off / reverse, Shift-click
@@ -1758,7 +1758,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout. Done.
 
 ### E8.8 Menu bar, tray, widgets and session
-- ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row (flipped left at the edge), one level deep; deeper ones list inline. Every shell menu takes the keyboard (arrows skip dead rows, Return/Right run or open, Left/Esc back out, letters jump, Left/Right walk the bar menus); a diagonal move toward an open submenu keeps it (aim triangle, 300 ms); the window menu's Move to lists the other displays by name.
+- ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row at any depth (after 200 ms of rest or at once on a click; each goes the way its parent went, flipped at the screen edge and kept on it, `shell::submenu_x`), each tray level asked for with AboutToShow. Every shell menu takes the keyboard (arrows skip dead rows, Return/Right run or open, Left/Esc back out one level, letters jump, Left/Right walk the bar menus); a diagonal move toward an open submenu keeps it (aim triangle, 300 ms); the window menu's Move to lists the other displays by name.
 - ~~Menu bar on every display; auto-hide option; a Recent Items menu with Clear.~~ Done: `src/backend/winit.rs`, `src/state.rs`, `src/shell/mod.rs`.
 - ~~Trash at the dock's right end; Launchpad folders and drag to rearrange.~~ Done: Trash after the separator (Open, Empty Trash,
   drop to trash, `[dock] show_trash`); Launchpad icons drag to reorder and onto each other to make folders (saved in
