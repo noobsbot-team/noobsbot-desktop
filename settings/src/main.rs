@@ -220,6 +220,8 @@ pub enum Message {
     /// A theme sound plays; `true`: it becomes the alert sound.
     Sound(&'static str, bool),
     Users(users::Users),
+    /// An account change finished: the accounts again and what went wrong.
+    UsersActed((users::Users, Option<String>)),
 }
 
 impl App {
@@ -340,6 +342,9 @@ impl App {
                         return Task::none();
                     }
                     return self.join(ssid, Some(value));
+                } else if key == users::NAME {
+                    let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
+                    return Task::perform(users::set(me.path.clone(), "SetRealName", value.trim().to_owned()), Message::UsersActed);
                 } else if let Some(name) = key.strip_prefix("display.custom_scale.") {
                     match pages::parse_scale(&value) {
                         Some(scale) => self.change_outputs(vec![(name.to_owned(), "scale", scale.into())], false),
@@ -359,6 +364,12 @@ impl App {
             }
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Users(users) => self.users = Some(users),
+            Message::UsersActed((users, error)) => {
+                self.users = Some(users);
+                self.error = error;
+                // The sidebar's name comes from /etc/passwd, which AccountsService rewrote.
+                self.user = system::user();
+            }
             Message::Wallpaper(path) => {
                 self.save("appearance.wallpaper", path.as_str());
                 self.save("appearance.wallpaper_dark", path);

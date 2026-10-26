@@ -17,9 +17,16 @@ pub struct Account {
     /// AccountsService's object path.
     pub path: String,
     pub login: String,
-    /// The full name, else the login.
+    /// The full name; may be empty.
     pub name: String,
     pub picture: Option<Handle>,
+}
+
+impl Account {
+    /// The full name, else the login.
+    pub fn shown(&self) -> &str {
+        if self.name.trim().is_empty() { &self.login } else { &self.name }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -44,12 +51,24 @@ pub async fn read() -> Users {
             others.push(account);
         }
     }
-    others.sort_by_key(|a| a.name.to_lowercase());
+    others.sort_by_key(|a| a.shown().to_lowercase());
     let me = match me {
         Some(path) => account(&bus, &path).await,
         None => None,
     };
     Users { me, others }
+}
+
+/// The full name field, as a text key.
+pub const NAME: &str = "users.name";
+
+/// Calls `method` (`SetRealName`, `SetIconFile`) on the account at `path`, then the accounts again and what went
+/// wrong. Interactive: polkit may ask for the password through the desktop's agent.
+pub async fn set(path: String, method: &'static str, value: String) -> (Users, Option<String>) {
+    let result = async { crate::system::system(120).await?.call_method(Some(ACCOUNTS), path.as_str(), Some(USER), method, &(value.as_str(),)).await };
+    let what = if method == "SetRealName" { "name" } else { "picture" };
+    let error = result.await.err().map(|err| format!("Couldn't change the {what}: {err}"));
+    (read().await, error)
 }
 
 async fn text(bus: &Connection, path: &str, name: &str) -> String {
@@ -62,7 +81,7 @@ async fn account(bus: &Connection, path: &OwnedObjectPath) -> Option<Account> {
     if login.is_empty() {
         return None;
     }
-    let name = Some(text(bus, path, "RealName").await).filter(|n| !n.trim().is_empty()).unwrap_or_else(|| login.clone());
+    let name = text(bus, path, "RealName").await;
     // As the lock screen looks: AccountsService's copy, else `~/.face`.
     let files = [PathBuf::from(text(bus, path, "IconFile").await), PathBuf::from("/var/lib/AccountsService/icons").join(&login)];
     let face = PathBuf::from(text(bus, path, "HomeDirectory").await).join(".face");
