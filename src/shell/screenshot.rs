@@ -611,9 +611,9 @@ impl State {
         true
     }
 
-    /// Record in the toolbar: starts `wf-recorder` on the whole screen (into ~/Videos), or stops it.
+    /// Record in the toolbar (or the screen-record key): starts `wf-recorder` on the whole screen (into ~/Videos), or stops it.
     // ponytail: wf-recorder until our own PipeWire recorder (E7.2); no menu-bar stop button, Super+Shift+5 ▸ Stop.
-    fn toggle_recording(&mut self) {
+    pub fn toggle_recording(&mut self) {
         if let Some(pid) = self.screenshots.recording.take() {
             // SIGINT lets it finish the file.
             unsafe { libc::kill(pid as i32, libc::SIGINT) };

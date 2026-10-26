@@ -807,6 +807,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Print", "screenshot-toolbar"),
         ("Shift+Print", "screenshot-region"),
         ("Alt+Print", "screenshot-window"),
+        ("Super+Alt+5", "screen-record"),
         ("F12", "quake"),
         ("XF86AudioRaiseVolume", "volume up"),
         ("XF86AudioLowerVolume", "volume down"),
