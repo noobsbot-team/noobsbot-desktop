@@ -1,5 +1,6 @@
 //! Control Center (E2.3): a `panel` glass column under the bar at the top right with `card` modules: Wi-Fi and
-//! Bluetooth toggles, Do Not Disturb, Dark Mode, Display and Sound sliders, Now Playing, battery and power mode.
+//! Bluetooth toggles, Do Not Disturb, Dark Mode, Keep Awake (with the apps blocking sleep), Display and Sound sliders,
+//! Now Playing, battery and power mode.
 
 use smithay::{
     backend::renderer::gles::{GlesRenderer, element::PixelShaderElement},
