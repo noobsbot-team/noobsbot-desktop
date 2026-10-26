@@ -16,14 +16,22 @@ pub mod layout {
     pub const PAD: i32 = 10;
     pub const COLS: usize = 9;
     pub const CELL: i32 = 36;
+    /// The field and the headers grow with the text size (`text::ts`); the emoji cells and tabs don't.
     pub const FIELD: i32 = 28;
     pub const HEADER: i32 = 20;
-    /// The grid's height: a header and seven rows, or with the Recent row five.
-    pub const BODY: i32 = HEADER + 7 * CELL;
     pub const TAB: i32 = 30;
     pub const RADIUS: f64 = 12.0;
     pub const WIDTH: i32 = 2 * PAD + COLS as i32 * CELL;
-    pub const HEIGHT: i32 = PAD + FIELD + 8 + BODY + 8 + TAB + PAD;
+
+    /// The grid's height: a header and seven rows, or with the Recent row (and its header) five.
+    pub fn body() -> i32 {
+        use crate::text::ts;
+        2 * ts(HEADER) - HEADER + 7 * CELL
+    }
+
+    pub fn height() -> i32 {
+        PAD + crate::text::ts(FIELD) + 8 + body() + 8 + TAB + PAD
+    }
 }
 
 /// Recent emoji kept and shown: one row.
@@ -133,22 +141,23 @@ pub struct Layout {
 pub fn layout(at: Point<i32, Logical>, recent: bool) -> Layout {
     use layout::*;
     let (x, y) = (at.x, at.y);
-    let rect = Rectangle::new(at, (WIDTH, HEIGHT).into());
-    let field = Rectangle::new((x + PAD, y + PAD).into(), (WIDTH - 2 * PAD, FIELD).into());
-    let magnifier = Rectangle::new((x + PAD + 6, y + PAD + 6).into(), (16, 16).into());
+    let (field_h, header_h) = (crate::text::ts(FIELD), crate::text::ts(HEADER));
+    let rect = Rectangle::new(at, (WIDTH, height()).into());
+    let field = Rectangle::new((x + PAD, y + PAD).into(), (WIDTH - 2 * PAD, field_h).into());
+    let magnifier = Rectangle::new((x + PAD + 6, y + PAD + (field_h - 16) / 2).into(), (16, 16).into());
     let cells = |top: i32, rows: i32| -> Vec<Rect> {
         (0..rows * COLS as i32).map(|i| Rectangle::new((x + PAD + i % COLS as i32 * CELL, top + i / COLS as i32 * CELL).into(), (CELL, CELL).into())).collect()
     };
-    let mut top = y + PAD + FIELD + 8;
-    let body_end = top + BODY;
+    let mut top = y + PAD + field_h + 8;
+    let body_end = top + body();
     let recent = recent.then(|| {
-        let header = Rectangle::new((x + PAD + 4, top).into(), (WIDTH - 2 * PAD - 8, HEADER).into());
-        let row = cells(top + HEADER, 1);
-        top += HEADER + CELL + 8;
+        let header = Rectangle::new((x + PAD + 4, top).into(), (WIDTH - 2 * PAD - 8, header_h).into());
+        let row = cells(top + header_h, 1);
+        top += header_h + CELL + 8;
         (header, row)
     });
-    let header = Rectangle::new((x + PAD + 4, top).into(), (WIDTH - 2 * PAD - 8, HEADER).into());
-    let grid = cells(top + HEADER, (body_end - top - HEADER) / CELL);
+    let header = Rectangle::new((x + PAD + 4, top).into(), (WIDTH - 2 * PAD - 8, header_h).into());
+    let grid = cells(top + header_h, (body_end - top - header_h) / CELL);
     let tab_y = body_end + 8;
     let tabs = (0..TAB_ICONS.len() as i32).map(|i| Rectangle::new((x + PAD + i * CELL, tab_y).into(), (CELL, TAB).into())).collect();
     Layout { rect, magnifier, field, recent, header, grid, tabs }
@@ -157,7 +166,7 @@ pub fn layout(at: Point<i32, Logical>, recent: bool) -> Layout {
 /// The popover's top-left for a text `cursor` (global, made output-relative by the caller) on an output of `size`:
 /// under the cursor, or above it without room below; centred without a cursor.
 pub fn anchor(cursor: Option<Rect>, size: Size<i32, Logical>) -> Point<i32, Logical> {
-    let popover = Size::from((layout::WIDTH, layout::HEIGHT));
+    let popover = Size::from((layout::WIDTH, layout::height()));
     match cursor {
         Some(cursor) => crate::ime::place(Rectangle::new(cursor.loc, (cursor.size.w, cursor.size.h + 4).into()), popover, Rectangle::from_size(size)),
         None => ((size.w - popover.w) / 2, (size.h - popover.h) / 2).into(),
@@ -409,7 +418,7 @@ mod tests {
         let at = Point::from((100, 50));
         for recent in [false, true] {
             let l = layout(at, recent);
-            assert_eq!(l.rect, Rectangle::new(at, (layout::WIDTH, layout::HEIGHT).into()));
+            assert_eq!(l.rect, Rectangle::new(at, (layout::WIDTH, layout::height()).into()));
             let row = l.recent.iter().flat_map(|(h, r)| std::iter::once(h).chain(r));
             assert!(l.grid.iter().chain(&l.tabs).chain([&l.field, &l.header]).chain(row).all(|r| l.rect.contains_rect(*r)));
             assert_eq!(l.grid.len() % layout::COLS, 0);
@@ -420,12 +429,27 @@ mod tests {
     }
 
     #[test]
+    fn layout_grows_with_text_size() {
+        let at = Point::from((100, 50));
+        for recent in [false, true] {
+            let one = crate::text::with_scale(1.0, || layout(at, recent));
+            assert_eq!(one, layout(at, recent), "1.0 is the default");
+            let l = crate::text::with_scale(1.5, || layout(at, recent));
+            // A Callout line at 1.5 fits the field, a Caption line the headers; the same emoji show.
+            assert_eq!((l.field.size.h, l.header.size.h, l.grid.len(), l.rect.size.w), (42, 30, one.grid.len(), one.rect.size.w));
+            let row = l.recent.iter().flat_map(|(h, r)| std::iter::once(h).chain(r));
+            assert!(l.grid.iter().chain(&l.tabs).chain([&l.field, &l.header]).chain(row).all(|r| l.rect.contains_rect(*r)));
+            assert!(l.grid.last().is_some_and(|c| c.loc.y + c.size.h <= l.tabs[0].loc.y) && l.grid[0].loc.y >= l.header.loc.y + 30);
+        }
+    }
+
+    #[test]
     fn anchored_at_the_cursor() {
         let size = Size::from((1280, 800));
-        assert_eq!(anchor(None, size), Point::from(((1280 - layout::WIDTH) / 2, (800 - layout::HEIGHT) / 2)));
+        assert_eq!(anchor(None, size), Point::from(((1280 - layout::WIDTH) / 2, (800 - layout::height()) / 2)));
         let cursor = Rectangle::new((200, 100).into(), (1, 18).into());
         assert_eq!(anchor(Some(cursor), size), Point::from((200, 122)));
         let low = Rectangle::new((200, 700).into(), (1, 18).into());
-        assert_eq!(anchor(Some(low), size).y, 700 - layout::HEIGHT);
+        assert_eq!(anchor(Some(low), size).y, 700 - layout::height());
     }
 }
