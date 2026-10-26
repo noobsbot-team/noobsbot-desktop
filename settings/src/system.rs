@@ -18,6 +18,8 @@ pub struct Status {
     /// `None`: no adapter, or BlueZ isn't running.
     pub bluetooth: Option<Bluetooth>,
     pub output: Option<Device>,
+    /// The output's left/right balance, -1 … 1; `None` without `pactl`.
+    pub balance: Option<f32>,
     pub input: Option<Device>,
     /// `None`: systemd-timedated isn't there.
     pub time: Option<Time>,
@@ -107,10 +109,16 @@ pub async fn read() -> Status {
         None => (None, None, None, None, None),
     };
     let pw = wpctl(&["status"]).unwrap_or_default();
+    let pactl = crate::pactl::read();
     Status {
         wifi,
         bluetooth,
-        output: device(OUTPUT),
+        output: device(OUTPUT).map(|mut d| {
+            // wpctl reads one channel; with the balance off centre the louder one is the volume.
+            d.volume = pactl.filter(|(_, b)| *b != 0.0).map_or(d.volume, |(loudest, _)| loudest);
+            d
+        }),
+        balance: pactl.map(|(_, b)| b),
         input: device(INPUT),
         time,
         battery,
@@ -349,7 +357,19 @@ fn device(target: &str) -> Option<Device> {
 
 /// Output (`true`) or input volume in percent, then the new status.
 pub async fn set_volume(output: bool, percent: u8) -> Status {
+    // wpctl would centre the balance; pactl keeps it.
+    if output && crate::pactl::read().is_some_and(|(_, balance)| balance != 0.0 && crate::pactl::set(percent.min(100), balance)) {
+        return read().await;
+    }
     let _ = wpctl(&["set-volume", if output { OUTPUT } else { INPUT }, &format!("{}%", percent.min(100))]);
+    read().await
+}
+
+/// The output's balance, -1 left … 1 right, its loudest channel kept; then the new status.
+pub async fn set_balance(balance: f32) -> Status {
+    if let Some((loudest, _)) = crate::pactl::read() {
+        crate::pactl::set(loudest, balance);
+    }
     read().await
 }
 
