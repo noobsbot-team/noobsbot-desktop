@@ -645,9 +645,34 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                 .collect();
             vec![group(t, "Shortcuts", rows), note(t, "Type an action and press Return; “none” frees the key.")]
         }
-        Page::General => vec![group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))])],
+        Page::General => vec![login_items(app), group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))])],
         _ => Vec::new(),
     }
+}
+
+/// General ▸ Login Items (`autostart`): a toggle each, − for the user's own, + from the installed apps.
+fn login_items(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let mut rows: Vec<Element<'_, Message>> = app
+        .login_items
+        .iter()
+        .map(|item| {
+            let file = item.file.clone();
+            let mut controls = row![toggle(t, item.on, move |on| Message::LoginItem(file.clone(), on))].spacing(8).align_y(Alignment::Center);
+            if item.removable {
+                controls = controls.push(button(text("−").size(13)).padding([0, 8]).style(t.push(false)).on_press(Message::RemoveLoginItem(item.file.clone())));
+            }
+            line(t, item.name.as_str(), "", controls.into())
+        })
+        .collect();
+    let add = pick_list(app.installed.as_slice(), None::<crate::autostart::Installed>, Message::AddLoginItem)
+        .placeholder("+ Add an app…")
+        .text_size(13)
+        .padding([3, 8])
+        .style(t.pick())
+        .menu_style(t.menu());
+    rows.push(line(t, "Open at login", "Off keeps the entry, hidden", add.into()));
+    group(t, "Login Items", rows)
 }
 
 /// `eDP-1` → `Built-in display`, `winit` → `Nested window`, `HDMI-A-1` → `HDMI-A-1`.

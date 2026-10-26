@@ -2,6 +2,7 @@
 //! reloads the moment it is saved, and asks the system services (NetworkManager, BlueZ, PipeWire) for the rest.
 
 mod arrange;
+mod autostart;
 mod config;
 #[path = "../../src/display_info.rs"]
 mod display_info;
@@ -94,6 +95,9 @@ pub struct App {
     keep: Option<arrange::Keep>,
     /// Appearance's wallpaper gallery, loaded on start.
     thumbs: Vec<(std::path::PathBuf, iced::widget::image::Handle)>,
+    /// General ▸ Login Items, and the apps "+" offers; read when General opens.
+    login_items: Vec<autostart::Item>,
+    installed: Vec<autostart::Installed>,
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +137,10 @@ pub enum Message {
     Thumbs(Vec<(std::path::PathBuf, iced::widget::image::Handle)>),
     /// A gallery picture (empty: the built-in opal), for light and dark mode alike.
     Wallpaper(String),
+    /// A login item (by file name) on or off.
+    LoginItem(String, bool),
+    AddLoginItem(autostart::Installed),
+    RemoveLoginItem(String),
 }
 
 impl App {
@@ -153,8 +161,13 @@ impl App {
             selected: None,
             keep: None,
             thumbs: Vec::new(),
+            login_items: Vec::new(),
+            installed: Vec::new(),
         };
         app.retheme();
+        if page == Page::General {
+            (app.login_items, app.installed) = autostart::load();
+        }
         // Typing searches at once, as in macOS (see `type_ahead`).
         (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs)]))
     }
@@ -183,6 +196,9 @@ impl App {
             Message::Page(page) => {
                 self.page = page;
                 self.query.clear();
+                if page == Page::General {
+                    (self.login_items, self.installed) = autostart::load();
+                }
                 if page.is_system() {
                     return Task::perform(system::read(), Message::Status);
                 }
@@ -257,6 +273,18 @@ impl App {
                 let changes = self.displays.iter().map(|d| (d.name.clone(), "primary", (d.name == name).into())).collect();
                 self.change_outputs(changes, false);
             }
+            Message::LoginItem(file, on) => {
+                let done = autostart::set_on(&autostart::user_dir(), &autostart::system_dirs(), &file, on);
+                self.login_changed(done, &file);
+            }
+            Message::AddLoginItem(app) => {
+                let done = autostart::add(&autostart::user_dir(), &app.path);
+                self.login_changed(done, &app.name);
+            }
+            Message::RemoveLoginItem(file) => {
+                let done = autostart::remove(&autostart::user_dir(), &file);
+                self.login_changed(done, &file);
+            }
             Message::Keep => self.keep(),
             Message::Revert => self.revert(),
             // Ran out: the desktop is putting the settings back; the sheet just goes.
@@ -312,6 +340,12 @@ impl App {
             Ok(()) => self.error = None,
             Err(err) => self.error = Some(format!("Couldn't save the display settings: {err}")),
         }
+    }
+
+    /// After a Login Items change: the error if it failed, and the list read again.
+    fn login_changed(&mut self, done: std::io::Result<()>, what: &str) {
+        self.error = done.err().map(|err| format!("Couldn't change the login item {what}: {err}"));
+        self.login_items = autostart::load().0;
     }
 
     /// "Keep Changes": the desktop has nothing to put back.
