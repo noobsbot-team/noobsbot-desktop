@@ -171,6 +171,8 @@ pub struct State {
     pub services: crate::services::Services,
     /// `None`: no battery, or UPower isn't running.
     pub battery: Option<crate::services::power::Battery>,
+    /// Wireless mice, keyboards and headsets with a battery (UPower).
+    pub peripherals: Vec<crate::services::power::Peripheral>,
     /// `None`: NetworkManager isn't running.
     pub network: Option<crate::services::network::Network>,
     /// `None`: no adapter, or BlueZ isn't running.
@@ -399,6 +401,7 @@ impl State {
                 // Only the changed menu-bar item gets a new buffer, so the redraw damages just that item.
                 match update {
                     crate::services::Update::Battery(battery) => state.battery_changed(battery),
+                    crate::services::Update::Peripherals(list) => state.peripherals = list.unwrap_or_default(),
                     crate::services::Update::Network(network) => state.network = network,
                     crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,
                     crate::services::Update::Profiles(profiles) => state.profiles = profiles,
@@ -528,6 +531,7 @@ impl State {
             text: Default::default(),
             services,
             battery: None,
+            peripherals: Vec::new(),
             network: None,
             bluetooth: None,
             profiles: None,
