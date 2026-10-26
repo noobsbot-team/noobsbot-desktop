@@ -905,15 +905,40 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
         // ponytail: only version 1 exists; a migration step per version goes here when 2 appears.
         tracing::warn!("config version {} is not 1; reading the keys this version understands", config.version);
     }
-    // A user [bindings] table is merged over the defaults; "none" frees a key.
-    let mut bindings = default_bindings();
-    bindings.extend(std::mem::take(&mut config.bindings));
-    bindings.retain(|_, action| action != "none");
-    config.bindings = bindings;
+    config.bindings = merge_bindings(default_bindings(), std::mem::take(&mut config.bindings));
     config.appearance.glass_opacity = config.appearance.glass_opacity.clamp(0.0, 1.0);
     config.dock.icon_size = config.dock.icon_size.clamp(crate::shell::dock::MIN_ICON as u16, crate::shell::dock::MAX_ICON as u16);
     config.dock.zoom_percent = config.dock.zoom_percent.clamp(100, 300);
     Ok(config)
+}
+
+/// The user's `[bindings]` over the defaults, comparing parsed keys, so `Ctrl+Super+x` is `Super+Ctrl+X`: a user
+/// binding replaces the default for its keys, and of two user bindings for the same keys the first (in sorted order)
+/// wins. Each conflict is logged; "none" frees a key.
+fn merge_bindings(defaults: BTreeMap<String, String>, user: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    use crate::shortcuts::parse;
+    let mut out = defaults;
+    let mut taken: Vec<(crate::shortcuts::Binding, String)> = Vec::new();
+    for (combo, action) in user {
+        // A combo that doesn't parse can't conflict; `shortcuts::from_config` reports it.
+        if let Some(keys) = parse(&combo) {
+            if let Some((_, first)) = taken.iter().find(|(k, _)| *k == keys) {
+                tracing::warn!("config: shortcut `{combo}` = `{action}` is the same keys as `{first}` = `{}`; keeping `{first}`", out[first]);
+                continue;
+            }
+            out.retain(|default, was| {
+                let same = parse(default) == Some(keys);
+                if same && *default != combo && action != "none" {
+                    tracing::warn!("config: shortcut `{combo}` = `{action}` is the same keys as the default `{default}` = `{was}`; using `{combo}`");
+                }
+                !same
+            });
+            taken.push((keys, combo.clone()));
+        }
+        out.insert(combo, action);
+    }
+    out.retain(|_, action| action != "none");
+    out
 }
 
 /// Every key of `user` that `known` (the shipped defaults) doesn't have. `bindings` keys are free-form.
@@ -1236,6 +1261,26 @@ mod tests {
     fn defaults_round_trip() {
         assert_eq!(parse(DEFAULT_TOML).unwrap(), Config::default());
         assert_eq!(parse("").unwrap(), Config::default());
+    }
+
+    #[test]
+    fn user_bindings_beat_defaults_by_keys() {
+        let map = |pairs: &[(&str, &str)]| pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<BTreeMap<_, _>>();
+        let defaults = map(&[("Super+Ctrl+Q", "lock"), ("Super+B", "exec browser"), ("Super+W", "close")]);
+        let user = map(&[("Ctrl+Super+q", "exec a"), ("super+ctrl+Q", "exec b"), ("super+b", "none"), ("Super+W", "minimise")]);
+        let merged = merge_bindings(defaults, user);
+        // Sorted, "Ctrl+Super+q" comes before "super+ctrl+Q", so it wins; both replace the default.
+        assert_eq!(merged, map(&[("Ctrl+Super+q", "exec a"), ("Super+W", "minimise")]));
+    }
+
+    #[test]
+    fn default_bindings_do_not_conflict() {
+        let mut seen = Vec::new();
+        for combo in default_bindings().keys() {
+            let keys = crate::shortcuts::parse(combo).unwrap_or_else(|| panic!("{combo} parses"));
+            assert!(!seen.contains(&keys), "{combo} repeats another default");
+            seen.push(keys);
+        }
     }
 
     #[test]

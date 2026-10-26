@@ -273,6 +273,35 @@ pub fn lookup<'a>(bindings: &'a [(Binding, Action)], mods: &ModifiersState, key:
     bindings.iter().find(|(b, _)| b.key == key && b.desktop == desktop && b.ctrl == mods.ctrl && b.shift == mods.shift && b.alt == alt).map(|(_, a)| a)
 }
 
+/// How long a `Record(true)` lasts without a key from Settings.
+const RECORD_FOR: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Settings recording a shortcut (`org.noobsbot.Desktop.Shortcuts.Record`): while on, no binding matches and every
+/// key goes to the focused window. Ends when that window loses focus or after `RECORD_FOR`.
+#[derive(Debug)]
+pub struct Recording<W>(Option<(Option<W>, std::time::Instant)>);
+
+impl<W> Default for Recording<W> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl<W: PartialEq> Recording<W> {
+    /// `focus`: the window focused now, which the recording belongs to.
+    pub fn set(&mut self, on: bool, focus: Option<W>, now: std::time::Instant) {
+        self.0 = on.then_some((focus, now));
+    }
+
+    /// Whether it is still on with `focus` focused at `now`; turns itself off otherwise.
+    pub fn on(&mut self, focus: Option<&W>, now: std::time::Instant) -> bool {
+        if self.0.as_ref().is_some_and(|(w, since)| w.as_ref() != focus || now.duration_since(*since) >= RECORD_FOR) {
+            self.0 = None;
+        }
+        self.0.is_some()
+    }
+}
+
 /// One key step from `percent`, within 0–100; a level already above 100 (PipeWire allows 150) is only turned down.
 fn step(percent: u8, up: bool) -> u8 {
     if up { percent.saturating_add(STEP).min(percent.max(100)) } else { percent.saturating_sub(STEP) }
@@ -520,6 +549,12 @@ impl State {
         }
     }
 
+    /// Settings is still recording a shortcut (see `Recording`).
+    pub fn recording_on(&mut self) -> bool {
+        let focus = self.focused_window();
+        self.recording.on(focus.as_ref(), std::time::Instant::now())
+    }
+
     pub fn focused_window(&self) -> Option<Window> {
         let surface = self.seat.get_keyboard()?.current_focus()?;
         self.space.elements().find(|w| w.toplevel().is_some_and(|t| *t.wl_surface() == surface)).cloned()
@@ -563,6 +598,8 @@ mod tests {
         assert_eq!(parse("Super+B").map(|b| b.key), Some(Keysym::b), "letters are case-insensitive");
         assert!(parse("Super+Alt+Esc").is_some_and(|b| b.alt && b.key == Keysym::Escape));
         assert!(parse("F12").is_some_and(|b| !b.desktop && b.key == Keysym::F12));
+        assert_eq!(parse("Super+Ctrl+X"), parse("ctrl+super+x"), "any order, any case");
+        assert_ne!(parse("Super+X"), parse("Super+Shift+X"));
         assert_eq!(parse("Super+Hyper+B"), None);
         assert_eq!(parse("Super+NoSuchKey"), None);
     }
@@ -584,6 +621,24 @@ mod tests {
         assert_eq!(a("move-to-space left"), Some(Action::MoveToSpace(-1)));
         assert_eq!(a("move-to-display previous"), Some(Action::MoveToDisplay(-1)));
         assert_eq!(a("keep-on-top"), Some(Action::KeepOnTop));
+    }
+
+    #[test]
+    fn recording_ends_on_focus_change_or_timeout() {
+        let t = std::time::Instant::now();
+        let mut r = Recording::default();
+        assert!(!r.on(Some(&1), t));
+        r.set(true, Some(1), t);
+        assert!(r.on(Some(&1), t + RECORD_FOR / 2));
+        r.set(false, Some(1), t);
+        assert!(!r.on(Some(&1), t), "Record(false)");
+        r.set(true, Some(1), t);
+        assert!(!r.on(Some(&1), t + RECORD_FOR), "expired");
+        r.set(true, Some(1), t);
+        assert!(!r.on(Some(&2), t), "another window took focus");
+        assert!(!r.on(Some(&1), t), "and it stays off when focus comes back");
+        r.set(true, Some(1), t);
+        assert!(!r.on(None, t), "focus went nowhere");
     }
 
     #[test]

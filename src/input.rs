@@ -377,7 +377,8 @@ impl State {
     fn key(&mut self, code: Keycode, key_state: KeyState, time: u32) {
         let Some(keyboard) = self.seat.get_keyboard() else { return };
         let serial = SERIAL_COUNTER.next_serial();
-        let inhibited = self.shortcuts_inhibited();
+        // Settings recording a shortcut gets every key, as an app that inhibits shortcuts does.
+        let inhibited = self.shortcuts_inhibited() || self.recording_on();
         let super_down = self.super_tap.down();
         let action = keyboard.input::<Option<Action>, _>(self, code, key_state, serial, time, |state, mods, key| {
             let code = key.raw_code();
