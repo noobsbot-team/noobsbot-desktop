@@ -229,6 +229,51 @@ pub fn move_to<T>(v: &mut Vec<T>, from: usize, to: usize) {
     }
 }
 
+/// freedesktop main categories and the folder names they give, most specific first.
+const CATEGORIES: [(&str, &str); 13] = [
+    ("Game", "Games"),
+    ("Development", "Development"),
+    ("Graphics", "Graphics"),
+    ("Office", "Office"),
+    ("Education", "Education"),
+    ("Science", "Science"),
+    ("Audio", "Audio"),
+    ("Video", "Video"),
+    ("AudioVideo", "Media"),
+    ("Network", "Internet"),
+    ("Settings", "Settings"),
+    ("System", "System"),
+    ("Utility", "Utilities"),
+];
+
+/// A new folder's name: the main category all its apps share, else "Folder".
+pub fn folder_name(ids: &[String], apps: &[App]) -> String {
+    let has = |id: &String, cat: &str| apps.iter().find(|a| a.id == *id).is_some_and(|a| a.categories.iter().any(|c| c == cat));
+    CATEGORIES.iter().find(|(cat, _)| ids.iter().all(|id| has(id, cat))).map_or("Folder", |(_, name)| name).to_owned()
+}
+
+/// Drops entry `from` onto `onto`: two apps make a folder, an app joins a folder; a folder goes into nothing.
+/// `false`: nothing changed.
+pub fn merge(order: &mut Vec<Entry>, from: usize, onto: usize, apps: &[App]) -> bool {
+    if from == onto || onto >= order.len() {
+        return false;
+    }
+    let Some(Entry::App(id)) = order.get(from).cloned() else { return false };
+    order.remove(from);
+    let target = &mut order[if from < onto { onto - 1 } else { onto }];
+    *target = match std::mem::replace(target, Entry::App(String::new())) {
+        Entry::Folder { name, apps: mut ids } => {
+            ids.push(id);
+            Entry::Folder { name, apps: ids }
+        }
+        Entry::App(other) => {
+            let ids = vec![other, id];
+            Entry::Folder { name: folder_name(&ids, apps), apps: ids }
+        }
+    };
+    true
+}
+
 fn order_file() -> std::path::PathBuf {
     super::drawer::state_file("launchpad.json")
 }
@@ -262,6 +307,8 @@ pub struct Press {
     pub since: Instant,
     /// Dragged past `DRAG_START`.
     pub moved: bool,
+    /// Held over this tile's icon: dropping makes a folder (`merge`).
+    pub onto: Option<usize>,
 }
 
 impl Press {
@@ -554,7 +601,7 @@ impl State {
             l.order = arrange(&l.order, apps);
         }
         let grab = location - grid.icon_rect(i).loc.to_f64();
-        l.press = Some(Press { index: page * grid.per_page() + i, start: location, at: location, grab, since: Instant::now(), moved: false });
+        l.press = Some(Press { index: page * grid.per_page() + i, start: location, at: location, grab, since: Instant::now(), moved: false, onto: None });
         // The icon lifts after `HOLD` without moving: draw it then.
         let lift = self.loop_handle.insert_source(Timer::from_duration(HOLD), |_, _, state| {
             state.schedule_redraw();
@@ -575,9 +622,14 @@ impl State {
         if !p.moved || searching {
             return;
         }
+        p.onto = None;
         if let Some(i) = grid.cell_at(to) {
             let slot = (l.page * grid.per_page() + i).min(l.order.len().saturating_sub(1));
-            if slot != p.index {
+            let app = matches!(l.order.get(p.index), Some(Entry::App(_)));
+            // Over another icon (an app only: folders don't nest): a folder on drop; between icons: a new place.
+            if app && slot != p.index && grid.icon_rect(i).to_f64().contains(to) {
+                p.onto = Some(slot);
+            } else if slot != p.index {
                 let from = std::mem::replace(&mut p.index, slot);
                 l.reorder(&grid, from, slot, Instant::now());
             }
@@ -610,6 +662,9 @@ impl State {
         let Some(l) = self.launchpad.as_mut() else { return };
         let Some(p) = l.press.take() else { return };
         if p.moved && !l.searching() {
+            if let Some(onto) = p.onto {
+                merge(&mut l.order, p.index, onto, self.apps.list());
+            }
             save_order(&l.order);
         }
         let page = l.page;
@@ -828,6 +883,29 @@ mod tests {
         let t = tiles(&apps, &[folder(&["firefox", "ark"])], "");
         assert!(matches!(&t[0], Tile::Folder(name, apps) if name == "Tools" && apps.len() == 2));
         assert_eq!(tiles(&apps, &[folder(&["firefox", "ark"])], "fire").len(), 1, "search finds apps in folders");
+    }
+
+    #[test]
+    fn folders_form_on_drop() {
+        let mut games = [app("Chess"), app("Mines"), app("Kate")];
+        games[0].categories = vec!["Game".into(), "BoardGame".into()];
+        games[1].categories = vec!["Game".into()];
+        games[2].categories = vec!["Utility".into()];
+        let mut order: Vec<Entry> = ["chess", "kate", "mines"].map(|id| Entry::App(id.into())).to_vec();
+        let ids = |e: &Entry| match e {
+            Entry::Folder { name, apps } => format!("{name}:{}", apps.join(",")),
+            Entry::App(id) => id.clone(),
+        };
+        assert!(merge(&mut order, 2, 0, &games));
+        assert_eq!(order.iter().map(ids).collect::<Vec<_>>(), ["Games:chess,mines", "kate"]);
+        assert!(merge(&mut order, 1, 0, &games), "an app joins a folder");
+        assert_eq!(order.iter().map(ids).collect::<Vec<_>>(), ["Games:chess,mines,kate"]);
+        let mut two = vec![Entry::App("kate".into()), Entry::App("chess".into())];
+        assert!(merge(&mut two, 0, 1, &games), "dragged forward onto the next");
+        assert_eq!(two.iter().map(ids).collect::<Vec<_>>(), ["Folder:chess,kate"], "no shared category");
+        assert!(!merge(&mut order, 0, 0, &games));
+        let mut nest = vec![two[0].clone(), Entry::App("x".into())];
+        assert!(!merge(&mut nest, 0, 1, &games), "folders don't nest");
     }
 
     #[test]

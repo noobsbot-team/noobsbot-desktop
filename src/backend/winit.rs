@@ -669,7 +669,18 @@ impl State {
         if let (Some(((position, shown, field, page), grid)), Some(l)) = (&pad, self.launchpad.as_ref()) {
             let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &field.text);
             let (lifted, offsets) = (l.lifted(grid, now), l.offsets(now));
-            let frame = LaunchpadFrame { tiles: &tiles, grid, output: size, position: *position, page: *page, shown: *shown, field, lifted, offsets: &offsets };
+            let frame = LaunchpadFrame {
+                tiles: &tiles,
+                grid,
+                output: size,
+                position: *position,
+                page: *page,
+                shown: *shown,
+                field,
+                lifted,
+                offsets: &offsets,
+                onto: l.press.as_ref().and_then(|p| p.onto),
+            };
             bar.extend(pad_view.elements(
                 renderer,
                 shaders,
