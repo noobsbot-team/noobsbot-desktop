@@ -15,6 +15,11 @@ members = ["settings"]
 name = "noobsbot-desktop-update"
 path = "src/bin/update-helper.rs"
 
+# Runs the compositor for the session wrapper and stops it when its heartbeat stops (E6.4).
+[[bin]]
+name = "noobsbot-desktop-watchdog"
+path = "src/bin/watchdog.rs"
+
 [dependencies]
 smithay = { version = "=0.7.0", default-features = false, features = ["backend_drm", "backend_gbm", "backend_libinput", "backend_session_libseat", "backend_udev", "backend_winit", "desktop", "renderer_gl", "renderer_multi", "wayland_frontend"] }
 notify = "8.2.0"
