@@ -377,7 +377,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         Some(show @ ("spotlight" | "spotlight-calc")) => {
             let text = if show == "spotlight" { "te" } else { "12*7" };
             let field = ui::field::TextField { text: text.into(), caret: text.len(), ..Default::default() };
-            state.spotlight = Some(shell::spotlight::Spotlight { field, selected: 0 });
+            state.spotlight = Some(shell::spotlight::Spotlight { field, ..Default::default() });
         }
         // The emoji picker centred, with sample recents; or searching "heart".
         Some(show @ ("emoji" | "emoji-search")) => {
