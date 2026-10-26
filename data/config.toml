@@ -188,8 +188,8 @@ hour24 = false
 weekday = true
 date = true
 seconds = false
-# The calendar's first day: "sunday", "monday" or "saturday".
-week_start = "sunday"
+# The calendar's first day: "auto" (the locale's, from LC_TIME), "sunday", "monday" or "saturday".
+week_start = "auto"
 # ISO week numbers in a narrow column at the left of the Notification Center calendar.
 week_numbers = false
 

@@ -444,7 +444,7 @@ pub const SETTINGS: &[Setting] = &[
         "clock.week_start",
         "Weeks start on",
         "",
-        Kind::Choice(&[("sunday", "Sunday"), ("monday", "Monday"), ("saturday", "Saturday")]),
+        Kind::Choice(&[("auto", "Region default"), ("sunday", "Sunday"), ("monday", "Monday"), ("saturday", "Saturday")]),
     ),
     s(Page::DateTime, "Calendar", "clock.week_numbers", "Show week numbers", "In the Notification Center calendar", Kind::Toggle),
     s(Page::Spaces, "", "windows.spaces", "Spaces", "Dynamic: + in Mission Control adds more", Kind::Slider { min: 0.0, max: 16.0, step: 1.0 }),

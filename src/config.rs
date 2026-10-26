@@ -228,7 +228,9 @@ pub struct Clock {
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WeekStart {
+    /// The locale's first weekday (LC_TIME).
     #[default]
+    Auto,
     Sunday,
     Monday,
     Saturday,
@@ -237,6 +239,7 @@ pub enum WeekStart {
 impl From<WeekStart> for chrono::Weekday {
     fn from(start: WeekStart) -> Self {
         match start {
+            WeekStart::Auto => crate::calendar::locale_week_start(),
             WeekStart::Sunday => chrono::Weekday::Sun,
             WeekStart::Monday => chrono::Weekday::Mon,
             WeekStart::Saturday => chrono::Weekday::Sat,
