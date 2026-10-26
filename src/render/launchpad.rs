@@ -49,6 +49,8 @@ pub struct Frame<'a> {
     pub offsets: &'a [Point<i32, Logical>],
     /// The tile a dragged icon is held over: dropping makes a folder.
     pub onto: Option<usize>,
+    /// The open folder: its panel, the grid in it, its name and its tile.
+    pub folder: Option<(Rect, &'a Grid, &'a TextField, usize)>,
 }
 
 /// Size, pages, page, shown, caret x, selection width, dark, opacity, accent, scale.
@@ -64,6 +66,8 @@ pub struct LaunchpadView {
     glass: Option<(Key, Vec<PixelShaderElement>)>,
     /// Shapes that move with the pages (folder tiles), rebuilt only when one changes.
     moving: Option<(Vec<Shape>, Vec<PixelShaderElement>)>,
+    /// In front of the grid: a lifted folder's glass and the open folder's caret, panel and dim.
+    front: Option<(Vec<Shape>, Vec<PixelShaderElement>)>,
     labels: Vec<Label>,
 }
 
@@ -90,7 +94,7 @@ impl LaunchpadView {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let Frame { tiles, grid, output, position, page, shown, field, lifted, offsets, onto } = *frame;
+        let Frame { tiles, grid, output, position, page, shown, field, lifted, offsets, onto, folder } = *frame;
         let per_page = grid.per_page();
         let count = pages(tiles.len(), per_page);
         let spec = Material::Panel.spec(dark);
@@ -106,10 +110,36 @@ impl LaunchpadView {
         let px = (f64::from(grid.icon) * scale).ceil() as u32;
         let mini_px = (f64::from(mini_grid(grid.icon_rect(0))[0].size.w) * scale).ceil() as u32;
         let mut moving: Vec<Shape> = Vec::new();
-        // In front: the lifted icon, a little bigger.
+        // In front of the grid: the lifted icon, a little bigger, then the open folder.
+        let (mut top, mut front): (Vec<Piece>, Vec<Shape>) = (Vec::new(), Vec::new());
         if let Some((tile, rect)) = lifted.and_then(|(i, r)| Some((tiles.get(i)?, r))) {
             let big = zoom(rect, rect.loc.to_f64() + rect.size.to_f64().downscale(2.0).to_point(), 1.1);
-            art(icons, tile, big, (px, mini_px), alpha * 0.9, tint(alpha), &mut pieces, &mut moving);
+            art(icons, tile, big, (px, mini_px), alpha * 0.9, tint(alpha), &mut top, &mut front);
+        }
+        if let Some((panel, inner, name, index)) = folder
+            && let Some(Tile::Folder(_, apps)) = tiles.get(index)
+        {
+            for (j, app) in apps.iter().enumerate().take(inner.per_page()) {
+                top.push((icon_image(icons, &app.icon, px), inner.icon_rect(j), true, alpha));
+                top.push((text.label(&app.name, CALLOUT, inner.name_rect(j).size.w as u32, scale), inner.name_rect(j), false, alpha));
+            }
+            // The name, centred, with the caret (it always has the keyboard) or the Ctrl+A selection.
+            let style = Style { size: 17, line_height: 22, weight: 600, ..CALLOUT };
+            let f = inner.field;
+            let label = text.label(&name.text, style, f.size.w as u32, scale);
+            let w = logical(label.width).min(f.size.w);
+            let x = f.loc.x + (f.size.w - w) / 2;
+            top.push((label, Rectangle::new((x, f.loc.y).into(), (w, f.size.h).into()), false, alpha));
+            let [ar, ag, ab] = accent.map(|c| f32::from(c) / 255.0);
+            if name.all {
+                front.push((Rectangle::new((x - 1, f.loc.y + 3).into(), (w + 2, f.size.h - 6).into()), [ar, ag, ab, 0.3 * alpha], 2.0, false));
+            } else {
+                let caret = x + logical(text.label(&name.text[..name.caret], style, 4000, scale).width).min(w);
+                front.push((Rectangle::new((caret, f.loc.y + 4).into(), (1, f.size.h - 8).into()), [ar, ag, ab, alpha], 0.0, false));
+            }
+            front.push((panel, tint(alpha), 20.0, true));
+            let [r, g, b, a] = DIM;
+            front.push((Rectangle::from_size(output), [r, g, b, a * alpha], 0.0, false));
         }
         let first = position.floor().max(0.0) as usize;
         let last = (position.ceil().max(0.0) as usize).min(count - 1);
@@ -189,9 +219,15 @@ impl LaunchpadView {
             self.glass = Some((key, glass));
         }
 
+        let in_front = top.len();
+        top.append(&mut pieces);
+        let pieces = top;
         self.labels = keep_buffers(&self.labels, pieces.iter().map(|(p, ..)| p.clone()));
         let mut out = Vec::new();
-        for ((rendered, buffer), (_, rect, stretch, a)) in self.labels.iter().zip(&pieces) {
+        for (n, ((rendered, buffer), (_, rect, stretch, a))) in self.labels.iter().zip(&pieces).enumerate() {
+            if n == in_front {
+                out.extend(shapes(&mut self.front, front.clone(), shaders, dark, scale).iter().cloned().map(SceneElement::Shader));
+            }
             let Some(buffer) = buffer else { continue };
             let (size, src) = if *stretch {
                 (rect.size, Some(Rectangle::from_size((f64::from(rendered.width), f64::from(rendered.height)).into())))
@@ -204,14 +240,28 @@ impl LaunchpadView {
                 Err(err) => tracing::warn!("launchpad: {err}"),
             }
         }
-        if self.moving.as_ref().is_none_or(|(k, _)| *k != moving) {
-            let built = moving.iter().map(|&(rect, fill, radius, effects)| shaders.glass_shape(rect, fill, radius, effects, dark, scale)).collect();
-            self.moving = Some((moving, built));
+        if in_front == pieces.len() {
+            out.extend(shapes(&mut self.front, front, shaders, dark, scale).iter().cloned().map(SceneElement::Shader));
         }
-        let moving = self.moving.iter().flat_map(|(_, g)| g);
-        out.extend(moving.chain(self.glass.iter().flat_map(|(_, g)| g)).cloned().map(SceneElement::Shader));
+        out.extend(shapes(&mut self.moving, moving, shaders, dark, scale).iter().cloned().map(SceneElement::Shader));
+        out.extend(self.glass.iter().flat_map(|(_, g)| g).cloned().map(SceneElement::Shader));
         out
     }
+}
+
+/// The elements for `list`, kept in `cache` (and their damage ids with them) while it doesn't change.
+fn shapes<'a>(
+    cache: &'a mut Option<(Vec<Shape>, Vec<PixelShaderElement>)>,
+    list: Vec<Shape>,
+    shaders: &Shaders,
+    dark: bool,
+    scale: f64,
+) -> &'a [PixelShaderElement] {
+    if cache.as_ref().is_none_or(|(k, _)| *k != list) {
+        let built = list.iter().map(|&(rect, fill, radius, effects)| shaders.glass_shape(rect, fill, radius, effects, dark, scale)).collect();
+        *cache = Some((list, built));
+    }
+    cache.as_ref().map_or(&[], |(_, built)| built)
 }
 
 /// A tile's icon in `rect`: the app's, or a folder's glass with its first nine apps; returns its name.
