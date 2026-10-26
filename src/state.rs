@@ -1410,7 +1410,21 @@ impl ClientDndGrabHandler for State {
         }
     }
 }
-impl ServerDndGrabHandler for State {}
+/// The only drag the compositor starts itself: the screenshot thumbnail (E6.8).
+impl ServerDndGrabHandler for State {
+    fn send(&mut self, mime_type: String, fd: OwnedFd, _seat: Seat<Self>) {
+        self.thumbnail_send(mime_type, fd);
+    }
+
+    fn dropped(&mut self, _seat: Seat<Self>) {
+        // `cancelled` follows at once when no app took it; decide after.
+        self.loop_handle.insert_idle(|state| state.thumbnail_dropped());
+    }
+
+    fn cancelled(&mut self, _seat: Seat<Self>) {
+        self.thumbnail_cancelled();
+    }
+}
 
 impl PrimarySelectionHandler for State {
     fn primary_selection_state(&self) -> &PrimarySelectionState {

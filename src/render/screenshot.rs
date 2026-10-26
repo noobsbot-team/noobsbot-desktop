@@ -92,8 +92,18 @@ impl ScreenshotView {
         out
     }
 
-    /// The floating thumbnail in `rect`: the image, then its edge and shadow.
-    pub fn thumbnail(&mut self, renderer: &mut GlesRenderer, shaders: &Shaders, thumb: &Thumb, rect: Rect, dark: bool, scale: f64) -> Vec<SceneElement> {
+    /// The floating thumbnail in `rect` at `alpha` (dragged, it is see-through): the image, then its edge and shadow.
+    #[expect(clippy::too_many_arguments, reason = "the frame's drawing context")]
+    pub fn thumbnail(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        shaders: &Shaders,
+        thumb: &Thumb,
+        rect: Rect,
+        alpha: f32,
+        dark: bool,
+        scale: f64,
+    ) -> Vec<SceneElement> {
         let frame = (rect, dark, scale.to_bits());
         if self.thumb.as_ref().is_none_or(|(rgba, f, ..)| !Arc::ptr_eq(rgba, &thumb.rgba) || *f != frame) {
             let (w, h) = thumb.size;
@@ -108,7 +118,7 @@ impl ScreenshotView {
         let mut out: Vec<SceneElement> = glass[..1].iter().cloned().map(SceneElement::Shader).collect();
         // The whole picture scaled into `rect` (see `label_element`).
         let src = Rectangle::from_size((f64::from(thumb.size.0), f64::from(thumb.size.1)).into());
-        match MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, None, Some(src), Some(rect.size), Kind::Unspecified) {
+        match MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, Some(alpha), Some(src), Some(rect.size), Kind::Unspecified) {
             Ok(image) => out.push(SceneElement::Memory(image)),
             Err(err) => tracing::warn!("screenshot thumbnail: {err}"),
         }

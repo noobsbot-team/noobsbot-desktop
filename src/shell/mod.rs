@@ -518,7 +518,9 @@ impl State {
         if self.launchpad_open() || self.drawer_layout().is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
-        self.menu_bar_at(location).is_some() || self.in_popup(location) || self.dock_covers(location)
+        // The screenshot thumbnail, unless it is being dragged (then the app under it is the drop target).
+        let on_thumbnail = !self.screenshots.dragging && self.thumbnail_rect().is_some_and(|r| r.to_f64().contains(location));
+        on_thumbnail || self.menu_bar_at(location).is_some() || self.in_popup(location) || self.dock_covers(location)
     }
 
     /// A press at `location` (output-relative); `secondary`: the right button. `true`: the shell took it, so no
