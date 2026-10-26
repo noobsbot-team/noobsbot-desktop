@@ -2,7 +2,11 @@
 //! desktop rewrites it whenever they change; System Settings watches it and writes `[[display.outputs]]` in
 //! `config.toml` back. Shared by both crates (`#[path]` in settings), so the two ends always agree.
 
-use std::{path::PathBuf, time::Duration};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -67,4 +71,33 @@ pub fn previous_path() -> Option<PathBuf> {
 /// A laptop's own panel, by its connector name.
 pub fn built_in(name: &str) -> bool {
     ["eDP", "LVDS", "DSI"].iter().any(|p| name.starts_with(p))
+}
+
+const BACKLIGHT: &str = "/sys/class/backlight";
+
+/// The built-in panel's backlight: firmware interfaces first, then platform, then raw (the order logind uses).
+pub fn backlight() -> Option<String> {
+    let rank = |name: &str| match fs::read_to_string(Path::new(BACKLIGHT).join(name).join("type")).ok()?.trim() {
+        "firmware" => Some(0),
+        "platform" => Some(1),
+        "raw" => Some(2),
+        _ => None,
+    };
+    let names = fs::read_dir(BACKLIGHT).ok()?.filter_map(|e| e.ok()?.file_name().into_string().ok());
+    names.filter_map(|name| Some((rank(&name)?, name))).min().map(|(_, name)| name)
+}
+
+/// A number from the backlight's sysfs `file` (`brightness`, `max_brightness`).
+pub fn backlight_number(name: &str, file: &str) -> Option<u32> {
+    fs::read_to_string(Path::new(BACKLIGHT).join(name).join(file)).ok()?.trim().parse().ok()
+}
+
+/// The built-in panel's brightness in percent; `None` without a backlight (desktop monitors).
+pub fn brightness() -> Option<u8> {
+    let name = backlight()?;
+    Some(to_percent(backlight_number(&name, "brightness")?, backlight_number(&name, "max_brightness")?))
+}
+
+pub fn to_percent(raw: u32, max: u32) -> u8 {
+    if max == 0 { 0 } else { (u64::from(raw.min(max)) * 100).div_ceil(u64::from(max)) as u8 }
 }

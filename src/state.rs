@@ -429,6 +429,7 @@ impl State {
                     crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                     crate::services::Update::Widgets(widgets) => state.widgets = widgets,
+                    crate::services::Update::SetBrightness(percent) => state.services.send(crate::services::Command::Brightness(percent)),
                     crate::services::Update::Record(on) => {
                         let focus = state.focused_window();
                         state.recording.set(on, focus, std::time::Instant::now());
