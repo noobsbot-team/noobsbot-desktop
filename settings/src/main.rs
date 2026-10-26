@@ -104,6 +104,7 @@ pub enum Message {
     Search(String),
     Toggle(&'static str, bool),
     Choose(String, &'static str),
+    Number(&'static str, i64),
     Slide(String, f64),
     Release(String),
     Type(String, String),
@@ -194,6 +195,7 @@ impl App {
             Message::Search(query) => self.query = query,
             Message::Toggle(key, on) => self.save(key, on),
             Message::Choose(key, value) => self.save(&key, value),
+            Message::Number(key, value) => self.save(key, value),
             Message::Slide(key, value) => {
                 self.drafts.insert(key, value);
             }
