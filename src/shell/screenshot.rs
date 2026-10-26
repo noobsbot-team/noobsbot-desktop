@@ -15,7 +15,7 @@ use std::{
 use smithay::{
     input::{
         keyboard::Keysym,
-        pointer::{CursorImageStatus, GrabStartData},
+        pointer::{CursorImageStatus, GrabStartData, MotionEvent},
     },
     reexports::{
         calloop::{
@@ -741,6 +741,23 @@ impl State {
         if let Some((thumb, path)) = self.screenshots.thumbnail.take() {
             self.show_thumbnail(thumb, path);
         }
+    }
+
+    /// Esc while the thumbnail is dragged: the drag is cancelled (no app or dock gets it) and the thumbnail comes back.
+    pub fn thumbnail_escape(&mut self) -> bool {
+        let Some(pointer) = self.seat.get_pointer() else { return false };
+        if !std::mem::take(&mut self.screenshots.dragging) {
+            return false;
+        }
+        let serial = SERIAL_COUNTER.next_serial();
+        let time = Duration::from(self.protocols.clock.now()).as_millis() as u32;
+        // Leaving the app under it first, so ending the grab drops nothing.
+        pointer.motion(self, None, &MotionEvent { location: pointer.current_location(), serial, time });
+        pointer.unset_grab(self, serial, time);
+        if let Some((thumb, path)) = self.screenshots.thumbnail.take() {
+            self.show_thumbnail(thumb, path);
+        }
+        true
     }
 
     /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts `wf-recorder` on the whole
