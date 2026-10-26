@@ -124,6 +124,8 @@ pub struct App {
     terminals: Vec<(autostart::Installed, String)>,
     /// Keyboard ▸ Input Sources' picker, open, with what is typed in its search field.
     picker: Option<String>,
+    /// fcitx5's input methods while it runs; read when Keyboard opens.
+    methods: Option<xkb::Methods>,
     /// Apps in the notification history, read when Notifications opens.
     notifiers: Vec<String>,
     /// Notifications ▸ Applications: the app whose options are open.
@@ -228,6 +230,10 @@ pub enum Message {
     Sources(Vec<(String, String)>),
     /// Open (or filter) the input source picker; `None` closes it.
     Picker(Option<String>),
+    /// fcitx5's input methods, and what went wrong changing them.
+    Methods((Option<xkb::Methods>, Option<String>)),
+    /// An fcitx5 input method (unique name) added to its group, or taken out.
+    Method(String, bool),
     /// `keyboard.options` rewritten by a Modifier Keys dropdown.
     Options(String),
     Shortcuts(shortcuts::Msg),
@@ -279,6 +285,7 @@ impl App {
             default_apps: Vec::new(),
             terminals: Vec::new(),
             picker: None,
+            methods: None,
             notifiers: config::notifying_apps(),
             notify_app: None,
             shortcuts: None,
@@ -292,7 +299,11 @@ impl App {
         if page == Page::Dock {
             (app.default_apps, app.terminals) = defaults::load();
         }
-        let users = if page == Page::Users { Task::perform(users::read(), Message::Users) } else { Task::none() };
+        let users = match page {
+            Page::Users => Task::perform(users::read(), Message::Users),
+            Page::Keyboard => Task::perform(async { (xkb::methods().await, None) }, Message::Methods),
+            _ => Task::none(),
+        };
         // Typing searches at once (see `type_ahead`).
         let folders = app.config.str(gallery::FOLDERS).to_owned();
         (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(folders), Message::Thumbs), users]))
@@ -333,6 +344,9 @@ impl App {
                 }
                 if page == Page::Users {
                     return Task::perform(users::read(), Message::Users);
+                }
+                if page == Page::Keyboard {
+                    return Task::perform(async { (xkb::methods().await, None) }, Message::Methods);
                 }
                 if page.is_system() {
                     return Task::perform(system::read(), Message::Status);
@@ -467,6 +481,14 @@ impl App {
                     .map(|err| format!("Couldn't save the input sources: {err}"));
             }
             Message::Picker(query) => self.picker = query,
+            Message::Methods((methods, error)) => {
+                self.methods = methods;
+                self.error = error.or(self.error.take());
+            }
+            Message::Method(id, add) => {
+                self.picker = None;
+                return Task::perform(xkb::set_method(id, add), Message::Methods);
+            }
             Message::Options(options) => self.save("keyboard.options", options),
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Join(ssid) => return self.join(&ssid, None),

@@ -101,6 +101,8 @@ options = ""
 # Key repeat: held this many ms, then this many times a second (0 = no repeat).
 repeat_delay = 500
 repeat_rate = 30
+# Each window remembers the layout it was typed in and switches back to it when focused.
+per_window_source = false
 
 [touchpad]
 # Off: the trackpad does nothing. The touchpad-toggle key flips this until the file is next saved.
@@ -387,7 +389,8 @@ proxy_pac = ""
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows, "screen-zoom [in|out]",
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-window (the focused one), screen-record, screenshot-toolbar, emoji,
-# app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard.
+# app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard, keyboard-viewer, "input-source [previous|1…9]" (next, previous or the
+# n-th keyboard layout; 1…9 have no default key, as Super+Ctrl+1…9 are Spaces).
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec helium-browser"
@@ -414,6 +417,7 @@ proxy_pac = ""
 "Super+A" = "app-drawer"
 # Next keyboard layout (E6.12); fcitx5 keeps its own switch key for its input methods.
 "Super+Ctrl+Space" = "input-source"
+"Super+Ctrl+Shift+Space" = "input-source previous"
 # The emoji picker (E7.2): types the emoji into the focused text field, or copies it.
 "Super+Ctrl+E" = "emoji"
 "Super+period" = "emoji"

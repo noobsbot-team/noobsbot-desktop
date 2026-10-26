@@ -302,11 +302,13 @@ pub struct Keyboard {
     /// Key repeat: held this many ms, then this many times a second; 0 = off.
     pub repeat_delay: u32,
     pub repeat_rate: u32,
+    /// Each window keeps the layout it had when it lost focus, and gets it back on focus.
+    pub per_window_source: bool,
 }
 
 impl Default for Keyboard {
     fn default() -> Self {
-        Self { layout: String::new(), variant: String::new(), options: String::new(), repeat_delay: 500, repeat_rate: 30 }
+        Self { layout: String::new(), variant: String::new(), options: String::new(), repeat_delay: 500, repeat_rate: 30, per_window_source: false }
     }
 }
 
@@ -1166,6 +1168,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Space", "spotlight"),
         ("Super+A", "app-drawer"),
         ("Super+Ctrl+Space", "input-source"),
+        ("Super+Ctrl+Shift+Space", "input-source previous"),
         ("Super+Ctrl+E", "emoji"),
         ("Super+period", "emoji"),
         ("Super+Left", "space left"),
