@@ -632,6 +632,7 @@ impl State {
         let mut command = std::process::Command::new(program);
         command.args(args).env("WAYLAND_DISPLAY", &self.socket_name).env("XDG_ACTIVATION_TOKEN", &token).env("DESKTOP_STARTUP_ID", &token);
         command.env("XCURSOR_SIZE", crate::backend::cursor::size(self.config.appearance.pointer_size).to_string());
+        command.envs(crate::proxy::env(&self.config.network));
         if let Some(display) = &self.x_display {
             command.env("DISPLAY", display);
         }

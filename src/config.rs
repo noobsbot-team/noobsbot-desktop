@@ -61,6 +61,7 @@ pub struct Config {
     /// App name (as it sends notifications) → how they show.
     pub notification_apps: BTreeMap<String, AppRule>,
     pub app_drawer: AppDrawer,
+    pub network: Network,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
     /// Window rules (E1.9); compile with `rules::compile` after every load.
@@ -587,6 +588,7 @@ impl Default for Config {
             notifications: Notifications::default(),
             notification_apps: BTreeMap::new(),
             app_drawer: AppDrawer::default(),
+            network: Network::default(),
             bindings: default_bindings(),
             rules: vec![
                 Rule {
@@ -886,6 +888,31 @@ impl Default for AppDrawer {
     fn default() -> Self {
         Self { super_tap: true }
     }
+}
+
+/// `[network]`: the proxy apps we start are given (`src/proxy.rs`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Network {
+    pub proxy: ProxyMode,
+    /// `host:port` of each proxy (manual); empty = none for that kind.
+    pub proxy_http: String,
+    pub proxy_https: String,
+    pub proxy_socks: String,
+    /// Hosts and networks reached directly, comma separated.
+    pub proxy_bypass: String,
+    /// The proxy auto-config (PAC) file's URL (automatic).
+    pub proxy_pac: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyMode {
+    #[default]
+    None,
+    Manual,
+    /// From a PAC file: only apps that read the GTK proxy settings follow it.
+    Auto,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]

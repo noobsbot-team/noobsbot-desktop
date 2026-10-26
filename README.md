@@ -343,6 +343,7 @@ doesn't understand is skipped and reported in the journal.
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
 | `[desktop]` | desktop icons on or off, mounted drives among them (`show_drives`) |
+| `[network]` | proxy for the apps the desktop starts: none, manual (HTTP, HTTPS, SOCKS, bypass list) or automatic (PAC URL); also written to the GTK proxy settings |
 | `[housekeeping]` | when old Trash items and recent-files entries are cleared |
 | `[bindings]` | keyboard shortcuts |
 | `[[rules]]` | window rules: open on a Space, size, position, always on top, no title bar, opacity |
