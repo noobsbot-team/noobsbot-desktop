@@ -192,6 +192,10 @@ pub struct State {
     pub alert: Option<crate::shell::alert::Alert>,
     /// Its once-a-second countdown.
     pub alert_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// logind's sleep blockers, read when Control Center opens.
+    pub sleep_blockers: Vec<crate::services::login::Inhibitor>,
+    /// Keep Awake is on: no idle dim, screen-off or sleep. Not saved: it ends with the session.
+    pub keep_awake: bool,
     /// The Control Center module showing its list.
     pub expanded: Option<crate::shell::control::Module>,
     /// How far that list is scrolled, in logical px.
@@ -398,6 +402,7 @@ impl State {
                     crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
                     crate::services::Update::Resumed => state.idle_activity(),
+                    crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                     crate::services::Update::Record(on) => {
                         let focus = state.focused_window();
@@ -502,6 +507,8 @@ impl State {
             osd: None,
             alert: None,
             alert_timer: None,
+            sleep_blockers: Vec::new(),
+            keep_awake: false,
             expanded: None,
             control_scroll: 0.0,
             shell_drag: None,

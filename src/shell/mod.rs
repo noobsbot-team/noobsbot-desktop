@@ -373,6 +373,7 @@ impl State {
                     (BarItem::Tray(i), false) => self.tray_press(i, location, secondary),
                     // fcitx5 tells nobody when its method changes: ask now.
                     (BarItem::Input, false) => self.services.send(crate::services::Command::FcitxRead),
+                    (BarItem::ControlCenter, false) => self.services.send(crate::services::Command::Inhibitors),
                     _ => {}
                 }
                 true
