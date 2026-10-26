@@ -12,8 +12,12 @@ use crate::{App, Message, font, style};
 /// The open "Keyboard Shortcuts…" sheet.
 pub struct Editor {
     pub category: &'static str,
-    /// The row (by combo) whose keys the next key press sets.
+    /// The row (by combo) whose keys the next key press sets; empty: the new shortcut's.
     pub recording: Option<String>,
+    /// The custom shortcut − removes, by combo.
+    pub selected: Option<String>,
+    /// The new shortcut (+): its combo and action, until Add.
+    pub draft: Option<(String, String)>,
 }
 
 #[derive(Clone, Debug)]
@@ -27,6 +31,22 @@ pub enum Msg {
     Record(String),
     /// A key pressed while recording.
     Key(iced::keyboard::Key, iced::keyboard::Modifiers),
+    Select(String),
+    /// + : a new shortcut's row, its keys recording.
+    New,
+    DraftAction(String),
+    Add,
+    Remove,
+}
+
+/// An action in the + picker, shown by its label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Pick(&'static str);
+
+impl std::fmt::Display for Pick {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&label(self.0))
+    }
 }
 
 /// One row: the combo as written, the action it runs (the default's when switched off), and whether it is on.
@@ -149,7 +169,7 @@ pub fn update(app: &mut App, msg: Msg) -> Task<Message> {
     let key = |combo: &str| format!("bindings.{combo}");
     let done = match msg {
         Msg::Open => {
-            app.shortcuts = Some(Editor { category: CATEGORIES[0], recording: None });
+            app.shortcuts = Some(Editor { category: CATEGORIES[0], recording: None, selected: None, draft: None });
             Ok(())
         }
         Msg::Close => {
@@ -173,8 +193,13 @@ pub fn update(app: &mut App, msg: Msg) -> Task<Message> {
                     None => return Task::none(),
                 },
             };
-            if let Some(editor) = &mut app.shortcuts {
-                editor.recording = None;
+            let Some(editor) = &mut app.shortcuts else { return Task::none() };
+            editor.recording = None;
+            if old.is_empty() {
+                if let (Some(draft), Some(new)) = (&mut editor.draft, new) {
+                    draft.0 = new.unwrap_or_default();
+                }
+                return Task::future(record(false)).discard();
             }
             let action = app.config.bindings().into_iter().find(|(c, _)| *c == old).map(|(_, a)| a).unwrap_or_default();
             let action = if action.trim() == "none" { app.config.default_of(&key(&old)).unwrap_or_default().to_owned() } else { action };
@@ -195,6 +220,33 @@ pub fn update(app: &mut App, msg: Msg) -> Task<Message> {
             }
             Ok(())
         }
+        Msg::Select(combo) => {
+            if let Some(editor) = &mut app.shortcuts {
+                editor.selected = Some(combo);
+            }
+            Ok(())
+        }
+        Msg::New => {
+            let Some(editor) = &mut app.shortcuts else { return Task::none() };
+            editor.draft = Some(Default::default());
+            return update(app, Msg::Record(String::new()));
+        }
+        Msg::DraftAction(action) => {
+            if let Some((_, draft)) = app.shortcuts.as_mut().and_then(|e| e.draft.as_mut()) {
+                *draft = action;
+            }
+            Ok(())
+        }
+        Msg::Add => {
+            let Some(editor) = &mut app.shortcuts else { return Task::none() };
+            let Some((combo, action)) = editor.draft.take() else { return Task::none() };
+            editor.category = category(&action);
+            app.config.set(&key(&combo), action.trim())
+        }
+        Msg::Remove => match app.shortcuts.as_mut().and_then(|e| e.selected.take()) {
+            Some(combo) => app.config.change(&[key(&combo)], []),
+            None => Ok(()),
+        },
         Msg::Enable(combo, true) => app.config.change(&[key(&combo)], []),
         Msg::Enable(combo, false) => app.config.set(&key(&combo), "none"),
     };
@@ -219,6 +271,32 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
         );
     }
     let mut list = column![].spacing(2);
+    if let Some((combo, action)) = &editor.draft {
+        let recording = editor.recording.as_deref() == Some("");
+        let shown = if recording {
+            "Type keys…".to_owned()
+        } else if combo.is_empty() {
+            "Click to record".to_owned()
+        } else {
+            format(combo)
+        };
+        let keys = button(text(shown).size(13)).padding([2, 8]).style(t.segment(recording)).on_press(Message::Shortcuts(Msg::Record(String::new())));
+        let typed = iced::widget::text_input("exec firefox", action)
+            .on_input(|a| Message::Shortcuts(Msg::DraftAction(a)))
+            .size(12)
+            .padding([3, 8])
+            .style(t.input(false));
+        let picks: Vec<Pick> = known().map(Pick).collect();
+        let pick = iced::widget::pick_list(picks, None::<Pick>, |p| Message::Shortcuts(Msg::DraftAction(p.0.to_owned())))
+            .placeholder("Action")
+            .text_size(12)
+            .padding([3, 8])
+            .style(t.pick())
+            .menu_style(t.menu());
+        let ready = normalise(combo).is_some() && !action.trim().is_empty();
+        let add = button(text("Add").size(12)).padding([3, 10]).style(t.push(true)).on_press_maybe(ready.then_some(Message::Shortcuts(Msg::Add)));
+        list = list.push(container(row![keys, typed, pick, add].spacing(6).align_y(Alignment::Center)).padding([4, 8]));
+    }
     for r in rows.iter().filter(|r| category(&r.action) == editor.category) {
         let enable: Element<'static, Message> = if r.custom {
             space().width(16).into()
@@ -226,7 +304,18 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
             let combo = r.combo.clone();
             checkbox(r.on).on_toggle(move |on| Message::Shortcuts(Msg::Enable(combo.clone(), on))).size(14).into()
         };
-        let mut line = row![enable, text(label(&r.action)).size(13).width(Length::Fill)].spacing(8).align_y(Alignment::Center);
+        let name: Element<'static, Message> = if r.custom {
+            let selected = editor.selected.as_ref() == Some(&r.combo);
+            button(text(label(&r.action)).size(13))
+                .padding(0)
+                .width(Length::Fill)
+                .style(t.sidebar_row(selected))
+                .on_press(Message::Shortcuts(Msg::Select(r.combo.clone())))
+                .into()
+        } else {
+            text(label(&r.action)).size(13).width(Length::Fill).into()
+        };
+        let mut line = row![enable, name].spacing(8).align_y(Alignment::Center);
         if let Some(other) = clashes.get(&r.combo) {
             let tip = container(text(format!("Also bound to {}", label(other))).size(11)).padding([4, 8]).style(t.sheet());
             line = line.push(tooltip(text("⚠").size(13).color(style::rgb(0xFF9500)), tip, tooltip::Position::Top));
@@ -242,8 +331,17 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
         scrollable(list).direction(style::thin()).style(t.scroll()).width(Length::Fill).height(Length::Fill),
     ]
     .spacing(12);
-    let bar = row![space().width(Length::Fill), button(text("Done").size(13)).padding([4, 14]).style(t.push(true)).on_press(Message::Shortcuts(Msg::Close))]
-        .spacing(8);
+    let small = |label: &'static str, msg: Option<Msg>| {
+        button(text(label).size(13).center()).padding([2, 10]).style(t.push(false)).on_press_maybe(msg.map(Message::Shortcuts))
+    };
+    let selected = editor.selected.is_some().then_some(Msg::Remove);
+    let bar = row![
+        small("+", Some(Msg::New)),
+        small("−", selected),
+        space().width(Length::Fill),
+        button(text("Done").size(13)).padding([4, 14]).style(t.push(true)).on_press(Message::Shortcuts(Msg::Close))
+    ]
+    .spacing(8);
     let card = column![text("Keyboard Shortcuts").size(15).font(font(Weight::Semibold)), body, bar].spacing(12).max_width(640).height(Length::Fill);
     let sheet = container(card).padding(18).style(t.sheet());
     iced::widget::opaque(container(sheet).padding(24).center(Length::Fill).style(t.dim()))
