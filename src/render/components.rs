@@ -72,7 +72,7 @@ fn draw(ui: &mut Ui, output: Size<i32, Logical>) {
     let bg = if ui.dark { 0x1E as f32 / 255.0 } else { 0xEC as f32 / 255.0 };
     ui.shape(rect(0, 0, output.w, output.h), [bg, bg, bg, 1.0], 0.0);
     let left = ((output.w - 3 * COLUMN - 2 * GAP) / 2).max(GAP);
-    let top = menubar::HEIGHT + GAP;
+    let top = menubar::height() + GAP;
     let (c1, c2, c3) = (left, left + COLUMN + GAP, left + 2 * (COLUMN + GAP));
     let body = |y: i32| y + 12 + 16 + 12;
 
