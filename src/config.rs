@@ -450,6 +450,18 @@ pub struct Dock {
     pub scroll: DockScroll,
     /// Minimised windows go into their app's icon instead of tiles after the separator.
     pub minimise_into_icon: bool,
+    /// How a window goes into the dock and comes back (E5.5).
+    pub minimise_effect: MinimiseEffect,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MinimiseEffect {
+    /// It shrinks and slides into its dock spot.
+    #[default]
+    Scale,
+    /// It narrows into its dock spot, bottom first.
+    Genie,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -597,6 +609,7 @@ impl Default for Dock {
             middle: DockMiddle::New,
             scroll: DockScroll::On,
             minimise_into_icon: false,
+            minimise_effect: MinimiseEffect::Scale,
         }
     }
 }
