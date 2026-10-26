@@ -355,7 +355,8 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
 }
 
 /// The sidebar, in order; anything not listed below goes to "Other".
-pub const CATEGORIES: &[&str] = &["Windows", "Spaces & Mission Control", "Dock", "Screenshots", "Apps & Launchers", "Media & Hardware", "System", "Other"];
+pub const CATEGORIES: &[&str] =
+    &["Windows", "Spaces & Mission Control", "Dock", "Screenshots", "Apps & Launchers", "Media & Hardware", "Accessibility", "System", "Other"];
 
 /// Actions without an argument: name, label, category.
 const KNOWN: &[(&str, &str, &str)] = &[
@@ -383,6 +384,8 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("screenshot", "Screenshot of the Screen", "Screenshots"),
     ("screenshot-region", "Screenshot of a Region", "Screenshots"),
     ("screenshot-toolbar", "Screenshot Toolbar", "Screenshots"),
+    ("screenshot-window", "Screenshot of the Window", "Screenshots"),
+    ("screen-record", "Record the Screen", "Screenshots"),
     ("terminal", "Open Terminal", "Apps & Launchers"),
     ("spotlight", "Spotlight", "Apps & Launchers"),
     ("app-drawer", "App Drawer", "Apps & Launchers"),
@@ -392,6 +395,9 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("quake", "Drop-Down Terminal", "Apps & Launchers"),
     ("mute", "Mute", "Media & Hardware"),
     ("mic-mute", "Mute Microphone", "Media & Hardware"),
+    ("eject", "Eject", "Media & Hardware"),
+    ("screen-zoom", "Zoom On or Off", "Accessibility"),
+    ("on-screen-keyboard", "On-Screen Keyboard", "Accessibility"),
     ("lock", "Lock Screen", "System"),
     ("sleep", "Sleep", "System"),
     ("restart", "Restart", "System"),
@@ -412,6 +418,10 @@ const WITH_ARGUMENT: &[(&str, &str)] = &[
     ("volume", "Media & Hardware"),
     ("brightness", "Media & Hardware"),
     ("media", "Media & Hardware"),
+    ("keyboard-backlight", "Media & Hardware"),
+    ("touchpad", "Media & Hardware"),
+    ("default-app", "Apps & Launchers"),
+    ("screen-zoom", "Accessibility"),
 ];
 
 /// The argument-less actions, for the + picker.
@@ -445,8 +455,17 @@ pub fn label(action: &str) -> String {
         ("dock-app", n) if !n.is_empty() => format!("Dock App {n}"),
         ("dock-app-new", n) if !n.is_empty() => format!("New Window of Dock App {n}"),
         ("tile", side) if !side.is_empty() => format!("Tile {}", words(side)),
+        ("volume", "up-fine") => "Volume Up a Little".into(),
+        ("volume", "down-fine") => "Volume Down a Little".into(),
         ("volume" | "brightness", way) if !way.is_empty() => format!("{} {}", capital(name), capital(way)),
+        ("keyboard-backlight", way) if !way.is_empty() => format!("Keyboard Backlight {}", capital(way)),
+        ("touchpad", way) if !way.is_empty() => format!("Trackpad {}", capital(way)),
+        ("default-app", what) if !what.is_empty() => format!("Open Default App: {what}"),
+        ("screen-zoom", way) if !way.is_empty() => format!("Zoom {}", capital(way)),
         ("media", "play-pause") => "Play/Pause".into(),
+        ("media", "stop") => "Stop".into(),
+        ("media", "forward") => "Seek Forward".into(),
+        ("media", "rewind") => "Seek Back".into(),
         ("media", way) if !way.is_empty() => format!("{} Track", capital(way)),
         _ => KNOWN.iter().find(|k| arg.is_empty() && k.0 == name).map_or_else(|| action.trim().to_owned(), |k| k.1.to_owned()),
     }
@@ -558,6 +577,12 @@ mod tests {
         assert_eq!(label("volume up"), "Volume Up");
         assert_eq!(label("media previous"), "Previous Track");
         assert_eq!(label("frobnicate"), "frobnicate");
+        assert_eq!(label("volume up-fine"), "Volume Up a Little");
+        assert_eq!(label("media rewind"), "Seek Back");
+        assert_eq!(label("screen-zoom in"), "Zoom In");
+        assert_eq!(category("screen-zoom"), "Accessibility");
+        assert_eq!(category("keyboard-backlight up"), "Media & Hardware");
+        assert_eq!(category("screen-record"), "Screenshots");
         assert_eq!(category("lock"), "System");
         assert_eq!(category("exec foot"), "Apps & Launchers");
         assert_eq!(category("dock-app-new 2"), "Dock");
