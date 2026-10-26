@@ -482,12 +482,12 @@ impl State {
                 icons.push(DockIcon { name: item.icon(), windows: 0, focused: false, shade });
             }
             let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
-            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, dock_frame.tip.as_ref(), dark, scale));
+            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &dock_frame.tips, dark, scale));
             bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
             bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, scale));
             bar.extend(DockView::poofs(shaders, &dock_frame.poofs, layout.icon, scale));
         } else {
-            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, None, dark, scale));
+            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &[], dark, scale));
         }
         bar.extend(DockView::glows(shaders, &dock_frame.glows, scale));
         // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.

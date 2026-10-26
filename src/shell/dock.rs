@@ -481,16 +481,37 @@ impl State {
             return true;
         }
         self.dock_fx.scrolled.insert(item.key.clone(), now);
-        let mut windows = item.windows;
+        self.dock_cycle(item.windows, dir > 0.0);
+        true
+    }
+
+    /// Focuses the window after (or before) the focused one of `windows`, in the order they opened.
+    fn dock_cycle(&mut self, mut windows: Vec<Window>, forward: bool) {
+        if windows.is_empty() {
+            return;
+        }
         windows.sort_by_key(seen);
         let focused = self.focused_window();
-        let next = windows[cycle(windows.len(), windows.iter().position(|w| Some(w) == focused.as_ref()), dir > 0.0)].clone();
+        let next = windows[cycle(windows.len(), windows.iter().position(|w| Some(w) == focused.as_ref()), forward)].clone();
         if let Some(at) = self.hidden.iter().position(|(w, _)| *w == next) {
             let (_, loc) = self.hidden.remove(at);
             self.set_visible_loc(&next, loc);
         }
         self.focus_window(Some(next), SERIAL_COUNTER.next_serial());
-        true
+    }
+
+    /// Super+n (E8.3): the n-th icon's app comes forward, or its next window if it has focus, or it opens; `new`:
+    /// a new window. A builtin does its action.
+    pub fn dock_app(&mut self, n: usize, new: bool) {
+        let Some(item) = self.dock_items().into_iter().nth(n) else { return };
+        if !new && Builtin::of(&item.key).is_none() && self.focused_window().is_some_and(|f| item.windows.contains(&f)) {
+            self.dock_fx.clicked(item.key.clone());
+            self.dock_cycle(item.windows, true);
+            return self.schedule_redraw();
+        }
+        // Not focused, so `dock_activate` brings it forward rather than minimising it.
+        self.dock_click(item, new);
+        self.schedule_redraw();
     }
 
     /// The pointer moved. Plank's cursor region: the dock's resting area, shrinking to a 1 px strip at the screen
