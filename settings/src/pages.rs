@@ -34,13 +34,14 @@ pub enum Page {
     Notifications,
     Battery,
     LockScreen,
+    Privacy,
     General,
     Users,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 18] = [
+    pub const ALL: [Page; 19] = [
         Page::Wifi,
         Page::Bluetooth,
         Page::Sound,
@@ -56,6 +57,7 @@ impl Page {
         Page::Notifications,
         Page::Battery,
         Page::LockScreen,
+        Page::Privacy,
         Page::General,
         Page::Users,
         Page::About,
@@ -78,6 +80,7 @@ impl Page {
             Page::Notifications => "Notifications",
             Page::Battery => "Battery",
             Page::LockScreen => "Lock Screen",
+            Page::Privacy => "Privacy & Security",
             Page::General => "General",
             Page::Users => "Users",
             Page::About => "About",
@@ -92,7 +95,7 @@ impl Page {
 
     /// Pages that read the system services when opened.
     pub fn is_system(self) -> bool {
-        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery)
+        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery | Page::Privacy)
     }
 
     /// A little space starts a new block in the sidebar.
@@ -118,6 +121,7 @@ impl Page {
             Page::Notifications => ("bell", 0xFF3B30),
             Page::Battery => ("battery-high", 0x34C759),
             Page::LockScreen => ("lock-simple", 0x3A3A3C),
+            Page::Privacy => ("lock-simple", 0x007AFF),
             Page::General => ("gear-six", 0x8E8E93),
             Page::Users => ("user-circle", 0xFF9500),
             Page::About => ("info", 0x8E8E93),
@@ -1124,6 +1128,18 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             parts
         }
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
+        Page::Privacy => {
+            let check = match status.connectivity {
+                Some(on) => line(
+                    t,
+                    "Connectivity check",
+                    "NetworkManager asks a web address whether the internet is reachable; off also stops Wi-Fi sign-in page detection",
+                    toggle(t, on, Message::Connectivity),
+                ),
+                None => fact(t, "Connectivity check", "Off in NetworkManager's configuration".into()),
+            };
+            vec![group(t, "Network", vec![check])]
+        }
         Page::Appearance => vec![gallery(app)],
         Page::Users => users_part(app),
         _ => Vec::new(),
@@ -1817,6 +1833,7 @@ mod tests {
         assert_eq!(Page::parse("date-time"), Some(Page::DateTime));
         assert_eq!(Page::parse("wi-fi"), Some(Page::Wifi));
         assert_eq!(Page::parse("battery"), Some(Page::Battery));
+        assert_eq!(Page::parse("privacy-security"), Some(Page::Privacy));
         assert_eq!(Page::parse("users"), Some(Page::Users));
         assert_eq!(Page::parse("nope"), None);
     }
