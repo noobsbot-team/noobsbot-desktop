@@ -444,6 +444,25 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Spaces, "", "windows.spaces", "Spaces", "Dynamic: + in Mission Control adds more", Kind::Slider { min: 0.0, max: 16.0, step: 1.0 }),
     s(Page::Notifications, "", "notifications.dnd", "Do Not Disturb", "Banners stay quiet; Notification Center still collects them", Kind::Toggle),
+    s(
+        Page::Notifications,
+        "",
+        "notifications.previews",
+        "Show previews",
+        "A notification's text in banners and Notification Center",
+        Kind::Choice(&[("always", "Always"), ("unlocked", "When Unlocked"), ("never", "Never")]),
+    ),
+    s(Page::Notifications, "", "notifications.full_screen", "Allow notifications when a window is full screen", "", Kind::Toggle),
+    s(
+        Page::Notifications,
+        "Do Not Disturb",
+        "notifications.dnd_scheduled",
+        "Turn on on a schedule",
+        "Turns itself on and off; the Control Center overrides it until then",
+        Kind::Toggle,
+    ),
+    s(Page::Notifications, "Do Not Disturb", "notifications.dnd_from", "From", "", Kind::Slider { min: 0.0, max: 23.0, step: 1.0 }),
+    s(Page::Notifications, "Do Not Disturb", "notifications.dnd_until", "To", "", Kind::Slider { min: 0.0, max: 23.0, step: 1.0 }),
     s(Page::Notifications, "Weather", "weather.enabled", "Weather widget", "Forecast from Open-Meteo every 30 minutes; sends only the place", Kind::Toggle),
     s(Page::Notifications, "Weather", "weather.city", "City", "Looked up once; never located by IP", Kind::Text("Kathmandu")),
     s(Page::Notifications, "Weather", "weather.units", "Units", "", Kind::Choice(&[("celsius", "°C"), ("fahrenheit", "°F")])),
@@ -505,7 +524,9 @@ fn shown(key: &str, value: f64) -> String {
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
         "keyboard.repeat_rate" => format!("{value:.0}/s"),
         "keyboard.repeat_delay" => format!("{value:.0} ms"),
-        "appearance.dark_from" | "appearance.dark_until" | "night_light.from" | "night_light.until" => format!("{value:02.0}:00"),
+        "appearance.dark_from" | "appearance.dark_until" | "night_light.from" | "night_light.until" | "notifications.dnd_from" | "notifications.dnd_until" => {
+            format!("{value:02.0}:00")
+        }
         "night_light.temperature" => format!("{value:.0} K"),
         "mouse.speed" | "touchpad.speed" => format!("{:.0}%", (value + 1.0) * 50.0),
         k if k.starts_with("idle.") => match value.round() as u32 {
