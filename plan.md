@@ -1408,6 +1408,10 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   PipeWire frames (E7.2).
 - **Why:** browsers only share screens through the portal standard.
 - **Done when:** all three screenshot modes work; screen sharing works in Google Meet in Helium.
+- **Status:** dragging the thumbnail starts a compositor-owned Wayland drag (`text/uri-list` + `image/png`, written
+  on a worker thread); it follows the pointer at half size and 60% opacity, and its 5 s timer waits. A drop an app
+  takes dismisses it; a cancelled drop brings it back for 5 s; a drop on the dock goes to the dock (Trash trashes the
+  file, an app icon opens it).
 
 ### E6.9 X11 app support
 - **Built with:** **xwayland-satellite** (C10), started automatically.
