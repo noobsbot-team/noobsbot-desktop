@@ -221,6 +221,10 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             let idle = config.idle != state.config.idle;
             let spaces = config.spaces != state.config.spaces;
             let reader = config.accessibility.screen_reader != state.config.accessibility.screen_reader;
+            // Widgets are placed from the config every frame; one frame applies a new `[widgets]`.
+            if config.widgets != state.config.widgets {
+                state.schedule_redraw();
+            }
             state.config = config;
             if paste && let Some(focus) = state.seat.get_keyboard().map(|k| k.current_focus()) {
                 let seat = state.seat.clone();
