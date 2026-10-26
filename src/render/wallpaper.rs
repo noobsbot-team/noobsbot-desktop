@@ -109,6 +109,11 @@ impl Wallpaper {
         }
     }
 
+    /// The same settings with nothing on the GPU (after a GPU reset): the picture is decoded and uploaded again.
+    pub fn reupload(&self) -> Self {
+        Self { appearance: self.appearance.clone(), slide: self.slide.clone(), ..Self::new(self.tx.clone()) }
+    }
+
     /// Takes the wallpaper settings; the next frame picks the file (decoded on a worker thread once an output's size
     /// is known, then crossfaded in). A new slideshow folder picks its first picture now.
     // ponytail: the folder is listed on the frame thread (one read_dir); move it to the decode thread if a huge one stalls.
