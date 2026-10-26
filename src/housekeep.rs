@@ -102,7 +102,8 @@ fn due(stamp: &Path) -> bool {
 /// The daily cleanups; runs on its own thread.
 fn clean(settings: &Housekeeping) {
     if settings.empty_trash_days > 0 {
-        trash::empty_before(&trash::dir(), chrono::Local::now().naive_local() - chrono::Duration::days(settings.empty_trash_days.into()));
+        let cutoff = chrono::Local::now().naive_local() - chrono::Duration::days(settings.empty_trash_days.into());
+        trash::dirs().iter().for_each(|d| trash::empty_before(d, cutoff));
     }
     remove_thumbnails(&config::xdg_dir("XDG_CACHE_HOME", ".cache").join("thumbnails"));
     if settings.recent_days > 0 {
