@@ -13,7 +13,8 @@ const MAX: usize = 48;
 /// A picture longer than this a side is skipped rather than decoded into hundreds of MB (as the desktop does).
 const MAX_SIDE: usize = 8192;
 
-/// The config key of the folders added with "+ Add Folder…", and the text field key of that button's path field.
+/// The config key of the folders added with "+ Add Folder…", and the text field key of its path field (shown when
+/// there is no file chooser).
 pub const FOLDERS: &str = "appearance.gallery_folders";
 pub const ADD: &str = "gallery.add";
 
