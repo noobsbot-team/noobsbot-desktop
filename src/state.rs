@@ -609,6 +609,7 @@ impl State {
         self.restack();
         if restored {
             self.window_restored(window);
+            crate::shell::dock::set_minimised(window, false);
         }
         self.schedule_redraw();
     }

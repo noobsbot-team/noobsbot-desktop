@@ -523,7 +523,7 @@ impl State {
         let mut frame = Frame::default();
         self.dock_fx.poofs.retain(|(_, at)| now - *at < POOF_TIME);
         frame.poofs = self.dock_fx.poofs.iter().map(|(p, at)| (*p, progress(now - *at, POOF_TIME))).collect();
-        let Some(layout) = self.dock_layout(items.len()).filter(|_| !items.is_empty()) else {
+        let Some(layout) = self.dock_layout(items).filter(|_| !items.is_empty()) else {
             frame.animating = !frame.poofs.is_empty();
             return frame;
         };
@@ -648,8 +648,9 @@ impl State {
         frame
     }
 
-    /// Minimises `windows` (Plank keeps them on their app's icon).
+    /// Minimises `windows`: into tiles at the dock's right end, or (`[dock] minimise_into_icon`) their app's icon.
     pub fn minimise(&mut self, windows: Vec<Window>) {
+        windows.iter().for_each(|w| super::dock::set_minimised(w, true));
         self.hide_windows(windows);
     }
 
@@ -856,7 +857,7 @@ mod tests {
 
     #[test]
     fn sliding_moves_the_whole_dock() {
-        let l = super::super::dock::layout(3, (1920, 1200).into(), 84, 1.0, 0.0, None);
+        let l = super::super::dock::layout(3, 0, (1920, 1200).into(), 84, 1.0, 0.0, None);
         let s = l.clone().slid(50.0);
         assert_eq!(s.bar.loc.y, l.bar.loc.y + 50);
         assert_eq!(s.zone.loc.y, l.zone.loc.y + 50);
