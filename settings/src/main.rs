@@ -129,6 +129,8 @@ pub struct App {
     methods: Option<xkb::Methods>,
     /// Apps in the notification history, read when Notifications opens.
     notifiers: Vec<String>,
+    /// Widgets set over D-Bus, by id; read when Notifications opens.
+    widget_ids: Vec<String>,
     /// Notifications ▸ Applications: the app whose options are open.
     notify_app: Option<String>,
     /// Keyboard ▸ Keyboard Shortcuts…, open.
@@ -273,6 +275,10 @@ pub enum Message {
     DeleteUserNow(bool),
     /// A list key's new entries.
     List(&'static str, Vec<String>),
+    /// The ids `org.noobsbot.Desktop.Widgets` has.
+    WidgetIds(Vec<String>),
+    /// A widget editor's new `[widgets]`.
+    Widgets(pages::Widgets),
     /// The file chooser opens for the path field with this `texts` key.
     OpenFile(&'static str),
     /// It answered: the path goes where that field's would; no portal shows the field.
@@ -306,6 +312,7 @@ impl App {
             methods: None,
             notifiers: config::notifying_apps(),
             notify_app: None,
+            widget_ids: Vec::new(),
             shortcuts: None,
             level: 0.0,
             users: None,
@@ -320,6 +327,7 @@ impl App {
         let users = match page {
             Page::Users => Task::perform(users::read(), Message::Users),
             Page::Keyboard => Task::perform(async { (xkb::methods().await, None) }, Message::Methods),
+            Page::Notifications => Task::perform(system::widget_ids(), Message::WidgetIds),
             _ => Task::none(),
         };
         // Typing searches at once (see `type_ahead`).
@@ -359,6 +367,7 @@ impl App {
                 }
                 if page == Page::Notifications {
                     self.notifiers = config::notifying_apps();
+                    return Task::perform(system::widget_ids(), Message::WidgetIds);
                 }
                 if page == Page::Users {
                     return Task::perform(users::read(), Message::Users);
@@ -378,6 +387,8 @@ impl App {
             }
             Message::Number(key, value) => self.save(key, value),
             Message::List(key, items) => self.save(key, items.into_iter().collect::<toml_edit::Array>()),
+            Message::WidgetIds(ids) => self.widget_ids = ids,
+            Message::Widgets(places) => self.error = self.config.set_all(places.values()).err().map(|err| format!("Couldn't save widgets: {err}")),
             Message::NotifyApp(app) => self.notify_app = app,
             Message::AppRule(app, rule) => self.save(&format!("notification_apps.{app}"), rule.value()),
             Message::ClearRecent => self.error = config::clear_recent_files().err().map(|err| format!("Couldn't clear recent files: {err}")),
