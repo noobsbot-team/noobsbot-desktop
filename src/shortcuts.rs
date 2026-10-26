@@ -144,6 +144,25 @@ pub enum Action {
     Screenshot(crate::shell::screenshot::Start),
 }
 
+impl Action {
+    /// Runs while locked (E8.7): sound, brightness, media, eject and the keyboard layout; nothing that shows the
+    /// desktop or an app.
+    pub fn while_locked(&self) -> bool {
+        matches!(
+            self,
+            Action::Volume(_)
+                | Action::VolumeFine(_)
+                | Action::Mute
+                | Action::MicMute
+                | Action::Brightness(_)
+                | Action::KbdBacklight(_)
+                | Action::Media(_)
+                | Action::Eject
+                | Action::Layout(_)
+        )
+    }
+}
+
 /// A volume or brightness key press, in percent (about 1/16 steps).
 const STEP: u8 = 6;
 /// About a quarter of `STEP`.
@@ -721,6 +740,16 @@ mod tests {
         assert_ne!(parse("Super+X"), parse("Super+Shift+X"));
         assert_eq!(parse("Super+Hyper+B"), None);
         assert_eq!(parse("Super+NoSuchKey"), None);
+    }
+
+    #[test]
+    fn only_hardware_keys_work_locked() {
+        let a = |text| action(&Config::default(), text).unwrap();
+        let allowed = ["volume up", "volume down-fine", "mute", "brightness up", "keyboard-backlight toggle", "media play-pause"];
+        assert!(allowed.into_iter().chain(["media rewind", "eject", "input-source"]).all(|t| a(t).while_locked()));
+        let denied = ["spotlight", "switcher", "screenshot", "space right", "launchpad", "lock", "quake", "terminal"];
+        assert!(denied.into_iter().all(|t| !a(t).while_locked()));
+        assert!(!Action::Spawn("foot".into()).while_locked());
     }
 
     #[test]
