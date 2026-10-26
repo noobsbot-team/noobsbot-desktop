@@ -18,12 +18,16 @@ pub struct Shell {
     pub dock: Vec<(String, bool)>,
     /// The open Control Center's toggles: name, on.
     pub controls: Option<Vec<(String, bool)>>,
+    /// The window highlighted in Mission Control, by title.
+    pub mission: Option<String>,
 }
 
 const ROOT: NodeId = NodeId(1);
 const BAR: NodeId = NodeId(2);
 const DOCK: NodeId = NodeId(3);
 const CONTROL: NodeId = NodeId(4);
+const MISSION: NodeId = NodeId(5);
+const MISSION_ITEM: NodeId = NodeId(3000);
 const BAR_ITEM: u64 = 100;
 const DOCK_ITEM: u64 = 1000;
 const CONTROL_ITEM: u64 = 2000;
@@ -63,11 +67,23 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
         group(CONTROL, Role::Dialog, "Control Center", toggles.collect(), &mut nodes);
         children.push(CONTROL);
     }
+    if let Some(title) = &shell.mission {
+        let mut item = Node::new(Role::ListItem);
+        item.set_label(title.as_str());
+        group(MISSION, Role::Dialog, "Mission Control", vec![(MISSION_ITEM, item)], &mut nodes);
+        children.push(MISSION);
+    }
     let mut root = Node::new(Role::Window);
     root.set_label("Desktop");
     root.set_children(children);
     nodes.push((ROOT, root));
-    let focus = if shell.controls.is_some() { CONTROL } else { ROOT };
+    let focus = if shell.mission.is_some() {
+        MISSION_ITEM
+    } else if shell.controls.is_some() {
+        CONTROL
+    } else {
+        ROOT
+    };
     TreeUpdate { nodes, tree: Some(TreeInfo::new(ROOT)), tree_id: TreeId::ROOT, focus }
 }
 
@@ -160,7 +176,8 @@ impl State {
             ];
             TOGGLES.iter().zip(on).filter_map(|((_, name), on)| Some(((*name).to_owned(), on?))).collect()
         });
-        Shell { bar, dock, controls }
+        let mission = self.mission.as_ref().filter(|_| self.mission_open()).and_then(|m| m.hover.as_ref()).map(crate::render::window_title);
+        Shell { bar, dock, controls, mission }
     }
 
     /// Once per loop turn: a changed shell reaches the screen reader.
@@ -175,7 +192,7 @@ impl State {
         if *last == shell {
             return;
         }
-        let focused = shell.controls.is_some();
+        let focused = shell.controls.is_some() || shell.mission.is_some();
         *last = shell.clone();
         drop(last);
         access.adapter.update_window_focus_state(focused);
@@ -207,7 +224,7 @@ mod tests {
 
     #[test]
     fn tree_names_every_widget_and_focuses_an_open_control_center() {
-        let shell = Shell { bar: vec!["Clock".into()], dock: vec![("Files".into(), true)], controls: None };
+        let shell = Shell { bar: vec!["Clock".into()], dock: vec![("Files".into(), true)], controls: None, mission: None };
         let update = tree(&shell);
         let node = |id: u64| update.nodes.iter().find(|(n, _)| n.0 == id).map(|(_, node)| node.clone());
         assert_eq!(node(DOCK_ITEM).and_then(|n| n.label().map(str::to_owned)), Some("Files, running".into()));
@@ -222,5 +239,8 @@ mod tests {
         // Every node but the root is some node's child.
         let children: Vec<NodeId> = open.nodes.iter().flat_map(|(_, n)| n.children().to_vec()).collect();
         assert!(open.nodes.iter().all(|(id, _)| *id == ROOT || children.contains(id)));
+
+        let mission = tree(&Shell { mission: Some("Notes".into()), bar: Vec::new(), dock: Vec::new(), controls: None });
+        assert_eq!(mission.focus, MISSION_ITEM, "the highlighted window is read");
     }
 }
