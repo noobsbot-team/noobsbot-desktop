@@ -19,6 +19,18 @@ pub struct Status {
     pub bluetooth: Option<Bluetooth>,
     pub output: Option<Device>,
     pub input: Option<Device>,
+    /// `None`: systemd-timedated isn't there.
+    pub time: Option<Time>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Time {
+    /// Set automatically (NTP).
+    pub ntp: bool,
+    /// An NTP service is installed.
+    pub can_ntp: bool,
+    /// The system's time zone.
+    pub zone: String,
 }
 
 #[derive(Clone, Debug)]
@@ -46,20 +58,24 @@ const NM: &str = "org.freedesktop.NetworkManager";
 
 pub async fn read() -> Status {
     let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await.ok();
-    let (wifi, bluetooth) = match &system {
-        Some(bus) => (wifi(bus).await, bluetooth(bus).await),
-        None => (None, None),
+    let (wifi, bluetooth, time) = match &system {
+        Some(bus) => (wifi(bus).await, bluetooth(bus).await, time(bus).await),
+        None => (None, None, None),
     };
-    Status { wifi, bluetooth, output: device(OUTPUT), input: device(INPUT) }
+    Status { wifi, bluetooth, output: device(OUTPUT), input: device(INPUT), time }
 }
 
 /// The desktop's connect (`src/services/mod.rs`): on this thread, not zbus's pool, whose idle thread wakes every
 /// 500 ms.
 async fn connect(variable: &str, fallback: String) -> zbus::Result<Connection> {
+    connect_waiting(variable, fallback, Duration::from_secs(2)).await
+}
+
+async fn connect_waiting(variable: &str, fallback: String, timeout: Duration) -> zbus::Result<Connection> {
     let address = std::env::var(variable).unwrap_or_default();
     let path = address.strip_prefix("unix:path=").map_or(fallback.as_str(), |rest| rest.split(',').next().unwrap_or(rest));
     let socket = UnixStream::connect(path)?;
-    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(Duration::from_secs(2)).build().await
+    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(timeout).build().await
 }
 
 async fn property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str) -> zbus::Result<OwnedValue> {
@@ -132,6 +148,50 @@ pub async fn set_bluetooth(on: bool) -> Status {
         }
     }
     read().await
+}
+
+const TIMEDATE: &str = "org.freedesktop.timedate1";
+const TIMEDATE_PATH: &str = "/org/freedesktop/timedate1";
+
+async fn time(bus: &Connection) -> Option<Time> {
+    let get = |name: &'static str| property(bus, TIMEDATE, TIMEDATE_PATH, TIMEDATE, name);
+    Some(Time {
+        ntp: bool::try_from(get("NTP").await.ok()?).ok()?,
+        can_ntp: get("CanNTP").await.ok().and_then(|v| bool::try_from(v).ok()).unwrap_or(false),
+        zone: get("Timezone").await.ok().and_then(|v| String::try_from(v).ok()).unwrap_or_default(),
+    })
+}
+
+/// "Set time and date automatically", then the new status. Interactive: polkit asks for the password through the
+/// desktop's agent, so the call waits for the answer instead of the usual 2 s.
+pub async fn set_ntp(on: bool) -> Status {
+    if let Ok(bus) = connect_waiting("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into(), Duration::from_secs(120)).await {
+        let _ = bus.call_method(Some(TIMEDATE), TIMEDATE_PATH, Some(TIMEDATE), "SetNTP", &(on, true)).await;
+    }
+    read().await
+}
+
+/// Every time-zone name timedated accepts (zones and their aliases), from tzdata.
+pub static ZONES: std::sync::LazyLock<Vec<String>> =
+    std::sync::LazyLock::new(|| zones(&std::fs::read_to_string("/usr/share/zoneinfo/tzdata.zi").unwrap_or_default()));
+
+/// `Z Asia/Kathmandu …` (a zone) and `L Asia/Kathmandu Asia/Katmandu` (an alias) lines of `tzdata.zi`, sorted.
+fn zones(tzdata: &str) -> Vec<String> {
+    let mut zones: Vec<String> = tzdata
+        .lines()
+        .filter_map(|line| match line.split_whitespace().collect::<Vec<_>>()[..] {
+            ["Z", name, ..] | ["L", _, name] => Some(name.to_owned()),
+            _ => None,
+        })
+        .collect();
+    zones.sort();
+    zones
+}
+
+/// The zones whose name contains `query` (any case; a space matches `_`).
+pub fn matching_zones(query: &str) -> impl Iterator<Item = &'static str> {
+    let query = query.trim().to_lowercase().replace(' ', "_");
+    ZONES.iter().map(String::as_str).filter(move |z| z.to_lowercase().contains(&query))
 }
 
 const OUTPUT: &str = "@DEFAULT_AUDIO_SINK@";
@@ -288,6 +348,12 @@ mod tests {
         assert_eq!(installed(7_900_000.0), 8);
         assert_eq!(gpu("i915"), "Intel Graphics");
         assert_eq!(gpu("virtio_gpu"), "virtio_gpu");
+    }
+
+    #[test]
+    fn tzdata_zones() {
+        let tzdata = "# version\nR d 1916 o - Jun 14 23s 1 S\nZ Asia/Kathmandu 5:41:16 - LMT 1920\n5:30 - +0530 1986\nL Asia/Kathmandu Asia/Katmandu\nZ America/New_York -4:56:2 - LMT 1883\n";
+        assert_eq!(zones(tzdata), ["America/New_York", "Asia/Kathmandu", "Asia/Katmandu"]);
     }
 
     #[test]

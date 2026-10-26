@@ -83,7 +83,7 @@ impl Page {
 
     /// Pages that read the system services when opened.
     pub fn is_system(self) -> bool {
-        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound)
+        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime)
     }
 
     /// A little space starts a new block in the sidebar, as in macOS.
@@ -165,6 +165,8 @@ pub enum Kind {
     },
     Text(&'static str),
     Accent,
+    /// A time zone, searched as you type.
+    Zone,
 }
 
 pub struct Setting {
@@ -261,7 +263,7 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Mouse, "", "mouse.natural_scroll", "Natural scrolling", "Content follows the wheel", Kind::Toggle),
     s(Page::Mouse, "", "mouse.left_handed", "Primary button on the right", "The trackpad follows", Kind::Toggle),
     s(Page::Mouse, "", "mouse.middle_click_emulation", "Left + right = middle click", "", Kind::Toggle),
-    s(Page::DateTime, "", "clock.timezone", "Time zone", "Like Asia/Kathmandu; empty = the system's", Kind::Text("System")),
+    s(Page::DateTime, "", "clock.timezone", "Time zone", "Type a city; picking one also sets the system's", Kind::Zone),
     s(Page::DateTime, "", "clock.hour24", "24-hour time", "", Kind::Toggle),
     s(Page::DateTime, "Menu bar clock", "clock.weekday", "Show the day of the week", "", Kind::Toggle),
     s(Page::DateTime, "Menu bar clock", "clock.date", "Show the date", "", Kind::Toggle),
@@ -405,7 +407,52 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
             }
             swatches.into()
         }
+        Kind::Zone => zone_picker(app, key),
     }
+}
+
+/// The time-zone entry that writes empty: the system's zone, left alone.
+const AUTOMATIC: &str = "Automatic (system)";
+
+/// Date & Time ▸ Time zone: a field showing the zone; typing lists the zones that match, Return takes the first.
+fn zone_picker<'a>(app: &'a App, key: &'static str) -> Element<'a, Message> {
+    let t = app.tokens;
+    let typed = app.texts.get(key).map_or("", String::as_str);
+    let current = match app.config.str(key) {
+        "" => AUTOMATIC,
+        zone => zone,
+    };
+    let query = typed.trim().to_lowercase();
+    let automatic = AUTOMATIC.to_lowercase().contains(&query).then_some(("", AUTOMATIC));
+    // ponytail: the first 8 matches; a scrolling list if people want to browse.
+    let matches: Vec<(&'static str, &'static str)> =
+        if query.is_empty() { Vec::new() } else { automatic.into_iter().chain(crate::system::matching_zones(&query).map(|z| (z, z))).take(8).collect() };
+    let field = text_input(current, typed)
+        .on_input(move |v| Message::Type(key.into(), v))
+        .on_submit_maybe(matches.first().map(|&(zone, _)| Message::Choose(key, zone)))
+        .size(13)
+        .padding([3, 8])
+        .style(t.input(false));
+    let mut picker = column![field].spacing(4).width(220);
+    if !query.is_empty() {
+        let rows: Vec<Element<'a, Message>> = if matches.is_empty() {
+            vec![container(text("No matching time zone").size(12).color(t.secondary())).padding([4, 8]).into()]
+        } else {
+            matches
+                .into_iter()
+                .map(|(zone, label)| {
+                    button(text(label.replace('_', " ")).size(12))
+                        .padding([3, 8])
+                        .width(Length::Fill)
+                        .style(t.sidebar_row(false))
+                        .on_press(Message::Choose(key, zone))
+                        .into()
+                })
+                .collect()
+        };
+        picker = picker.push(container(column(rows)).padding(2).style(t.group()));
+    }
+    picker.into()
 }
 
 fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>, step: f64, value: f64) -> Element<'a, Message> {
@@ -518,6 +565,14 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             parts
         }
         Page::Displays => displays_part(app),
+        Page::DateTime => match &status.time {
+            Some(time) => {
+                let help = if time.can_ntp { "Asks for your password" } else { "No time service is installed" };
+                let ntp = toggler(time.ntp).on_toggle_maybe(time.can_ntp.then_some(Message::Ntp)).size(18).style(t.toggle());
+                vec![group(t, "", vec![line(t, "Set time and date automatically", help, ntp.into()), fact(t, "System time zone", time.zone.clone())])]
+            }
+            None => missing("systemd-timedated isn't available"),
+        },
         Page::About => {
             let version = version();
             let head = column![
