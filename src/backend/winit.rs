@@ -521,6 +521,32 @@ impl State {
         Some(views.launchpad.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, &mut self.icons, &frame, dark, accent, glass, scale))
     }
 
+    /// The app drawer on `output` when it shows there, with its entrance; once closed, its fade-out on the display
+    /// it was on.
+    fn drawer_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let open = self.drawer.is_some().then(|| self.drawer_output());
+        let frame = self.drawer_frame();
+        let appearance = &self.config.appearance;
+        let (dark, glass, scale, reduce) =
+            (render::is_dark(appearance), appearance.glass_opacity, output.current_scale().fractional_scale(), appearance.reduce_motion);
+        let accent = render::accent(appearance.accent, dark);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        match open {
+            Some(on) if on.as_ref() != Some(output) => return Vec::new(),
+            Some(_) => views.drawer.output = Some(output.name()),
+            None if views.drawer.output != Some(output.name()) => return Vec::new(),
+            None => {}
+        }
+        let mut elements = match &frame {
+            Some(frame) => {
+                views.drawer.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, &mut self.icons, frame, dark, accent, glass, scale)
+            }
+            None => Vec::new(),
+        };
+        views.drawer.motion(renderer, &mut elements, 0, frame.is_some(), reduce, scale, self.frame_time, &mut self.anim_until);
+        elements
+    }
+
     /// Spotlight, on `output` when it shows there.
     fn spotlight_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
         let Some(open) = self.spotlight.clone().filter(|s| self.overlay_output(s.output.as_ref()).as_ref() == Some(output)) else { return Vec::new() };
@@ -584,6 +610,7 @@ impl State {
             let pad = self.launchpad_elements(renderer, output);
             // Its own menu bar and the popups opened from it.
             let (strip, popups) = self.bar_elements(renderer, output, locked || pad.is_some());
+            let drawer = self.drawer_elements(renderer, output);
             let mut ripple = self.alert_elements(renderer, output);
             ripple.extend(self.spotlight_elements(renderer, output));
             ripple.extend(self.ripple_elements(output));
@@ -604,6 +631,7 @@ impl State {
                 views.ghosts.retain(|g| !g.anim.done(now));
                 let mut front = ripple;
                 front.extend(popups);
+                front.extend(drawer);
                 front.extend(strip);
                 front.extend(dock);
                 let pad_here = pad.is_some();
@@ -663,7 +691,7 @@ impl State {
         let pad = self.launchpad_elements(renderer, output);
         let desktop_frame = self.desktop_frame();
         let desktop_widgets = self.desktop_widgets();
-        let drawer_frame = self.drawer_frame();
+        let drawer = self.drawer_elements(renderer, output);
         let overview = self.mission_frame(output);
         let slide = if overview.is_none() { self.slide_frame(output) } else { None };
         let indicator = self.space_indicator(output);
@@ -699,7 +727,7 @@ impl State {
             emoji: emoji_view,
             osk: _,
             launchpad: _,
-            drawer: drawer_view,
+            drawer: _,
             mission,
             missions: _,
             ghosts,
@@ -803,22 +831,7 @@ impl State {
         entrances.fade_banners.track(renderer, &mut bar, mark, false, false, reduce, scale, now, &mut self.anim_until);
         bar.extend(popups);
         // The app drawer: behind its right-click menu, in front of the bar and the dock.
-        let mark = bar.len();
-        if let Some(frame) = &drawer_frame {
-            bar.extend(drawer_view.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                &mut self.icons,
-                frame,
-                dark,
-                accent,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
-        drawer_view.motion(renderer, &mut bar, mark, drawer_frame.is_some(), reduce, scale, now, &mut self.anim_until);
+        bar.extend(drawer);
         bar.extend(strip);
         // The dock: behind the bar and popups, above windows.
         bar.extend(dock_elements);

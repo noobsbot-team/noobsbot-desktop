@@ -733,10 +733,9 @@ impl State {
                 }
             }
             Builtin::AppDrawer => {
-                // The drawer opens above its icon; from another display's dock, in its corner on the first.
+                // The drawer opens above its icon, on its dock's display.
                 let items = self.dock_items();
-                let first = self.dock_output().as_ref() == self.space.outputs().next();
-                let at = items.iter().position(|i| i.key == key).zip(self.dock_layout(&items)).filter(|_| first).map(|(i, l)| {
+                let at = items.iter().position(|i| i.key == key).zip(self.dock_layout(&items)).map(|(i, l)| {
                     let (left, right) = l.columns[i];
                     (((left + right) / 2.0).round() as i32, l.icons[i].loc.y.round() as i32).into()
                 });
