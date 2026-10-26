@@ -1360,7 +1360,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 
 ### E6.7 Session startup & system glue
 - **What happens at login:**
-  1. Set the environment: `XDG_CURRENT_DESKTOP=noobsbot-desktop`, `XDG_SESSION_TYPE=wayland`, `XDG_MENU_PREFIX=arch-`,
+  1. Set the environment: `XDG_CURRENT_DESKTOP=noobsbot-desktop`, `XDG_SESSION_TYPE=wayland`, `XDG_MENU_PREFIX=arch-` (`noobsbot-` on Debian),
      `QT_QPA_PLATFORMTHEME=qt6ct`, `QT_STYLE_OVERRIDE=kvantum`, `TERMINAL=noobsbot`, `XCURSOR_THEME=WhiteSur-cursors`,
      `XCURSOR_SIZE=24`, `MOZ_ENABLE_WAYLAND=1`, `_JAVA_AWT_WM_NONREPARENTING=1`, `XMODIFIERS=@im=fcitx` (only when
      fcitx5 is installed, E6.12).
@@ -1416,6 +1416,21 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why a script:** simple, readable, repeatable. An AUR `PKGBUILD` may come later (Open-3).
 - **Done when:** fresh Arch in a **QEMU VM** → `install.sh` → reboot → tuigreet → Noobsbot Desktop with every feature
   working; then the same on real hardware.
+- **Debian 13 (trixie):** the same script, same steps, in Debian's names (G4b). Differences: `apt-get
+  --no-install-recommends` (the needed Recommends are listed); Helium from its own signed apt repository; WhiteSur
+  from its git install scripts (pinned commits); `xwayland-satellite` from the release tarball into `/usr/local/bin`
+  (built from a pinned commit when the tarball has none); Rust from `rustup` (Debian's is too old); the files in
+  `data/debian/system` replace or add to `data/system` (greetd user `_greetd` on VT 7, PAM `common-auth`, an app menu
+  for KDE apps instead of `archlinux-xdg-menu`); a `helium-browser` wrapper so the dock and Super+B work as on Arch.
+- **Modes:** **Auto** (recommended answers, no questions; also without a terminal and with `--update`) or
+  **Advanced** (every question first, then a summary to confirm, then unattended): non-free sources (Debian), keep or
+  replace another login manager, text or graphical login screen, browser, NVIDIA driver, prebuilt or source, and the
+  Debian installer's network moved to NetworkManager. Answers come from `/dev/tty` and are kept in
+  `~/.config/noobsbot-desktop/installer.conf` for later repairs.
+- **One prebuilt per CPU, for both distros:** built on the oldest supported system (Debian 13, glibc 2.41), and
+  load-tested in `archlinux:latest` and `debian:13` before it is signed (release.yml). Hardware differences are
+  handled at run time (Mesa, DRM, libinput, D-Bus services). If the prebuilt doesn't fit (another CPU, a missing
+  library), the installer builds that release from source. Watch Arch soname bumps of the linked libraries.
 
 ### E6.11 Privileged protocols & permissions
 - **What it is:** some Wayland protocols let a client **record the screen, read every window title, inject input or
@@ -1759,6 +1774,31 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Security (optional) | `sbctl` (Secure Boot, E6.6) |
 
 AUR names verified 2026-10-18. Nothing from GNOME, KDE Plasma or Cinnamon desktops is installed.
+
+## G4b. The same list on Debian 13 (installed with `--no-install-recommends`)
+| Arch | Debian 13 |
+|---|---|
+| `base-devel` `rust` | only for a build from source: `build-essential` `pkgconf` `clang` `rustup` + the `-dev` libraries (see ci.yml) |
+| `linux-firmware` `sof-firmware` | with the non-free sources: `firmware-linux-free` `firmware-linux-nonfree` `firmware-misc-nonfree` `firmware-sof-signed` `firmware-iwlwifi` `firmware-realtek` `firmware-atheros` `firmware-brcm80211` `firmware-intel-graphics`; without: `firmware-linux-free` |
+| `intel-ucode` / `amd-ucode` | `intel-microcode` / `amd64-microcode` (non-free) |
+| `mesa` `vulkan-intel` `vulkan-radeon` | `libegl1` `libgles2` `libgbm1` `libgl1-mesa-dri` · `mesa-vulkan-drivers` |
+| `intel-media-driver` | `intel-media-va-driver` |
+| `nvidia-open` `nvidia-utils` | nouveau by default; Advanced: `nvidia-open-kernel-dkms` `nvidia-driver-libs` `firmware-nvidia-gsp` `libnvidia-egl-wayland1` `libnvidia-egl-gbm1` + headers (driver 550) |
+| `networkmanager` `bluez-utils` | `network-manager` `wpasupplicant` · `bluez` (has the tools) |
+| `broadcom-wl-dkms` `linux-headers` | `broadcom-sta-dkms` + `linux-headers-<flavour>` |
+| `libinput` `libxkbcommon` `seatd` | `libinput10` `libxkbcommon0` `seatd` `libseat1` `libpam0g` `libudev1` |
+| `xorg-xwayland` `xwayland-satellite` | `xwayland` `libxcb1` `libxcb-cursor0` · xwayland-satellite from the release |
+| `greetd-tuigreet` | `tuigreet` · `dbus-user-session` `systemd-timesyncd` |
+| `polkit` `polkit-kde-agent` | `polkitd` `pkexec` `polkit-kde-agent-1` · `libpam-gnome-keyring` |
+| `pipewire` … | the same names + `pipewire-bin` (`pw-dump`) · `libglib2.0-bin` (`gdbus`) |
+| `kimageformats` `qt6-imageformats` `kconfig` | `kimageformat6-plugins` `qt6-image-formats-plugins` `libkf6config-bin` · `qt6-wayland` |
+| `archlinux-xdg-menu` | none: `data/debian/system/etc/xdg/menus/noobsbot-applications.menu` |
+| `inter-font` `ttf-jetbrains-mono` `noto-fonts` `noto-fonts-cjk` `noto-fonts-emoji` | `fonts-inter` `fonts-jetbrains-mono` `fonts-noto-core` `fonts-noto-cjk` `fonts-noto-color-emoji` |
+| `kvantum` | `qt-style-kvantum` · `breeze-icon-theme` |
+| `helium-browser-bin` (AUR) | `helium-bin` from `https://pkg.helium.computer/deb` (key in `data/debian/helium`) |
+| WhiteSur (AUR) | git: icons, cursors, gtk (needs `sassc` `libglib2.0-dev-bin` `libxml2-utils`), kvantum (pinned in install.sh) |
+
+Debian names verified 2026-10-26 (on arm64; the x86-only ones by name).
 
 ---
 
