@@ -44,7 +44,8 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates git build-essential pkgconf clang rustup \
             libxkbcommon-dev libseat-dev libinput-dev libudev-dev libsystemd-dev libdrm-dev libgbm-dev libegl-dev \
-            libgles-dev libdisplay-info-dev libpam0g-dev libwayland-dev libxcb1-dev libxcb-cursor-dev fonts-inter libkf6config-bin
+            libgles-dev libdisplay-info-dev libpam0g-dev libwayland-dev libxcb1-dev libxcb-cursor-dev fonts-inter libkf6config-bin \
+            dbus-daemon
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: actions/checkout@v4
