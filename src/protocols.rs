@@ -48,6 +48,7 @@ use smithay::{
 use crate::state::{ClientState, State};
 
 mod toplevel_list;
+mod virtual_pointer;
 
 pub struct Protocols {
     pub layer_shell: WlrLayerShellState,
@@ -71,6 +72,7 @@ pub struct Protocols {
     _system_bell: smithay::wayland::xdg_system_bell::XdgSystemBellState,
     _virtual_keyboard: VirtualKeyboardManagerState,
     toplevel_list: toplevel_list::ToplevelList,
+    _virtual_pointer: GlobalId,
 }
 
 impl Protocols {
@@ -99,6 +101,8 @@ impl Protocols {
             // A virtual keyboard types into any app (and the lock screen): trusted clients only.
             _virtual_keyboard: VirtualKeyboardManagerState::new::<State, _>(dh, crate::perms::trusted),
             toplevel_list: toplevel_list::ToplevelList::new(dh),
+            // Moves and clicks anywhere, like the virtual keyboard types: trusted clients only.
+            _virtual_pointer: virtual_pointer::global(dh),
         }
     }
 }
