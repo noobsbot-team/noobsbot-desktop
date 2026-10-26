@@ -565,6 +565,7 @@ impl State {
 
     fn screenshot_saved(&mut self, saved: Saved) {
         tracing::info!("screenshot saved to {}", saved.path.display());
+        self.ui_sound("screen-capture");
         self.clipboard.set_bytes(&self.display_handle, &self.seat.clone(), &["image/png"], saved.png);
         if self.screenshots.no_thumbnail {
             return;

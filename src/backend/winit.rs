@@ -605,6 +605,7 @@ impl State {
                         shaders,
                         &mut self.text,
                         &mut self.symbols,
+                        &mut self.icons,
                         status,
                         size,
                         dark,

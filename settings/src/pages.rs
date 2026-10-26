@@ -187,6 +187,8 @@ pub enum Kind {
     XkbOption(fn(&str) -> bool, &'static [(&'static str, &'static str)]),
     /// A whole number from a few steps: value written, label shown.
     Steps(&'static [(i64, &'static str)]),
+    /// A sound from the system's sound theme, with a button that plays it.
+    Sound,
 }
 
 pub struct Setting {
@@ -204,6 +206,8 @@ const fn s(page: Page, group: &'static str, key: &'static str, label: &'static s
 
 /// Every setting in `config.toml` (`data/config.toml`), in page order.
 pub const SETTINGS: &[Setting] = &[
+    s(Page::Sound, "Sound Effects", "sound.alert", "Alert sound", "Played when an app rings the bell", Kind::Sound),
+    s(Page::Sound, "Sound Effects", "sound.ui_sounds", "Play user interface sound effects", "Screenshots, emptying the Trash, volume keys", Kind::Toggle),
     s(
         Page::Appearance,
         "",
@@ -522,6 +526,8 @@ fn shown(key: &str, value: f64) -> String {
         "appearance.text_scale" => format!("{:.0}%", value * 100.0),
         "windows.spaces" if whole(key, value) == 0 => "Dynamic".into(),
         "sound.output" | "sound.input" => format!("{value:.0}%"),
+        "sound.balance" if value.abs() < 0.5 => "Centre".into(),
+        "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
         "keyboard.repeat_rate" => format!("{value:.0}/s"),
         "keyboard.repeat_delay" => format!("{value:.0} ms"),
@@ -624,6 +630,20 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
             swatches.into()
         }
         Kind::Zone => zone_picker(app, key),
+        Kind::Sound => {
+            let current = app.config.str(key);
+            let sounds = &*crate::system::SOUNDS;
+            let selected = sounds.iter().find(|s| s.0 == current).map(|(v, l)| Labelled(v, l));
+            let pick = pick_list(sounds.iter().map(|(v, l)| Labelled(v, l)).collect::<Vec<_>>(), selected, |c: Labelled| Message::Sound(c.0, true));
+            let play = selected.map(|s| Message::Sound(s.0, false));
+            row![
+                pick.placeholder(current).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()),
+                button(text("Play").size(12)).padding([3, 10]).style(t.push(false)).on_press_maybe(play),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into()
+        }
         Kind::XkbOption(family, choices) => {
             let options = app.config.str(key);
             let current = crate::xkb::current(options, family);
@@ -780,6 +800,13 @@ fn notifying_apps(app: &App) -> Vec<Element<'_, Message>> {
     vec![group(t, "Applications", rows)]
 }
 
+/// Sound ▸ Input's live level: 16 bars, lit up to `level` (0 … 1).
+fn meter<'a>(t: Tokens, level: f32) -> Element<'a, Message> {
+    let lit = (level * 16.0).round() as usize;
+    let bars = (0..16).map(|i| container(space()).width(6).height(12).style(Tokens::squircle(if i < lit { t.accent } else { t.fill() }, 2.0)).into());
+    iced::widget::Row::with_children(bars).spacing(3).width(206).into()
+}
+
 fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>, step: f64, value: f64) -> Element<'a, Message> {
     let bar = slider(range, value, move |v| Message::Slide(key.into(), v)).step(step).on_release(Message::Release(key.into())).width(150).style(t.slider());
     row![bar, text(shown(key, value)).size(12).color(t.secondary()).width(48).align_x(iced::alignment::Horizontal::Right)]
@@ -907,11 +934,18 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                 };
                 let key = if output { "sound.output" } else { "sound.input" };
                 let value = app.drafts.get(key).copied().unwrap_or(f64::from(device.volume.min(100)));
-                let rows = vec![
+                let mut rows = vec![
                     fact(t, "Device", device.name.clone()),
                     line(t, if output { "Volume" } else { "Input level" }, "", slider_row(t, key, 0.0..=100.0, 1.0, value)),
-                    line(t, "Mute", "", toggle(t, device.muted, move |m| Message::Mute(output, m))),
                 ];
+                if let Some(balance) = status.balance.filter(|_| output) {
+                    let value = app.drafts.get("sound.balance").copied().unwrap_or(f64::from(balance) * 100.0);
+                    rows.push(line(t, "Balance", "Left … right", slider_row(t, "sound.balance", -100.0..=100.0, 5.0, value)));
+                }
+                if !output {
+                    rows.push(line(t, "Level", "", meter(t, app.level)));
+                }
+                rows.push(line(t, "Mute", "", toggle(t, device.muted, move |m| Message::Mute(output, m))));
                 parts.push(group(t, header, rows));
             }
             parts

@@ -20,12 +20,17 @@ pub fn flash_alpha(elapsed: Duration) -> Option<f32> {
     (elapsed < FLASH).then(|| 0.4 * (1.0 - elapsed.as_secs_f32() / FLASH.as_secs_f32()))
 }
 
-/// The sound theme's `id` (described as `what`), else the freedesktop one straight to PipeWire; in the background.
-pub fn play(id: &'static str, what: &'static str) {
+/// Plays sound `name` from the sound theme, else the freedesktop one straight to PipeWire; off the calling thread.
+pub fn play(name: &str) {
+    // A theme name only: the config file's value goes into a path.
+    if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return;
+    }
+    let name = name.to_owned();
     std::thread::spawn(move || {
         let quiet = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
-        if !quiet(Command::new("canberra-gtk-play").args(["-i", id, "-d", what])) {
-            quiet(Command::new("pw-play").arg(format!("/usr/share/sounds/freedesktop/stereo/{id}.oga")));
+        if !quiet(Command::new("canberra-gtk-play").args(["-i", &name])) {
+            quiet(Command::new("pw-play").arg(format!("/usr/share/sounds/freedesktop/stereo/{name}.oga")));
         }
     });
 }
@@ -42,7 +47,14 @@ impl State {
             self.schedule_redraw();
         }
         if matches!(mode, Bell::Sound | Bell::Both) {
-            play("bell", "Alert");
+            play(&self.config.sound.alert);
+        }
+    }
+
+    /// A user interface sound (`screen-capture`, `trash-empty`), unless `[sound] ui_sounds` is off.
+    pub fn ui_sound(&self, name: &str) {
+        if self.config.sound.ui_sounds {
+            play(name);
         }
     }
 

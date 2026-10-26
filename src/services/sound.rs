@@ -23,6 +23,21 @@ pub struct Sound {
     pub input: Option<Device>,
     /// Every output, for the picker (E2.3).
     pub outputs: Vec<Output>,
+    /// Apps playing sound, for their own sliders.
+    pub streams: Vec<Stream>,
+}
+
+/// An app's playback stream.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Stream {
+    /// PipeWire's node id, for `set_stream_volume`.
+    pub id: u32,
+    /// `application.name`, else `node.name`.
+    pub name: String,
+    /// `application.icon-name`, when the app sets one.
+    pub icon: Option<String>,
+    pub volume: u8,
+    pub muted: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -136,8 +151,35 @@ fn wpctl(args: &[&str]) -> Option<String> {
 
 /// `None` when there is no output device.
 fn read() -> Option<Sound> {
-    let outputs = parse_outputs(&wpctl(&["status"]).unwrap_or_default());
-    Some(Sound { output: device(OUTPUT)?, input: device(INPUT), outputs })
+    let status = wpctl(&["status"]).unwrap_or_default();
+    let outputs = parse_outputs(&status);
+    let mut output = device(OUTPUT)?;
+    // wpctl reads one channel; with the balance off centre the louder one is the volume.
+    if let Some((loudest, _)) = crate::pactl::read().filter(|(_, balance)| *balance != 0.0) {
+        output.volume = loudest;
+    }
+    // ponytail: two wpctl runs per stream per graph change; one `pw-dump` read if many streams make that slow.
+    let streams = parse_streams(&status).into_iter().filter_map(stream).collect();
+    Some(Sound { output, input: device(INPUT), outputs, streams })
+}
+
+/// The ids in the audio `Streams:` section: `        89. Firefox`, its ports indented further under it.
+fn parse_streams(status: &str) -> Vec<u32> {
+    let audio = status.split("\nVideo\n").next().unwrap_or_default();
+    let mut lines = audio.lines().skip_while(|line| !line.ends_with("Streams:")).skip(1).filter(|l| !l.trim().is_empty()).peekable();
+    let indent = |line: &str| line.len() - line.trim_start().len();
+    let Some(top) = lines.peek().map(|l| indent(l)) else { return Vec::new() };
+    lines.filter(|l| indent(l) == top).filter_map(|l| l.trim_start().split_once(". ")?.0.parse().ok()).collect()
+}
+
+/// An app's playback stream by node id; `None` for a recording one.
+fn stream(id: u32) -> Option<Stream> {
+    let id = id.to_string();
+    let inspect = wpctl(&["inspect", &id])?;
+    let prop = |key| prop(&inspect, key);
+    (prop("media.class")?.as_str() == "Stream/Output/Audio").then_some(())?;
+    let (volume, muted) = parse_volume(&wpctl(&["get-volume", &id])?)?;
+    Some(Stream { id: id.parse().ok()?, name: prop("application.name").or_else(|| prop("node.name"))?, icon: prop("application.icon-name"), volume, muted })
 }
 
 /// The audio `Sinks:` section of `wpctl status`: `│  *   63. Raptor Lake-P/U/H cAVS Speaker      [vol: 0.89]`.
@@ -167,21 +209,32 @@ fn parse_volume(text: &str) -> Option<(u8, bool)> {
     Some(((volume * 100.0).round().clamp(0.0, 150.0) as u8, words.any(|w| w == "[MUTED]")))
 }
 
+/// `key = "value"` from `wpctl inspect`.
+fn prop(inspect: &str, key: &str) -> Option<String> {
+    inspect.lines().find_map(|line| {
+        let rest = line.trim_start_matches([' ', '*']).strip_prefix(key)?.trim_start().strip_prefix('=')?;
+        Some(rest.trim().trim_matches('"').to_owned())
+    })
+}
+
 /// `node.nick` (short, like `Speaker`) if set, else `node.description`.
 fn parse_name(inspect: &str) -> String {
-    let value = |key: &str| {
-        inspect.lines().find_map(|line| {
-            let rest = line.trim_start_matches([' ', '*']).strip_prefix(key)?.trim_start().strip_prefix('=')?;
-            Some(rest.trim().trim_matches('"').to_owned())
-        })
-    };
-    value("node.nick").or_else(|| value("node.description")).unwrap_or_default()
+    prop(inspect, "node.nick").or_else(|| prop(inspect, "node.description")).unwrap_or_default()
 }
 
 /// Volume and mute go through `wpctl`; the change comes back through the monitor like any other.
 pub fn set_volume(output: bool, percent: u8) {
+    // wpctl would centre the balance; pactl keeps it.
+    if output && crate::pactl::read().is_some_and(|(_, balance)| balance != 0.0 && crate::pactl::set(percent.min(100), balance)) {
+        return;
+    }
     let target = if output { OUTPUT } else { INPUT };
     let _ = wpctl(&["set-volume", target, &format!("{}%", percent.min(100))]);
+}
+
+/// An app's stream volume, by node id.
+pub fn set_stream_volume(id: u32, percent: u8) {
+    let _ = wpctl(&["set-volume", &id.to_string(), &format!("{}%", percent.min(100))]);
 }
 
 /// Makes output `id` the default; the change comes back through the monitor.
@@ -230,6 +283,16 @@ mod tests {
             [(60, "HDMI / DisplayPort 3 Output (Stereo)".into(), false), (63, "Raptor Lake Speaker".into(), true), (70, "AirPods".into(), false)]
         );
         assert_eq!(parse_outputs(""), []);
+    }
+
+    #[test]
+    fn streams() {
+        let status = "Audio\n ├─ Sinks:\n │  *   63. Speaker      [vol: 0.96]\n │  \n └─ Streams:\n        89. pw-play                                                     \n             90. output_FL       > Speaker:playback_FL\t[active]\n        95. Firefox\n             96. output_FR       > Speaker:playback_FR\t[active]\n\nVideo\n └─ Streams:\n        120. Camera\n";
+        assert_eq!(parse_streams(status), [89, 95]);
+        assert_eq!(parse_streams("Audio\n └─ Streams:\n\nVideo\n └─ Streams:\n        120. Camera\n"), Vec::<u32>::new());
+        let inspect = "id 89, type PipeWire:Interface:Node\n  * application.name = \"pw-play\"\n  * media.class = \"Stream/Output/Audio\"\n";
+        assert_eq!(prop(inspect, "media.class").as_deref(), Some("Stream/Output/Audio"));
+        assert_eq!(prop(inspect, "application.icon-name"), None);
     }
 
     #[test]

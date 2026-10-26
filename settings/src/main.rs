@@ -8,6 +8,8 @@ mod config;
 mod display_info;
 mod gallery;
 mod network;
+#[path = "../../src/pactl.rs"]
+mod pactl;
 mod pages;
 mod shortcuts;
 mod style;
@@ -48,6 +50,10 @@ fn main() -> iced::Result {
             if app.page == Page::Bluetooth {
                 all.push(iced::Subscription::run(system::discover).map(|()| Message::Rescan));
                 all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::Rescan));
+            }
+            // The microphone's live level, only while Sound shows it.
+            if app.page == Page::Sound && app.status.input.is_some() {
+                all.push(iced::Subscription::run(system::level).map(Message::Level));
             }
             if app.shortcuts.as_ref().is_some_and(|e| e.recording.is_some()) {
                 all.push(iced::event::listen_with(shortcuts::key_pressed));
@@ -117,6 +123,8 @@ pub struct App {
     notify_app: Option<String>,
     /// Keyboard ▸ Keyboard Shortcuts…, open.
     shortcuts: Option<shortcuts::Editor>,
+    /// Sound ▸ Input: the microphone's level, 0 … 1.
+    level: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -194,6 +202,10 @@ pub enum Message {
     NotifyApp(Option<String>),
     /// An app's new `[notification_apps]` rule.
     AppRule(String, pages::AppRule),
+    /// The microphone's level, 0 … 1.
+    Level(f32),
+    /// A theme sound plays; `true`: it becomes the alert sound.
+    Sound(&'static str, bool),
 }
 
 impl App {
@@ -220,6 +232,7 @@ impl App {
             notifiers: config::notifying_apps(),
             notify_app: None,
             shortcuts: None,
+            level: 0.0,
         };
         app.retheme();
         if page == Page::General {
@@ -278,8 +291,10 @@ impl App {
             }
             Message::Release(key) => {
                 let Some(value) = self.drafts.remove(&key) else { return Task::none() };
-                if let Some(output) = key.strip_prefix("sound.").map(|k| k == "output") {
-                    return Task::perform(system::set_volume(output, value.round() as u8), Message::Status);
+                match key.as_str() {
+                    "sound.output" | "sound.input" => return Task::perform(system::set_volume(key == "sound.output", value.round() as u8), Message::Status),
+                    "sound.balance" => return Task::perform(system::set_balance((value / 100.0) as f32), Message::Status),
+                    _ => {}
                 }
                 match pages::setting(&key).map(|s| s.kind) {
                     Some(pages::Kind::Slider { step, .. }) if step >= 1.0 => self.save(&key, pages::whole(&key, value)),
@@ -307,6 +322,13 @@ impl App {
                 }
             }
             Message::Status(status) => self.status = status,
+            Message::Level(level) => self.level = level,
+            Message::Sound(name, save) => {
+                if save {
+                    self.save("sound.alert", name);
+                }
+                system::play(name);
+            }
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Wallpaper(path) => {
                 self.save("appearance.wallpaper", path.as_str());

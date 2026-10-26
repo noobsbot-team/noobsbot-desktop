@@ -476,6 +476,7 @@ impl State {
                 output.volume = step(output.volume, up, if matches!(action, Action::VolumeFine(_)) { FINE_STEP } else { STEP });
                 self.services.send(Command::Volume { output: true, percent: output.volume });
                 self.show_volume();
+                self.ui_sound("audio-volume-change");
             }
             Action::Mute | Action::MicMute => {
                 let output = action == Action::Mute;
