@@ -1,6 +1,6 @@
 # Noobsbot Desktop — Design Plan (v1 "Opal")
 
-A complete, macOS-style desktop environment for Linux with a glassy theme, written in Rust, for a fresh
+A complete desktop environment for Linux with a glassy theme, a global menu bar and a dock, written in Rust, for a fresh
 Arch Linux system.
 
 > Status: **planning only — no code until the owner says "start"**.
@@ -8,7 +8,7 @@ Arch Linux system.
 > Noobsbot Terminal. Technical name **`noobsbot-desktop`** (program, package, config folder, session file).
 > **Release codename for version 1: "Opal"** (shown as "Noobsbot Desktop 1 · Opal" in About). An opal is a gem
 > that looks like glass with soft light inside but isn't see-through, like this design: glassy, yet mostly solid.
-> Later major releases get other gem codenames (e.g. Pearl, Jade, Onyx), the way macOS names its versions.
+> Later major releases get other gem codenames (e.g. Pearl, Jade, Onyx).
 > Code will live in `~/Projects/Linux Tools/custom-desktop-environemt/` (folder name kept as is).
 > **Repository:** `github.com/noobsbot-team/noobsbot-desktop`, next to `noobsbot-team/noobsbot-terminal`. Both
 > started on the owner's account (`anil0403/…`) and moved to the team's organisation; GitHub redirects the old URLs.
@@ -22,7 +22,7 @@ Arch Linux system.
 - **Part A** — What we are building (goal, requirements, non-goals, layers)
 - **Part B** — Glossary
 - **Part C** — Core technology choices (what, why, what we rejected)
-- **Part D** — Design system: the glassy macOS look shared by every element
+- **Part D** — Design system: the glassy look shared by every element
 - **Part E** — Milestones M1–M8: every element in detail (what, design, built with, why, done when)
 - **Part F** — Apps that ship with Noobsbot Desktop
 - **Part G** — System layer: hardware, drivers, services, package list
@@ -39,14 +39,14 @@ Arch Linux system.
 ## A1. The goal
 Noobsbot Desktop is a whole desktop: everything you see after logging in. That means windows, menu bar, dock,
 Spotlight, Launchpad, Notification Center, Control Center, calendar, Spaces, Mission Control, touchpad gestures,
-lock screen and System Settings. It **looks and behaves like macOS** with a **glassy theme**, is installed on a
+lock screen and System Settings. It has a **global menu bar, a dock and a glassy theme**, and **behaves the same way everywhere**, is installed on a
 **fresh Arch Linux** system by one script, does not rely on any other desktop,
 and must be **very fast** while using **as little RAM and CPU as possible**.
 
 ## A2. Requirements (set by the owner)
 | # | Requirement | Where |
 |---|---|---|
-| R1 | Look and feel like macOS, **well designed** everywhere | Part D + the "Design" block of every element in Part E |
+| R1 | A consistent glassy look and feel, **well designed** everywhere | Part D + the "Design" block of every element in Part E |
 | R2 | Glassy theme, **no blur**, low transparency (mostly solid) | D3 materials |
 | R3 | Super fast, minimal system resources | Part C, Part I |
 | R4 | Rust (or a better language if one exists) | C1 |
@@ -160,7 +160,7 @@ Each choice lists **what it decides**, **what we use**, **why**, and **what we r
 - **Why:** (1) **RAM:** each separate GUI program costs about 20–40 MB (its own GPU context, fonts, toolkit).
   Eight shell programs would be 160–320 MB; one process stays under 100 MB. (2) **Perfect sync:** dock
   magnification, gestures and Mission Control move in the same frame as the windows. (3) **Simpler:** the shell
-  sees every window directly, with no extra protocols. (4) macOS works the same way (WindowServer + Dock).
+  sees every window directly, with no extra protocols. (4) A single display server that owns the dock is a proven design.
 - **Separate on purpose:** real apps and the future Settings app. They're big, and their bugs mustn't kill the desktop.
 - **Downside & mitigation:** a shell crash ends the session. Mitigated with Rust safety, no `unwrap()` in shell
   code (enforced by Clippy lints `unwrap_used` / `expect_used` / `panic` in CI, not only by rule), and unit tests.
@@ -231,7 +231,7 @@ one product. All values live in `src/theme.rs` and can be overridden in `config.
 | `window-bg` | `#ECECEC` | `#1E1E1E` | Settings app window, alerts |
 | `accent` (default blue) | `#007AFF` | `#0A84FF` | selection, toggles on, focus ring, default button |
 
-### Accent choices (macOS set)
+### Accent choices (eight accent colours)
 | Blue | Purple | Pink | Red | Orange | Yellow | Green | Graphite |
 |---|---|---|---|---|---|---|---|
 | `#007AFF`/`#0A84FF` | `#AF52DE`/`#BF5AF2` | `#FF2D55`/`#FF375F` | `#FF3B30`/`#FF453A` | `#FF9500`/`#FF9F0A` | `#FFCC00`/`#FFD60A` | `#34C759`/`#30D158` | `#8E8E93`/`#98989D` |
@@ -342,7 +342,7 @@ drawn in one shader pass. Opacity is per material, multiplied by the global `gla
 ## D9. Iconography
 | Kind | Choice | Size |
 |---|---|---|
-| App icons | **WhiteSur** icon theme (macOS Big Sur style squircles) | dock 84 (zoomed to 126, like the current Plank), Launchpad 80, switcher 96, Spotlight 24/32, notifications 32 |
+| App icons | **WhiteSur** icon theme (squircle style) | dock 84 (zoomed to 126, like the current Plank), Launchpad 80, switcher 96, Spotlight 24/32, notifications 32 |
 | Symbols (menu bar, Control Center, OSD, menus) | **Phosphor Icons** (MIT, free; regular + fill weights, similar feel to Apple's SF Symbols) bundled as SVG | 16 (menu bar), 18–20 (Control Center), 24 (OSD) |
 | Cursors | **WhiteSur cursors** | 24 (scales with display) |
 - Menu-bar symbols are monochrome `label`; Control Center glyphs flip to white on accent when on.
@@ -360,7 +360,7 @@ drawn in one shader pass. Opacity is per material, multiplied by the global `gla
 
 ## D11. Wallpaper
 - Ships with **our own** wallpapers: a soft opal-like colour-gradient set (milky white with hints of blue, pink and green; a dark variant) with light and dark variants (dark used
-  automatically in dark mode). macOS wallpapers are copyrighted.
+  automatically in dark mode). Third-party OS wallpapers are copyrighted.
 - Any PNG/JPEG can be set (fill / fit / centre). Lock screen uses the same wallpaper darkened 30%.
 
 ## D12. Design workflow (how "well designed" is guaranteed)
@@ -382,7 +382,7 @@ included, with no element ever cut off or overflowing. Rules every element follo
 | **Minimum screen** | 1280 × 720 logical. Everything below is checked at 1280 × 720, 1366 × 768, 1920 × 1080, 2560 × 1440 @ 150%, 3840 × 2160 @ 200% and 1080 × 1920 (portrait) in the mockups and in the design review |
 | **Menu bar** | fixed 24 px; right-side items keep their order and, when space runs out, drop left-to-right into a "»" overflow menu (tray icons first, clock last to go); app-menu titles truncate with "…" and never wrap |
 | **Control Center** | fixed 320 px wide; if the screen is shorter than its height, the panel scrolls (never taller than screen − menu bar − 16) |
-| **Notification Center** | fixed 360 px wide, full height, scrolls; on screens narrower than 1366, it overlaps the content like macOS (it never pushes windows) |
+| **Notification Center** | fixed 360 px wide, full height, scrolls; on screens narrower than 1366, it overlaps the content (it never pushes windows) |
 | **Spotlight** | 680 px wide, or **90% of the screen width** when narrower; results list capped at 8 rows or at the space above the dock |
 | **Launchpad** | grid computed from the screen: columns = ⌊(width − 2 × 48) / 112⌋ clamped to 5…9, rows = ⌊(height − 160) / 120⌋ clamped to 3…6 (7 × 5 at 1080p, 5 × 4 at 720p, 9 × 6 at 4K); icon 80 px, or 64 px under 1366 wide |
 | **Dock** | exactly Plank's rule: when the pinned + running icons don't fit the screen width, the **icon size shrinks** (84 → down to 32) until they do; zoom still applies. One dock per monitor, each fitted to its own width |
