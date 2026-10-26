@@ -258,7 +258,8 @@ settings file.
 | Super+Shift+Left / Right | move the window to the previous / next Space |
 | Super+Ctrl+Left / Right / Up / Down | tile the window to the left / right / top / bottom half |
 | Super+` | next window of the same app |
-| Super+Shift+3 / 4 / 5 | screenshot: screen / region / toolbar |
+| Super+Shift+3 / 4 / 5 | screenshot: screen / region (Space: a window) / toolbar |
+| Alt+Print | screenshot of the focused window |
 | Super+Ctrl+Q | lock screen |
 | Super+Shift+Q | log out (asks first) |
 | Super+Alt+Esc | Force Quit |

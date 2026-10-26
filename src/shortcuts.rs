@@ -241,6 +241,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("show-desktop", "") => Some(Action::ShowDesktop),
         ("input-source", "") => Some(Action::Layout(None)),
         ("screenshot", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Screen)),
+        ("screenshot-window", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Window)),
         ("screenshot-region", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Region)),
         ("screenshot-toolbar", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Toolbar)),
         _ => None,
@@ -656,6 +657,8 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_Explorer, false), Some(&Action::DefaultApp("inode/directory".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Calculator, false), Some(&Action::DefaultApp("Calculator".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Search, false), Some(&Action::Spotlight));
+        let alt = ModifiersState { alt: true, ..Default::default() };
+        assert_eq!(lookup(&table, &alt, Keysym::Print, false), Some(&Action::Screenshot(crate::shell::screenshot::Start::Window)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
