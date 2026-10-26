@@ -24,7 +24,8 @@ pub async fn open(title: &'static str, directory: bool, filter: Option<Filter>) 
         let bus = zbus::Connection::session().await?;
         // The Request object's path is known before the call (`handle_token`), so its Response can't be missed.
         let sender = bus.unique_name().map(|n| n.trim_start_matches(':').replace('.', "_")).unwrap_or_default();
-        let token = format!("noobsbot{}", std::process::id());
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let token = format!("noobsbot{}_{}", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
         let request = format!("{PORTAL_PATH}/request/{sender}/{token}");
         let rule = zbus::MatchRule::builder()
             .msg_type(zbus::message::Type::Signal)
