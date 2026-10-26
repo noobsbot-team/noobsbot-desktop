@@ -440,6 +440,14 @@ impl Layout {
 
 impl State {
     /// The app id a LauncherEntry names `item` by: its key, or anything `Apps::find` resolves to it.
+    /// `[notification_apps]` turns the dock item `key`'s badge off: a rule by its name, its desktop id, or the
+    /// name its notifications carry along with that id.
+    fn badge_off(&self, key: &str) -> bool {
+        let name = self.apps.find(key).map(|a| a.name.as_str());
+        let sends = |app: &str| self.notifications.list.iter().any(|n| n.app == app && n.desktop_entry == key);
+        self.config.notification_apps.iter().any(|(app, rule)| !rule.badge && (app == key || Some(app.as_str()) == name || sends(app)))
+    }
+
     fn entry_for(&self, item: &Item) -> Option<&(Entry, Option<Instant>)> {
         let fx = &self.dock_fx;
         fx.entries.get(&item.key).or_else(|| fx.entries.iter().find(|(k, _)| self.apps.find(k).is_some_and(|a| a.id == item.key)).map(|(_, e)| e))
@@ -643,7 +651,8 @@ impl State {
             }
             frame.layout = Some(layout);
         }
-        frame.badges = items.iter().enumerate().filter_map(|(i, item)| Some((i, self.entry_for(item)?.0))).collect();
+        frame.badges =
+            items.iter().enumerate().filter(|(_, item)| !self.badge_off(&item.key)).filter_map(|(i, item)| Some((i, self.entry_for(item)?.0))).collect();
         frame.animating = animating;
         frame
     }
