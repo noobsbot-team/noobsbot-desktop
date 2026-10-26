@@ -199,6 +199,15 @@ impl Udev {
         self.gpus.devices_mut().ok()?.find(|d| *d.node() == primary).map(ApiDevice::renderer_mut)
     }
 
+    /// The displays mirroring `source` draw a frame (each on its own frame clock).
+    fn redraw_mirrors(&mut self, handle: &LoopHandle<'static, State>, source: &str) {
+        for (node, card) in &mut self.cards {
+            for (crtc, screen) in card.screens.iter_mut().filter(|(_, s)| s.mirror_of.as_deref() == Some(source)) {
+                screen.request(handle, *node, *crtc);
+            }
+        }
+    }
+
     /// Every display draws a frame (each when its own frame clock says).
     pub fn redraw_all(&mut self, handle: &LoopHandle<'static, State>) {
         for (node, card) in &mut self.cards {
@@ -473,6 +482,9 @@ impl State {
         }
         if animating || self.pointer_assist.animating(self.frame_time, self.dwell_wait()) {
             screen.again = true;
+        }
+        if damaged == Some(true) {
+            udev.redraw_mirrors(&self.loop_handle, &output.name());
         }
         if let Some(damaged) = damaged {
             self.after_frame(&output, pixels, damaged);
