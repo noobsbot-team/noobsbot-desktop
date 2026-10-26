@@ -285,8 +285,6 @@ pub struct Keyboard {
     pub layout: String,
     pub variant: String,
     pub options: String,
-    /// Super acts as Cmd (E1.6).
-    pub mac_keys: bool,
     /// Key repeat: held this many ms, then this many times a second; 0 = off.
     pub repeat_delay: u32,
     pub repeat_rate: u32,
@@ -294,7 +292,7 @@ pub struct Keyboard {
 
 impl Default for Keyboard {
     fn default() -> Self {
-        Self { layout: String::new(), variant: String::new(), options: String::new(), mac_keys: false, repeat_delay: 500, repeat_rate: 30 }
+        Self { layout: String::new(), variant: String::new(), options: String::new(), repeat_delay: 500, repeat_rate: 30 }
     }
 }
 
@@ -1521,8 +1519,8 @@ mod tests {
 
     #[test]
     fn config_layout_wins() {
-        let k = Keyboard { layout: "de".into(), variant: "neo".into(), options: "caps:escape".into(), mac_keys: true, ..Default::default() }.resolved();
-        assert_eq!((k.layout.as_str(), k.variant.as_str(), k.options.as_str(), k.mac_keys), ("de", "neo", "caps:escape", true));
+        let k = Keyboard { layout: "de".into(), variant: "neo".into(), options: "caps:escape".into(), ..Default::default() }.resolved();
+        assert_eq!((k.layout.as_str(), k.variant.as_str(), k.options.as_str()), ("de", "neo", "caps:escape"));
     }
 
     #[test]

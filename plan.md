@@ -1610,7 +1610,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 |---|---|---|
 | ~~`[windows] double_click_title` is shown in Settings but ignored~~ | `src/decorations.rs` | Done: Zoom / Minimise / Nothing honoured |
 | ~~`[windows] snapping` is on by default, has a toggle and a README line, but nothing reads it~~ | `src/grabs.rs` | Done: gates edge tiling while dragging (E8.5) |
-| `[keyboard] mac_keys` toggle is parsed but never applied | `src/config.rs` only | implement the E1.6 swap or hide the toggle. Partly: no Settings row any more; the key is still parsed and unused |
+| ~~`[keyboard] mac_keys` toggle is parsed but never applied~~ Done: the key is gone | `src/config.rs` only | implement the E1.6 swap or hide the toggle. Partly: no Settings row any more; the key is still parsed and unused |
 | ~~Window rule `opacity` is documented but not drawn~~ | `src/render/mod.rs` | Done: fades the app's content; title bar and shadow stay solid |
 | ~~Minimise from apps that draw their own title bar (GTK4, libadwaita) does nothing~~ | `src/state.rs` | Done: `minimize_request` calls `minimise` |
 | ~~Trackpad tap-to-click and natural scroll apply only when the device is re-plugged~~ | `src/backend/udev.rs` | Done: `configure_inputs` re-applies trackpad and mouse settings on reload |
