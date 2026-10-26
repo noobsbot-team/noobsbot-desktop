@@ -395,7 +395,7 @@ impl State {
         let Some(Popup::Notifications { year, month }) = self.popup else { return None };
         let rows = grid(year, month, self.config.clock.week_start.into()).len();
         let up_next = self.calendar_view(year, month, self.config.clock.week_start.into()).1.len();
-        Some(center(&self.notifications, self.output_size(), self.dnd, rows, up_next, self.batteries().len(), self.weather.is_some()))
+        Some(center(&self.notifications, self.output_size(), self.config.notifications.dnd, rows, up_next, self.batteries().len(), self.weather.is_some()))
     }
 
     /// A notification from an app: stored, and shown as a banner unless Do Not Disturb is on, a fullscreen app has
@@ -407,7 +407,7 @@ impl State {
         if let Some(lock) = self.lock.as_mut() {
             lock.missed += 1;
         }
-        let quiet = self.dnd || self.locked() || self.menu_bar().is_none() || self.center_open();
+        let quiet = self.config.notifications.dnd || self.locked() || self.menu_bar().is_none() || self.center_open();
         let transient = n.transient;
         self.notifications.insert(n);
         self.notifications.banners.retain(|b| *b != id);
@@ -551,7 +551,10 @@ impl State {
         let Some(center) = self.center_layout() else { return };
         match center_hit(&center, location) {
             Some(Hit::ClearAll) => self.clear(self.notifications.list.iter().map(|n| n.id).collect()),
-            Some(Hit::DndOff) => self.dnd = false,
+            Some(Hit::DndOff) => {
+                self.config.notifications.dnd = false;
+                crate::config::save_key("notifications", "dnd", "false");
+            }
             Some(Hit::Collapse) => self.notifications.expanded = None,
             Some(Hit::Expand(app)) => self.notifications.expanded = Some(app),
             Some(Hit::ClearGroup(app)) => self.clear(self.notifications.list.iter().filter(|n| n.app == app).map(|n| n.id).collect()),

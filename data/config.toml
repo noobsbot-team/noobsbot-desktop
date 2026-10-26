@@ -167,6 +167,10 @@ channel = "stable"
 # arrange; right-click for Open, Rename, Move to Trash and New Folder.
 icons = true
 
+[notifications]
+# Do Not Disturb (the Control Center tile): banners stay quiet; Notification Center still collects them.
+dnd = false
+
 [app_drawer]
 # The app drawer (Super+A, or the "app-drawer" dock item): apps by category, search, Favorites and Recent.
 # Press and release Super on its own to open it, like a classic start menu. Super+key shortcuts, Super+drag, holding
