@@ -23,7 +23,7 @@ pub fn on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
-fn run(program: &str, args: &[&str]) -> Option<String> {
+pub fn run(program: &str, args: &[&str]) -> Option<String> {
     let out = Command::new(program).args(args).stderr(Stdio::null()).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -36,21 +36,6 @@ pub fn engines() -> Option<Vec<(String, String)>> {
 /// The user's engines in switching order (`preload-engines`).
 pub fn preloaded() -> Vec<String> {
     run("gsettings", &["get", SCHEMA, "preload-engines"]).map(|text| parse_list(&text)).unwrap_or_default()
-}
-
-/// The user's engines with their long names, and the active one's name; `None` while ibus-daemon isn't running.
-pub fn read() -> Option<(Vec<(String, String)>, String)> {
-    let all = engines()?;
-    let named = preloaded().into_iter().map(|id| {
-        let name = all.iter().find(|e| e.0 == id).map_or_else(|| id.clone(), |e| e.1.clone());
-        (id, name)
-    });
-    let current = run("ibus", &["engine"]).unwrap_or_default().trim().to_owned();
-    Some((named.collect(), current))
-}
-
-pub fn set_current(name: &str) -> bool {
-    run("ibus", &["engine", name]).is_some()
 }
 
 /// `ibus list-engine`: `language: Chinese` headers, then `  pinyin - Intelligent Pinyin` per engine.
