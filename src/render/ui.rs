@@ -54,8 +54,11 @@ const TITLE1: Style = Style { size: 22, line_height: 26, ..BODY };
 const TITLE2: Style = Style { size: 17, line_height: 22, weight: 600, ..BODY };
 
 const WHITE: [u8; 4] = [255; 4];
-/// D8 badge red.
-const RED: [f32; 4] = [1.0, 0x3B as f32 / 255.0, 0x30 as f32 / 255.0, 1.0];
+/// D2 red (light): badges, recording, not responding.
+pub const RED: [u8; 4] = [0xFF, 0x3B, 0x30, 0xFF];
+/// D5 radii: button, text field, selected row; menu, popover, small tile.
+pub const CONTROL_RADIUS: f64 = 6.0;
+pub const POPOVER_RADIUS: f64 = 8.0;
 
 pub struct Ui<'a> {
     pub shaders: &'a Shaders,
@@ -352,7 +355,7 @@ impl Ui<'_> {
         let h = ts(16);
         let w = (self.width(count, CAPTION) + ts(8)).max(h);
         let rect = Rectangle::new((icon.loc.x + icon.size.w + 4 - w, icon.loc.y - 4).into(), (w, h).into());
-        self.shape(rect, RED, f64::from(h) / 2.0);
+        self.shape(rect, RED.map(|c| f32::from(c) / 255.0), f64::from(h) / 2.0);
         self.text(count, Style { color: WHITE, ..CAPTION }, rect, Align::Centre);
     }
 
