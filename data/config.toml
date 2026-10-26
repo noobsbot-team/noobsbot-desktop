@@ -161,6 +161,10 @@ sleep_on_battery = 900
 sleep_on_ac = 0
 # Lock the screen when it turns off. It always locks before sleeping.
 lock = true
+# Seconds after the screen turns off before it locks (0 = at once); input before then wakes it unlocked.
+lock_delay = 0
+# A line on the lock screen, under the clock ("If found, call …").
+lock_message = ""
 
 [privacy]
 # Programs (by path) allowed to record the screen through wlr-screencopy (grim, wf-recorder, OBS), and those denied.
@@ -198,6 +202,11 @@ icons = true
 [notifications]
 # Do Not Disturb (the Control Center tile): banners stay quiet; Notification Center still collects them.
 dnd = false
+
+[notification_apps]
+# Per app, by the name it sends: "banner" (goes after a few seconds), "alert" (stays until dismissed), "none" (only in
+# Notification Center) or "off" (dropped). Apps not listed show banners. System Settings ▸ Notifications sets these.
+# "Firefox" = "alert"
 
 [app_drawer]
 # The app drawer (Super+A, or the "app-drawer" dock item): apps by category, search, Favorites and Recent.

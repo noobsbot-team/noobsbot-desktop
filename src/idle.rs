@@ -35,6 +35,8 @@ pub enum Stage {
     Active,
     Dim,
     Off,
+    /// Off and locked (`lock_delay` after `Off`).
+    Locked,
     Asleep,
 }
 
@@ -69,7 +71,9 @@ impl Idle {
 /// The step after `stage` and how long until it is due after `idle` without input; `None`: nothing more to do.
 pub fn next(config: &config::Idle, on_battery: bool, stage: Stage, idle: Duration) -> Option<(Stage, Duration)> {
     let sleep = if on_battery { config.sleep_on_battery } else { config.sleep_on_ac };
-    [(Stage::Dim, config.dim), (Stage::Off, config.screen_off), (Stage::Asleep, sleep)]
+    let lock = if config.lock && config.screen_off > 0 { config.screen_off.saturating_add(config.lock_delay) } else { 0 };
+    // On a tie the earlier stage comes first (`min_by_key` keeps the first), so Off still precedes Locked.
+    [(Stage::Dim, config.dim), (Stage::Off, config.screen_off), (Stage::Locked, lock), (Stage::Asleep, sleep)]
         .into_iter()
         .filter(|&(s, secs)| s > stage && secs > 0)
         .min_by_key(|&(_, secs)| secs)
@@ -125,7 +129,7 @@ impl State {
             self.idle.stage = stage;
             self.schedule_redraw();
             match stage {
-                Stage::Off if self.config.idle.lock => self.lock_screen(),
+                Stage::Locked => self.lock_screen(),
                 Stage::Asleep => self.sleep(),
                 _ => {}
             }
@@ -140,7 +144,7 @@ impl State {
         match self.idle.stage {
             Stage::Active => None,
             Stage::Dim => Some(0.5),
-            Stage::Off | Stage::Asleep => Some(1.0),
+            Stage::Off | Stage::Locked | Stage::Asleep => Some(1.0),
         }
     }
 
@@ -206,8 +210,10 @@ mod tests {
         assert_eq!(next(&c, true, Stage::Active, secs(0)), Some((Stage::Dim, secs(120))));
         assert_eq!(next(&c, true, Stage::Active, secs(150)), Some((Stage::Dim, Duration::ZERO)));
         assert_eq!(next(&c, true, Stage::Dim, secs(150)), Some((Stage::Off, secs(150))));
-        assert_eq!(next(&c, true, Stage::Off, secs(300)), Some((Stage::Asleep, secs(600))));
-        assert_eq!(next(&c, false, Stage::Off, secs(300)), None, "never sleeps on AC by default");
+        assert_eq!(next(&c, true, Stage::Dim, secs(300)), Some((Stage::Off, Duration::ZERO)));
+        assert_eq!(next(&c, true, Stage::Off, secs(300)), Some((Stage::Locked, Duration::ZERO)), "locks with the screen by default");
+        assert_eq!(next(&c, true, Stage::Locked, secs(300)), Some((Stage::Asleep, secs(600))));
+        assert_eq!(next(&c, false, Stage::Locked, secs(300)), None, "never sleeps on AC by default");
         assert_eq!(next(&c, true, Stage::Asleep, secs(5000)), None);
     }
 
@@ -215,8 +221,16 @@ mod tests {
     fn zero_is_never_and_order_follows_the_times() {
         let c = config::Idle { dim: 0, screen_off: 60, sleep_on_battery: 30, ..Default::default() };
         assert_eq!(next(&c, true, Stage::Active, secs(0)), Some((Stage::Asleep, secs(30))), "sleep first when it comes first");
-        let off = config::Idle { dim: 0, screen_off: 0, sleep_on_battery: 0, sleep_on_ac: 0, lock: true };
+        let off = config::Idle { dim: 0, screen_off: 0, sleep_on_battery: 0, sleep_on_ac: 0, lock: true, ..Default::default() };
         assert_eq!(next(&off, true, Stage::Active, secs(0)), None);
+    }
+
+    #[test]
+    fn lock_waits_its_delay_after_the_screen_goes_off() {
+        let c = config::Idle { lock_delay: 60, ..Default::default() };
+        assert_eq!(next(&c, false, Stage::Off, secs(300)), Some((Stage::Locked, secs(60))));
+        let unlocked = config::Idle { lock: false, ..Default::default() };
+        assert_eq!(next(&unlocked, false, Stage::Off, secs(300)), None);
     }
 
     #[test]

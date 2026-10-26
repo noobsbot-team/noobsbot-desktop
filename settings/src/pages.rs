@@ -175,6 +175,8 @@ pub enum Kind {
     Zone,
     /// One xkb option in a comma list (the key is `keyboard.options`): its family, and the choices ("" = none).
     XkbOption(fn(&str) -> bool, &'static [(&'static str, &'static str)]),
+    /// A whole number from a few steps: value written, label shown.
+    Steps(&'static [(i64, &'static str)]),
 }
 
 pub struct Setting {
@@ -299,6 +301,15 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::LockScreen, "", "idle.dim", "Dim the display when inactive", "", Kind::Slider { min: 0.0, max: 600.0, step: 30.0 }),
     s(Page::LockScreen, "", "idle.screen_off", "Turn display off when inactive", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::LockScreen, "", "idle.lock", "Lock when the display turns off", "It always locks before sleeping", Kind::Toggle),
+    s(
+        Page::LockScreen,
+        "",
+        "idle.lock_delay",
+        "Require password after the display turns off",
+        "",
+        Kind::Steps(&[(0, "Immediately"), (5, "5 s"), (60, "1 min"), (300, "5 min"), (3600, "1 h")]),
+    ),
+    s(Page::LockScreen, "", "idle.lock_message", "Message on the lock screen", "Shown under the clock", Kind::Text("If found, please call …")),
     s(Page::Battery, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
@@ -382,16 +393,10 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
     let key = setting.key;
     match setting.kind {
         Kind::Toggle => toggle(t, app.config.bool(key), move |on| Message::Toggle(key, on)),
-        Kind::Choice(options) => {
-            let current = app.config.str(key);
-            let mut segments = row![].spacing(2);
-            for &(value, label) in options {
-                let selected = current == value;
-                let segment =
-                    button(text(label).size(12).center()).padding([2, 10]).height(22).style(t.segment(selected)).on_press(Message::Choose(key, value));
-                segments = segments.push(segment);
-            }
-            container(segments).padding(2).style(t.field()).into()
+        Kind::Choice(options) => choice(t, app.config.str(key), options, key),
+        Kind::Steps(steps) => {
+            let current = app.config.num(key) as i64;
+            segments(t, steps.iter().map(|&(n, label)| (label.to_owned(), current == n, Message::Number(key, n))).collect())
         }
         Kind::Slider { min, max, step } => {
             let value = app.drafts.get(key).copied().unwrap_or_else(|| app.config.num(key));
@@ -417,7 +422,12 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
                 let mark: Element<'_, Message> =
                     if selected { container(space()).width(6).height(6).style(Tokens::squircle(Color::WHITE, 3.0)).into() } else { space().into() };
                 swatches = swatches.push(
-                    button(container(mark).center(18)).padding(0).width(18).height(18).style(t.swatch(color, selected)).on_press(Message::Choose(key, name)),
+                    button(container(mark).center(18))
+                        .padding(0)
+                        .width(18)
+                        .height(18)
+                        .style(t.swatch(color, selected))
+                        .on_press(Message::Choose(key.into(), name)),
                 );
             }
             swatches.into()
@@ -463,7 +473,7 @@ fn zone_picker<'a>(app: &'a App, key: &'static str) -> Element<'a, Message> {
         if query.is_empty() { Vec::new() } else { automatic.into_iter().chain(crate::system::matching_zones(&query).map(|z| (z, z))).take(8).collect() };
     let field = text_input(current, typed)
         .on_input(move |v| Message::Type(key.into(), v))
-        .on_submit_maybe(matches.first().map(|&(zone, _)| Message::Choose(key, zone)))
+        .on_submit_maybe(matches.first().map(|&(zone, _)| Message::Choose(key.into(), zone)))
         .size(13)
         .padding([3, 8])
         .style(t.input(false));
@@ -479,7 +489,7 @@ fn zone_picker<'a>(app: &'a App, key: &'static str) -> Element<'a, Message> {
                         .padding([3, 8])
                         .width(Length::Fill)
                         .style(t.sidebar_row(false))
-                        .on_press(Message::Choose(key, zone))
+                        .on_press(Message::Choose(key.into(), zone))
                         .into()
                 })
                 .collect()
@@ -487,6 +497,35 @@ fn zone_picker<'a>(app: &'a App, key: &'static str) -> Element<'a, Message> {
         picker = picker.push(container(column(rows)).padding(2).style(t.group()));
     }
     picker.into()
+}
+
+/// A segmented control writing `key`.
+fn choice<'a>(t: Tokens, current: &str, options: &'static [(&'static str, &'static str)], key: &str) -> Element<'a, Message> {
+    segments(t, options.iter().map(|&(value, label)| (label.to_owned(), current == value, Message::Choose(key.into(), value))).collect())
+}
+
+/// The `[notification_apps]` styles, as the desktop reads them.
+const APP_STYLES: &[(&str, &str)] = &[("banner", "Banners"), ("alert", "Alerts"), ("none", "None"), ("off", "Off")];
+
+/// Notifications ▸ Applications: each app that has notified (or has a style set), with its style.
+fn notifying_apps(app: &App) -> Vec<Element<'_, Message>> {
+    let t = app.tokens;
+    let mut apps = app.config.keys("notification_apps");
+    apps.extend(app.notifiers.iter().cloned());
+    apps.sort();
+    apps.dedup();
+    if apps.is_empty() {
+        return vec![note(t, "Apps show here once they send a notification.")];
+    }
+    let rows = apps
+        .into_iter()
+        .map(|name| {
+            let key = format!("notification_apps.{name}");
+            let current = app.config.get(&key).and_then(toml_edit::Value::as_str).unwrap_or("banner");
+            line(t, name, "", choice(t, current, APP_STYLES, &key))
+        })
+        .collect();
+    vec![group(t, "Applications", rows), note(t, "Alerts stay until dismissed; None keeps them in Notification Center only; Off drops them.")]
 }
 
 fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>, step: f64, value: f64) -> Element<'a, Message> {
@@ -669,7 +708,6 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             };
             vec![group(t, "", rows), group(t, "", vec![mode])]
         }
-        Page::Notifications => vec![note(t, "Per-app banners and the Do Not Disturb schedule come here.")],
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
         Page::Appearance => vec![gallery(app)],
         _ => Vec::new(),
@@ -760,7 +798,15 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             parts.extend([group(t, "Shortcuts", rows), note(t, "Type an action and press Return; “none” frees the key.")]);
             parts
         }
-        Page::General => vec![login_items(app), group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))])],
+        Page::Notifications => notifying_apps(app),
+        Page::General => {
+            let clear = button(text("Clear").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ClearRecent);
+            vec![
+                login_items(app),
+                group(t, "Privacy", vec![line(t, "Recent files", "Every app's recent documents list", clear.into())]),
+                group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))]),
+            ]
+        }
         _ => Vec::new(),
     }
 }

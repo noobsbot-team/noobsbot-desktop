@@ -563,6 +563,7 @@ impl State {
                         lock,
                         battery: self.battery,
                         keyboard: &lock.keyboard,
+                        message: &self.config.idle.lock_message,
                         hour24: self.config.clock.format.hour24,
                         now: chrono::Local::now(),
                     };

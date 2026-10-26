@@ -67,6 +67,11 @@ impl Config {
         all.into_iter().collect()
     }
 
+    /// The keys of the user's `[table]` (no defaults), e.g. the apps in `[notification_apps]`.
+    pub fn keys(&self, table: &str) -> Vec<String> {
+        self.doc.get(table).and_then(Item::as_table_like).map(|t| t.iter().map(|(k, _)| k.to_owned()).collect()).unwrap_or_default()
+    }
+
     /// Sets `key` and saves. The comment and position of an existing line stay.
     pub fn set(&mut self, key: &str, value: impl Into<Value>) -> io::Result<()> {
         self.set_all([(key, value.into())])
@@ -81,7 +86,7 @@ impl Config {
     }
 
     fn put(&mut self, key: &str, value: Value) -> io::Result<()> {
-        let (table, name) = key.rsplit_once('.').map_or((None, key), |(t, k)| (Some(t), k));
+        let (table, name) = key.split_once('.').map_or((None, key), |(t, k)| (Some(t), k));
         let parent = match table {
             Some(table) => {
                 let item = self.doc.entry(table).or_insert(toml_edit::table());
@@ -202,8 +207,34 @@ fn written(event: &notify::Event, name: &std::ffi::OsStr) -> bool {
     write && event.paths.iter().any(|p| p.file_name() == Some(name))
 }
 
+/// The apps in the desktop's notification history (`$XDG_STATE_HOME/noobsbot-desktop/notifications`), sorted.
+pub fn notifying_apps() -> Vec<String> {
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"));
+    apps_in(&fs::read_to_string(state.join("noobsbot-desktop/notifications")).unwrap_or_default())
+}
+
+/// The third field of each history line (id, time, app, …), sorted and once each.
+/// ponytail: the app name's escapes (`\t`) aren't undone; no app name has a tab or backslash.
+fn apps_in(history: &str) -> Vec<String> {
+    let apps: std::collections::BTreeSet<&str> = history.lines().filter_map(|l| l.split('\t').nth(2)).filter(|a| !a.is_empty()).collect();
+    apps.into_iter().map(str::to_owned).collect()
+}
+
+/// Empties `$XDG_DATA_HOME/recently-used.xbel` (every app's recent files) to a valid, empty bookmark file.
+pub fn clear_recent_files() -> io::Result<()> {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share"));
+    save_atomic(&data.join("recently-used.xbel"), EMPTY_XBEL)
+}
+
+const EMPTY_XBEL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbel version=\"1.0\"\n      xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\"\n      xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>\n</xbel>\n";
+
 fn lookup<'a>(doc: &'a DocumentMut, key: &str) -> Option<&'a Value> {
-    let (table, name) = key.rsplit_once('.').map_or((None, key), |(t, k)| (Some(t), k));
+    let (table, name) = key.split_once('.').map_or((None, key), |(t, k)| (Some(t), k));
     let parent = match table {
         Some(table) => doc.get(table)?.as_table_like()?,
         None => doc.as_table(),
@@ -233,6 +264,11 @@ fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_lists_each_app_once() {
+        assert_eq!(apps_in("1\t0\tMail\ti\ts\tb\n2\t0\tChat\ti\ts\tb\n3\t0\tMail\ti\ts\tb\nbad\n"), ["Chat", "Mail"]);
+    }
 
     fn temp(name: &str, text: Option<&str>) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("noobsbot-settings-test-{name}-{}", std::process::id()));
