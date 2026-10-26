@@ -32,6 +32,8 @@ pub struct Shell {
     pub center: Option<Vec<Note>>,
     /// An alert sheet (polkit's too) or Force Quit.
     pub dialog: Option<Dialog>,
+    /// The shown app switcher: its apps and the selected one.
+    pub switcher: Option<(Vec<String>, usize)>,
 }
 
 /// An alert or Force Quit: title, message, a field, a list (Force Quit's apps) with its selected row, the buttons
@@ -148,6 +150,8 @@ const DIALOG: NodeId = NodeId(15);
 const DIALOG_MESSAGE: NodeId = NodeId(16);
 const DIALOG_FIELD: NodeId = NodeId(17);
 const DIALOG_LIST: NodeId = NodeId(18);
+const SWITCHER: NodeId = NodeId(19);
+const SWITCHER_ITEM: u64 = 8000;
 const DIALOG_ROW: u64 = 6000;
 const DIALOG_BUTTON: u64 = 7000;
 const MISSION_ITEM: NodeId = NodeId(3000);
@@ -342,6 +346,17 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
         nodes.extend(buttons);
         children.push(DIALOG);
     }
+    if let Some((apps, selected)) = &shell.switcher {
+        let items = apps.iter().enumerate().map(|(i, name)| {
+            let mut item = Node::new(Role::ListBoxOption);
+            item.set_label(name.as_str());
+            item.set_position_in_set(i);
+            item.set_selected(i == *selected);
+            (NodeId(SWITCHER_ITEM + i as u64), item)
+        });
+        group(SWITCHER, Role::ListBox, "App Switcher", items.collect(), &mut nodes);
+        children.push(SWITCHER);
+    }
     let mut root = Node::new(Role::Window);
     root.set_label("Desktop");
     root.set_children(children);
@@ -359,6 +374,9 @@ fn focus(shell: &Shell) -> NodeId {
         } else {
             NodeId(DIALOG_BUTTON + d.default as u64)
         }
+    } else if let Some((_, selected)) = &shell.switcher {
+        // Focus follows the selection, so each app is read as it is stepped to.
+        NodeId(SWITCHER_ITEM + *selected as u64)
     } else if shell.spotlight.is_some() {
         SPOTLIGHT_FIELD
     } else if let Some(apps) = &shell.launchpad {
@@ -475,7 +493,8 @@ impl State {
         let launchpad = self.access_launchpad();
         let (banners, center) = self.access_notes();
         let dialog = self.access_dialog();
-        Shell { bar, dock, controls, mission, spotlight, launchpad, banners, center, dialog }
+        let switcher = self.switcher.open.as_ref().filter(|o| o.visible).map(|o| (o.apps.iter().map(|a| a.name.clone()).collect(), o.selected));
+        Shell { bar, dock, controls, mission, spotlight, launchpad, banners, center, dialog, switcher }
     }
 
     /// The alert, else Force Quit.
@@ -746,6 +765,16 @@ mod tests {
         assert_eq!(node(&quit, DIALOG_LIST).active_descendant(), Some(NodeId(DIALOG_ROW + 1)));
         assert_eq!(node(&quit, NodeId(DIALOG_ROW + 1)).is_selected(), Some(true));
         assert_eq!(node(&quit, NodeId(DIALOG_BUTTON)).role(), Role::DefaultButton);
+    }
+
+    #[test]
+    fn the_switcher_focuses_the_selected_app() {
+        let shell = Shell { switcher: Some((vec!["Files".into(), "Notes".into()], 1)), ..Default::default() };
+        let update = tree(&shell);
+        assert_eq!(update.focus, NodeId(SWITCHER_ITEM + 1));
+        let notes = node(&update, NodeId(SWITCHER_ITEM + 1));
+        assert_eq!((notes.label(), notes.is_selected()), (Some("Notes"), Some(true)));
+        assert_eq!(node(&update, SWITCHER).label(), Some("App Switcher"));
     }
 
     #[test]
