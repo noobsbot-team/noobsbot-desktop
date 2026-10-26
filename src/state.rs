@@ -706,10 +706,15 @@ impl State {
         Some(window.toplevel()?.wl_surface().client()?.get_credentials(&self.display_handle).ok()?.pid)
     }
 
-    /// Where windows may go: the first output minus the menu bar and what layer surfaces (bars, docks) reserve.
-    /// ponytail: a zoomed window keeps its size when a bar appears later; refitting comes with output changes (M6).
+    /// The first display's work area: for what has no display of its own yet (a lost window). Below its menu bar and
+    /// what layer surfaces (bars, docks) reserve.
     pub fn work_area(&self) -> Option<Rect> {
         self.output_area(self.space.outputs().next()?)
+    }
+
+    /// The work area of the display `window` is mostly on, else the first's.
+    pub fn window_area(&self, window: &Window) -> Option<Rect> {
+        self.window_output(window).map_or_else(|| self.work_area(), |o| self.output_area(&o))
     }
 
     /// The work area of `output`: below its menu bar and its layer surfaces, above its dock.
@@ -819,7 +824,7 @@ impl State {
     /// same tile a drag gives, so dragging it away restores it. A zoomed window keeps its pre-zoom size to go back to.
     /// ponytail: does nothing to a full-screen window.
     pub fn tile_to(&mut self, window: &Window, edges: wm::Edges) {
-        let (Some(surface), Some(area)) = (window.toplevel().cloned(), self.work_area()) else { return };
+        let (Some(surface), Some(area)) = (window.toplevel().cloned(), self.window_area(window)) else { return };
         if surface.with_pending_state(|s| s.states.contains(xdg_toplevel::State::Fullscreen)) {
             return;
         }
@@ -829,7 +834,7 @@ impl State {
 
     /// Window ▸ Center: the middle of the work area, at the same size.
     pub fn center(&mut self, window: &Window) {
-        let (Some(frame), Some(area)) = (self.frame(window), self.work_area()) else { return };
+        let (Some(frame), Some(area)) = (self.frame(window), self.window_area(window)) else { return };
         self.set_visible_loc(window, wm::center(area, frame.size));
     }
 
@@ -874,7 +879,7 @@ impl State {
     pub fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
         let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
         // The display the window is on, so zoom fills that one.
-        let Some(area) = self.window_output(&window).map_or_else(|| self.work_area(), |o| self.output_area(&o)) else { return };
+        let Some(area) = self.window_area(&window) else { return };
         self.window_reframing(&window);
         let restore = window.user_data().get_or_insert(|| Restore(std::sync::Mutex::new(None)));
         if let (Ok(mut saved), Some(frame)) = (restore.0.lock(), self.frame(&window)) {
@@ -983,8 +988,8 @@ impl State {
     /// `layer` is kept by `restack`, `decorations` by decorations.rs.
     fn apply_rules(&mut self, surface: &ToplevelSurface) {
         let actions = self.resolve_rules(surface);
-        let (window, area) = (self.window_for(surface.wl_surface()).cloned(), self.work_area());
-        let (Some(window), Some(area)) = (window, area) else { return };
+        let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
+        let Some(area) = self.window_area(&window) else { return };
         if let Some([w, h]) = actions.size {
             // A ruled size is the frame's, title bar included.
             let size = self.content_size(&window, (w.to_px(area.size.w), h.to_px(area.size.h)).into());
@@ -1085,7 +1090,9 @@ impl CompositorHandler for State {
             });
             if !sent {
                 // Apps that size themselves should fit the work area (xdg_toplevel bounds).
-                if let (Some(window), Some(area)) = (self.window_for(surface).cloned(), self.work_area()) {
+                if let Some(window) = self.window_for(surface).cloned()
+                    && let Some(area) = self.window_area(&window)
+                {
                     let bounds = self.content_size(&window, area.size);
                     toplevel.with_pending_state(|s| s.bounds = Some(bounds));
                 }
@@ -1109,7 +1116,7 @@ impl CompositorHandler for State {
                 let size = window.geometry().size + Size::from((0, crate::decorations::bar_height(&window)));
                 if size.w > 0 && window.user_data().get::<Placed>().is_none() {
                     window.user_data().insert_if_missing(|| Placed);
-                    if let Some(area) = self.work_area() {
+                    if let Some(area) = self.window_area(&window) {
                         // A window bigger than the work area (the app ignored the bounds) is shrunk to fit.
                         let fitted = Size::from((size.w.min(area.size.w), size.h.min(area.size.h)));
                         if fitted != size
