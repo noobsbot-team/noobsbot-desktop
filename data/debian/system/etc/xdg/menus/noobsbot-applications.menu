@@ -1,6 +1,6 @@
 <!DOCTYPE Menu PUBLIC "-//freedesktop//DTD Menu 1.0//EN" "http://www.freedesktop.org/standards/menu-spec/1.0/menu.dtd">
-<!-- The app list KDE apps read (Dolphin's Open With, Kate's tools), on Debian: Arch has archlinux-xdg-menu, Debian has
-     no KDE 6 menu outside Plasma. noobsbot-desktop-session sets XDG_MENU_PREFIX=noobsbot- when this file is here. -->
+<!-- The app list Qt apps read (Dolphin's Open With, Kate's tools), on Debian: Arch has archlinux-xdg-menu, Debian has
+     no such menu of its own. noobsbot-desktop-session sets XDG_MENU_PREFIX=noobsbot- when this file is here. -->
 <Menu>
   <Name>Applications</Name>
   <DefaultAppDirs/>

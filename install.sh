@@ -795,7 +795,7 @@ user_settings() {
             mv "$list.new" "$list"
         fi
     fi
-    # KDE apps (Dolphin's Open Terminal Here) read their own key; one keyring, no KWallet prompts (E6.7).
+    # Dolphin's Open Terminal Here and Kate read their own key; one keyring, no KWallet prompts (E6.7).
     run mkdir -p "$CFG"
     run kwriteconfig6 --file "$CFG/kdeglobals" --group General --key TerminalApplication noobsbot
     run kwriteconfig6 --file "$CFG/kdeglobals" --group General --key TerminalService noobsbot.desktop

@@ -1,5 +1,5 @@
 //! App theme generator (E2.9): `noobsbot-desktop theme --write` turns the Part D tokens the shell draws with into a
-//! Kvantum theme, a KDE colour scheme and the kdeglobals keys (plus gsettings on request), so Qt/KDE and GTK apps
+//! Kvantum theme, a Qt colour scheme and the kdeglobals keys (plus gsettings on request), so Qt and GTK apps
 //! match the desktop in light and dark. Files the owner also edits (kdeglobals, kvantum.kvconfig) are merged: only
 //! our keys change, every other line stays byte-for-byte.
 
@@ -40,7 +40,7 @@ fn gsettings(dark: bool) -> [[&'static str; 2]; 4] {
     ]
 }
 
-/// `ink` (0 or 255) at `alpha` over `bg`, flattened: KDE and Kvantum want solid colours.
+/// `ink` (0 or 255) at `alpha` over `bg`, flattened: Qt colour schemes and Kvantum want solid colours.
 fn over(ink: u8, alpha: f32, bg: Rgb) -> Rgb {
     mix([ink; 3], alpha, bg)
 }
@@ -63,7 +63,7 @@ fn ink(dark: bool) -> (u8, f32, f32) {
     if dark { (255, 0.85, 0.55) } else { (0, 0.85, 0.50) }
 }
 
-/// The `[Colors:*]` groups of the KDE colour scheme: window = `panel` glass, views = `card`, menus = `popover`.
+/// The `[Colors:*]` groups of the Qt colour scheme: window = `panel` glass, views = `card`, menus = `popover`.
 fn colour_groups(dark: bool, accent: Accent) -> Groups {
     let tint = |m: Material| m.spec(dark).tint;
     let a = render::accent(accent, dark);

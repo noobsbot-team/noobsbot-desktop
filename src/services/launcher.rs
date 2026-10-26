@@ -1,4 +1,4 @@
-//! Unity LauncherEntry (E3.1), the badge API Plank reads: apps broadcast `Update(app_uri, properties)` on the session
+//! LauncherEntry (E3.1), the badge API Plank reads: apps broadcast `Update(app_uri, properties)` on the session
 //! bus, each update adding to what that app said before; the dock shows the count, the progress and urgency. There is
 //! no name to own, it is only a signal. An app that leaves the bus loses its badge.
 

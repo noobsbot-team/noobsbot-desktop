@@ -1,7 +1,7 @@
-//! Our polkit authentication agent (plan.md E7.2): admin password prompts in our alert instead of KDE's dialog.
+//! Our polkit authentication agent (plan.md E7.2): admin password prompts in our alert instead of the fallback agent's dialog.
 //! polkitd calls `BeginAuthentication`; the alert asks for the password, and polkit's own helper checks it with PAM
 //! and tells polkitd (we never see whether a password is right other than by its SUCCESS line). Registered only in
-//! a real session (not nested), for our login session; if that fails, KDE's agent is started instead.
+//! a real session (not nested), for our login session; if that fails, the standard Qt agent is started instead.
 
 use std::{
     collections::HashMap,
@@ -162,7 +162,7 @@ async fn serve_with(bus: &Connection, updates: &Sender<Update>, answer: &Answer<
     }
 }
 
-/// KDE's agent, when ours couldn't register (kept installed as the fallback).
+/// The standard Qt agent, when ours couldn't register (kept installed as the fallback).
 pub fn fallback() {
     let started = std::process::Command::new("systemctl").args(["--user", "start", "--no-block", "plasma-polkit-agent.service"]).status();
     if let Err(err) = started {

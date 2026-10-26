@@ -49,11 +49,11 @@ itself. Apps (the terminal, browser, file manager, editor) are ordinary separate
   the eight macOS accent colours. No blur keeps it sharp and fast.
 - **Fast and light:** it aims for 0% CPU when nothing changes, under 100 MB of memory for the whole desktop and
   under half a second to start. Measurements are in [`PERF.md`](PERF.md).
-- **Self-contained:** it installs on a fresh Arch or Debian 13 system and needs no other desktop. Nothing from GNOME, KDE
-  Plasma or any other desktop is installed (Dolphin and Kate bring some KDE libraries, which load only when they're open).
+- **Self-contained:** it installs on a fresh Arch or Debian 13 system and needs no other desktop. Nothing from any other desktop
+  is installed (Dolphin and Kate bring some Qt libraries, which load only when they're open).
 
 ## How it is different
-| | Noobsbot Desktop | GNOME / KDE Plasma | Tiling compositors (Hyprland, Sway, niri) | macOS themes on another desktop |
+| | Noobsbot Desktop | Traditional desktops | Tiling compositors | macOS themes on another desktop |
 |---|---|---|---|---|
 | Look | macOS, designed as one system (Part D of `plan.md`) | their own | minimal, you build the bar and launcher yourself | a skin over a different layout and behaviour |
 | Shell | built into the compositor: one process | many processes (shell, panels, daemons) | compositor plus separate bars and launchers | the host desktop's |
@@ -336,8 +336,8 @@ Versions follow [semantic versioning](https://semver.org); every release's chang
 - **Screen recording asks first:** the first time a program wants to record the screen, an alert asks you, and the
   answer is saved in `[privacy]`. Sandboxed (Flatpak) apps never get screen recording. Screen sharing goes through
   the standard portal.
-- **Password prompts** (for example `pkexec`, or installing an update) use Noobsbot Desktop's own alert. KDE's
-  agent is only a fallback.
+- **Password prompts** (for example `pkexec`, or installing an update) use Noobsbot Desktop's own alert. The
+  standard Qt agent is only a fallback.
 - **Lock screen:** if the desktop ever crashes, you return to the login screen; it is never left unlocked.
 - **Updates are signed:** releases are signed in CI with a key whose private half never leaves the release secret.
   The installer and the updater refuse anything that doesn't match, and refuse to downgrade.
@@ -351,11 +351,11 @@ Versions follow [semantic versioning](https://semver.org); every release's chang
 | Browser | [Helium](https://helium.computer) |
 | Files | Dolphin (with archive support via Ark) |
 | Text editor | Kate, and nano in the terminal |
-| Disks | KDE Partition Manager and Filelight |
+| Disks | Partition Manager and Filelight |
 | Resources | System Monitor and btop, plus the desktop's Force Quit window |
 | Settings | Noobsbot Desktop's own System Settings |
 
-Qt apps such as Dolphin and Kate get the matching "Noobsbot Glass" theme (Kvantum and a KDE colour scheme), made
+Qt apps such as Dolphin and Kate get the matching "Noobsbot Glass" theme (Kvantum and a Qt colour scheme), made
 from the desktop's own colours by `noobsbot-desktop theme --write` (add `--gsettings` for GTK apps). Set
 `theme_apps = true` in `[appearance]` to have the Dark Mode toggle rewrite it, so apps follow light and dark mode.
 

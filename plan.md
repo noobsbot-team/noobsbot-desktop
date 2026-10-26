@@ -40,7 +40,7 @@ Arch Linux system.
 Noobsbot Desktop is a whole desktop: everything you see after logging in. That means windows, menu bar, dock,
 Spotlight, Launchpad, Notification Center, Control Center, calendar, Spaces, Mission Control, touchpad gestures,
 lock screen and System Settings. It **looks and behaves like macOS** with a **glassy theme**, is installed on a
-**fresh Arch Linux** system by one script, does not rely on any other desktop (GNOME, KDE Plasma or others),
+**fresh Arch Linux** system by one script, does not rely on any other desktop,
 and must be **very fast** while using **as little RAM and CPU as possible**.
 
 ## A2. Requirements (set by the owner)
@@ -130,7 +130,7 @@ Each choice lists **what it decides**, **what we use**, **why**, and **what we r
 - **Why:** (1) C/C++-level speed, native code. (2) **No garbage collector**, so there are no stutters and RAM
   stays low. (3) **Memory safety** at compile time, which matters because a compositor crash kills the whole
   desktop and every app. (4) The best Linux-desktop ecosystem today (Smithay, cosmic-text, zbus, calloop),
-  proven by System76's COSMIC desktop and the niri compositor. (5) The owner already writes Rust (noobsbot).
+  proven in production by other Rust desktops and compositors. (5) The owner already writes Rust (noobsbot).
 - **Rejected:** **C** (memory bugs crash the session, more code); **C++** (complex, the same risk); **Zig**
   (immature, no Wayland ecosystem); **Go/C#/Java** (garbage-collector pauses, more RAM);
   **Python/JS** (far too slow to draw 60–120 frames per second).
@@ -139,15 +139,15 @@ Each choice lists **what it decides**, **what we use**, **why**, and **what we r
 - **Why:** (1) One program does everything: on X11 we'd need an X server + window manager + a separate
   compositor (picom) for corners, shadows and transparency. That's more RAM, more latency, and tearing.
   (2) Tear-free by design. (3) Secure: apps can't spy on each other's windows or keystrokes. (4) The future:
-  GNOME and KDE have moved; X11 is in maintenance. (5) Proper HiDPI and mixed scaling.
+  the major desktops have moved; X11 is in maintenance. (5) Proper HiDPI and mixed scaling.
 - Old X11-only apps still run through XWayland (C10).
 - **Rejected:** X11 (needs picom, tears, insecure, being phased out).
 
 ## C3. Compositor library → **Smithay** (pure Rust, pinned version)
 - **What:** a toolkit that handles Wayland protocol plumbing, input, monitors, sessions and a GPU renderer.
-- **Why:** pure Rust (fits C1); powers COSMIC and niri in production; leaves every behaviour decision to us;
+- **Why:** pure Rust (fits C1); powers other Rust compositors in production; leaves every behaviour decision to us;
   has a **nested mode** (runs as a window), so development is safe.
-- **Rejected:** **wlroots** (C, needs unsafe bindings); **forking niri / cosmic-comp / Hyprland** (huge code
+- **Rejected:** **wlroots** (C, needs unsafe bindings); **forking an existing compositor** (huge code
   that isn't ours, built for tiling and separate-process shells); **from zero** (months of plumbing).
 
 ## C4. Drawing → **OpenGL ES 3 via Smithay `GlesRenderer` + our GLSL shaders**
@@ -190,7 +190,7 @@ Each choice lists **what it decides**, **what we use**, **why**, and **what we r
 
 ## C10. Old X11 apps → **xwayland-satellite**
 - **Why:** most apps are native Wayland now. For the rest, a small separate helper is far less code than an X11
-  window manager inside Noobsbot Desktop (niri does the same).
+  window manager inside Noobsbot Desktop (other Rust compositors do the same).
 - **Rejected:** Smithay's built-in X11 WM support (thousands of extra lines in the compositor).
 
 ## C11. Settings storage → **one TOML file, live-reloaded**
@@ -508,7 +508,7 @@ macOS-style glass windows.
   - Unfocused windows: traffic lights turn grey.
   - Window corners: radius 10 (top) and 10 (bottom), continuous squircle; 0.5 px hairline around the window.
 - **Built with:** server-side decorations (we draw them) negotiated through `xdg-decoration` **and** the older
-  `org_kde_kwin_server_decoration` (GTK3 and Qt 5 only understand the KDE one; without it every GTK3 dialog, including
+  `org_kde_kwin_server_decoration` (GTK3 and Qt 5 only understand this older one; without it every GTK3 dialog, including
   the portal file picker, draws its own title bar); SDF shader for the circles and glyphs.
 - **Why:** server-side is the only way **every** app gets the same macOS title bar. SDF keeps circles crisp at
   every scale. Apps that refuse server-side decorations (GTK4/libadwaita) keep their own (see L2).
@@ -632,7 +632,7 @@ macOS-style glass windows.
 - **Built with:** Smithay's output frame-scheduling hooks + `presentation-time`; DRM atomic commits with
   `drm` planes (udev backend, M6); `frame.rs` for the per-output scheduler; cursor plane via Smithay's
   `CursorImageStatus`.
-- **Why:** this is the same design as niri and sway's `max_render_time` and KWin's "triple buffering" work: measure
+- **Why:** this is the same design other compositors use for render-time budgeting and triple buffering: measure
   the render time and draw as late as safely possible. Without it a compositor adds a whole frame of latency; with it
   Noobsbot Desktop feels as direct as drawing on X11 without a compositor, but tear-free.
 - **Done when:** a 240 fps phone-camera test of a drag shows the window moving within 1 frame (+ ≤ 2 ms) of the
@@ -839,20 +839,20 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 - **Built with:**
   | Piece | What we ship | Why |
   |---|---|---|
-  | **Kvantum theme "Noobsbot Glass"** (light + dark) | our own Kvantum theme, derived from WhiteSur's Kvantum theme, recoloured and resized to Part D. Kvantum's translucency is on (`translucent_windows`, window/menu opacity set to match D3), with **no blur** | Kvantum is the standard way to fully restyle Qt apps outside KDE, and it supports translucent windows. Starting from WhiteSur gives macOS shapes; our tokens give our exact colours |
-  | **KDE colour scheme "Noobsbot Glass"** (light + dark) in `~/.local/share/color-schemes/`, selected in `~/.config/kdeglobals` | KDE apps take some colours (views, selection, links) from the colour scheme, not from the style; both must match |
-  | `kdeglobals` fonts + icons | `font=Inter,10`, `fixed=JetBrains Mono,10`, `[Icons] Theme=WhiteSur` / `WhiteSur-dark` | KDE apps read these outside Plasma too |
+  | **Kvantum theme "Noobsbot Glass"** (light + dark) | our own Kvantum theme, derived from WhiteSur's Kvantum theme, recoloured and resized to Part D. Kvantum's translucency is on (`translucent_windows`, window/menu opacity set to match D3), with **no blur** | Kvantum is the standard way to fully restyle Qt apps on any desktop, and it supports translucent windows. Starting from WhiteSur gives macOS shapes; our tokens give our exact colours |
+  | **Qt colour scheme "Noobsbot Glass"** (light + dark) in `~/.local/share/color-schemes/`, selected in `~/.config/kdeglobals` | Dolphin and Kate take some colours (views, selection, links) from the colour scheme, not from the style; both must match |
+  | `kdeglobals` fonts + icons | `font=Inter,10`, `fixed=JetBrains Mono,10`, `[Icons] Theme=WhiteSur` / `WhiteSur-dark` | Dolphin and Kate read these on any desktop |
   | Session env | `QT_QPA_PLATFORMTHEME=qt6ct`, `QT_STYLE_OVERRIDE=kvantum` (E6.7) | forces every Qt app to use the theme |
   | **GTK** (file-picker dialogs, any GTK app) | WhiteSur-gtk recoloured to Part D; `gsettings org.gnome.desktop.interface` for theme, icons, font, `color-scheme` | GTK apps read gsettings; GTK can't do translucent windows, so it gets the same colours, solid |
   | **Helium** | **not themed: kept exactly as it is** (its own theme, its own tab-strip title bar, its own light/dark setting) | owner's choice (F2) |
   | **Theme generator** | `noobsbot-desktop theme --write` writes all of the files above from `theme.rs` tokens, and runs on every accent/mode/opacity change. It **merges**, never overwrites: in `kdeglobals` it owns only `[General] ColorScheme/font/fixed`, `[Icons]` and `[Colors:*]`, so F1's `TerminalApplication` and anything the owner set survive; likewise for the gsettings keys | **one source of truth**: change the accent once, and the desktop and every app change together |
 - **Light/dark & accent switching:** toggling dark mode (Control Center) or changing the accent rewrites the Kvantum
   config, colour scheme, kdeglobals and gsettings, and sends the portal `color-scheme` change. GTK apps update
-  live; Qt apps update live for colours (KDE apps watch kdeglobals); a Kvantum *style* change applies to newly opened
+  live; Qt apps update live for colours (Dolphin and Kate watch kdeglobals); a Kvantum *style* change applies to newly opened
   windows (reopen to update), which is a Kvantum limitation.
 - **Why this way instead of a "real" glass style plugin:** writing our own Qt style plugin (C++) would be a large
   extra project in another language. Kvantum + a colour scheme gets the same look with config files only.
-  **Rejected:** Breeze (KDE look), Adwaita (GNOME look), a custom Qt style plugin (too much code for the gain).
+  **Rejected:** Breeze and Adwaita (other desktops' looks), a custom Qt style plugin (too much code for the gain).
 - **License note:** WhiteSur (Kvantum/GTK) is GPL-3.0, so our derived "Noobsbot Glass" themes are GPL-3.0 too.
 - **Risk + spike (first week of M2):** Kvantum's translucent windows have known Qt 6 Wayland bugs (opaque or black
   windows in some apps). Spike: Dolphin with `translucent_windows=true` inside the nested compositor. If it fails, the
@@ -937,7 +937,7 @@ Goal: the owner's current dock (Plank, Transparent-Tight theme), rebuilt nativel
   | Drag an icon | reorder; drag it off the dock to remove it (poof animation) |
   | Drag a `.desktop` file/app onto the dock | pin it |
   | Drop files onto an app icon | opens them with that app |
-  | Badges and progress | count badges and progress bars from apps that publish them (Unity LauncherEntry D-Bus API, which Plank also uses) |
+  | Badges and progress | count badges and progress bars from apps that publish them (LauncherEntry D-Bus API, which Plank also uses) |
   | Ctrl+right-click (Plank's preferences) | opens Dock settings (`config.toml` until the Settings app, M7) |
   Extras on top of Plank (needed by other parts of this plan, off unless used): **minimised windows** go to the
   dock's right end (E5.5 minimise animation), and **Options ▸ Assign To Space** in the right-click menu (E5.1).
@@ -1353,7 +1353,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   E6.4, plus a user row and session choice) and speaks greetd's small JSON IPC itself (`shell/greeter.rs`, no crate).
   `install.sh --greeter` writes `data/system/etc/greetd/noobsbot-greeter.toml` as the config; tuigreet stays the default and fallback.
 - **Why:** minimal, doesn't depend on any desktop, the modern standard for lightweight setups.
-  **Rejected:** SDDM (KDE/Qt, heavier), GDM (pulls in GNOME).
+  **Rejected:** SDDM (heavier), GDM (pulls in another desktop).
 - **Done when:** boot → tuigreet → log in → Noobsbot Desktop starts; logging out returns to tuigreet.
 
 ### E6.7 Session startup & system glue
@@ -1374,7 +1374,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
      org.freedesktop.impl.portal.Screenshot=wlr
      ```
      **One password store:** gnome-keyring (Secret Service) for Helium, Wi-Fi and everything else; KWallet is not
-     installed and KDE apps are told so (`~/.config/kwalletrc`: `[Wallet] Enabled=false`), so no second wallet ever
+     installed and Dolphin and Kate are told so (`~/.config/kwalletrc`: `[Wallet] Enabled=false`), so no second wallet ever
      pops up (KIO network-share passwords are then asked once per session, L9).
   4. Run **XDG autostart** entries (`~/.config/autostart/*.desktop`), so "Open at Login" apps start.
 - **Session file:** `/usr/share/wayland-sessions/noobsbot-desktop.desktop` with `Exec=noobsbot-desktop-session` (the
@@ -1419,7 +1419,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   from its git install scripts (pinned commits); `xwayland-satellite` from the release tarball into `/usr/local/bin`
   (built from a pinned commit when the tarball has none); Rust from `rustup` (Debian's is too old); the files in
   `data/debian/system` replace or add to `data/system` (greetd user `_greetd` on VT 7, PAM `common-auth`, an app menu
-  for KDE apps instead of `archlinux-xdg-menu`); a `helium-browser` wrapper so the dock and Super+B work as on Arch.
+  for Dolphin and Kate instead of `archlinux-xdg-menu`); a `helium-browser` wrapper so the dock and Super+B work as on Arch.
 - **Modes:** **Auto** (recommended answers, no questions; also without a terminal and with `--update`) or
   **Advanced** (every question first, then a summary to confirm, then unattended): non-free sources (Debian), keep or
   replace another login manager, text or graphical login screen, browser, NVIDIA driver, prebuilt or source, and the
@@ -1572,7 +1572,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
     Lock Screen (idle times, password delay) · **Privacy** (screen-recording / input permissions, E6.11) · **General ▸ Software Update** (E6.13) · Users
     (picture, name, password) · About (computer, CPU, RAM, GPU, OS, disk, version + "Check for updates").
   - Search finds any setting.
-- **Built with:** a separate Rust app. Toolkit decided at M7 (Open-2): **iced** (pure Rust, used by COSMIC apps, wgpu
+- **Built with:** a separate Rust app. Toolkit decided at M7 (Open-2): **iced** (pure Rust, used in production apps, wgpu
   like noobsbot) is the front-runner; **slint** (lighter, built for low memory) is the alternative. Both get styled
   with the Part D tokens. It changes settings by **editing `config.toml`** (Noobsbot Desktop reloads instantly) and calls
   the system services (NetworkManager, BlueZ, timedated, …) for system-level settings.
@@ -1584,7 +1584,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 |---|---|---|
 | Graphical login screen (done, opt-in) | lock-screen-style login | greetd greeter mode of Noobsbot Desktop (`--greeter`, see E6.6) |
 | Calendar events (done) | "Up Next" widget, event dots, reminders | own `.ics` parser (`ical.rs`, `events.rs`), `[calendar] files`; CalDAV later |
-| Own polkit agent (done) | password prompts in our alert design instead of KDE's | polkit agent D-Bus API + `polkit-agent-helper-1` (`services/polkit.rs`); KDE's agent is the fallback |
+| Own polkit agent (done) | password prompts in our alert design instead of the fallback agent's | polkit agent D-Bus API + `polkit-agent-helper-1` (`services/polkit.rs`); the standard Qt agent is the fallback |
 | Weather widget (done, off by default) | forecast in Notification Center | Open-Meteo (no key, no account; city or lat/long, no IP lookup), `services/weather.rs` |
 | Fingerprint unlock | lock screen + sudo | `fprintd` |
 | Printers | printing from apps | CUPS |
@@ -1737,7 +1737,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   | Noobsbot Desktop (Super+Enter, dock, Spotlight, quake F12) | our config | `terminal = "noobsbot"` in `config.toml` |
   | Apps with `Terminal=true` in their `.desktop` file (e.g. btop, nano from Spotlight/Launchpad) | our launcher | started inside `noobsbot -e <command>` |
   | GTK/GLib apps and the freedesktop standard | `xdg-terminal-exec` | `~/.config/xdg-terminals.list` → `noobsbot.desktop`; package `xdg-terminal-exec` |
-  | **Dolphin "Open Terminal Here" (Shift+F4), Kate, other KDE apps** | KDE's own setting, *not* the standard | `~/.config/kdeglobals`: `[General] TerminalApplication=noobsbot` and `TerminalService=noobsbot.desktop` |
+  | **Dolphin "Open Terminal Here" (Shift+F4), Kate, other Qt apps** | their own setting, *not* the standard | `~/.config/kdeglobals`: `[General] TerminalApplication=noobsbot` and `TerminalService=noobsbot.desktop` |
   | Scripts and CLI tools | `$TERMINAL` environment variable | `TERMINAL=noobsbot` in the session environment (E6.7) |
   | Right-click → Open With for shell scripts | MIME default | `xdg-mime default noobsbot.desktop application/x-shellscript` |
   - **Limit:** Dolphin's and Kate's *built-in* terminal panels (F4) embed Konsole's component, which noobsbot can't
@@ -1752,7 +1752,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   (ungoogled-chromium, no Google services, uBlock Origin built in): native Wayland, hardware video decoding, screen
   sharing via portals, MPRIS, idle-inhibit — everything the plan relied on Helium for.
 - **Integration:** flags `--ozone-platform=wayland --password-store=gnome-libsecret` (Chromium only auto-detects
-  the keyring on GNOME/KDE; on an unknown desktop it would store passwords **unencrypted**), written to
+  the keyring on a few known desktops; on an unknown desktop it would store passwords **unencrypted**), written to
   `~/.config/helium-browser-flags.conf`, which the `helium-browser-bin` launcher (`helium-browser`) reads, so **every**
   launch path (dock, Spotlight, `xdg-open` links from other apps) gets them; set as the system default
   (`xdg-mime default helium.desktop` for http/https/html/xhtml, which is what `xdg-settings` does on a desktop it doesn't know); passwords in gnome-keyring.
@@ -1768,18 +1768,18 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
 - **Why:** owner choice (R7). Fast; tabs, split view, previews; network shares, phones (MTP) and archives via KIO.
 - **Extras:** `kio-extras` (thumbnails, MTP, network), `kdegraphics-thumbnailers` + `ffmpegthumbs` (PDF and video
   previews), `kimageformats` + `qt6-imageformats` (WebP, HEIC, AVIF), `kio-admin` (edit system files behind a polkit
-  prompt), `ark` (zip/tar/7z), `archlinux-xdg-menu` (without it, "Open With" is **empty** outside KDE).
+  prompt), `ark` (zip/tar/7z), `archlinux-xdg-menu` (without it, "Open With" is **empty** here).
 - **Passwords:** KWallet is **not** installed; gnome-keyring is the one store (E6.7). Network-share passwords are asked
   once per session in Dolphin (L9).
 - **Look:** Noobsbot Glass (E2.9).
-- **Cost:** KDE Frameworks libraries (~300 MB disk), with **no RAM use until Dolphin opens**.
+- **Cost:** Qt framework libraries (~300 MB disk), with **no RAM use until Dolphin opens**.
 
 ## F4. Text editor → **Kate** (GUI) + **nano** (terminal)
-- **Why Kate:** the same Qt/KDE family as Dolphin (shared libraries, consistent look), with syntax highlighting,
+- **Why Kate:** the same Qt family as Dolphin (shared libraries, consistent look), with syntax highlighting,
   tabs and a file tree. **Why nano:** the simple terminal editor anyone can use.
-- **Rejected:** gedit / GNOME Text Editor (pulls GTK/GNOME libraries alongside Qt, mixed look); VS Code (heavy).
+- **Rejected:** gedit and other GTK editors (pull GTK libraries alongside Qt, mixed look); VS Code (heavy).
 
-## F5. Disk management → **KDE Partition Manager** + **Filelight**, with disk info in Dolphin and Settings
+## F5. Disk management → **Partition Manager** + **Filelight**, with disk info in Dolphin and Settings
 - **What it is:** everything about drives: see disks and partitions, format a USB stick, create, resize or delete
   partitions, check drive health, and see what's using space.
 - **Design / where you find it:**
@@ -1792,13 +1792,13 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   | What's filling the disk | **Filelight** (sunburst chart of folders); "Open in Filelight" in Dolphin | Filelight |
   | Mount / eject USB drives | automatic (E4.6) | udisks2 |
   | "Disk almost full" warning | notification at 90% and 95% used on `/` and `/home` | our code (udisks2 / `statvfs`) |
-- **Built with:** `partitionmanager` (KDE, uses kpmcore; asks for the admin password through polkit only when changing
+- **Built with:** `partitionmanager` (Qt, uses kpmcore; asks for the admin password through polkit only when changing
   disks), `filelight`, `smartmontools`, filesystem tools `exfatprogs`, `dosfstools` (FAT32), `ntfs-3g` (NTFS),
   `btrfs-progs`, `e2fsprogs` (ext4). The disk-full warning lives in Noobsbot Desktop's `services/disks.rs`.
-- **Why these:** Partition Manager and Filelight are **Qt/KDE apps like Dolphin and Kate**, so they share the libraries
+- **Why these:** Partition Manager and Filelight are **Qt apps like Dolphin and Kate**, so they share the libraries
   already installed (only ~8 MB extra) and get the same Noobsbot Glass theme (E2.9). Partition Manager does everything
   macOS Disk Utility does, plus resizing. Filelight is the clearest "what uses my space" view.
-  **Rejected:** GNOME Disks (GTK4/libadwaita: extra GTK libraries, its own title bar, see L2); GParted (GTK3, runs
+  **Rejected:** GTK disk tools (GTK4/libadwaita: extra GTK libraries, its own title bar, see L2); GParted (GTK3, runs
   as root with X11, poor fit on Wayland).
 - **Milestone:** packages installed in M6 (`install.sh`); disk-full warning M4 (with notifications); Storage bar M7.
 - **Done when:** a USB stick can be formatted from Dolphin, partitions can be resized, SMART health shows, and
@@ -1815,14 +1815,14 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   | Stop a frozen app | logo menu ▸ **Force Quit…** or **Super+Alt+Esc** → Noobsbot Desktop's own Force Quit window | Noobsbot Desktop (E4.7) |
   | "App not responding" | when a window stops answering for 5 s: its title dims and an alert offers **Wait / Force Quit** | Noobsbot Desktop (E4.7) |
   | Glance at load (optional) | Notification Center **System** widget: CPU %, memory, disk free, network up/down | Noobsbot Desktop (E4.2) |
-- **Built with:** `plasma-systemmonitor` (KDE's System Monitor; brings `ksystemstats` for the data); `btop`; Noobsbot Desktop
+- **Built with:** `plasma-systemmonitor` (the Qt System Monitor; brings `ksystemstats` for the data); `btop`; Noobsbot Desktop
   reads `/proc` and `/sys` itself for the widget and Force Quit (no extra service).
 - **Why these:** System Monitor is the one the owner already keeps in the dock today (dock2), it's Qt like the
   other apps (same look, shared libraries), and it covers everything Activity Monitor does, including GPU.
   btop is tiny and great in the terminal. Force Quit is built into Noobsbot Desktop because the compositor already knows
   every window and its process. It works even when everything else is busy, and looks exactly like macOS.
-  **Rejected:** Mission Center (good, but GTK4/libadwaita: extra libraries and its own title bar); GNOME System
-  Monitor (GTK, GNOME look); htop (btop is nicer and still small).
+  **Rejected:** Mission Center (good, but GTK4/libadwaita: extra libraries and its own title bar); GTK system
+  monitors (another desktop's look); htop (btop is nicer and still small).
 - **Milestone:** apps installed in M6; Force Quit + "not responding" in M4; System widget M4 (optional).
 
 ## F7. Optional (owner can add)
@@ -1875,7 +1875,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | udisks2 | USB mounting without root | standard, Dolphin uses it | scripts |
 | polkit + polkit-kde-agent | admin password prompts | standard; Qt agent matches Dolphin/Kate | own agent now (later, E7.2) |
 | gnome-keyring | stores passwords (Helium, Wi-Fi) | Secret Service standard, light | KWallet (heavier) |
-| xdg-desktop-portal + -gtk + -wlr | file pickers, screen sharing | required by browsers; `-wlr` matches our protocols | portal-kde (pulls in Plasma) |
+| xdg-desktop-portal + -gtk + -wlr | file pickers, screen sharing | required by browsers; `-wlr` matches our protocols | other portal backends (pull in another desktop) |
 | systemd-timesyncd / timedated | time sync, time zone | already in systemd | chrony |
 | greetd + tuigreet | login | minimal, independent | SDDM, GDM |
 | xwayland-satellite | X11 apps | minimal, separate | built-in X11 WM |
@@ -1901,7 +1901,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Dev / test only | `qemu-desktop` `virt-manager` (fresh-system VM), `powertop`, `heaptrack` (Part K gates); `paru` is bootstrapped by `install.sh` |
 | Security (optional) | `sbctl` (Secure Boot, E6.6) |
 
-AUR names verified 2026-10-18. Nothing from GNOME, KDE Plasma or other desktops is installed.
+AUR names verified 2026-10-18. Nothing from any other desktop is installed.
 
 ## G4b. The same list on Debian 13 (installed with `--no-install-recommends`)
 | Arch | Debian 13 |
@@ -1933,7 +1933,7 @@ Debian names verified 2026-10-26 (on arm64; the x86-only ones by name).
 # Part H — Fonts, icons & themes
 | Use | Choice | Why | Rejected |
 |---|---|---|---|
-| UI text | **Inter** | closest free match to Apple's SF Pro; built for screens | SF Pro (license), Cantarell (GNOME look) |
+| UI text | **Inter** | closest free match to Apple's SF Pro; built for screens | SF Pro (license), Cantarell (another desktop's look) |
 | Monospace | **JetBrains Mono** | very readable; good for noobsbot | — |
 | Other languages | **Noto Sans / Serif** | covers almost every script | — |
 | CJK | **Noto CJK** | complete coverage | — |
@@ -1941,8 +1941,8 @@ Debian names verified 2026-10-26 (on arm64; the x86-only ones by name).
 | App icons | **WhiteSur icon theme** | high-quality macOS Big Sur-style, large coverage | Apple icons (license), Papirus (not macOS-like) |
 | Symbols | **Phosphor Icons** (MIT) | consistent line icons with regular + fill weights, close to SF Symbols in feel | SF Symbols (license), mixed theme symbolics (inconsistent) |
 | Cursors | **WhiteSur cursors** | matching macOS-style cursors | — |
-| Qt apps (Dolphin, Kate, …) | **our "Noobsbot Glass" Kvantum theme + colour scheme** (derived from WhiteSur Kvantum) + qt6ct, generated from Part D tokens (E2.9) | the same glassy macOS look as the desktop, light/dark + accent in sync | Breeze (KDE look), plain WhiteSur (not our exact tokens) |
-| GTK dialogs | **WhiteSur-gtk recoloured to Part D** (E2.9) | same colours for file pickers (solid; GTK can't do translucency) | Adwaita (GNOME look) |
+| Qt apps (Dolphin, Kate, …) | **our "Noobsbot Glass" Kvantum theme + colour scheme** (derived from WhiteSur Kvantum) + qt6ct, generated from Part D tokens (E2.9) | the same glassy macOS look as the desktop, light/dark + accent in sync | Breeze (another desktop's look), plain WhiteSur (not our exact tokens) |
+| GTK dialogs | **WhiteSur-gtk recoloured to Part D** (E2.9) | same colours for file pickers (solid; GTK can't do translucency) | Adwaita (another desktop's look) |
 | Icon fallback | `hicolor` + `breeze-icons` (comes with Dolphin) | never a missing icon | — |
 | Wallpapers | **our own** set (D11) | Apple wallpapers are copyrighted | — |
 
@@ -1960,7 +1960,7 @@ Debian names verified 2026-10-26 (on arm64; the x86-only ones by name).
 | Gestures & animations | full frame rate (60/120 Hz) | transforms on existing textures; no app redraws |
 | Fullscreen video/games | close to bare-metal | direct scanout; idle-inhibit |
 | Glass cost | **one pass** per surface | no blur (R2) |
-| Battery | better than GNOME/KDE | all of the above + power-profiles-daemon |
+| Battery | better than traditional desktops | all of the above + power-profiles-daemon |
 | Binary | small | `lto = "thin"`, `strip = true` |
 Measured with USS (`Private_Clean + Private_Dirty` in `/proc/<pid>/smaps_rollup`; plain RSS also counts Mesa's
 shared libLLVM/libgallium pages, ~130 MB that every GL process maps), per-thread CPU ticks, frame-time logs and
@@ -2062,9 +2062,9 @@ Rule: **a crate is added only when its feature is built.**
   the app name + About/Hide/Quit.
 - **L2 — Apps with their own title bars** (GTK4/libadwaita) won't show our traffic lights; themes make them look close.
 - **L3 — No Apple fonts, icons, symbols or wallpapers** (license). Open look-alikes (Part H).
-- **L4 — Dolphin/Kate bring KDE libraries** (~300 MB disk); no RAM cost until opened.
+- **L4 — Dolphin/Kate bring Qt framework libraries** (~300 MB disk); no RAM cost until opened.
 - **L5 — No 2-finger edge swipe for Notification Center** (libinput doesn't report finger position); click the clock / Super+N.
-- **L6 — Polkit password prompts:** our own agent (E7.2) shows them in our alert; KDE's dialog appears only if ours
+- **L6 — Polkit password prompts:** our own agent (E7.2) shows them in our alert; the fallback agent's dialog appears only if ours
   can't register.
 - **L7 — Screen sharing is per screen, not per window** (xdg-desktop-portal-wlr limit); window capture comes with our own
   `ext-image-copy-capture` toplevel support later.

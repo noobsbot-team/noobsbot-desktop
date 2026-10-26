@@ -14,7 +14,7 @@ trait Session {
     fn set_brightness(&self, subsystem: &str, name: &str, brightness: u32) -> zbus::Result<()>;
 }
 
-/// The panel's backlight: firmware interfaces first, then platform, then raw (the order logind and GNOME use).
+/// The panel's backlight: firmware interfaces first, then platform, then raw (the order logind uses).
 fn device() -> Option<String> {
     let rank = |name: &str| match fs::read_to_string(Path::new(SYSFS).join(name).join("type")).ok()?.trim() {
         "firmware" => Some(0),

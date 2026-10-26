@@ -68,7 +68,7 @@ pub struct Appearance {
     pub wallpaper: String,
     /// PNG or JPEG for dark mode; empty = the built-in dark opal gradient.
     pub wallpaper_dark: String,
-    /// The Control Center's Dark Mode toggle also rewrites the Qt/KDE app theme (E2.9).
+    /// The Control Center's Dark Mode toggle also rewrites the Qt app theme (E2.9).
     pub theme_apps: bool,
     /// Every movement becomes a 150 ms crossfade (D10).
     pub reduce_motion: bool,

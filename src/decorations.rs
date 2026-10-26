@@ -81,11 +81,11 @@ pub fn lights_hovered(window: &Window) -> bool {
     window.user_data().get::<LightsHover>().is_some_and(|h| h.0.load(Ordering::Relaxed))
 }
 
-/// Set on a surface whose app agreed to our title bar through the KDE protocol (GTK3, Qt 5).
+/// Set on a surface whose app agreed to our title bar through the older server-decoration protocol (GTK3, Qt 5).
 #[derive(Default)]
 struct KdeServerSide(AtomicBool);
 
-/// The height of our title bar on `window`: `BAR` if the app agreed (xdg-decoration or KDE) and it is not fullscreen.
+/// The height of our title bar on `window`: `BAR` if the app agreed (xdg-decoration or server-decoration) and it is not fullscreen.
 pub fn bar_height(window: &Window) -> i32 {
     let Some(toplevel) = window.toplevel() else { return 0 };
     let (xdg, fullscreen) = toplevel.with_pending_state(|s| (s.decoration_mode == Some(Mode::ServerSide), s.states.contains(xdg_toplevel::State::Fullscreen)));

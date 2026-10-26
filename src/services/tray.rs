@@ -85,7 +85,7 @@ pub struct MenuRow {
     pub enabled: bool,
 }
 
-/// The watcher we host: item ids are `<bus name><object path>`, as KDE's.
+/// The watcher we host: item ids are `<bus name><object path>`, as the spec's.
 /// Items any app may register: a spammer stops here instead of in our memory.
 const MAX_ITEMS: usize = 64;
 
@@ -263,7 +263,7 @@ async fn read(bus: &Connection) -> Option<Vec<TrayItem>> {
     Some(items)
 }
 
-/// `None` for a Passive item (hidden, as on KDE) or one without any icon.
+/// `None` for a Passive item (hidden, as the spec says) or one without any icon.
 fn from_props(service: &str, path: &str, props: &HashMap<String, OwnedValue>) -> Option<TrayItem> {
     let text = |key: &str| props.get(key).and_then(|v| v.downcast_ref::<&str>().ok()).unwrap_or_default().to_owned();
     if text("Status") == "Passive" {
