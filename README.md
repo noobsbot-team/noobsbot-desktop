@@ -329,7 +329,7 @@ doesn't understand is skipped and reported in the journal.
 | `[mouse]` | tracking speed, acceleration, primary button, natural scrolling, middle-click emulation, double-click speed and middle-click paste (also given to GTK apps) |
 | `[hot_corners]` | an action for each screen corner (off by default) |
 | `[display]` | which GPU draws the desktop, scale for every screen |
-| `[[display.outputs]]` | one screen by connector name: on or off, resolution, refresh rate, scale, rotation, position, which shows the menu bar and Dock, mirroring another display (System Settings › Displays asks to keep or revert) |
+| `[[display.outputs]]` | one screen by connector name: on or off, resolution, refresh rate, scale, rotation, position, which shows the menu bar and Dock, mirroring another display (System Settings › Displays asks to keep or revert), `vrr`: variable refresh rate where the display supports it |
 | `[windows]` | move key, magnetic edges, snapping, double-click title bar, number of Spaces, reopen windows at login |
 | `[spaces]` | each display with its own Spaces, or one set for all |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week (or the locale's), week numbers |

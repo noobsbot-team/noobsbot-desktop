@@ -2179,6 +2179,9 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
         rates.dedup();
         let pick = pick_list(rates, Some(Rate(d.mode.refresh)), move |r: Rate| change(vec![("refresh", ((f64::from(r.0) / 10.0).round() / 100.0).into())]));
         rows.push(line(t, "Refresh rate", "", pick.text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()));
+        if d.vrr_capable {
+            rows.push(line(t, "Variable refresh rate", "", toggle(t, d.vrr, move |on| change(vec![("vrr", on.into())]))));
+        }
     }
     // The entry's own scale; 0 or none = the default ([display] scale, else auto). A mirror is drawn in its own pixels.
     if d.mirror.is_empty() {
