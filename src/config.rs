@@ -77,6 +77,12 @@ pub struct Appearance {
     pub reduce_motion: bool,
     /// How the wallpaper picture meets the screen.
     pub wallpaper_fit: WallpaperFit,
+    /// Slideshow: a folder of PNG/JPEG pictures shown in turn (instead of the two files above); empty = off.
+    pub wallpaper_folder: String,
+    /// Minutes per picture; 0 = a new one only at login.
+    pub wallpaper_interval: u32,
+    /// Random order instead of by name.
+    pub wallpaper_shuffle: bool,
     /// `auto` is dark from this hour until `dark_until` (0 … 23, local time).
     pub dark_from: u32,
     pub dark_until: u32,
@@ -691,6 +697,9 @@ impl Default for Appearance {
             theme_apps: false,
             reduce_motion: false,
             wallpaper_fit: WallpaperFit::Fill,
+            wallpaper_folder: String::new(),
+            wallpaper_interval: 30,
+            wallpaper_shuffle: false,
             dark_from: 19,
             dark_until: 7,
             text_scale: 1.0,

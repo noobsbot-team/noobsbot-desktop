@@ -1664,7 +1664,7 @@ The dock stays per app, as on macOS. Every per-window job a taskbar does gets a 
 
 ### E8.4 Appearance and themes (priority 1)
 Rows live on the Appearance page (E8.2). Behind them:
-- Wallpaper: gallery, fit modes, slideshow and crossfade in the wallpaper renderer (today `cover` only).
+- Wallpaper: gallery, fit modes, slideshow and crossfade in the wallpaper renderer (built: `[appearance] wallpaper_folder`, `wallpaper_interval`, `wallpaper_shuffle`; 1 s crossfade on every change).
 - Auto-dark from configurable hours or sunset (needs the location the user typed for weather; no geoclue, E2.6).
 - Night Light as an output colour-temperature shader with schedule, as designed in E6.2.
 - Text size and pointer size applied to the shell and exported to apps and XWayland (`XCURSOR_SIZE` today).
