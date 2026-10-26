@@ -424,6 +424,12 @@ impl State {
                 if screen.mirror_of != of {
                     (screen.mirror_of, screen.mirrored) = (of, None);
                 }
+                // Takes effect with the next frame; a display that needs a modeset for it may blank briefly.
+                if screen.compositor.vrr_enabled() != d.vrr
+                    && let Err(err) = screen.compositor.use_vrr(d.vrr)
+                {
+                    tracing::warn!("display {}: variable refresh rate: {err}", d.name);
+                }
             }
             shown.push((d, output));
         }
@@ -672,7 +678,9 @@ impl State {
                     _ => (now, 0),
                 };
                 use wp_presentation_feedback::Kind as K;
-                feedback.presented(time, Refresh::fixed(refresh(&screen.output)), seq, K::Vsync | K::HwClock | K::HwCompletion);
+                let period = refresh(&screen.output);
+                let rate = if screen.compositor.vrr_enabled() { Refresh::variable(period) } else { Refresh::fixed(period) };
+                feedback.presented(time, rate, seq, K::Vsync | K::HwClock | K::HwCompletion);
             }
             Ok(_) => {}
             Err(err) => tracing::warn!("{}: frame: {err}", screen.output.name()),
@@ -802,14 +810,19 @@ fn describe(drm: &DrmDevice, info: &connector::Info) -> Display {
             display_info::Mode { width: mode.size.w, height: mode.size.h, refresh: mode.refresh, preferred: m.mode_type().contains(ModeTypeFlags::PREFERRED) }
         })
         .collect();
-    Display { built_in: display_info::built_in(&name), name, make, model, serial, width_mm, height_mm, modes, ..Default::default() }
+    let vrr_capable = property(drm, info.handle(), b"vrr_capable") == Some(1);
+    Display { built_in: display_info::built_in(&name), name, make, model, serial, width_mm, height_mm, modes, vrr_capable, ..Default::default() }
 }
 
 /// The connector's EDID blob.
 fn edid(drm: &DrmDevice, connector: connector::Handle) -> Option<Vec<u8>> {
+    drm.get_property_blob(property(drm, connector, b"EDID")?).ok().filter(|b| !b.is_empty())
+}
+
+/// A connector property's raw value, by name.
+fn property(drm: &DrmDevice, connector: connector::Handle, name: &[u8]) -> Option<u64> {
     let props = drm.get_properties(connector).ok()?;
-    let blob = props.iter().find_map(|(id, value)| (drm.get_property(*id).ok()?.name().to_bytes() == b"EDID").then_some(*value))?;
-    drm.get_property_blob(blob).ok().filter(|b| !b.is_empty())
+    props.iter().find_map(|(id, value)| (drm.get_property(*id).ok()?.name().to_bytes() == name).then_some(*value))
 }
 
 /// Picks a CRTC, and makes the output (in `drm_mode`), its global and its DRM compositor; `apply_displays` sets its
