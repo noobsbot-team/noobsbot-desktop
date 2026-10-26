@@ -364,7 +364,7 @@ impl State {
     fn dock_target(&self, window: &Window) -> Rectangle<f64, Logical> {
         let output = self.window_output(window).or_else(|| self.space.outputs().next().cloned());
         let docked = output.clone().filter(|o| self.dock_outputs().contains(o) && self.dock_shown_on(o));
-        let mut items = self.dock_items();
+        let mut items = self.dock_items_on(output.as_ref());
         let tile = crate::shell::dock::is_minimised(window) && !self.config.dock.minimise_into_icon;
         if tile && !items.iter().any(|i| i.is_tile() && i.windows.contains(window)) {
             items.push(crate::shell::dock::Item { key: "minimised:next".into(), app: None, windows: vec![window.clone()] });

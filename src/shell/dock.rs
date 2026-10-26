@@ -435,16 +435,30 @@ impl State {
         Some((r.key.clone(), r.app.clone()))
     }
 
-    /// Whether `window` is on the current Space (shown, or minimised from it).
-    fn on_current_space(&self, window: &Window) -> bool {
+    /// Whether `window` is on the current Space (shown, or minimised from it) of `output` (`None`: any display's).
+    // ponytail: a minimised window counts as on the display its top-left corner was on.
+    fn on_current_space(&self, window: &Window, output: Option<&Output>) -> bool {
         let top = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.loc.y);
-        let loc = self.space.element_location(window).or_else(|| self.hidden.iter().find(|(w, _)| w == window).map(|(_, l)| *l));
-        loc.is_none_or(|l| crate::spaces::row_at(l.y, top) == 0)
+        let hidden = || self.hidden.iter().find(|(w, _)| w == window).map(|(_, l)| *l);
+        let loc = self.space.element_location(window).or_else(hidden);
+        let here = output.is_none_or(|o| match self.window_output(window) {
+            Some(on) => on == *o,
+            None => hidden().is_none_or(|l| self.space.output_geometry(o).is_some_and(|g| g.contains(l))),
+        });
+        here && loc.is_none_or(|l| crate::spaces::row_at(l.y, top) == 0)
     }
 
-    /// Pinned items that are installed, in config order, then running apps in the order they started.
+    /// The items of the dock the pointer is on (`dock_output`).
     pub fn dock_items(&self) -> Vec<Item> {
+        self.dock_items_on(self.dock_output().as_ref())
+    }
+
+    /// `output`'s dock's items: pinned items that are installed, in config order, then running apps in the order they
+    /// started. With `[dock] current_workspace_only`, only the current Space's apps and windows: with a dock on every
+    /// display, that display's.
+    pub fn dock_items_on(&self, output: Option<&Output>) -> Vec<Item> {
         let dock = &self.config.dock;
+        let output = output.filter(|_| dock.displays == DockDisplays::All);
         let mut items: Vec<Item> = Vec::new();
         for name in &dock.items {
             if name == TRASH_KEY {
@@ -457,7 +471,7 @@ impl State {
             }
         }
         let mut windows: Vec<Window> = self.space.elements().rev().chain(self.hidden.iter().map(|(w, _)| w)).cloned().collect();
-        windows.retain(|w| !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w)));
+        windows.retain(|w| !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w, output)));
         windows.sort_by_key(seen);
         for window in windows {
             let Some((key, app)) = self.dock_key(&window) else { continue };
@@ -475,7 +489,7 @@ impl State {
         // Minimised windows' tiles at the right end, in the order they were minimised.
         if !dock.minimise_into_icon {
             for (window, _) in &self.hidden {
-                if is_minimised(window) && !self.is_quake(window) && (!dock.current_workspace_only || self.on_current_space(window)) {
+                if is_minimised(window) && !self.is_quake(window) && (!dock.current_workspace_only || self.on_current_space(window, output)) {
                     let app = self.dock_key(window).and_then(|(_, app)| app);
                     items.push(Item { key: format!("{TILE}{}", seen(window)), app, windows: vec![window.clone()] });
                 }
