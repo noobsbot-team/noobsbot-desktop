@@ -1,0 +1,11 @@
+# The graphical login screen (plan.md E7.2): Noobsbot Desktop's own greeter instead of tuigreet. Debian version (user
+# `_greetd`, VT 7). `./install.sh --greeter` writes this as /etc/greetd/config.toml (later runs keep it). To go back to
+# tuigreet, the default and the fallback if this one ever fails to start: swap the two command lines below in
+# /etc/greetd/config.toml (from another console: Ctrl+Alt+F2), and install.sh keeps tuigreet from then on.
+[terminal]
+vt = 7
+
+[default_session]
+command = "noobsbot-desktop --greeter"
+# command = "tuigreet --time --remember --cmd noobsbot-desktop-session"
+user = "_greetd"

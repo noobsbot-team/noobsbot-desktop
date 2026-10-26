@@ -48,7 +48,7 @@ fn install() -> Result<Version, String> {
     let key = fs::read_to_string(at(verify::PUBKEY)).map_err(|e| format!("{}: {e}", verify::PUBKEY))?;
     let sums = small(&dir.join("SHA256SUMS"))?;
     let sig = String::from_utf8(small(&dir.join("SHA256SUMS.minisig"))?).map_err(|_| "the signature is not text")?;
-    let signed = verify::signed(&key, &sums, &sig)?;
+    let signed = verify::signed(&key, &sums, &sig, std::env::consts::ARCH)?;
 
     let lib = at("/usr/lib/noobsbot-desktop");
     let versions = lib.join("versions");

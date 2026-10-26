@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Debian only, installed as /usr/local/bin/helium-browser. Debian's Helium (helium-bin) starts as `helium` and reads no
+# flags file. The dock, Super+B and Arch's package use `helium-browser` with ~/.config/helium-browser-flags.conf
+# (one flag per line), so this gives Debian the same name and the same flags.
+conf=${XDG_CONFIG_HOME:-$HOME/.config}/helium-browser-flags.conf
+flags=()
+[[ -r $conf ]] && mapfile -t flags < <(grep -Ev '^[[:space:]]*(#|$)' "$conf")
+exec /usr/bin/helium "${flags[@]}" "$@"
