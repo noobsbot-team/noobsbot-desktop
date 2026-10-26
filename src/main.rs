@@ -147,7 +147,13 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
                 return;
             }
             tracing::info!("settings reloaded");
-            if config.keyboard != state.config.keyboard
+            if config.keyboard.repeat() != state.config.keyboard.repeat()
+                && let Some(keyboard) = state.seat.get_keyboard()
+            {
+                let (rate, delay) = config.keyboard.repeat();
+                keyboard.change_repeat_info(rate, delay);
+            }
+            if config.keyboard.xkb_changed(&state.config.keyboard)
                 && let Some(keyboard) = state.seat.get_keyboard()
             {
                 let resolved = config.keyboard.resolved();

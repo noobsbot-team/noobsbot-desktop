@@ -36,6 +36,9 @@ variant = ""
 options = ""
 # Super acts as Cmd, like macOS: Super+C/V/X/Z/A/S/F/T/R/L/W/N/1…9 reach apps as Ctrl+… (plan E1.6, not applied yet).
 mac_keys = false
+# Key repeat: held this many ms, then this many times a second (0 = no repeat).
+repeat_delay = 500
+repeat_rate = 30
 
 [touchpad]
 tap_to_click = true
