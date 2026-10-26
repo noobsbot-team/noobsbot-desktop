@@ -31,6 +31,10 @@ wallpaper_fit = "fill"
 theme_apps = false
 # Reduce motion: windows, menus and banners crossfade (150 ms) instead of moving.
 reduce_motion = false
+# Text size of menus, the menu bar, the dock and notifications (0.8 … 1.5); GTK and Qt apps follow.
+text_scale = 1.0
+# Pointer size in px, e.g. 24, 32, 48 (0 = $XCURSOR_SIZE, else 24); apps started here get it as XCURSOR_SIZE.
+pointer_size = 0
 
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).

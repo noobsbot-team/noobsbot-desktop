@@ -79,6 +79,10 @@ pub struct Appearance {
     /// `auto` is dark from this hour until `dark_until` (0 … 23, local time).
     pub dark_from: u32,
     pub dark_until: u32,
+    /// Multiplier on the shell's label sizes, 0.8 … 1.5; also GTK `text-scaling-factor` and the Qt font size.
+    pub text_scale: f32,
+    /// Pointer size in px; 0 = `$XCURSOR_SIZE`, else 24. Apps we start get it as `XCURSOR_SIZE`.
+    pub pointer_size: u32,
 }
 
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
@@ -623,6 +627,13 @@ impl Default for Idle {
     }
 }
 
+impl Appearance {
+    /// `text_scale` within 0.8 … 1.5.
+    pub fn text_scale(&self) -> f32 {
+        self.text_scale.clamp(0.8, 1.5)
+    }
+}
+
 impl Default for Appearance {
     fn default() -> Self {
         Self {
@@ -636,6 +647,8 @@ impl Default for Appearance {
             wallpaper_fit: WallpaperFit::Fill,
             dark_from: 19,
             dark_until: 7,
+            text_scale: 1.0,
+            pointer_size: 0,
         }
     }
 }

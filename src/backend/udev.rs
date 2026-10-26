@@ -455,7 +455,7 @@ impl State {
                 render_elements_from_surface_tree(renderer, surface, at, scale, 1.0, Kind::Cursor).into_iter().map(SceneElement::Surface).collect()
             }
             CursorImageStatus::Named(icon) => {
-                let px = (f64::from(cursor::size()) * scale).round() as u32;
+                let px = (f64::from(cursor::size(self.config.appearance.pointer_size)) * scale).round() as u32;
                 let entry = cache.entry((*icon, px)).or_insert_with(|| {
                     let names: Vec<&str> = [icon.name()].into_iter().chain(icon.alt_names().iter().copied()).chain(["default", "left_ptr"]).collect();
                     let image = cursor::load(&names, px)?;

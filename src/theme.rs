@@ -40,6 +40,19 @@ fn gsettings(dark: bool) -> [[&'static str; 2]; 4] {
     ]
 }
 
+/// The text size and pointer size keys of `org.gnome.desktop.interface` (E8.4).
+fn sizes(appearance: &Appearance) -> [[String; 2]; 2] {
+    [
+        ["text-scaling-factor".into(), format!("{:.2}", appearance.text_scale())],
+        ["cursor-size".into(), crate::backend::cursor::size(appearance.pointer_size).to_string()],
+    ]
+}
+
+/// The Qt font size in points: 10 times the text scale.
+fn qt_points(appearance: &Appearance) -> u32 {
+    (10.0 * appearance.text_scale()).round() as u32
+}
+
 /// `ink` (0 or 255) at `alpha` over `bg`, flattened: Qt colour schemes and Kvantum want solid colours.
 fn over(ink: u8, alpha: f32, bg: Rgb) -> Rgb {
     mix([ink; 3], alpha, bg)
@@ -291,7 +304,14 @@ pub fn write(appearance: &Appearance, config_home: &Path, data_home: &Path) -> i
     save(path, merge(&text, &vec![("General", vec![("theme", name(dark).into())])], |_| false))?;
 
     let mut ours: Groups = vec![
-        ("General", vec![("ColorScheme", name(dark).into()), ("font", "Inter,10".into()), ("fixed", "JetBrains Mono,10".into())]),
+        (
+            "General",
+            vec![
+                ("ColorScheme", name(dark).into()),
+                ("font", format!("Inter,{}", qt_points(appearance))),
+                ("fixed", format!("JetBrains Mono,{}", qt_points(appearance))),
+            ],
+        ),
         ("Icons", vec![("Theme", icons(dark).into())]),
     ];
     ours.extend(colour_groups(dark, appearance.accent));
@@ -338,6 +358,18 @@ pub fn write_in_background(appearance: Appearance, gsettings: bool) {
     let _ = tx.send((appearance, gsettings));
 }
 
+/// Sets the GTK text scale and pointer size on a thread (a real session only, never nested), so the frame never waits.
+pub fn sizes_in_background(appearance: &Appearance) {
+    let sizes = sizes(appearance);
+    std::thread::spawn(move || {
+        for [key, value] in &sizes {
+            if !gsettings_command([key, value]).status().is_ok_and(|s| s.success()) {
+                tracing::warn!("gsettings {key}: failed");
+            }
+        }
+    });
+}
+
 /// `noobsbot-desktop theme …`: the exit code.
 pub fn cli(args: impl Iterator<Item = String>) -> i32 {
     let (mut write_files, mut run_gsettings) = (false, false);
@@ -371,7 +403,8 @@ pub fn cli(args: impl Iterator<Item = String>) -> i32 {
     if !run_gsettings {
         println!("GTK (pass --gsettings to apply):");
     }
-    for [key, value] in gsettings(render::is_dark(&appearance)) {
+    let sizes = sizes(&appearance);
+    for [key, value] in gsettings(render::is_dark(&appearance)).into_iter().chain(sizes.iter().map(|[k, v]| [k.as_str(), v.as_str()])) {
         println!("gsettings set org.gnome.desktop.interface {key} '{value}'");
         if run_gsettings && !gsettings_command([key, value]).status().is_ok_and(|s| s.success()) {
             eprintln!("gsettings {key}: failed");
@@ -394,6 +427,15 @@ mod tests {
             let args: Vec<_> = command.get_args().collect();
             assert_eq!(args, ["set", "org.gnome.desktop.interface", "color-scheme", value]);
         }
+    }
+
+    #[test]
+    fn text_and_pointer_sizes_follow_the_config() {
+        let appearance = Appearance { text_scale: 1.26, pointer_size: 32, ..Appearance::default() };
+        assert_eq!(qt_points(&appearance), 13);
+        assert_eq!(sizes(&appearance), [["text-scaling-factor".to_string(), "1.26".into()], ["cursor-size".into(), "32".into()]]);
+        // Out of range clamps.
+        assert_eq!(qt_points(&Appearance { text_scale: 3.0, ..Appearance::default() }), 15);
     }
 
     fn temp_dir(name: &str) -> PathBuf {

@@ -58,9 +58,13 @@ pub fn load(names: &[&str], size: u32) -> Option<Image> {
     None
 }
 
-/// The pointer size in logical px: `$XCURSOR_SIZE`, else 24.
-pub fn size() -> u32 {
-    std::env::var("XCURSOR_SIZE").ok().and_then(|s| s.parse().ok()).filter(|s| (8..=256).contains(s)).unwrap_or(24)
+/// The pointer size in logical px: `configured` (`[appearance] pointer_size`), else `$XCURSOR_SIZE`, else 24.
+pub fn size(configured: u32) -> u32 {
+    Some(configured)
+        .filter(|s| *s > 0)
+        .or_else(|| std::env::var("XCURSOR_SIZE").ok().and_then(|s| s.parse().ok()))
+        .filter(|s| (8..=256).contains(s))
+        .unwrap_or(24)
 }
 
 /// The `Inherits=` themes of an `index.theme`.

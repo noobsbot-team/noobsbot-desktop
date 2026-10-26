@@ -1,7 +1,7 @@
 //! Backends: `winit` runs nested in a window (`--nested`), `udev` on the real screen (E6.1). Both draw the same frame
 //! (`State::frame_elements` in winit.rs) with the shell's caches below.
 
-mod cursor;
+pub mod cursor;
 pub mod udev;
 pub mod winit;
 
