@@ -84,9 +84,9 @@ fn type_ahead(event: iced::Event, status: iced::event::Status, _: iced::window::
 }
 
 /// `displays.json`, or nothing when the desktop isn't running (or wrote something unreadable).
-/// Take Photo's countdown: a `PhotoTick` in a second (a pool thread sleeps).
-fn tick() -> Task<Message> {
-    Task::perform(async { std::thread::sleep(std::time::Duration::from_secs(1)) }, |()| Message::PhotoTick)
+/// Take Photo's countdown: a `PhotoTick` for countdown `generation` in a second (a pool thread sleeps).
+fn tick(generation: u32) -> Task<Message> {
+    Task::perform(async { std::thread::sleep(std::time::Duration::from_secs(1)) }, move |()| Message::PhotoTick(generation))
 }
 
 fn read_displays() -> Vec<display_info::Display> {
@@ -153,6 +153,8 @@ pub struct App {
     users: Option<users::Users>,
     /// Users ▸ Take Photo…'s sheet, open.
     shot: Option<users::Shot>,
+    /// Bumped by each Take Photo… / Retake, so ticks and photos of an earlier countdown are dropped.
+    shot_generation: u32,
     /// The Printers page's queues and jobs: `None` until read, `Some(None)` without CUPS.
     printers: Option<Option<printers::Printers>>,
     /// The printer whose options are open.
@@ -283,10 +285,10 @@ pub enum Message {
     Picture(std::path::PathBuf),
     /// Users ▸ Take Photo… (or Retake): the countdown starts; `false` closes the sheet.
     TakePhoto(bool),
-    /// A second of the countdown passed.
-    PhotoTick,
-    /// The camera's photo, or why not.
-    Photo(Result<iced::widget::image::Handle, String>),
+    /// A second of countdown N (`App::shot_generation`) passed.
+    PhotoTick(u32),
+    /// Countdown N's photo, or why not.
+    Photo(u32, Result<iced::widget::image::Handle, String>),
     /// Users ▸ Change Password…: the fields open or close.
     PasswordForm,
     ChangePassword,
@@ -354,6 +356,7 @@ impl App {
             level: 0.0,
             users: None,
             shot: None,
+            shot_generation: 0,
             printers: None,
             printer: None,
             devices: None,
@@ -580,24 +583,26 @@ impl App {
             }
             Message::TakePhoto(open) => {
                 self.shot = open.then_some(users::Shot::Count(3));
+                self.shot_generation = self.shot_generation.wrapping_add(1);
                 if open {
-                    return tick();
+                    return tick(self.shot_generation);
                 }
             }
-            Message::PhotoTick => match self.shot {
+            Message::PhotoTick(generation) if generation == self.shot_generation => match self.shot {
                 Some(users::Shot::Count(n)) if n > 1 => {
                     self.shot = Some(users::Shot::Count(n - 1));
-                    return tick();
+                    return tick(generation);
                 }
                 Some(users::Shot::Count(_)) => {
                     let Some(camera) = self.users.as_ref().and_then(|u| u.camera.clone()) else { return Task::none() };
                     self.shot = Some(users::Shot::Taking);
-                    return Task::perform(users::take_photo(camera), Message::Photo);
+                    return Task::perform(users::take_photo(camera), move |photo| Message::Photo(generation, photo));
                 }
                 _ => {}
             },
-            Message::Photo(photo) => {
-                if self.shot.is_some() {
+            Message::PhotoTick(_) => {}
+            Message::Photo(generation, photo) => {
+                if self.shot.is_some() && generation == self.shot_generation {
                     self.shot = Some(photo.map_or_else(users::Shot::Failed, users::Shot::Taken));
                 }
             }
