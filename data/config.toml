@@ -209,7 +209,7 @@ super_tap = true
 # Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
-# app-drawer.
+# app-drawer, "dock-app 1…9", "dock-app-new 1…9".
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec helium-browser"
@@ -234,18 +234,35 @@ super_tap = true
 # The emoji picker (E7.2): types the emoji into the focused text field, or copies it.
 "Super+Ctrl+E" = "emoji"
 "Super+period" = "emoji"
-# Spaces (E5.1) and Mission Control (E5.2). Ctrl+arrows and Ctrl+digits stay with the apps.
+# Spaces (E5.1) and Mission Control (E5.2). Ctrl+arrows stay with the apps; Ctrl+1…9 go to a Space, as on macOS.
 "Super+Left" = "space left"
 "Super+Right" = "space right"
-"Super+1" = "space 1"
-"Super+2" = "space 2"
-"Super+3" = "space 3"
-"Super+4" = "space 4"
-"Super+5" = "space 5"
-"Super+6" = "space 6"
-"Super+7" = "space 7"
-"Super+8" = "space 8"
-"Super+9" = "space 9"
+"Ctrl+1" = "space 1"
+"Ctrl+2" = "space 2"
+"Ctrl+3" = "space 3"
+"Ctrl+4" = "space 4"
+"Ctrl+5" = "space 5"
+"Ctrl+6" = "space 6"
+"Ctrl+7" = "space 7"
+"Ctrl+8" = "space 8"
+"Ctrl+9" = "space 9"
+# The n-th dock icon (E8.3): focus it, cycle its windows if it has focus, or open it. Hold Super to see the numbers.
+# Super+Shift+n opens a new window; Super+Shift+3/4/5 stay screenshots.
+"Super+1" = "dock-app 1"
+"Super+2" = "dock-app 2"
+"Super+3" = "dock-app 3"
+"Super+4" = "dock-app 4"
+"Super+5" = "dock-app 5"
+"Super+6" = "dock-app 6"
+"Super+7" = "dock-app 7"
+"Super+8" = "dock-app 8"
+"Super+9" = "dock-app 9"
+"Super+Shift+1" = "dock-app-new 1"
+"Super+Shift+2" = "dock-app-new 2"
+"Super+Shift+6" = "dock-app-new 6"
+"Super+Shift+7" = "dock-app-new 7"
+"Super+Shift+8" = "dock-app-new 8"
+"Super+Shift+9" = "dock-app-new 9"
 "Super+Shift+Left" = "move-to-space left"
 "Super+Shift+Right" = "move-to-space right"
 "Super+Up" = "mission-control"

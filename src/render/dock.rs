@@ -78,12 +78,12 @@ pub struct DockView {
     badge_labels: Vec<Label>,
     /// Lightened or darkened copies of icons, by icon, size and shade in 1/20 steps.
     shaded: HashMap<(usize, u32, u8, u8), Arc<Rendered>>,
-    /// The tooltip, made for these words, top-left, mode and scale.
+    /// The tooltips, made for these words and bottom centres, mode and scale.
     tip: Option<(TipKey, Vec<PixelShaderElement>, Vec<Piece>)>,
     tip_labels: Vec<Label>,
 }
 
-type TipKey = (String, Point<i32, Logical>, bool, u64);
+type TipKey = (Vec<(String, Point<i32, Logical>)>, bool, u64);
 
 type BadgeKey = (Vec<(Rect, Option<i64>, Option<u8>)>, [u8; 3], u64);
 type Piece = (Arc<Rendered>, Rect);
@@ -134,7 +134,7 @@ impl DockView {
         glows.iter().map(|(rect, colour)| SceneElement::Shader(shaders.light(*rect, *colour, false, scale))).collect()
     }
 
-    /// The hovered app's name (D8 tooltip), centred over `at` (its bottom edge).
+    /// The hovered app's name (D8 tooltip) and the Super+n number pills, each centred over its point (bottom edge).
     #[expect(clippy::too_many_arguments, reason = "the frame's drawing context")]
     pub fn tooltip(
         &mut self,
@@ -142,19 +142,21 @@ impl DockView {
         shaders: &Shaders,
         text: &mut Text,
         symbols: &mut Symbols,
-        tip: Option<&(String, Point<i32, Logical>)>,
+        tips: &[(String, Point<i32, Logical>)],
         dark: bool,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let Some((words, at)) = tip else {
+        if tips.is_empty() {
             (self.tip, self.tip_labels) = (None, Vec::new());
             return Vec::new();
-        };
-        let key = (words.clone(), *at, dark, scale.to_bits());
+        }
+        let key = (tips.to_vec(), dark, scale.to_bits());
         if self.tip.as_ref().is_none_or(|(k, _, _)| *k != key) {
             let mut ui = Ui { shaders, text, symbols, dark, accent: [0, 0, 0], glass_opacity: 1.0, scale, glass: Vec::new(), pieces: Vec::new() };
-            let (w, h) = (ui.width(words, CALLOUT) + 16, i32::from(CALLOUT.line_height) + 12);
-            ui.tooltip((at.x - w / 2, at.y - h).into(), words);
+            for (words, at) in tips {
+                let (w, h) = (ui.width(words, CALLOUT) + 16, i32::from(CALLOUT.line_height) + 12);
+                ui.tooltip((at.x - w / 2, at.y - h).into(), words);
+            }
             let (mut glass, pieces) = (ui.glass, ui.pieces);
             glass.reverse();
             self.tip = Some((key, glass, pieces));

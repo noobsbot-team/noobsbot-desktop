@@ -47,6 +47,8 @@ const POOF_TIME: Duration = Duration::from_millis(300);
 const SETTLE: Duration = Duration::from_millis(200);
 /// Plank's HOVER_DELAY_TIME before the tooltip.
 pub const TIP_DELAY: Duration = Duration::from_millis(200);
+/// Super held alone this long shows the Super+n number pills (longer than a drawer tap).
+const NUMBERS_DELAY: Duration = Duration::from_millis(600);
 
 fn progress(t: Duration, of: Duration) -> f64 {
     t.as_secs_f64() / of.as_secs_f64()
@@ -325,8 +327,8 @@ pub struct Frame {
     pub glows: Vec<(Rect, [f32; 4])>,
     /// Item index and its badge and progress.
     pub badges: Vec<(usize, Entry)>,
-    /// The hovered app's name, centred over this point (its bottom edge).
-    pub tip: Option<(String, Point<i32, Logical>)>,
+    /// The hovered app's name, and the number pills while Super is held: words centred over a point (bottom edge).
+    pub tips: Vec<(String, Point<i32, Logical>)>,
     /// Poofs: where, and how far along (0..1).
     pub poofs: Vec<(Point<f64, Logical>, f64)>,
     /// Draw another frame.
@@ -616,9 +618,22 @@ impl State {
                     let centre = f64::from(layout.zone.loc.y) + layout.icon / 2.0;
                     let x = (layout.columns[i].0 + layout.columns[i].1) / 2.0;
                     let y = centre - ((layout.icon * zoom).round() - layout.icon / 2.0);
-                    frame.tip = Some((items[i].title().to_owned(), (x.round() as i32, y.round() as i32).into()));
+                    frame.tips.push((items[i].title().to_owned(), (x.round() as i32, y.round() as i32).into()));
                 } else {
                     self.dock_wake(at + TIP_DELAY);
+                }
+            }
+            // Super held alone: 1…9 over the first nine icons, for Super+n (E8.3).
+            if let Some(down) = self.super_tap.down() {
+                if now - down >= NUMBERS_DELAY {
+                    for (i, rect) in layout.icons.iter().enumerate().take(9) {
+                        let x = (layout.columns[i].0 + layout.columns[i].1) / 2.0;
+                        // Half a pill below the icon's centre, so the pill sits on it.
+                        let y = rect.loc.y + rect.size.h / 2.0 + 14.0;
+                        frame.tips.push(((i + 1).to_string(), (x.round() as i32, y.round() as i32).into()));
+                    }
+                } else {
+                    self.dock_wake(down + NUMBERS_DELAY);
                 }
             }
             frame.layout = Some(layout);
