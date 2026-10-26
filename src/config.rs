@@ -457,6 +457,8 @@ pub struct Windows {
     pub spaces: u8,
     /// Which window gets the keyboard: the one clicked, or (advanced) the one under the pointer.
     pub focus: FocusMode,
+    /// The Log Out alert's "Reopen windows when logging back in" box, as last left (E8.8).
+    pub reopen_at_login: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -839,7 +841,15 @@ impl Default for Touchpad {
 
 impl Default for Windows {
     fn default() -> Self {
-        Self { move_modifier: Modifier::Super, magnetic_edges: true, snapping: true, double_click_title: TitleAction::Zoom, spaces: 0, focus: FocusMode::Click }
+        Self {
+            move_modifier: Modifier::Super,
+            magnetic_edges: true,
+            snapping: true,
+            double_click_title: TitleAction::Zoom,
+            spaces: 0,
+            focus: FocusMode::Click,
+            reopen_at_login: true,
+        }
     }
 }
 

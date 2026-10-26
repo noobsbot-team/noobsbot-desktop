@@ -460,6 +460,7 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
     s(Page::General, "Software Update", "check_updates", "Check for updates daily", "Sends nothing but the version; installs at next login", Kind::Toggle),
+    s(Page::General, "Session", "windows.reopen_at_login", "Reopen windows when logging back in", "Also the Log Out alert's checkbox", Kind::Toggle),
 ];
 
 pub fn setting(key: &str) -> Option<&'static Setting> {
