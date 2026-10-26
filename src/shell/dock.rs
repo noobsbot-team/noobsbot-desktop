@@ -861,7 +861,8 @@ pub fn menu_rows(
     pinned: Option<bool>,
     login: Option<bool>,
 ) -> Vec<Option<Row>> {
-    let row = |label: &str, shortcut, command: Option<Command>| Some(Row { label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
+    let row =
+        |label: &str, shortcut, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
     let tick = |on: bool| if on { "✓" } else { "" };
     let windows = titles.iter().enumerate().map(|(i, t)| row(t, "", (active != Some(i)).then_some(Command::Window(i)))).collect();
     let recent = recent.iter().enumerate().map(|(i, r)| row(r, "", Some(Command::Recent(i)))).collect();
