@@ -90,6 +90,20 @@ pub enum Action {
     ShowSpace(usize),
     /// The focused window comes along to the Space left or right.
     MoveToSpace(i32),
+    /// Space n, from 0: the focused window goes there, the shown Space stays.
+    SendToSpace(usize),
+    /// The focused window goes to a new Space (dynamic Spaces).
+    SendToNewSpace,
+    /// The focused window to the next (+1) or previous (-1) display.
+    MoveToDisplay(i32),
+    /// Tiles the focused window against these work-area edges; none: Fill (E8.5, Super+Ctrl+arrows).
+    Tile(crate::wm::Edges),
+    /// Centres the focused window.
+    Center,
+    /// Keeps the focused window above the others, or not.
+    KeepOnTop,
+    /// The focused app's next window on this Space (Super+`, E4.5).
+    CycleAppWindows,
     /// Opens or closes Mission Control (E5.2).
     MissionControl,
     /// Mission Control with only the focused app's windows.
@@ -186,6 +200,15 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("dock-app-new", n) => dock_n(n).map(|n| Action::DockApp { n, new: true }),
         ("move-to-space", "left") => Some(Action::MoveToSpace(-1)),
         ("move-to-space", "right") => Some(Action::MoveToSpace(1)),
+        ("move-to-space", n) => n.parse::<usize>().ok().filter(|n| (1..=16).contains(n)).map(|n| Action::SendToSpace(n - 1)),
+        ("move-to-new-space", "") => Some(Action::SendToNewSpace),
+        ("move-to-display", "next") => Some(Action::MoveToDisplay(1)),
+        ("move-to-display", "previous") => Some(Action::MoveToDisplay(-1)),
+        ("tile", side) => tile_edges(side).map(Action::Tile),
+        ("fill", "") => Some(Action::Tile(Default::default())),
+        ("center" | "centre", "") => Some(Action::Center),
+        ("keep-on-top", "") => Some(Action::KeepOnTop),
+        ("cycle-app-windows", "") => Some(Action::CycleAppWindows),
         ("mission-control", "") => Some(Action::MissionControl),
         ("app-expose", "") => Some(Action::AppExpose),
         ("show-desktop", "") => Some(Action::ShowDesktop),
@@ -200,6 +223,22 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
 /// "1"…"9": a dock icon, from 0.
 fn dock_n(n: &str) -> Option<usize> {
     n.parse::<usize>().ok().filter(|n| (1..=9).contains(n)).map(|n| n - 1)
+}
+
+/// "left", "top-right", …: the work-area edges a tile is against; a half or a quarter, nothing else.
+fn tile_edges(side: &str) -> Option<crate::wm::Edges> {
+    let mut e = crate::wm::Edges::default();
+    for part in side.split('-') {
+        let edge = match part {
+            "left" => &mut e.left,
+            "right" => &mut e.right,
+            "top" => &mut e.top,
+            "bottom" => &mut e.bottom,
+            _ => return None,
+        };
+        *edge = true;
+    }
+    (!side.is_empty() && !(e.left && e.right) && !(e.top && e.bottom)).then_some(e)
 }
 
 /// The shortcut table from the config's `[bindings]`; entries that don't parse are logged and skipped.
@@ -343,6 +382,40 @@ impl State {
             Action::SwitchSpace(delta) => self.switch_space(delta),
             Action::ShowSpace(n) => self.show_space(n),
             Action::MoveToSpace(delta) => self.move_to_space(delta),
+            Action::SendToSpace(n) => {
+                if let Some(window) = focused {
+                    self.move_window_to_space(&window, n);
+                }
+            }
+            Action::SendToNewSpace => {
+                if let Some(window) = focused {
+                    self.move_to_new_space(&window);
+                }
+            }
+            Action::MoveToDisplay(delta) => {
+                if let Some(window) = focused {
+                    self.move_to_display(&window, delta);
+                }
+            }
+            Action::Tile(edges) => {
+                if let Some(window) = focused {
+                    self.tile_to(&window, edges);
+                }
+            }
+            Action::Center => {
+                if let Some(window) = focused {
+                    self.center(&window);
+                }
+            }
+            Action::KeepOnTop => {
+                if let Some(window) = focused {
+                    self.keep_on_top(&window);
+                }
+            }
+            Action::CycleAppWindows => {
+                let windows = self.app_windows(focused.as_ref()).into_iter().filter(|w| self.on_current(w)).collect();
+                self.dock_cycle(windows, true);
+            }
             Action::MissionControl => {
                 self.close_drawer();
                 self.toggle_mission_control();
@@ -480,6 +553,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_window_actions() {
+        let a = |text| action(&Config::default(), text);
+        let e = crate::wm::Edges { right: true, top: true, ..Default::default() };
+        assert_eq!(a("tile top-right"), Some(Action::Tile(e)));
+        assert_eq!(a("tile right-top"), Some(Action::Tile(e)));
+        assert_eq!(a("fill"), Some(Action::Tile(Default::default())));
+        assert_eq!(a("tile left-right"), None);
+        assert_eq!(a("tile"), None);
+        assert_eq!(a("tile middle"), None);
+        assert_eq!(a("move-to-space 16"), Some(Action::SendToSpace(15)));
+        assert_eq!(a("move-to-space 17"), None);
+        assert_eq!(a("move-to-space left"), Some(Action::MoveToSpace(-1)));
+        assert_eq!(a("move-to-display previous"), Some(Action::MoveToDisplay(-1)));
+        assert_eq!(a("keep-on-top"), Some(Action::KeepOnTop));
+    }
+
+    #[test]
     fn steps() {
         assert_eq!(step(50, true), 56);
         assert_eq!(step(98, true), 100);
@@ -521,6 +611,10 @@ mod tests {
         assert_eq!(lookup(&table, &super_ctrl, Keysym::_3, false), Some(&Action::ShowSpace(2)));
         assert_eq!(lookup(&table, &ModifiersState { ctrl: true, ..Default::default() }, Keysym::_3, false), None, "Ctrl+3 goes to the app");
         assert_eq!(action(&Config::default(), "dock-app 10"), None);
+        let tile = |left, right, top, bottom| Some(Action::Tile(crate::wm::Edges { left, right, top, bottom }));
+        assert_eq!(lookup(&table, &super_ctrl, Keysym::Left, false).cloned(), tile(true, false, false, false));
+        assert_eq!(lookup(&table, &super_ctrl, Keysym::Down, false).cloned(), tile(false, false, false, true));
+        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::grave, false), Some(&Action::CycleAppWindows));
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::Up, false), Some(&Action::MissionControl));
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::Left, false), None, "plain arrows go to the app");
     }

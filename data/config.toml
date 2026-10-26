@@ -250,7 +250,9 @@ super_tap = true
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
-# "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",
+# "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right|1…16",
+# move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
+# fill, center, keep-on-top, cycle-app-windows,
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
 # app-drawer, "dock-app 1…9", "dock-app-new 1…9".
 [bindings]
@@ -264,7 +266,7 @@ super_tap = true
 "Super+H" = "hide"
 "Super+Alt+H" = "hide-others"
 # Hold Super and press Tab to switch apps (Shift+Tab steps back). Nested in another desktop, Super is Alt, and the
-# host may keep Alt+Tab for itself: bind another key here, e.g. "Super+grave" = "switcher".
+# host may keep Alt+Tab for itself: bind another key here, e.g. "Super+Ctrl+Tab" = "switcher".
 "Super+Tab" = "switcher"
 "Super+Alt+Escape" = "force-quit"
 "Super+Ctrl+Q" = "lock"
@@ -308,6 +310,13 @@ super_tap = true
 "Super+Shift+9" = "dock-app-new 9"
 "Super+Shift+Left" = "move-to-space left"
 "Super+Shift+Right" = "move-to-space right"
+# Tile the window to a half of the screen; dragging it away gives its old size back (E8.5).
+"Super+Ctrl+Left" = "tile left"
+"Super+Ctrl+Right" = "tile right"
+"Super+Ctrl+Up" = "tile top"
+"Super+Ctrl+Down" = "tile bottom"
+# The focused app's next window.
+"Super+grave" = "cycle-app-windows"
 "Super+Up" = "mission-control"
 "Super+Down" = "app-expose"
 "Super+F11" = "show-desktop"
