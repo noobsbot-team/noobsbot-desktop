@@ -1712,7 +1712,8 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Menu bar on every display; auto-hide option; a Recent Items menu with Clear.
 - Trash at the dock's right end; Launchpad folders and drag to rearrange.
 - Widgets for Notification Center and the desktop as separate processes over D-Bus (no plugins in the compositor).
-- Keep-awake Control Center tile with the list of apps blocking sleep.
+- Keep-awake Control Center tile with the list of apps blocking sleep (done: idle-inhibit windows and logind `block`
+  inhibitors; on until logout).
 - ~~Reopen windows at login (checkbox in the Log Out alert).~~ Done: `session.toml` in the state dir; each app starts once 3 s after login and its windows go back to their Space, display and frame as they map (20 s wait).
 - Thunderbolt "Allow accessory to connect?" alert through `boltd` (G2).
 - Desktop icons for mounted drives with Eject.
