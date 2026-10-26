@@ -736,7 +736,7 @@ impl State {
                 field,
                 lifted,
                 offsets: &offsets,
-                onto: l.press.as_ref().and_then(|p| p.onto),
+                onto: l.press.as_ref().and_then(|p| p.onto(now)),
                 folder: open.as_ref().map(|((panel, inner), name, i)| (*panel, inner, *name, *i)),
             };
             bar.extend(pad_view.elements(

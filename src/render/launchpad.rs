@@ -161,13 +161,16 @@ impl LaunchpadView {
                 let off = offsets.get(i).copied().unwrap_or_default();
                 let i = i % per_page;
                 let shift = |r: Rect| zoom(Rectangle::new((r.loc.x + dx + off.x, r.loc.y + off.y).into(), r.size), centre, s);
-                let icon = shift(grid.icon_rect(i));
+                let mut icon = shift(grid.icon_rect(i));
                 if icon.loc.x + icon.size.w < 0 || icon.loc.x > output.w {
                     continue;
                 }
+                // A folder target grows a little over a glass well.
                 if onto == Some(p * per_page + i) {
-                    let well = zoom(icon, icon.loc.to_f64() + icon.size.to_f64().downscale(2.0).to_point(), 1.2);
+                    let mid = icon.loc.to_f64() + icon.size.to_f64().downscale(2.0).to_point();
+                    let well = zoom(icon, mid, 1.25);
                     moving.push((well, tint(alpha), f64::from(well.size.w) * 0.225, true));
+                    icon = zoom(icon, mid, 1.1);
                 }
                 let name = art(icons, tile, icon, (px, mini_px), alpha, tint(alpha), &mut pieces, &mut moving);
                 let name_rect = shift(grid.name_rect(i));
