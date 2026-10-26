@@ -96,6 +96,28 @@ pub fn sub_rows<'a>(rows: &'a [Option<Row>], path: &[usize]) -> &'a [Option<Row>
     path.iter().try_fold(rows, |rows, &i| Some(&rows.get(i)?.as_ref()?.sub[..])).unwrap_or_default()
 }
 
+/// Fits `popup`'s open submenus and keyboard row to its `rows` as rebuilt: the path ends before the first row that is
+/// gone or has no submenu any more, and a keyboard row past its level's end goes to the level's last live row.
+pub fn fit_menu(rows: &[Option<Row>], popup: Option<Popup>, submenu: &mut Option<(Popup, Vec<usize>)>, cursor: &mut Option<(Popup, usize, usize)>) {
+    let path = match submenu {
+        Some((p, path)) if Some(*p) == popup => {
+            let opens = |d: usize| sub_rows(rows, &path[..d]).get(path[d]).and_then(Option::as_ref).is_some_and(|r| !r.sub.is_empty());
+            let keep = (0..path.len()).take_while(|&d| opens(d)).count();
+            path.truncate(keep);
+            &path[..]
+        }
+        _ => &[],
+    };
+    if let Some((p, d, i)) = *cursor
+        && Some(p) == popup
+    {
+        let level = path.get(..d).map(|at| sub_rows(rows, at));
+        if level.is_none_or(|level| i >= level.len()) {
+            *cursor = level.and_then(|level| menu_step(level, None, false)).map(|j| (p, d, j));
+        }
+    }
+}
+
 /// The tray menu row at the end of `path` (as `sub_rows`).
 fn tray_row<'a>(rows: &'a [Option<MenuRow>], path: &[usize]) -> Option<&'a MenuRow> {
     let (&last, init) = path.split_last()?;
@@ -202,7 +224,7 @@ impl Row {
 /// Up (`down` false) or Down from row `from` (`None`: from outside the menu, so the first or last): the next live
 /// row, past separators and disabled rows; at either end it stays.
 pub fn menu_step(rows: &[Option<Row>], from: Option<usize>, down: bool) -> Option<usize> {
-    let live = |i: &usize| rows[*i].as_ref().is_some_and(Row::live);
+    let live = |i: &usize| rows.get(*i).and_then(Option::as_ref).is_some_and(Row::live);
     match (from, down) {
         (None, true) => (0..rows.len()).find(live),
         (None, false) => (0..rows.len()).rev().find(live),
@@ -732,10 +754,10 @@ impl State {
         }
     }
 
-    /// The rows of the open `menu`.
+    /// The rows of the open `menu`; its open submenus and keyboard row are fitted to them (`fit_menu`).
     pub fn open_menu_rows(&mut self, menu: Menu) -> Vec<Option<Row>> {
         let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
-        match menu {
+        let rows = match menu {
             Menu::Dock => self.dock_menu_rows(),
             Menu::Input => self.input_menu_rows(),
             Menu::Desktop => self.desktop_menu_rows(),
@@ -744,7 +766,9 @@ impl State {
             Menu::Overflow => self.overflow_menu_rows(),
             Menu::Battery(_) => self.battery_menu_rows(),
             _ => menu_rows(menu, "", tray, self.update_ready(), self.recent_menu.as_deref().unwrap_or_default()),
-        }
+        };
+        fit_menu(&rows, self.popup, &mut self.submenu, &mut self.menu_cursor);
+        rows
     }
 
     /// Reads the Recent Items when the logo menu opens and drops them when it closes, so it reads the file once.
@@ -1349,6 +1373,36 @@ mod tests {
         let mut tray = tray.to_vec();
         tray_find(&mut tray, 3).unwrap().submenu = Some(vec![row(6, "New", None)]);
         assert_eq!(tray_row(&tray, &[1, 0, 0]).map(|r| r.id), Some(6));
+    }
+
+    #[test]
+    fn rows_shrinking_under_an_open_path_and_cursor_cut_them_back() {
+        let row = |id, label: &str, submenu| Some(MenuRow { id, label: label.into(), enabled: true, submenu });
+        let leaves = |n| Some((10..10 + n).map(|id| row(id, "Leaf", None)).collect());
+        let p = Popup::Menu(Menu::Tray(0));
+        let open = |path: Vec<usize>, cursor| (Some((p, path)), Some((p, 2, cursor)));
+        // Open, More › Deep › its fifth leaf lit by the keyboard.
+        let (mut submenu, mut cursor) = open(vec![1, 0], 4);
+        // Deep came back with two leaves: the last one is lit instead.
+        let rows = tray_rows(&[row(1, "Open", None), row(2, "More", Some(vec![row(3, "Deep", leaves(2))]))]);
+        fit_menu(&rows, Some(p), &mut submenu, &mut cursor);
+        assert_eq!((submenu.clone().unwrap().1, cursor.unwrap()), (vec![1, 0], (p, 2, 1)));
+        // More lost its submenu: the path stops before it and the cursor, two levels down, goes.
+        let rows = tray_rows(&[row(1, "Open", None), row(2, "More", None)]);
+        let (mut submenu, mut cursor) = open(vec![1, 0], 4);
+        fit_menu(&rows, Some(p), &mut submenu, &mut cursor);
+        assert_eq!((submenu.unwrap().1, cursor), (vec![], None));
+        // More itself is gone (the window behind it closed); another popup's state is left alone.
+        let (mut submenu, mut cursor) = open(vec![1, 0], 4);
+        fit_menu(&rows[..1], Some(Popup::Control), &mut submenu, &mut cursor);
+        assert_eq!(submenu.as_ref().unwrap().1, [1, 0]);
+        fit_menu(&rows[..1], Some(p), &mut submenu, &mut cursor);
+        assert_eq!((submenu.unwrap().1, cursor), (vec![], None));
+        // A keyboard row past the end of the menu itself: its last live row.
+        let (mut submenu, mut cursor) = (None, Some((p, 0, 9)));
+        fit_menu(&rows, Some(p), &mut submenu, &mut cursor);
+        assert_eq!(cursor, Some((p, 0, 1)));
+        assert_eq!(menu_step(&rows, Some(9), false), Some(1), "Up from past the end: no panic");
     }
 
     #[test]
