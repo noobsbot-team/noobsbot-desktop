@@ -110,6 +110,22 @@ pub fn wallpaper(event_loop: &mut EventLoop<State>, state: &State) -> Result<Wal
     Ok(wallpaper)
 }
 
+/// A client's lock surface, if any, at its display's top left.
+fn lock_surface_elements(renderer: &mut GlesRenderer, surface: Option<&smithay::wayland::session_lock::LockSurface>, scale: f64) -> Vec<SceneElement> {
+    let Some(surface) = surface else { return Vec::new() };
+    smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
+        renderer,
+        surface.wl_surface(),
+        (0, 0),
+        scale,
+        1.0,
+        smithay::backend::renderer::element::Kind::Unspecified,
+    )
+    .into_iter()
+    .map(SceneElement::Surface)
+    .collect()
+}
+
 impl State {
     /// Every element of `output`'s frame, front to back, and whether an animation needs another frame. Both backends
     /// draw with it. Zoom and colour filters (E8.6) take the frame, then Night Light goes in front of everything
@@ -514,9 +530,12 @@ impl State {
             let (dock, dock_animating) = if locked { Default::default() } else { self.dock_elements(renderer, output) };
             let animating = animating || dock_animating;
             let views = self.backend.as_mut()?;
-            // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
-            let mut elements = if locked {
-                views.wallpaper.element(&views.shaders, geo.size, scale, dark)
+            // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen, or a
+            // client's lock surface for this display.
+            let mut elements = if let Some(lock) = &self.lock {
+                let mut elements = lock_surface_elements(renderer, lock.surface_on(output), scale);
+                elements.extend(views.wallpaper.element(&views.shaders, geo.size, scale, dark));
+                elements
             } else {
                 // Its popups and menu bar, and ghosts of closing and minimising windows, in front of the windows.
                 let now = self.frame_time;
@@ -554,7 +573,9 @@ impl State {
                 )
             };
             // Locked, the wallpaper darkens as under the lock page (30%, 40% in light mode), so every display reads locked.
-            let lock_shade = locked.then_some(if dark { 0.3 } else { 0.4 });
+            // A client's lock surface draws its own.
+            let ours = self.lock.as_ref().is_some_and(|l| l.surface_on(output).is_none());
+            let lock_shade = ours.then_some(if dark { 0.3 } else { 0.4 });
             if let Some(alpha) = idle_shade.into_iter().chain(lock_shade).reduce(f32::max) {
                 elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
             }
@@ -852,18 +873,9 @@ impl State {
         // locked frame ever shows up in a profile.
         if let (Some(lock), Some(geo)) = (&self.lock, self.space.output_geometry(output)) {
             elements = locked_osd;
-            elements.extend(match lock.client_surface() {
-                Some(surface) => smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
-                    renderer,
-                    surface.wl_surface(),
-                    (0, 0),
-                    scale,
-                    1.0,
-                    smithay::backend::renderer::element::Kind::Unspecified,
-                )
-                .into_iter()
-                .map(SceneElement::Surface)
-                .collect(),
+            // A client's lock: its surface for this display.
+            elements.extend(match lock.client_surface().map(|_| lock.surface_on(output)) {
+                Some(surface) => lock_surface_elements(renderer, surface, scale),
                 None => {
                     let content = LockContent {
                         lock,
@@ -997,7 +1009,7 @@ impl State {
         }
         layers.cleanup();
         drop(layers);
-        for surface in self.lock.iter().flat_map(|l| &l.surfaces) {
+        for (surface, _) in self.lock.iter().flat_map(|l| &l.surfaces).filter(|(_, o)| o == output) {
             smithay::desktop::utils::send_frames_surface_tree(surface.wl_surface(), output, elapsed, Some(Duration::ZERO), on_output);
         }
         feedback

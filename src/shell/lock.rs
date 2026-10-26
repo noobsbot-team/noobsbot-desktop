@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use smithay::{
     delegate_session_lock,
     input::keyboard::Keysym,
+    output::Output,
     reexports::{
         calloop::{
             RegistrationToken, channel,
@@ -75,8 +76,8 @@ pub struct Lock {
     pub client: bool,
     /// That client's confirmed lock object: only its `unlock_and_destroy` unlocks.
     pub locker: Option<ExtSessionLockV1>,
-    /// The client's surfaces, drawn instead of ours while one is alive.
-    pub surfaces: Vec<LockSurface>,
+    /// The client's surfaces, each with the display it covers, drawn instead of ours while one is alive.
+    pub surfaces: Vec<(LockSurface, Output)>,
     /// Greeter mode (E7.2): users, sessions, greetd's last error.
     pub greeter: Option<crate::shell::greeter::Greeter>,
 }
@@ -183,8 +184,18 @@ impl Lock {
 
     /// A client lock surface that can take input.
     pub fn client_surface(&self) -> Option<&LockSurface> {
-        self.surfaces.iter().find(|s| s.alive())
+        self.surfaces.iter().map(|(s, _)| s).find(|s| s.alive())
     }
+
+    /// The client's live lock surface on `output`.
+    pub fn surface_on(&self, output: &Output) -> Option<&LockSurface> {
+        self.surfaces.iter().find(|(s, o)| o == output && s.alive()).map(|(s, _)| s)
+    }
+}
+
+/// The size a client's lock surface is configured with on a display of `size`: all of it, never 0.
+pub fn surface_size(size: Size<i32, Logical>) -> (u32, u32) {
+    (size.w.max(1) as u32, size.h.max(1) as u32)
 }
 
 /// Overwrites a password before it is dropped.
@@ -529,17 +540,19 @@ impl SessionLockHandler for State {
         });
     }
 
-    /// ponytail: one output; every lock surface gets its size.
-    fn new_surface(&mut self, surface: LockSurface, _output: WlOutput) {
-        let Some(size) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size) else { return };
-        surface.with_pending_state(|s| s.size = Some((size.w.max(1) as u32, size.h.max(1) as u32).into()));
+    /// A surface for `output`, sized to that display.
+    // ponytail: sized once; a display that changes size while locked leaves it as it was.
+    fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
+        let Some(output) = Output::from_resource(&output) else { return };
+        let Some(size) = self.space.output_geometry(&output).map(|g| g.size) else { return };
+        surface.with_pending_state(|s| s.size = Some(surface_size(size).into()));
         surface.send_configure();
         if let Some(keyboard) = self.seat.get_keyboard() {
             keyboard.set_focus(self, Some(surface.wl_surface().clone()), SERIAL_COUNTER.next_serial());
         }
         if let Some(lock) = self.lock.as_mut() {
-            lock.surfaces.retain(LockSurface::alive);
-            lock.surfaces.push(surface);
+            lock.surfaces.retain(|(s, o)| s.alive() && *o != output);
+            lock.surfaces.push((surface, output));
         }
     }
 }
@@ -557,6 +570,13 @@ mod tests {
     }
 
     /// The whole flow with a mock checker in place of PAM.
+    #[test]
+    fn client_lock_surfaces_fill_their_own_display() {
+        assert_eq!(surface_size(Size::from((1536, 960))), (1536, 960));
+        assert_eq!(surface_size(Size::from((2560, 1440))), (2560, 1440));
+        assert_eq!(surface_size(Size::from((0, 0))), (1, 1), "never 0, which the protocol forbids");
+    }
+
     #[test]
     fn unlock_flow_with_mock_check() {
         let check = |password: &str| password == "right";
