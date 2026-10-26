@@ -344,6 +344,10 @@ doesn't understand is skipped and reported in the journal.
 | `[bindings]` | keyboard shortcuts |
 | `[[rules]]` | window rules: open on a Space, size, position, always on top, no title bar, opacity |
 
+Default apps (web browser, mail, files, text editor, images, video, music, PDF) are not in `config.toml`: System
+Settings ▸ Desktop & Dock ▸ Default Apps writes them to `~/.config/mimeapps.list`, which `xdg-open` and the
+`default-app` keys follow. Its Terminal row sets `terminal`.
+
 Example: dark mode, a purple accent, and a hot corner for Mission Control:
 ```toml
 [appearance]

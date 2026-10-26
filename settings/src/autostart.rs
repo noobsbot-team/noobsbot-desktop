@@ -30,7 +30,7 @@ impl std::fmt::Display for Installed {
     }
 }
 
-fn env_dir(variable: &str, home_relative: &str) -> PathBuf {
+pub fn env_dir(variable: &str, home_relative: &str) -> PathBuf {
     std::env::var_os(variable)
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -48,12 +48,12 @@ pub fn system_dirs() -> Vec<PathBuf> {
     dirs.split(':').filter(|d| !d.is_empty()).map(|d| Path::new(d).join("autostart")).collect()
 }
 
-fn desktop() -> String {
+pub fn desktop() -> String {
     std::env::var("XDG_CURRENT_DESKTOP").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "noobsbot-desktop".into())
 }
 
 /// The `[Desktop Entry]` keys (the desktop's `apps::parse`).
-fn fields(text: &str) -> HashMap<&str, &str> {
+pub fn fields(text: &str) -> HashMap<&str, &str> {
     let mut fields = HashMap::new();
     let mut in_main = false;
     for line in text.lines().map(str::trim) {
@@ -148,16 +148,16 @@ pub fn remove(user: &Path, file: &str) -> io::Result<()> {
     std::fs::remove_file(user.join(file))
 }
 
-/// The apps a launcher shows, by name, from `applications/` in the data dirs.
+/// The apps a launcher shows that `keep` takes (by their keys), by name, from `applications/` in the data dirs.
 /// ponytail: top-level files only, no subdirectory ids; walk them if an app is missing.
-fn installed_in(dirs: &[PathBuf], desktop: &str) -> Vec<Installed> {
+pub fn installed_in(dirs: &[PathBuf], desktop: &str, keep: impl Fn(&HashMap<&str, &str>) -> bool) -> Vec<Installed> {
     let mut apps: Vec<Installed> = files(dirs.iter().rev().map(PathBuf::as_path))
         .into_values()
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
             let fields = fields(&text);
             let flag = |key: &str| fields.get(key) == Some(&"true");
-            let shown = fields.get("Type") == Some(&"Application") && !flag("NoDisplay") && !flag("Hidden") && shows_here(&fields, desktop);
+            let shown = fields.get("Type") == Some(&"Application") && !flag("NoDisplay") && !flag("Hidden") && shows_here(&fields, desktop) && keep(&fields);
             Some(Installed { name: (*fields.get("Name").filter(|_| shown)?).to_owned(), path })
         })
         .collect();
@@ -165,14 +165,19 @@ fn installed_in(dirs: &[PathBuf], desktop: &str) -> Vec<Installed> {
     apps
 }
 
+/// `applications/` in the XDG data dirs, most important first.
+pub fn app_dirs() -> Vec<PathBuf> {
+    let system = std::env::var("XDG_DATA_DIRS").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
+    std::iter::once(env_dir("XDG_DATA_HOME", ".local/share"))
+        .chain(system.split(':').filter(|d| !d.is_empty()).map(PathBuf::from))
+        .map(|d| d.join("applications"))
+        .collect()
+}
+
 /// The items and the installed apps, for the page.
 pub fn load() -> (Vec<Item>, Vec<Installed>) {
     let desktop = desktop();
-    let system = std::env::var("XDG_DATA_DIRS").ok().filter(|d| !d.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
-    let data: Vec<PathBuf> =
-        std::iter::once(env_dir("XDG_DATA_HOME", ".local/share")).chain(system.split(':').filter(|d| !d.is_empty()).map(PathBuf::from)).collect();
-    let apps: Vec<PathBuf> = data.iter().map(|d| d.join("applications")).collect();
-    (list(&user_dir(), &system_dirs(), &desktop), installed_in(&apps, &desktop))
+    (list(&user_dir(), &system_dirs(), &desktop), installed_in(&app_dirs(), &desktop, |_| true))
 }
 
 #[cfg(test)]
@@ -203,7 +208,7 @@ mod tests {
         set_on(&user, &system, "alpha.desktop", true).unwrap();
         assert!(!user.join("alpha.desktop").exists());
 
-        let installed = installed_in(std::slice::from_ref(&apps), desktop);
+        let installed = installed_in(std::slice::from_ref(&apps), desktop, |_| true);
         assert_eq!(installed.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(), ["Beta"]);
         add(&user, &installed[0].path).unwrap();
         let beta = Item { file: "beta.desktop".into(), name: "Beta".into(), on: true, removable: true };
