@@ -144,6 +144,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     text::set_scale(state.config.appearance.text_scale());
     let codes = state.config.keyboard.resolved().layout;
     state.read_layouts(&codes);
+    housekeep::start(&state);
 
     // Saving the settings file applies it at once (E1.8).
     let (tx, rx) = channel::channel();
