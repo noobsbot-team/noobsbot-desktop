@@ -179,7 +179,7 @@ dnd = false
 super_tap = true
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
-# Actions: terminal, quit, close, minimise, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
+# Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right",
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
 # app-drawer.
@@ -190,6 +190,7 @@ super_tap = true
 "Super+Q" = "quit"
 "Super+W" = "close"
 "Super+M" = "minimise"
+"Super+Ctrl+F" = "fullscreen"
 "Super+H" = "hide"
 "Super+Alt+H" = "hide-others"
 # Hold Super and press Tab to switch apps (Shift+Tab steps back). Nested in another desktop, Super is Alt, and the

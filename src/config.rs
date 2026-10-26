@@ -514,6 +514,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Q", "quit"),
         ("Super+W", "close"),
         ("Super+M", "minimise"),
+        ("Super+Ctrl+F", "fullscreen"),
         ("Super+H", "hide"),
         ("Super+Alt+H", "hide-others"),
         ("Super+Tab", "switcher"),
