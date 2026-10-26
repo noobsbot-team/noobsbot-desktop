@@ -94,8 +94,10 @@ enum Msg {
 #[derive(Default)]
 pub struct Screenshots {
     pub shot: Option<Shot>,
-    /// Read from the next frame, output-relative logical px.
-    pub pending: Option<Rect>,
+    /// The display the overlay is on and the next capture is of: the pointer's, or the focused window's for Window.
+    pub output: Option<smithay::output::Output>,
+    /// Read from that display's next frame, relative to it, logical px.
+    pub pending: Option<(smithay::output::Output, Rect)>,
     /// The floating thumbnail and the file it opens, until its 5 s are up.
     pub thumbnail: Option<(Thumb, PathBuf)>,
     thumb_timer: Option<RegistrationToken>,
@@ -310,9 +312,13 @@ fn installed(program: &str) -> bool {
 impl State {
     pub fn screenshot(&mut self, start: Start) {
         match start {
-            Start::Screen => self.shoot(Mode::Screen, None),
+            Start::Screen => {
+                self.screenshots.output = self.pointer_output();
+                self.shoot(Mode::Screen, None);
+            }
             Start::Window => {
                 let Some(frame) = self.focused_window().and_then(|w| self.frame(&w)) else { return };
+                self.screenshots.output = self.display_with(Some(frame.loc + Point::from((frame.size.w / 2, frame.size.h / 2))));
                 self.shoot(Mode::Window, Some(Rectangle::new(frame.loc - self.shot_origin(), frame.size)));
             }
             Start::Region => self.open_shot(Shot { mode: Mode::Region, ..Default::default() }),
@@ -325,8 +331,10 @@ impl State {
         }
     }
 
+    /// Opens the overlay on the pointer's display.
     fn open_shot(&mut self, shot: Shot) {
         self.popup = None;
+        self.screenshots.output = self.pointer_output();
         self.screenshots.shot = Some(shot);
         self.shot_cursor(false);
         self.schedule_redraw();
@@ -351,9 +359,14 @@ impl State {
         }
     }
 
-    /// The captured output's top-left corner, in global coordinates.
+    /// The captured display's top-left corner, in global coordinates.
     fn shot_origin(&self) -> Point<i32, Logical> {
-        self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or((0, 0).into(), |g| g.loc)
+        self.overlay_geometry(self.screenshots.output.as_ref()).map_or((0, 0).into(), |g| g.loc)
+    }
+
+    /// The captured display's size, which the toolbar and the selection are laid out in.
+    pub fn shot_size(&self) -> Size<i32, Logical> {
+        self.overlay_geometry(self.screenshots.output.as_ref()).map_or_else(Default::default, |g| g.size)
     }
 
     /// The window frame (title bar included) at `at`, output-relative.
@@ -367,7 +380,7 @@ impl State {
     /// The toolbar part (or Options row) at `at`.
     fn shot_hit(&self, at: Point<f64, Logical>) -> Option<Hit> {
         let shot = self.screenshots.shot.as_ref().filter(|s| s.toolbar)?;
-        let size = self.output_size();
+        let size = self.shot_size();
         let bar = toolbar(size);
         if shot.options {
             let (menu, rows) = options_menu(&bar, size);
@@ -390,17 +403,19 @@ impl State {
     /// Over the toolbar strip or its open menu, where the arrow shows and clicks don't pick.
     fn on_toolbar(&self, at: Point<f64, Logical>) -> bool {
         let Some(shot) = self.screenshots.shot.as_ref().filter(|s| s.toolbar) else { return false };
-        let size = self.output_size();
+        let size = self.shot_size();
         let bar = toolbar(size);
         bar.rect.to_f64().contains(at) || (shot.options && options_menu(&bar, size).0.to_f64().contains(at))
     }
 
-    /// Pointer motion while the overlay is up (output-relative): `true` if it took it, so no app sees the pointer.
+    /// Pointer motion while the overlay is up (first-output-relative): `true` if it took it, so no app sees the
+    /// pointer.
     pub fn shot_motion(&mut self, to: Point<f64, Logical>) -> bool {
         if self.screenshots.shot.is_none() {
             self.thumbnail_motion(to);
             return false;
         }
+        let to = self.to_display(self.screenshots.output.as_ref(), to);
         let hover = self.shot_hit(to);
         let on_bar = self.on_toolbar(to);
         let window = (!on_bar).then(|| self.shot_window(to)).flatten();
@@ -422,6 +437,7 @@ impl State {
     /// A press while the overlay is up: it takes every click.
     pub fn shot_press(&mut self, at: Point<f64, Logical>, left: bool) -> bool {
         let Some(shot) = self.screenshots.shot.clone() else { return self.thumbnail_press(at, left) };
+        let at = self.to_display(self.screenshots.output.as_ref(), at);
         if !left {
             // A right click cancels.
             self.close_shot();
@@ -548,19 +564,20 @@ impl State {
         let toolbar = self.screenshots.shot.as_ref().is_some_and(|s| s.toolbar);
         self.close_shot();
         self.screenshots.last_mode = if toolbar { mode } else { self.screenshots.last_mode };
-        let size = self.output_size();
+        let Some(output) = self.overlay_output(self.screenshots.output.as_ref()) else { return };
+        let size = self.shot_size();
         let rect = rect.and_then(|r| r.intersection(Rectangle::from_size(size))).unwrap_or_else(|| Rectangle::from_size(size));
         // The thumbnail of the last one is not in the next.
         self.hide_thumbnail();
         let delay = if toolbar { self.screenshots.delay } else { 0 };
         if delay == 0 {
-            self.screenshots.pending = Some(rect);
+            self.screenshots.pending = Some((output, rect));
             self.schedule_redraw();
             return;
         }
         let timer = Timer::from_duration(Duration::from_secs(u64::from(delay)));
         let started = self.loop_handle.insert_source(timer, move |_, _, state| {
-            state.screenshots.pending = Some(rect);
+            state.screenshots.pending = Some((output.clone(), rect));
             state.schedule_redraw();
             TimeoutAction::Drop
         });

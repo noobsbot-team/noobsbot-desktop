@@ -213,10 +213,8 @@ impl State {
     /// After drawing `output`'s frame: hands the pixels read back (see `frame_wanted`) to a screenshot and the copies.
     pub fn after_frame(&mut self, output: &Output, pixels: Option<Pixels>, damaged: bool) {
         let Some(pixels) = pixels else { return };
-        // Screenshots are of the first display (their rect is relative to it, see shell/screenshot.rs).
-        if self.space.outputs().next() == Some(output)
-            && let Some(rect) = self.screenshots.pending.take()
-        {
+        // A screenshot is of one display (its rect is relative to it, see shell/screenshot.rs).
+        if let Some((_, rect)) = self.screenshots.pending.take_if(|(o, _)| o == output) {
             let scale = output.current_scale().fractional_scale();
             let region = rect.to_f64().to_physical(scale).to_i32_round();
             let (rgba, size) = pixels.shown().crop(region);
@@ -229,7 +227,7 @@ impl State {
 
     /// Whether `output`'s frame just drawn (`damaged`: it changed) must be read back.
     pub fn frame_wanted(&self, output: &Output, damaged: bool) -> bool {
-        (self.screenshots.pending.is_some() && self.space.outputs().next() == Some(output))
+        self.screenshots.pending.as_ref().is_some_and(|(o, _)| o == output)
             || self.capture.wants(output, damaged, |c| self.capture.verdicts.get(c) == Some(&true))
     }
 }

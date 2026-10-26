@@ -547,6 +547,19 @@ impl State {
         elements
     }
 
+    /// The screenshot overlay and its toolbar, on `output` when it is up there.
+    fn shot_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let here = self.overlay_output(self.screenshots.output.as_ref()).as_ref() == Some(output);
+        let Some(shot) = self.screenshots.shot.clone().filter(|_| here) else { return Vec::new() };
+        let flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
+        let size = self.shot_size();
+        let appearance = &self.config.appearance;
+        let (dark, glass, scale) = (render::is_dark(appearance), appearance.glass_opacity, output.current_scale().fractional_scale());
+        let accent = render::accent(appearance.accent, dark);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        views.screenshot.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, &shot, flags, size, dark, accent, glass, scale)
+    }
+
     /// Spotlight, on `output` when it shows there.
     fn spotlight_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
         let Some(open) = self.spotlight.clone().filter(|s| self.overlay_output(s.output.as_ref()).as_ref() == Some(output)) else { return Vec::new() };
@@ -612,6 +625,7 @@ impl State {
             let (strip, popups) = self.bar_elements(renderer, output, locked || pad.is_some());
             let drawer = self.drawer_elements(renderer, output);
             let mut ripple = self.alert_elements(renderer, output);
+            ripple.extend(self.shot_elements(renderer, output));
             ripple.extend(self.spotlight_elements(renderer, output));
             ripple.extend(self.ripple_elements(output));
             let animating = animating || !ripple.is_empty();
@@ -676,7 +690,7 @@ impl State {
             return Some((elements, animating || views.wallpaper.fading()));
         }
         self.capture_ask();
-        let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
+        let shot = self.shot_elements(renderer, output);
         let thumbnail = self.thumbnail_frame();
         let quit_list = self.force_quit.clone().map(|f| {
             let entries = self.force_quit_entries();
@@ -749,22 +763,7 @@ impl State {
         let mut bar = Vec::new();
         bar.extend(alert);
         // The screenshot overlay and its thumbnail: in front of all but the alert.
-        if let Some(shot) = &self.screenshots.shot {
-            let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
-            bar.extend(screenshot.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                shot,
-                shot_flags,
-                size,
-                dark,
-                accent,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
+        bar.extend(shot);
         match &thumbnail {
             Some((rect, thumb, alpha)) => bar.extend(screenshot.thumbnail(renderer, shaders, thumb, *rect, *alpha, dark, scale)),
             None => screenshot.hide_thumbnail(),
