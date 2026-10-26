@@ -331,6 +331,8 @@ impl App {
                         return Task::none();
                     }
                     return self.join(ssid, Some(value));
+                } else if let Some(path) = key.strip_prefix(system::RENAME) {
+                    return Task::perform(system::rename_device(path.to_owned(), value.trim().to_owned()), Message::Acted);
                 } else if let Some(name) = key.strip_prefix("display.custom_scale.") {
                     match pages::parse_scale(&value) {
                         Some(scale) => self.change_outputs(vec![(name.to_owned(), "scale", scale.into())], false),

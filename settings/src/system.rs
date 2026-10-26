@@ -393,6 +393,19 @@ pub async fn forget(path: String) -> (Status, Option<String>) {
     (read().await, error)
 }
 
+/// Text field key prefix for renaming a paired device: `bt.rename.` + its BlueZ path.
+pub const RENAME: &str = "bt.rename.";
+
+/// Gives a device a new name (BlueZ's `Alias`; empty brings back its own), then the new status and the error, if any.
+pub async fn rename_device(path: String, name: String) -> (Status, Option<String>) {
+    let result = async {
+        let bus = system(10).await?;
+        set_property(&bus, "org.bluez", &path, "org.bluez.Device1", "Alias", name.as_str().into()).await
+    };
+    let error = result.await.err().map(|err| format!("Couldn't rename the device: {err}"));
+    (read().await, error)
+}
+
 const OUTPUT: &str = "@DEFAULT_AUDIO_SINK@";
 const INPUT: &str = "@DEFAULT_AUDIO_SOURCE@";
 
