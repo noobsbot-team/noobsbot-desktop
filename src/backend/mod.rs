@@ -20,7 +20,7 @@ use smithay::{
 use crate::{
     render::{
         self, AlertSheet, Components, ControlCenter, DesktopView, DockView, DrawerView, EmojiPicker, ForceQuitWindow, Gallery, LaunchpadView, LockView,
-        MenuBar, MenuPopover, MissionView, NotificationViews, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, Wallpaper,
+        MenuBar, MenuPopover, MissionView, NotificationViews, OnScreenKeyboard, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, Wallpaper,
     },
     state::State,
 };
@@ -46,6 +46,7 @@ pub struct Views {
     pub force_quit: ForceQuitWindow,
     pub spotlight: SpotlightPanel,
     pub emoji: EmojiPicker,
+    pub osk: OnScreenKeyboard,
     pub launchpad: LaunchpadView,
     pub drawer: DrawerView,
     pub mission: MissionView,
@@ -79,6 +80,7 @@ impl Views {
             force_quit: ForceQuitWindow::default(),
             spotlight: SpotlightPanel::default(),
             emoji: EmojiPicker::default(),
+            osk: OnScreenKeyboard::default(),
             launchpad: LaunchpadView::default(),
             drawer: DrawerView::default(),
             mission: MissionView::default(),

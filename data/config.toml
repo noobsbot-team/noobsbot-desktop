@@ -262,7 +262,7 @@ on_screen_keyboard = false
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows,
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
-# app-drawer, "dock-app 1…9", "dock-app-new 1…9".
+# app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard.
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec helium-browser"

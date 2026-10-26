@@ -225,6 +225,10 @@ impl State {
                 let serial = SERIAL_COUNTER.next_serial();
                 let state = event.state();
                 let location = pointer.current_location();
+                // The on-screen keyboard is above everything, the lock screen too; its clicks reach no app.
+                if state == ButtonState::Pressed && self.osk_press(self.to_output(location)) {
+                    return;
+                }
                 if self.locked() {
                     if state == ButtonState::Pressed {
                         self.lock_press(self.to_output(location));
