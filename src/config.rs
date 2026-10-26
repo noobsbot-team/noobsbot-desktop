@@ -517,10 +517,12 @@ pub struct OutputSettings {
     pub primary: bool,
     /// Mirror: show this connector's picture instead of extending the desktop; empty = extended.
     pub mirror: String,
+    /// Variable refresh rate (adaptive sync), where the display and its connector support it.
+    pub vrr: bool,
 }
 
 /// The keys an `[[display.outputs]]` entry may have (unknown ones are warned about).
-const OUTPUT_KEYS: [&str; 9] = ["name", "enabled", "mode", "refresh", "scale", "rotation", "position", "primary", "mirror"];
+const OUTPUT_KEYS: [&str; 10] = ["name", "enabled", "mode", "refresh", "scale", "rotation", "position", "primary", "mirror", "vrr"];
 
 impl Default for OutputSettings {
     fn default() -> Self {
@@ -534,6 +536,7 @@ impl Default for OutputSettings {
             position: None,
             primary: false,
             mirror: String::new(),
+            vrr: false,
         }
     }
 }
@@ -1763,7 +1766,7 @@ mod tests {
     fn display_outputs() {
         let c = parse(concat!(
             "[display]\nscale = 1.5\n",
-            "[[display.outputs]]\nname = \"eDP-1\"\nmode = \"1920x1200\"\nrefresh = 59.95\nscale = 1.25\nrotation = 90\nposition = [0, -200]\nprimary = true\nshiny = 1\n",
+            "[[display.outputs]]\nname = \"eDP-1\"\nmode = \"1920x1200\"\nrefresh = 59.95\nscale = 1.25\nrotation = 90\nposition = [0, -200]\nprimary = true\nvrr = true\nshiny = 1\n",
             "[[display.outputs]]\nname = \"DP-1\"\nmirror = \"eDP-1\"\n",
             "[[display.outputs]]\nname = \"HDMI-A-1\"\nenabled = false\n",
         ))
@@ -1781,7 +1784,8 @@ mod tests {
                 rotation: 90,
                 position: Some([0, -200]),
                 primary: true,
-                mirror: String::new()
+                mirror: String::new(),
+                vrr: true
             }
         );
         assert_eq!(hdmi, &OutputSettings { name: "HDMI-A-1".into(), enabled: false, ..Default::default() }, "unset keys: the defaults");
