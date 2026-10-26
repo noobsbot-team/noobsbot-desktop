@@ -244,7 +244,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             let release = services::update::Release {
                 version: semver::Version::new(1, 3, 0),
                 tag: "v1.3.0".into(),
-                url: "https://github.com/anil0403/noobsbot-desktop/releases/tag/v1.3.0".into(),
+                url: "https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/v1.3.0".into(),
                 download: services::update::Download::Ready(std::env::temp_dir()),
             };
             // Kept up and hovered (buttons showing) for the screenshot.

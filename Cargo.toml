@@ -4,7 +4,7 @@ version = "1.0.0-alpha.7"
 edition = "2024"
 license = "MIT"
 description = "Noobsbot Desktop: a macOS-style Wayland desktop environment"
-repository = "https://github.com/anil0403/noobsbot-desktop"
+repository = "https://github.com/noobsbot-team/noobsbot-desktop"
 
 [workspace]
 # System Settings (E7.1) is the one separate program.

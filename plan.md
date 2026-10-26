@@ -10,10 +10,8 @@ Arch Linux system.
 > that looks like glass with soft light inside but isn't see-through, like this design: glassy, yet mostly solid.
 > Later major releases get other gem codenames (e.g. Pearl, Jade, Onyx), the way macOS names its versions.
 > Code will live in `~/Projects/Linux Tools/custom-desktop-environemt/` (folder name kept as is).
-> **Repository:** `github.com/anil0403/noobsbot-desktop` (owner's own account while working solo; matches
-> `anil0403/noobsbot-terminal`). When the Noobsbot Team takes over, both repos move to the team's existing GitHub
-> organisation **`noobs-bot`** (→ `noobs-bot/noobsbot-desktop`, `noobs-bot/noobsbot-terminal`); GitHub redirects
-> the old URLs automatically.
+> **Repository:** `github.com/noobsbot-team/noobsbot-desktop`, next to `noobsbot-team/noobsbot-terminal`. Both
+> started on the owner's account (`anil0403/…`) and moved to the team's organisation; GitHub redirects the old URLs.
 > **License:** the code is **MIT** (short, permissive, the same licence Smithay uses; anyone may use, change and share it). The derived
 > "Noobsbot Glass" Kvantum/GTK themes live in `themes/` under **GPL-3.0** (WhiteSur's licence). Decided here so the
 > repo carries `LICENSE` (MIT) from the start, and `themes/LICENSE` (GPL-3.0) once the themes exist.
@@ -1503,13 +1501,13 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   ```
   | Step | How |
   |---|---|
-  | **Check** | once every 24 h (calloop timer; also "Check Now" and the first launch after boot) `GET https://api.github.com/repos/anil0403/noobsbot-desktop/releases/latest` (Beta channel: `/releases`, pre-releases allowed). Compares SemVer with the running version. No account, no identifier, no telemetry: the request carries nothing but the version header. Off with one toggle. Fails silently when offline |
+  | **Check** | once every 24 h (calloop timer; also "Check Now" and the first launch after boot) `GET https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/latest` (Beta channel: `/releases`, pre-releases allowed). Compares SemVer with the running version. No account, no identifier, no telemetry: the request carries nothing but the version header. Off with one toggle. Fails silently when offline |
   | **Notify** | notification (E4.1): "Noobsbot Desktop 1.3 is available · *Update Tonight* / *Details*"; a red badge "1" on System Settings in the dock, like macOS |
   | **Download** | in the background to `~/.cache/noobsbot-desktop/updates/`; `SHA256SUMS` + **minisign signature verified** before anything is touched; a bad signature deletes the file and shows an alert |
   | **Install** | a compositor can't replace itself while running, so the verified tarball is staged, and installed by the tiny privileged helper `noobsbot-desktop-update` through **polkit** (admin password in our alert; one polkit action `org.noobsbot.desktop.update`). It unpacks to `/usr/lib/noobsbot-desktop/versions/1.3.0/`, switches the `/usr/bin/noobsbot-desktop` symlink, keeps the previous version. Applied at the **next login** ("Install at next login", default) or now via "Log Out & Update" |
   | **Rollback** | the session wrapper `noobsbot-desktop-session` starts the current version and writes a `boot-ok` marker after 60 s of running; if a new version dies 3 times within 2 min before the marker, the wrapper starts the **previous version** and shows "Update 1.3.0 was rolled back" with a Report button (opens the GitHub issue page). Settings keeps a "Revert to 1.2.4" button for 30 days |
   | **Themes and config** | each version ships its `themes/`; the generator (E2.9) regenerates on first start of a new version; `config.toml` is migrated by `version` (C11), never rewritten destructively |
-  | **noobsbot-terminal** | same updater, second repo (`anil0403/noobsbot-terminal` releases), shown as a second row in Software Update |
+  | **noobsbot-terminal** | same updater, second repo (`noobsbot-team/noobsbot-terminal` releases), shown as a second row in Software Update |
   | **Installed from AUR instead** (Open-3) | the updater detects it (`pacman -Qo /usr/bin/noobsbot-desktop`) and only *notifies*, pointing to the package manager, so it never fights pacman |
 - **Built with:** `release-plz` + GitHub Actions (CI); `ureq` (small blocking HTTP client, run on a worker thread so the
   compositor loop never blocks), `semver`, `minisign-verify`, `zstd`/`tar` crates; `polkit` action + a 100-line
@@ -1600,7 +1598,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 # Part F — Apps that ship with Noobsbot Desktop
 
 ## F1. Terminal → **noobsbot-terminal** (default) — owner's own
-- **What:** the owner's GPU-rendered terminal (Rust, winit + wgpu), repo `anil0403/noobsbot-terminal`, command `noobsbot`;
+- **What:** the owner's GPU-rendered terminal (Rust, winit + wgpu), repo `noobsbot-team/noobsbot-terminal`, command `noobsbot`;
   tabs, splits, suggestions, quake mode.
 - **Why:** owner requirement (R5). It's also native Wayland, fast (GPU) and written in the same language.
 - **Made the default everywhere** (`install.sh` sets every one of these, because different apps look in different places):

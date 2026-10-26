@@ -8,7 +8,7 @@ screen and System Settings.
 Version 1 codename: **Opal**, a gem that looks like glass with soft light inside but isn't see-through, like the
 design: glassy, yet mostly solid.
 
-Made by the Noobsbot Team. Sister project: [noobsbot-terminal](https://github.com/anil0403/noobsbot-terminal), the
+Made by the Noobsbot Team. Sister project: [noobsbot-terminal](https://github.com/noobsbot-team/noobsbot-terminal), the
 default terminal.
 
 > **Status: early releases (0.x).** Every planned part is built and tested in a nested window and in a virtual
@@ -121,7 +121,7 @@ The full design, with the reasoning behind every choice, is in [`plan.md`](plan.
 On a fresh Arch install, logged in as your user:
 ```sh
 sudo pacman -S --needed git
-git clone https://github.com/anil0403/noobsbot-desktop.git
+git clone https://github.com/noobsbot-team/noobsbot-desktop.git
 cd noobsbot-desktop
 ./install.sh
 ```
@@ -344,7 +344,7 @@ Versions follow [semantic versioning](https://semver.org); every release's chang
 ## Apps that come with it
 | Role | App |
 |---|---|
-| Terminal | [noobsbot-terminal](https://github.com/anil0403/noobsbot-terminal) |
+| Terminal | [noobsbot-terminal](https://github.com/noobsbot-team/noobsbot-terminal) |
 | Browser | [Helium](https://helium.computer) |
 | Files | Dolphin (with archive support via Ark) |
 | Text editor | Kate, and nano in the terminal |
