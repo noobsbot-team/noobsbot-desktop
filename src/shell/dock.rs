@@ -137,6 +137,20 @@ pub fn cycle(n: usize, active: Option<usize>, forward: bool) -> usize {
     }
 }
 
+/// The window a cycle lands on: the next (or previous) of `groups[here]` (one app's windows, in the order they
+/// opened); when the focused window is one of them and `across` is set, it walks on into the neighbouring groups (the
+/// dock's other apps) instead of wrapping round.
+pub fn cycle_target<T: PartialEq + Clone>(groups: &[Vec<T>], here: usize, focused: Option<&T>, forward: bool, across: bool) -> Option<T> {
+    let own = groups.get(here)?;
+    let at = own.iter().position(|w| Some(w) == focused);
+    if across && at.is_some() {
+        let flat: Vec<&T> = groups.iter().flatten().collect();
+        let i = flat.iter().position(|w| Some(*w) == focused);
+        return Some(flat[cycle(flat.len(), i, forward)].clone());
+    }
+    own.get(cycle(own.len(), at, forward)).cloned()
+}
+
 /// Hovering an icon with several windows this long shows their previews (E8.3).
 pub const PEEK_DELAY: Duration = Duration::from_millis(500);
 /// Thumbnail height, and the strip's padding and gaps.
@@ -677,7 +691,7 @@ impl State {
         if self.focused_window().is_some_and(|f| shown.contains(&f)) {
             return match self.config.dock.click {
                 DockClick::Toggle => self.minimise(shown),
-                DockClick::Cycle => self.dock_cycle(shown, true),
+                DockClick::Cycle => self.dock_step(shown, true),
             };
         }
         // Bottom first, so their order is kept and the topmost ends on top with focus.
@@ -736,18 +750,38 @@ impl State {
             return true;
         }
         self.dock_fx.scrolled.insert(item.key.clone(), now);
-        self.dock_cycle(item.windows, forward);
+        self.dock_step(item.windows, forward);
         true
     }
 
     /// Focuses the window after (or before) the focused one of `windows`, in the order they opened.
     pub(crate) fn dock_cycle(&mut self, mut windows: Vec<Window>, forward: bool) {
-        if windows.is_empty() {
-            return;
-        }
         windows.sort_by_key(seen);
         let focused = self.focused_window();
-        let next = windows[cycle(windows.len(), windows.iter().position(|w| Some(w) == focused.as_ref()), forward)].clone();
+        if let Some(next) = cycle_target(&[windows], 0, focused.as_ref(), forward, false) {
+            self.dock_bring(next);
+        }
+    }
+
+    /// A dock click or scroll cycling `windows` (one app's): with `[dock] cycle_across_apps`, past its last window
+    /// into the next running dock app's.
+    fn dock_step(&mut self, windows: Vec<Window>, forward: bool) {
+        if !self.config.dock.cycle_across_apps {
+            return self.dock_cycle(windows, forward);
+        }
+        let mut groups: Vec<Vec<Window>> = self.dock_items().into_iter().filter(|i| !i.is_tile() && !i.windows.is_empty()).map(|i| i.windows).collect();
+        groups.iter_mut().for_each(|g| g.sort_by_key(seen));
+        let Some(here) = groups.iter().position(|g| windows.first().is_some_and(|w| g.contains(w))) else {
+            return self.dock_cycle(windows, forward);
+        };
+        let focused = self.focused_window();
+        if let Some(next) = cycle_target(&groups, here, focused.as_ref(), forward, true) {
+            self.dock_bring(next);
+        }
+    }
+
+    /// `window` comes back if minimised and gets focus.
+    fn dock_bring(&mut self, next: Window) {
         if let Some(at) = self.hidden.iter().position(|(w, _)| *w == next) {
             let (_, loc) = self.hidden.remove(at);
             self.set_visible_loc(&next, loc);
@@ -1636,6 +1670,23 @@ mod tests {
         assert_eq!(cycle(3, Some(0), false), 2);
         assert_eq!(cycle(3, None, false), 0, "none active: the first");
         assert_eq!(cycle(1, Some(0), true), 0);
+    }
+
+    #[test]
+    fn cycle_target_stays_in_or_crosses_apps() {
+        let groups = vec![vec![1, 2], vec![3], vec![4, 5]];
+        // Within the app: round.
+        assert_eq!(cycle_target(&groups, 0, Some(&2), true, false), Some(1));
+        assert_eq!(cycle_target(&groups, 0, Some(&1), false, false), Some(2));
+        // Another app focused: this app's first window, across or not.
+        assert_eq!(cycle_target(&groups, 2, Some(&1), true, true), Some(4));
+        assert_eq!(cycle_target(&groups, 2, None, false, false), Some(4));
+        // Across: past the app's last window into the next app, and round the dock.
+        assert_eq!(cycle_target(&groups, 0, Some(&2), true, true), Some(3));
+        assert_eq!(cycle_target(&groups, 0, Some(&1), false, true), Some(5));
+        assert_eq!(cycle_target(&groups, 2, Some(&5), true, true), Some(1));
+        assert_eq!(cycle_target(&groups, 1, Some(&3), true, true), Some(4));
+        assert_eq!(cycle_target::<i32>(&[], 0, None, true, true), None);
     }
 
     #[test]

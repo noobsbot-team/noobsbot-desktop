@@ -334,7 +334,7 @@ doesn't understand is skipped and reported in the journal.
 | `[spaces]` | each display with its own Spaces, or one set for all |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week (or the locale's), week numbers |
 | `[menu_bar]` | hide the menu bar until the pointer reaches the top edge |
-| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To) |
+| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions, `cycle_across_apps`; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To) |
 | `[idle]` | when to dim, turn the screen off and sleep (each on battery and on AC), turn the keyboard backlight off, locking |
 | `[battery]` | the percentage beside the menu bar's battery symbol, slightly dim the display on battery |
 | `[sound]` | the alert sound (from the system's sound theme) and user interface sound effects on or off |
