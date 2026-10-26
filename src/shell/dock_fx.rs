@@ -12,6 +12,7 @@ use std::{
 
 use smithay::{
     desktop::Window,
+    output::Output,
     reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
     utils::{IsAlive, Logical, Point, Rectangle},
 };
@@ -192,7 +193,7 @@ pub fn hides(mode: DockHide, hovered: bool, o: Overlaps) -> bool {
 }
 
 /// The dock's hidden state over time: Plank's hide and unhide delays, and the settle time after windows change.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct Hider {
     pub hidden: bool,
     /// A delayed change: the hidden state it sets, and when.
@@ -250,17 +251,30 @@ fn move_left(t: Duration) -> f64 {
     1.0 - (1.0 - (p - 1.0) * (p - 1.0)).sqrt()
 }
 
-#[derive(Debug)]
-pub struct Fx {
+/// One display's dock: its hidden state and its zoom.
+#[derive(Debug, Clone, Copy)]
+pub struct Side {
     /// 1 = hidden.
     pub hide: Ease,
     /// 1 = zoomed in.
     pub zoom: Ease,
     pub hider: Hider,
-    /// The deadline a timer is set for, so one is set once.
-    timer: Option<Instant>,
     /// The last pointer position over the dock, which the zoom eases out around after the pointer left.
     pub zoom_at: Option<Point<f64, Logical>>,
+}
+
+impl Default for Side {
+    fn default() -> Self {
+        Self { hide: Ease::new(HIDE_TIME, true), zoom: Ease::new(ZOOM_TIME, false), hider: Hider::default(), zoom_at: None }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Fx {
+    /// Each display's dock, by output name.
+    sides: HashMap<String, Side>,
+    /// The deadline a timer is set for, so one is set once.
+    timer: Option<Instant>,
     /// Item key → when it was launched from the dock.
     launched: HashMap<String, Instant>,
     /// Item key → when it was clicked to focus or scrolled (shaded), and when it last switched windows by scrolling.
@@ -281,30 +295,6 @@ pub struct Fx {
     added: HashMap<String, Instant>,
     /// Icons dragged off the dock: where they went up in smoke, and when.
     poofs: Vec<(Point<f64, Logical>, Instant)>,
-}
-
-impl Default for Fx {
-    fn default() -> Self {
-        Self {
-            hide: Ease::new(HIDE_TIME, true),
-            zoom: Ease::new(ZOOM_TIME, false),
-            hider: Hider::default(),
-            timer: None,
-            zoom_at: None,
-            launched: HashMap::new(),
-            clicked: HashMap::new(),
-            scrolled: HashMap::new(),
-            hover: None,
-            unhover: None,
-            tip_hidden: false,
-            urgent: Vec::new(),
-            entries: HashMap::new(),
-            order: Vec::new(),
-            moves: HashMap::new(),
-            added: HashMap::new(),
-            poofs: Vec::new(),
-        }
-    }
 }
 
 /// How one icon is drawn this frame.
@@ -336,6 +326,15 @@ pub struct Frame {
 }
 
 impl Fx {
+    /// The dock on display `output`.
+    pub fn side(&self, output: &str) -> Side {
+        self.sides.get(output).copied().unwrap_or_default()
+    }
+
+    pub fn side_mut(&mut self, output: &str) -> &mut Side {
+        self.sides.entry(output.to_owned()).or_default()
+    }
+
     /// A LauncherEntry update.
     pub fn entry(&mut self, app: String, entry: Entry) {
         let since = self.entries.get(&app).and_then(|(e, since)| since.filter(|_| e.urgent));
@@ -453,16 +452,16 @@ impl State {
         fx.entries.get(&item.key).or_else(|| fx.entries.iter().find(|(k, _)| self.apps.find(k).is_some_and(|a| a.id == item.key)).map(|(_, e)| e))
     }
 
-    /// What the windows do under the dock's `zone` (output-relative), for the hide modes.
-    pub fn dock_overlaps(&self, zone: Rect) -> Overlaps {
+    /// What the windows do under the dock's `zone` (relative to `output`), for the hide modes.
+    pub fn dock_overlaps(&self, output: &Output, zone: Rect) -> Overlaps {
         let focused = self.focused_window();
         // By dock item, not process: every X11 window shares xwayland-satellite's pid.
         let key = focused.as_ref().and_then(|w| self.dock_key(w)).map(|(k, _)| k);
-        let origin = self.to_output((0.0, 0.0).into()).to_i32_round::<i32>();
+        let origin = self.space.output_geometry(output).map_or_else(Default::default, |g| g.loc);
         let mut o = Overlaps::default();
         for window in self.space.elements() {
             let Some(f) = self.frame(window) else { continue };
-            if !Rectangle::new(f.loc + origin, f.size).overlaps(zone) {
+            if !Rectangle::new(f.loc - origin, f.size).overlaps(zone) {
                 continue;
             }
             o.any = true;
@@ -491,16 +490,19 @@ impl State {
         });
     }
 
-    /// Brings the hidden state up to date (the hide mode, delays and settle time) and sets a timer for the next
-    /// deadline. `true` if it changed.
-    pub fn dock_update_hide(&mut self, layout: &Layout) -> bool {
+    /// Brings `output`'s dock's hidden state up to date (the hide mode, delays and settle time) and sets a timer for
+    /// the next deadline. `true` if it changed.
+    pub fn dock_update_hide(&mut self, output: &Output, layout: &Layout) -> bool {
         let now = Instant::now();
         let focused = self.focused_window();
-        // Fullscreen on another output (the shell is drawn on the first) leaves the dock alone.
+        // Fullscreen on another display leaves this dock alone.
         let fullscreen = focused.is_some_and(|w| {
             w.toplevel().is_some_and(|t| t.current_state().states.contains(xdg_toplevel::State::Fullscreen))
-                && self.space.outputs().next().is_some_and(|o| self.space.outputs_for_element(&w).contains(o))
+                && self.space.outputs_for_element(&w).contains(output)
         });
+        // The pointer is on the dock it last moved over (`dock_output`).
+        let reveal = self.dock_reveal && self.dock_output().as_ref() == Some(output);
+        let name = output.name();
         let menu = self.popup == Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock));
         // Plank shows the dock while its menu is open or an icon is dragged; Launchpad and fullscreen are ours.
         let (want, settle) = if self.launchpad.is_some() || menu || self.dock_ui.dragging() {
@@ -508,45 +510,52 @@ impl State {
         } else if fullscreen {
             (true, None)
         } else {
-            let seen = self.dock_overlaps(layout.zone);
-            let (overlaps, settle) = self.dock_fx.hider.settle(seen, now);
-            (hides(self.config.dock.hide, self.dock_reveal, overlaps), settle)
+            let seen = self.dock_overlaps(output, layout.zone);
+            let (overlaps, settle) = self.dock_fx.side_mut(&name).hider.settle(seen, now);
+            (hides(self.config.dock.hide, reveal, overlaps), settle)
         };
         let dock = &self.config.dock;
         let ms = |v: u32| Duration::from_millis(u64::from(v));
-        let was = self.dock_fx.hider.hidden;
-        let delay = self.dock_fx.hider.update(want, self.dock_reveal, ms(dock.hide_delay), ms(dock.unhide_delay), now);
+        let side = self.dock_fx.side_mut(&name);
+        let was = side.hider.hidden;
+        let delay = side.hider.update(want, reveal, ms(dock.hide_delay), ms(dock.unhide_delay), now);
+        side.hide.set(side.hider.hidden, now);
+        let changed = was != side.hider.hidden;
         if let Some(at) = settle.into_iter().chain(delay).min() {
             self.dock_wake(at);
         }
-        self.dock_fx.hide.set(self.dock_fx.hider.hidden, now);
-        was != self.dock_fx.hider.hidden
+        changed
     }
 
-    /// Steps the dock's animations to now: slides it towards shown or hidden, bounces launching and urgent icons,
-    /// shades clicked and hovered ones, slides moved ones, pulses the urgent glow while hidden. Focusing an app ends
-    /// its urgency.
-    pub fn dock_frame(&mut self, items: &[Item]) -> Frame {
+    /// Steps `output`'s dock's animations to now: slides it towards shown or hidden, bounces launching and urgent
+    /// icons, shades clicked and hovered ones, slides moved ones, pulses the urgent glow while hidden. Focusing an app
+    /// ends its urgency. Bounces, shades, moves and badges are shared by every dock; the hover, tooltip and poofs
+    /// show on the one the pointer is on (`dock_output`).
+    pub fn dock_frame(&mut self, output: &Output, items: &[Item]) -> Frame {
         let now = Instant::now();
         let mut frame = Frame::default();
+        let here = self.dock_output().as_ref() == Some(output);
         self.dock_fx.poofs.retain(|(_, at)| now - *at < POOF_TIME);
-        frame.poofs = self.dock_fx.poofs.iter().map(|(p, at)| (*p, progress(now - *at, POOF_TIME))).collect();
-        let Some(layout) = self.dock_layout(items).filter(|_| !items.is_empty()) else {
+        if here {
+            frame.poofs = self.dock_fx.poofs.iter().map(|(p, at)| (*p, progress(now - *at, POOF_TIME))).collect();
+        }
+        let Some(layout) = self.dock_layout_on(output, items).filter(|_| !items.is_empty()) else {
             frame.animating = !frame.poofs.is_empty();
             return frame;
         };
-        self.dock_update_hide(&layout);
+        self.dock_update_hide(output, &layout);
         let focused = self.focused_window();
+        let side = self.dock_fx.side(&output.name());
         let fx = &mut self.dock_fx;
         fx.urgent.retain(|(w, _)| w.alive() && focused.as_ref() != Some(w));
         fx.launched.retain(|_, at| now - *at < LAUNCH_TIME);
         fx.clicked.retain(|_, at| now - *at < CLICK_TIME);
         let keys: Vec<&str> = items.iter().map(|i| i.key.as_str()).collect();
         fx.track(&keys, now);
-        let hide = fx.hide.value(now);
-        let hover_fading = [&fx.hover, &fx.unhover].iter().any(|h| h.as_ref().is_some_and(|(_, at)| now - *at < HOVER_TIME));
-        let mut animating = fx.hide.moving(now)
-            || fx.zoom.moving(now)
+        let hide = side.hide.value(now);
+        let hover_fading = here && [&fx.hover, &fx.unhover].iter().any(|h| h.as_ref().is_some_and(|(_, at)| now - *at < HOVER_TIME));
+        let mut animating = side.hide.moving(now)
+            || side.zoom.moving(now)
             || !fx.launched.is_empty()
             || !fx.clicked.is_empty()
             || !fx.moves.is_empty()
@@ -586,7 +595,7 @@ impl State {
             let mut layout = layout.slid(hide * reach);
             let step = layout.icon + super::dock::item_pad(layout.icon);
             let fx = &self.dock_fx;
-            let menu = self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock))).map(|(k, _)| k);
+            let menu = self.dock_ui.menu.as_ref().filter(|_| here && self.popup == Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock))).map(|(k, _)| k);
             for (i, item) in items.iter().enumerate() {
                 let rect = &mut layout.icons[i];
                 let launch = fx.launched.get(&item.key).map_or(0.0, |at| launch_bounce(now - *at, layout.icon));
@@ -598,7 +607,8 @@ impl State {
                     layout.columns[i].0 += dx;
                     layout.columns[i].1 += dx;
                 }
-                let mut shade = Shade { alpha: 1.0, lighten: fx.lighten(&item.key, now) as f32, darken: 0.0 };
+                let lighten = if here { fx.lighten(&item.key, now) } else { 0.0 };
+                let mut shade = Shade { alpha: 1.0, lighten: lighten as f32, darken: 0.0 };
                 // Arriving: it rises from below the screen edge and fades in (EASE_IN_EXPO).
                 if let Some(at) = fx.added.get(&item.key) {
                     let p = progress(now - *at, MOVE_TIME).min(1.0);
@@ -617,6 +627,7 @@ impl State {
             // Plank's tooltip: after HOVER_DELAY_TIME on one icon, centred over it, (zoomed size − half the icon) above
             // its resting centre; not while the dock moves, a menu is open or an icon is dragged.
             let shown = self.config.dock.tooltips
+                && here
                 && !fx.tip_hidden
                 && hide == 0.0
                 && menu.is_none()

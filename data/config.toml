@@ -242,7 +242,8 @@ hide_delay = 0
 unhide_delay = 0
 # No dragging icons in, out or around, and no Keep in Dock.
 lock_items = false
-# Show only pinned apps; show only the current Space's running apps and windows.
+# Show only pinned apps; show only the current Space's running apps and windows (with a dock on every display,
+# each dock shows its own display's).
 pinned_only = false
 current_workspace_only = false
 # The app's name over the hovered icon.
@@ -266,6 +267,9 @@ show_trash = true
 # The dock menu's Options ▸ Assign To, per app: "all" puts its windows on every Space; "<display>:<n>" opens its new
 # windows on Space n of that display. E.g. assign = { "org.kde.kate" = "all", "kitty" = "DP-1:2" }
 assign = {}
+# Which displays have a dock: "all" (one each), "main" (the main display only) or "pointer" (the one the pointer
+# is on; the dock follows it).
+displays = "all"
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.

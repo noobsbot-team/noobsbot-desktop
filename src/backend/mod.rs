@@ -48,7 +48,8 @@ pub struct Views {
     pub identify: IdentifyLabels,
     pub control: ControlCenter,
     pub alert: AlertSheet,
-    pub dock: DockView,
+    /// Each display's dock, by output name.
+    pub docks: std::collections::HashMap<String, DockView>,
     pub switcher: SwitcherPanel,
     pub force_quit: ForceQuitWindow,
     pub spotlight: SpotlightPanel,
@@ -89,7 +90,7 @@ impl Views {
             identify: IdentifyLabels::default(),
             control: ControlCenter::default(),
             alert: AlertSheet::default(),
-            dock: DockView::default(),
+            docks: Default::default(),
             switcher: SwitcherPanel::default(),
             force_quit: ForceQuitWindow::default(),
             spotlight: SpotlightPanel::default(),

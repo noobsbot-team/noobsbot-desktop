@@ -214,6 +214,15 @@ pub fn open_corner(corner: Corner, geo: Rect, others: &[Rect]) -> bool {
     ![(x + dx, y), (x, y + dy)].into_iter().any(|p| others.iter().any(|o| o.contains(Point::from(p))))
 }
 
+/// The open corner (`open_corner`) of the display in `screens` that holds `at` (global), with that display's index.
+pub fn hot_corner(screens: &[Rect], at: Point<f64, Logical>) -> Option<(usize, Corner)> {
+    let i = screens.iter().position(|s| s.to_f64().contains(at))?;
+    let geo = screens[i];
+    let corner = corner_at(at - geo.loc.to_f64(), geo.size)?;
+    let others: Vec<Rect> = screens.iter().enumerate().filter(|(j, _)| *j != i).map(|(_, r)| *r).collect();
+    open_corner(corner, geo, &others).then_some((i, corner))
+}
+
 /// Hot corner state: the corner the pointer rests in and since when.
 #[derive(Default)]
 pub struct Corners {
@@ -222,6 +231,8 @@ pub struct Corners {
     timer: Option<RegistrationToken>,
     /// The ripple of the last trigger and when it started.
     pub ripple: Option<(Corner, Instant)>,
+    /// The display of the pointer's corner, which the ripple shows on (`None`: the first).
+    pub output: Option<smithay::output::Output>,
 }
 
 impl Corners {
@@ -380,11 +391,15 @@ impl State {
         self.seat.get_pointer().is_some_and(|p| p.is_grabbed())
     }
 
-    /// The pointer moved to `at` (output-relative): resting in an active corner for `DELAY` triggers it.
+    /// The pointer moved to `at` (global): resting in an active corner of any display for `DELAY` triggers it.
     pub fn hot_corner_motion(&mut self, at: Point<f64, Logical>) {
-        let Some(geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
-        let others: Vec<Rect> = self.space.outputs().skip(1).filter_map(|o| self.space.output_geometry(o)).collect();
-        let corner = corner_at(at, geo.size).filter(|c| open_corner(*c, geo, &others) && self.corner_action(*c).is_some());
+        let outputs: Vec<smithay::output::Output> = self.space.outputs().cloned().collect();
+        let screens: Vec<Rect> = outputs.iter().filter_map(|o| self.space.output_geometry(o)).collect();
+        let hit = hot_corner(&screens, at).filter(|(_, c)| self.corner_action(*c).is_some());
+        let corner = hit.map(|(_, c)| c);
+        if let Some((i, _)) = hit {
+            self.corners.output = outputs.get(i).cloned();
+        }
         let dragging = self.dragging();
         let entered = self.corners.motion(corner, dragging, Instant::now());
         // Left the corner (or entered another): its pending trigger goes.
@@ -411,9 +426,11 @@ impl State {
         self.corners.timer = timer.inspect_err(|err| tracing::warn!("hot corner timer: {err}")).ok();
     }
 
-    /// This frame's ripple (rect, opacity), clearing a finished one. A ripple started in the future (`--show`) holds
-    /// half way.
-    pub fn ripple_frame(&mut self, size: Size<i32, Logical>) -> Option<(Rect, f32)> {
+    /// This frame's ripple on `output` (rect, opacity), clearing a finished one. A ripple started in the future
+    /// (`--show`) holds half way.
+    pub fn ripple_frame(&mut self, output: &smithay::output::Output) -> Option<(Rect, f32)> {
+        let shown = self.corners.output.as_ref().filter(|o| self.space.outputs().any(|x| x == *o)).or(self.space.outputs().next());
+        let size = self.space.output_geometry(output).filter(|_| shown == Some(output))?.size;
         let (corner, start) = self.corners.ripple?;
         let now = Instant::now();
         let t = if start > now { 0.5 } else { now.duration_since(start).as_secs_f64() / RIPPLE };
@@ -577,6 +594,23 @@ mod tests {
         let above = Rect::new((0, -1000).into(), (1536, 1000).into());
         assert!(!open_corner(Corner::TopLeft, laptop, &[above]) && !open_corner(Corner::TopRight, laptop, &[above]));
         assert!(open_corner(Corner::TopRight, laptop, &[]));
+    }
+
+    #[test]
+    fn each_display_has_its_own_corners_but_not_on_shared_edges() {
+        // Side by side: the outer corners of each, never where they meet.
+        let side = [Rect::new((0, 0).into(), (1920, 1080).into()), Rect::new((1920, 0).into(), (1920, 1080).into())];
+        assert_eq!(hot_corner(&side, (0.0, 0.0).into()), Some((0, Corner::TopLeft)));
+        assert_eq!(hot_corner(&side, (3839.0, 1079.0).into()), Some((1, Corner::BottomRight)));
+        assert_eq!(hot_corner(&side, (1920.0, 0.0).into()), None, "the second's top left meets the first");
+        assert_eq!(hot_corner(&side, (1919.0, 1079.0).into()), None, "the first's bottom right meets the second");
+        assert_eq!(hot_corner(&side, (5000.0, 0.0).into()), None, "on no display");
+        // Stacked: the top one keeps its top corners, the bottom one its bottom corners.
+        let stacked = [Rect::new((0, 0).into(), (1920, 1080).into()), Rect::new((0, 1080).into(), (1920, 1080).into())];
+        assert_eq!(hot_corner(&stacked, (1919.0, 0.0).into()), Some((0, Corner::TopRight)));
+        assert_eq!(hot_corner(&stacked, (0.0, 2159.0).into()), Some((1, Corner::BottomLeft)));
+        assert_eq!(hot_corner(&stacked, (0.0, 1079.0).into()), None);
+        assert_eq!(hot_corner(&stacked, (1919.0, 1080.0).into()), None);
     }
 
     #[test]

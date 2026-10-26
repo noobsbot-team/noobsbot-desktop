@@ -702,6 +702,20 @@ pub struct Dock {
     /// Options ▸ Assign To, per dock app (item key): `"all"` (every Space) or `"<display>:<n>"` (its new windows
     /// open on Space n of that display).
     pub assign: BTreeMap<String, String>,
+    /// Which displays have a dock (D13).
+    pub displays: DockDisplays,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockDisplays {
+    /// One dock per display.
+    #[default]
+    All,
+    /// The main display only.
+    Main,
+    /// The display the pointer is on: the dock follows it.
+    Pointer,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -1024,6 +1038,7 @@ impl Default for Dock {
             minimise_effect: MinimiseEffect::Scale,
             show_trash: true,
             assign: BTreeMap::new(),
+            displays: DockDisplays::All,
         }
     }
 }
