@@ -279,6 +279,7 @@ settings file.
 | Super+Shift+Q | log out (asks first) |
 | Super+Alt+Esc | Force Quit |
 | Super+Ctrl+Space | next keyboard layout |
+| Super+Ctrl+Shift+Space | previous keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
 | F12 | quake terminal |
 | Volume, mute, mic, brightness, keyboard backlight and media keys | as labelled, with an on-screen display |
