@@ -317,6 +317,7 @@ doesn't understand is skipped and reported in the journal.
 | `[[display.outputs]]` | one screen by connector name: on or off, resolution, refresh rate, scale, rotation, position, which shows the menu bar and Dock (System Settings › Displays asks to keep or revert) |
 | `[windows]` | move key, magnetic edges, snapping, double-click title bar, number of Spaces |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week |
+| `[menu_bar]` | hide the menu bar until the pointer reaches the top edge |
 | `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions |
 | `[idle]` | when to dim, turn the screen off and sleep (battery and AC), locking |
 | `[privacy]` | which programs may record the screen |
