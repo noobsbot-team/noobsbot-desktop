@@ -401,6 +401,8 @@ pub const SETTINGS: &[Setting] = &[
         "Intelligent: while a window overlaps it",
         Kind::Choice(&[("intelligent", "Intelligent"), ("never", "Never")]),
     ),
+    s(Page::Dock, "Dock", "dock.hide_delay", "Wait before hiding", "", Kind::Slider { min: 0.0, max: 2000.0, step: 50.0 }),
+    s(Page::Dock, "Dock", "dock.unhide_delay", "Wait before showing", "When the pointer calls it up", Kind::Slider { min: 0.0, max: 2000.0, step: 50.0 }),
     s(Page::Dock, "Dock", "dock.minimise_into_icon", "Minimise windows into application icon", "", Kind::Toggle),
     s(Page::Dock, "Dock", "dock.minimise_effect", "Minimise windows using", "", Kind::Choice(&[("scale", "Scale Effect"), ("genie", "Genie Effect")])),
     s(Page::Dock, "Dock", "dock.show_trash", "Show Trash in Dock", "", Kind::Toggle),
@@ -422,6 +424,17 @@ pub const SETTINGS: &[Setting] = &[
         "After an app's last window, clicking or scrolling goes to the next app",
         Kind::Toggle,
     ),
+    s(Page::Dock, "Dock", "dock.tooltips", "Show app names", "Over the icon under the pointer", Kind::Toggle),
+    s(Page::Dock, "Dock", "dock.pinned_only", "Show only kept apps", "Running apps not kept in the Dock stay out", Kind::Toggle),
+    s(
+        Page::Dock,
+        "Dock",
+        "dock.current_workspace_only",
+        "Show only this Space's apps",
+        "Running apps and minimised windows of the current Space",
+        Kind::Toggle,
+    ),
+    s(Page::Dock, "Dock", "dock.lock_items", "Lock the Dock's contents", "No dragging icons in, out or around, and no Keep in Dock", Kind::Toggle),
     s(Page::Dock, "Menu Bar", "menu_bar.auto_hide", "Automatically hide and show the menu bar", "Shows when the pointer touches the top edge", Kind::Toggle),
     s(
         Page::Dock,
@@ -646,7 +659,7 @@ fn shown(key: &str, value: f64) -> String {
         "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
         "keyboard.repeat_rate" => format!("{value:.0}/s"),
-        "keyboard.repeat_delay" | "mouse.double_click_ms" => format!("{value:.0} ms"),
+        "keyboard.repeat_delay" | "mouse.double_click_ms" | "dock.hide_delay" | "dock.unhide_delay" => format!("{value:.0} ms"),
         "appearance.dark_from" | "appearance.dark_until" | "night_light.from" | "night_light.until" | "notifications.dnd_from" | "notifications.dnd_until" => {
             format!("{value:02.0}:00")
         }
