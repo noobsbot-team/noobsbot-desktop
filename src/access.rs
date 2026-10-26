@@ -186,6 +186,26 @@ const LAUNCHPAD_ITEM: u64 = 5000;
 const BANNER_ITEM: u64 = 1 << 40;
 const CENTER_ITEM: u64 = 2 << 40;
 
+/// A menu bar status item as read: what it is, then its state.
+fn status_name(item: &crate::render::menubar::Item, status: &crate::shell::control::Status) -> String {
+    use crate::render::menubar::Kind;
+    let state = match item.kind {
+        Kind::Recording => item.text.clone(),
+        Kind::Network => status.wifi.as_ref().map(|(_, name)| name.clone()),
+        Kind::Bluetooth => status.bluetooth.as_ref().map(|(_, name)| name.clone()),
+        Kind::Battery => status.battery.map(|(p, charging)| format!("{p}%{}", if charging { ", charging" } else { "" })),
+        Kind::Volume => status.volume.map(|(v, muted)| if muted { "muted".to_owned() } else { format!("{v}%") }),
+    };
+    let name = match item.kind {
+        Kind::Recording => "Stop recording",
+        Kind::Network => "Wi-Fi",
+        Kind::Bluetooth => "Bluetooth",
+        Kind::Battery => "Battery",
+        Kind::Volume => "Sound",
+    };
+    state.map_or(name.to_owned(), |state| format!("{name}, {state}"))
+}
+
 /// The whole tree; every update replaces it.
 pub fn tree(shell: &Shell) -> TreeUpdate {
     let mut nodes = Vec::new();
@@ -529,10 +549,7 @@ impl State {
         let mut bar = vec!["Noobsbot menu".to_owned()];
         if let Some(content) = self.menu_bar() {
             bar.extend(content.app.map(|id| crate::render::menubar::app_name(&id)));
-            bar.extend(status.wifi.as_ref().map(|(_, name)| format!("Wi-Fi, {name}")));
-            bar.extend(status.bluetooth.as_ref().map(|(_, name)| format!("Bluetooth, {name}")));
-            bar.extend(status.battery.map(|(p, charging)| format!("Battery {p}%{}", if charging { ", charging" } else { "" })));
-            bar.extend(status.volume.map(|(v, muted)| if muted { "Volume, muted".to_owned() } else { format!("Volume {v}%") }));
+            bar.extend(content.status.iter().map(|item| status_name(item, &status)));
             bar.push("Control Center".into());
             bar.push(content.clock);
         }
@@ -757,6 +774,20 @@ mod tests {
 
         let mission = tree(&Shell { mission: Some("Notes".into()), ..Default::default() });
         assert_eq!(mission.focus, MISSION_ITEM, "the highlighted window is read");
+    }
+
+    #[test]
+    fn status_items_read_their_name_then_state() {
+        use crate::render::menubar::{Item, Kind};
+        use crate::symbols::Symbol;
+        let item = |kind, text: Option<&str>| Item { kind, symbol: Symbol::Stop, text: text.map(str::to_owned), badge: false };
+        let status =
+            crate::shell::control::Status { wifi: Some((true, "Home".into())), battery: Some((85, true)), volume: Some((40, true)), ..Default::default() };
+        assert_eq!(status_name(&item(Kind::Recording, Some("0:42")), &status), "Stop recording, 0:42");
+        assert_eq!(status_name(&item(Kind::Network, None), &status), "Wi-Fi, Home");
+        assert_eq!(status_name(&item(Kind::Bluetooth, None), &status), "Bluetooth");
+        assert_eq!(status_name(&item(Kind::Battery, Some("85%")), &status), "Battery, 85%, charging");
+        assert_eq!(status_name(&item(Kind::Volume, None), &status), "Sound, muted");
     }
 
     fn node(update: &TreeUpdate, id: NodeId) -> Node {
