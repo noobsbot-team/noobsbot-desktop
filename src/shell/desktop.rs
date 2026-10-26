@@ -130,19 +130,25 @@ pub fn label_rect(cell: Rect) -> Rect {
     Rectangle::new((cell.loc.x + (CELL_W - LABEL_W) / 2, cell.loc.y + 6 + ICON + 6).into(), (LABEL_W, 2 * LABEL_LINE).into())
 }
 
-/// Cells for `names`: a saved one where it is on the grid and free, the rest in the first free cells, down each
-/// column, then leftwards; more icons than cells pile up in the last one rather than run off the screen.
-// ponytail: macOS shrinks the grid instead. Add when a desktop gets that full.
-pub fn place(names: &[&str], saved: &HashMap<String, Cell>, grid: &Grid) -> Vec<Cell> {
+/// Cells for `names`: the first `drives` take the first cells in order; then a saved one where it is on the grid and
+/// free, the rest in the first free cells, down each column, then leftwards; more icons than cells pile up in the last
+/// one rather than run off the screen.
+// ponytail: the grid could shrink instead. Add when a desktop gets that full.
+pub fn place(drives: usize, names: &[&str], saved: &HashMap<String, Cell>, grid: &Grid) -> Vec<Cell> {
+    let slot = |n: i32| if n < grid.rows * grid.cols { (n / grid.rows, n % grid.rows) } else { (grid.cols - 1, grid.rows - 1) };
     let fits = |&(c, r): &Cell| (0..grid.cols).contains(&c) && (0..grid.rows).contains(&r);
-    let mut taken = std::collections::HashSet::new();
-    let mut cells: Vec<Option<Cell>> = names.iter().map(|n| saved.get(*n).copied().filter(fits).filter(|c| taken.insert(*c))).collect();
+    let mut taken: std::collections::HashSet<Cell> = (0..drives as i32).map(slot).collect();
+    let mut cells: Vec<Option<Cell>> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| if i < drives { Some(slot(i as i32)) } else { saved.get(*n).copied().filter(fits).filter(|c| taken.insert(*c)) })
+        .collect();
     let mut next = 0;
     for cell in cells.iter_mut().filter(|c| c.is_none()) {
-        while taken.contains(&(next / grid.rows, next % grid.rows)) {
+        while taken.contains(&slot(next)) && next < grid.rows * grid.cols {
             next += 1;
         }
-        *cell = Some(if next < grid.rows * grid.cols { (next / grid.rows, next % grid.rows) } else { (grid.cols - 1, grid.rows - 1) });
+        *cell = Some(slot(next));
         next += 1;
     }
     cells.into_iter().flatten().collect()
@@ -384,7 +390,7 @@ impl State {
     fn desktop_cells(&self) -> Option<(Grid, Vec<Cell>)> {
         let grid = self.desktop_grid()?;
         let names: Vec<&str> = self.desktop.entries.iter().map(|e| e.name.as_str()).collect();
-        Some((grid, place(&names, &self.desktop.saved, &grid)))
+        Some((grid, place(0, &names, &self.desktop.saved, &grid)))
     }
 
     /// The icon (index) whose picture or name is under `p`, output-relative.
@@ -677,18 +683,29 @@ mod tests {
         let g = grid();
         let saved = HashMap::from([("b".to_owned(), (0, 0)), ("c".to_owned(), (3, 1)), ("d".to_owned(), (40, 0)), ("e".to_owned(), (3, 1))]);
         // b and c keep theirs; d's is off the grid and e's is c's, so they flow into the free cells like a.
-        assert_eq!(place(&["a", "b", "c", "d", "e"], &saved, &g), vec![(0, 1), (0, 0), (3, 1), (0, 2), (0, 3)]);
+        assert_eq!(place(0, &["a", "b", "c", "d", "e"], &saved, &g), vec![(0, 1), (0, 0), (3, 1), (0, 2), (0, 3)]);
         // Columns wrap after `rows` icons.
         let many: Vec<String> = (0..8).map(|i| i.to_string()).collect();
         let names: Vec<&str> = many.iter().map(String::as_str).collect();
-        assert_eq!(place(&names, &HashMap::new(), &g)[6..], [(1, 0), (1, 1)]);
+        assert_eq!(place(0, &names, &HashMap::new(), &g)[6..], [(1, 0), (1, 1)]);
         // A hundred icons on a 6×12 grid: the 73rd onwards share the last cell, none leaves the screen.
         let many: Vec<String> = (0..100).map(|i| i.to_string()).collect();
         let names: Vec<&str> = many.iter().map(String::as_str).collect();
-        let cells = place(&names, &HashMap::new(), &g);
+        let cells = place(0, &names, &HashMap::new(), &g);
         assert!(cells.iter().all(|&(c, r)| (0..g.cols).contains(&c) && (0..g.rows).contains(&r)));
         assert_eq!(cells[71], (11, 5));
         assert!(cells[72..].iter().all(|&c| c == (11, 5)));
+    }
+
+    #[test]
+    fn drives_come_first_at_the_top_right() {
+        let g = grid();
+        // b saved where the first drive goes: the drives win, b and a flow below them.
+        let saved = HashMap::from([("b".to_owned(), (0, 0)), ("c".to_owned(), (2, 2))]);
+        assert_eq!(place(2, &["/run/media/USB", "/run/media/SD", "a", "b", "c"], &saved, &g), vec![(0, 0), (0, 1), (0, 2), (0, 3), (2, 2)]);
+        // A column of drives spills into the next.
+        let names = ["/1", "/2", "/3", "/4", "/5", "/6", "/7", "a"];
+        assert_eq!(place(7, &names, &HashMap::new(), &g)[5..], [(0, 5), (1, 0), (1, 1)]);
     }
 
     #[test]
