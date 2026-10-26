@@ -257,7 +257,7 @@ impl State {
             || self.mission_key(sym, mods)
             || self.spotlight_key(sym, raw, mods)
             || self.emoji_key(sym, raw, mods)
-            || self.menu_key(sym)
+            || self.menu_key(sym, unbound)
             || (sym == Keysym::Escape && self.close_popup())
         {
             return true;

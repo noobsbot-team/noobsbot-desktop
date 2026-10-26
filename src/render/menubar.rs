@@ -184,6 +184,11 @@ impl MenuBar {
         self.hits.iter().find(|(_, rect)| rect.to_f64().contains(location)).map(|(item, _)| *item)
     }
 
+    /// The items, left to right.
+    pub fn items(&self) -> impl Iterator<Item = BarItem> + '_ {
+        self.hits.iter().map(|(item, _)| *item)
+    }
+
     /// The pressed pill behind `item`: rounded, a little inside the bar's height. Menus line up with it.
     pub fn pill(&self, item: BarItem) -> Option<Rect> {
         let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
