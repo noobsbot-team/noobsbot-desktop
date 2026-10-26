@@ -197,14 +197,14 @@ pub fn menu_jump(rows: &[Option<Row>], from: Option<usize>, c: char) -> Option<u
     (0..rows.len()).map(|k| (start + k) % rows.len()).find(|&i| rows[i].as_ref().is_some_and(|r| r.live() && starts(r)))
 }
 
-/// Left or Right from bar item `open` among `items` (left to right): the neighbouring one that opens a menu, going
-/// round; `tray_menu(i)`: tray item i has one.
-pub fn bar_step(items: &[BarItem], open: BarItem, right: bool, tray_menu: impl Fn(usize) -> bool) -> Option<BarItem> {
+/// Left or Right from bar item `open` among `items` (left to right): the neighbouring one that opens a menu or a
+/// status module, going round; `opens(item)`: a tray or status item has one.
+pub fn bar_step(items: &[BarItem], open: BarItem, right: bool, opens: impl Fn(BarItem) -> bool) -> Option<BarItem> {
     let menus: Vec<_> = items
         .iter()
         .copied()
         .filter(|item| match item {
-            BarItem::Tray(i) => tray_menu(*i),
+            BarItem::Tray(_) | BarItem::Status(_) => opens(*item),
             _ => matches!(popup_for(*item), Some(Popup::Menu(_))),
         })
         .collect();
@@ -610,13 +610,17 @@ impl State {
             BarItem::Status(i) if self.menu_bar().and_then(|c| c.status.get(i).map(|s| s.kind)) == Some(menubar::Kind::Recording) => {
                 self.toggle_recording();
             }
-            BarItem::Status(_) => {
-                self.control_scroll = 0.0;
-                if matches!(self.popup, Some(Popup::Module(control::Module::Wifi, _))) {
-                    self.services.send(crate::services::Command::WifiScan);
-                }
-            }
+            BarItem::Status(_) => self.module_opened(),
             _ => {}
+        }
+    }
+
+    /// A status item's module just opened, by click or sliding along the bar: its list starts at the top, and Wi-Fi
+    /// scans (NetworkManager refuses scans too close together).
+    fn module_opened(&mut self) {
+        self.control_scroll = 0.0;
+        if matches!(self.popup, Some(Popup::Module(control::Module::Wifi, _))) {
+            self.services.send(crate::services::Command::WifiScan);
         }
     }
 
@@ -661,6 +665,9 @@ impl State {
         let Some(backend) = self.backend.as_ref() else { return };
         if let Some(next) = bar.and_then(|b| b.hit(to)).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(|item| self.bar_popup(item)) {
             self.popup = Some(next);
+            if matches!(next, Popup::Module(..)) {
+                self.module_opened();
+            }
             self.schedule_redraw();
         } else if let Popup::Menu(menu) = open {
             let (row, moved) = (backend.menu.row_at(to), backend.menu.row_at(from) != backend.menu.row_at(to));
@@ -803,6 +810,10 @@ impl State {
     /// Left/Right on a bar menu with no submenu in the way go to the neighbouring bar menu. `true`: used.
     pub fn menu_key(&mut self, sym: smithay::input::keyboard::Keysym, letters: bool) -> bool {
         use smithay::input::keyboard::Keysym;
+        if let Some(Popup::Module(_, i)) = self.popup {
+            // A status module takes no other keys; Esc closes it (`close_popup`).
+            return matches!(sym, Keysym::Left | Keysym::Right) && self.bar_key(BarItem::Status(i), sym == Keysym::Right);
+        }
         let Some(popup @ Popup::Menu(menu)) = self.popup else { return false };
         let rows = self.open_menu_rows(menu);
         let open = self.open_submenu();
@@ -824,13 +835,8 @@ impl State {
             // Esc with no submenu closes the menu (`close_popup`).
             Keysym::Escape => return false,
             Keysym::Left | Keysym::Right if bar.is_some() && !(sym == Keysym::Right && has_sub) => {
-                let items: Vec<_> = self.popup_output().and_then(|o| self.bar_view(&o)).map(|b| b.items().collect()).unwrap_or_default();
-                let next = bar.and_then(|b| bar_step(&items, b, sym == Keysym::Right, |i| self.tray.get(i).is_some_and(|t| t.menu.is_some())));
-                if let Some(next) = next {
-                    self.menu_cursor = None;
-                    // A tray item's menu: `secondary` asks for it rather than activating the item.
-                    self.open_bar_item(next, Point::default(), true);
-                    self.schedule_redraw();
+                if let Some(from) = bar {
+                    self.bar_key(from, sym == Keysym::Right);
                 }
             }
             Keysym::Right | Keysym::Return | Keysym::KP_Enter => match (row, at) {
@@ -856,6 +862,22 @@ impl State {
                 Some(c) => self.menu_cursor_to(popup, in_sub, menu_jump(&level, at, c)),
                 None => return false,
             },
+        }
+        true
+    }
+
+    /// Left or Right from bar item `from`'s open popup: the neighbouring item's opens. Always `true` (used).
+    fn bar_key(&mut self, from: BarItem, right: bool) -> bool {
+        let items: Vec<_> = self.popup_output().and_then(|o| self.bar_view(&o)).map(|b| b.items().collect()).unwrap_or_default();
+        let opens = |item| match item {
+            BarItem::Tray(i) => self.tray.get(i).is_some_and(|t| t.menu.is_some()),
+            _ => self.bar_popup(item).is_some(),
+        };
+        if let Some(next) = bar_step(&items, from, right, opens) {
+            self.menu_cursor = None;
+            // A tray item's menu: `secondary` asks for it rather than activating the item.
+            self.open_bar_item(next, Point::default(), true);
+            self.schedule_redraw();
         }
         true
     }
@@ -1196,13 +1218,20 @@ mod tests {
     fn left_and_right_go_round_the_bar_menus() {
         let items =
             [BarItem::Logo, BarItem::App, BarItem::Tray(0), BarItem::Tray(1), BarItem::Status(0), BarItem::Input, BarItem::ControlCenter, BarItem::Clock];
-        // Tray 1 only activates; status items, Control Center and the clock open no menu.
-        let menu = |i| i == 0;
+        // Tray 1 only activates; Control Center and the clock open no menu.
+        let menu = |item| item == BarItem::Tray(0);
         assert_eq!(bar_step(&items, BarItem::Logo, true, menu), Some(BarItem::App));
         assert_eq!(bar_step(&items, BarItem::Tray(0), true, menu), Some(BarItem::Input));
         assert_eq!(bar_step(&items, BarItem::Input, true, menu), Some(BarItem::Logo), "round");
         assert_eq!(bar_step(&items, BarItem::Logo, false, menu), Some(BarItem::Input));
         assert_eq!(bar_step(&items, BarItem::Tray(5), false, menu), None, "an item not on the bar");
+        // Status 0 opens its module (Status 1, the recording's stop item, opens nothing).
+        let items = [BarItem::Logo, BarItem::Tray(0), BarItem::Status(0), BarItem::Status(1), BarItem::Status(2), BarItem::Input, BarItem::Clock];
+        let opens = |item| matches!(item, BarItem::Tray(0) | BarItem::Status(0) | BarItem::Status(2));
+        assert_eq!(bar_step(&items, BarItem::Tray(0), true, opens), Some(BarItem::Status(0)));
+        assert_eq!(bar_step(&items, BarItem::Status(0), true, opens), Some(BarItem::Status(2)), "past the stop item");
+        assert_eq!(bar_step(&items, BarItem::Status(2), true, opens), Some(BarItem::Input));
+        assert_eq!(bar_step(&items, BarItem::Input, false, opens), Some(BarItem::Status(2)));
     }
 
     #[test]

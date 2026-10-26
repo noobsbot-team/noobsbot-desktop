@@ -86,7 +86,7 @@ trait Manager {
     fn deactivate_connection(&self, active: &ObjectPath<'_>) -> zbus::Result<()>;
     fn add_and_activate_connection(
         &self,
-        connection: HashMap<&str, HashMap<&str, Value<'_>>>,
+        connection: Settings,
         device: &ObjectPath<'_>,
         specific_object: &ObjectPath<'_>,
     ) -> zbus::Result<(OwnedObjectPath, OwnedObjectPath)>;
@@ -132,6 +132,12 @@ trait AccessPoint {
     fn strength(&self) -> zbus::Result<u8>;
     #[zbus(property)]
     fn ssid(&self) -> zbus::Result<Vec<u8>>;
+    #[zbus(property)]
+    fn flags(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn wpa_flags(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn rsn_flags(&self) -> zbus::Result<u32>;
 }
 
 /// Sends the network state now and after every change, including NetworkManager starting or stopping. Signals are
@@ -167,7 +173,8 @@ pub async fn scan(bus: &Connection) {
     }
 }
 
-/// Control Center ▸ Wi-Fi ▸ a network: its saved connection (with `password` as its new one), or a new WPA-PSK one.
+/// Control Center ▸ Wi-Fi ▸ a network: its saved connection (with `password` as its new one), or a new one secured as
+/// the access point says (`key_mgmt`); what it can't tell, NetworkManager asks our secret agent for.
 pub async fn join(bus: &Connection, ssid: &str, ap: &str, device: &str, password: Option<&str>) {
     let result = async {
         let (ap, device) = (ObjectPath::try_from(ap)?, ObjectPath::try_from(device)?);
@@ -181,11 +188,9 @@ pub async fn join(bus: &Connection, ssid: &str, ap: &str, device: &str, password
                 drop(manager.activate_connection(&connection, &device, &ap).await?);
             }
             Join::Add(password) => {
-                let mut settings = HashMap::new();
-                if let Some(psk) = password {
-                    settings.insert("802-11-wireless-security", HashMap::from([("key-mgmt", Value::from("wpa-psk")), ("psk", Value::from(psk))]));
-                }
-                manager.add_and_activate_connection(settings, &device, &ap).await?;
+                let point = AccessPointProxy::builder(bus).path(&ap)?.cache_properties(CacheProperties::No).build().await?;
+                let key_mgmt = key_mgmt(point.flags().await?, point.wpa_flags().await?, point.rsn_flags().await?);
+                manager.add_and_activate_connection(new_settings(key_mgmt, password)?, &device, &ap).await?;
             }
         }
         zbus::Result::Ok(())
@@ -208,6 +213,36 @@ fn plan(saved: Option<OwnedObjectPath>, password: Option<&str>) -> Join<'_> {
         (Some(connection), None) => Join::Activate(connection),
         (Some(connection), Some(password)) => Join::Update(connection, password),
         (None, password) => Join::Add(password),
+    }
+}
+
+/// A new connection's `key-mgmt` from its access point's Flags, WpaFlags and RsnFlags, when they say it plainly:
+/// a pre-shared key (wpa-psk), SAE alone (sae), or privacy with no WPA at all (WEP, "none"). 802.1X, OWE and anything
+/// else: `None`, left to NetworkManager and our secret agent.
+fn key_mgmt(flags: u32, wpa: u32, rsn: u32) -> Option<&'static str> {
+    // NM80211ApFlags PRIVACY; NM80211ApSecurityFlags KEY_MGMT_PSK, KEY_MGMT_802_1X, KEY_MGMT_SAE.
+    const PRIVACY: u32 = 0x1;
+    const PSK: u32 = 0x100;
+    const EAP: u32 = 0x200;
+    const SAE: u32 = 0x400;
+    let any = wpa | rsn;
+    match any {
+        0 if flags & PRIVACY != 0 => Some("none"),
+        _ if any & EAP != 0 => None,
+        _ if any & PSK != 0 => Some("wpa-psk"),
+        _ if any & SAE != 0 => Some("sae"),
+        _ => None,
+    }
+}
+
+/// A new connection's settings: only its security, and `password` as its key when the kind is known.
+fn new_settings(key_mgmt: Option<&str>, password: Option<&str>) -> zbus::Result<Settings> {
+    let Some(key_mgmt) = key_mgmt else { return Ok(Settings::new()) };
+    let security = HashMap::from([("key-mgmt".to_owned(), OwnedValue::try_from(Value::from(key_mgmt)).map_err(zbus::Error::from)?)]);
+    let settings = HashMap::from([("802-11-wireless-security".to_owned(), security)]);
+    match password {
+        Some(password) => with_password(settings, password),
+        None => Ok(settings),
     }
 }
 
@@ -459,6 +494,26 @@ mod tests {
         let wep = with_password(wep, "abcde").unwrap();
         assert_eq!((text(&wep, "wep-key2"), number(&wep, "wep-key-type")), ("abcde".into(), 1));
         assert!(!wep["802-11-wireless-security"].contains_key("psk"));
+    }
+
+    #[test]
+    fn new_networks_are_secured_as_the_access_point_says() {
+        assert_eq!(key_mgmt(0, 0, 0), None, "open");
+        assert_eq!(key_mgmt(1, 0, 0), Some("none"), "WEP");
+        assert_eq!(key_mgmt(1, 0, 0x188), Some("wpa-psk"), "WPA2 personal");
+        assert_eq!(key_mgmt(1, 0x188, 0x188), Some("wpa-psk"), "WPA/WPA2 mixed");
+        assert_eq!(key_mgmt(1, 0, 0x588), Some("wpa-psk"), "WPA2/WPA3 transition");
+        assert_eq!(key_mgmt(1, 0, 0x488), Some("sae"), "WPA3 personal");
+        assert_eq!(key_mgmt(1, 0, 0x288), None, "enterprise: the agent asks");
+        assert_eq!(key_mgmt(1, 0, 0x888), None, "OWE");
+
+        let text = |s: &Settings, k: &str| String::try_from(s["802-11-wireless-security"][k].try_clone().unwrap()).unwrap();
+        assert!(new_settings(None, Some("pw")).unwrap().is_empty(), "the password is asked for again by the agent");
+        let wep = new_settings(Some("none"), Some("abcde")).unwrap();
+        assert_eq!((text(&wep, "key-mgmt"), text(&wep, "wep-key0")), ("none".into(), "abcde".into()));
+        let sae = new_settings(Some("sae"), Some("hunter22")).unwrap();
+        assert_eq!((text(&sae, "key-mgmt"), text(&sae, "psk")), ("sae".into(), "hunter22".into()));
+        assert!(!new_settings(Some("wpa-psk"), None).unwrap()["802-11-wireless-security"].contains_key("psk"));
     }
 
     #[test]
