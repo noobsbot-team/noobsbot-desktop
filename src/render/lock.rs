@@ -34,6 +34,7 @@ pub struct Content<'a> {
     pub message: &'a str,
     pub hour24: bool,
     pub now: chrono::DateTime<chrono::Local>,
+    pub caps_lock: bool,
 }
 
 /// Date, time, missed count, hover, wrong, battery, (keyboard, message), size, dark, opacity, scale, greeter (user, session,
@@ -52,7 +53,7 @@ type PageKey = (
     u64,
     Option<(usize, usize, Option<String>)>,
 );
-type FieldKey = (TextField, Rect, bool, bool, [u8; 3], u32, u64);
+type FieldKey = (TextField, Rect, bool, bool, bool, [u8; 3], u32, u64);
 /// Full name and round picture per user.
 type Users = Vec<(String, Option<Arc<Rendered>>)>;
 type ShadeKey = (Size<i32, Logical>, u32, u64);
@@ -193,7 +194,7 @@ impl LockView {
         // The field, shaken sideways after a wrong password.
         let shake = lock.shake(std::time::Instant::now()).unwrap_or(0);
         let field_rect = Rectangle::new((layout.field.loc.x + shake, layout.field.loc.y).into(), layout.field.size);
-        let field_key = (lock.field.clone(), field_rect, lock.checking.is_some(), dark, accent, glass_opacity.to_bits(), scale.to_bits());
+        let field_key = (lock.field.clone(), field_rect, lock.checking.is_some(), content.caps_lock, dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.field.as_ref().is_none_or(|(k, _, _)| *k != field_key) {
             let mut ui = Ui { shaders, text, symbols, dark, accent, glass_opacity, scale, glass: Vec::new(), pieces: Vec::new() };
             let typed = !lock.field.text.is_empty();
@@ -204,6 +205,13 @@ impl LockView {
                 let arrow = Rectangle::new((pill.loc.x + pill.size.w - 24, pill.loc.y + (pill.size.h - 16) / 2).into(), (16, 16).into());
                 let color = ui.ink(alpha);
                 ui.symbol(Symbol::ArrowRight, Weight::Regular, 16, arrow, color);
+            }
+            // Caps Lock on: ⇪ at the field's right, left of the arrow (E8.6).
+            if content.caps_lock {
+                let right = if typed { 44 } else { 24 };
+                let mark = Rectangle::new((pill.loc.x + pill.size.w - right, pill.loc.y).into(), (16, pill.size.h).into());
+                let color = ui.ink(0.55);
+                ui.text("⇪", Style { color, ..BODY }, mark, Align::Centre);
             }
             self.field = Some((field_key, std::mem::take(&mut ui.glass), std::mem::take(&mut ui.pieces)));
         }
