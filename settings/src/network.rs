@@ -509,7 +509,8 @@ pub async fn join(bus: Connection, ap: Ap, password: Option<String>) -> zbus::Re
     Ok(())
 }
 
-/// "Other…": a network that doesn't announce its name. `security` is "none", "psk" (WPA2/WPA3 Personal) or "eap"
+/// "Other…": a network that doesn't announce its name. `security` is "none", "psk" (WPA2/WPA3 Personal), "sae" (WPA3
+/// Personal only) or "eap"
 /// (WPA2 Enterprise, with `eap` "peap" or "ttls", `inner` "mschapv2" or "pap", and an optional `ca` file).
 #[derive(Default)]
 pub struct Hidden {
@@ -542,8 +543,11 @@ fn hidden_settings(h: &Hidden) -> Dict<'_> {
         ("802-11-wireless", HashMap::from([("ssid", Value::from(h.ssid.as_bytes())), ("hidden", Value::from(true))])),
     ]);
     match h.security.as_str() {
-        // ponytail: wpa-psk joins WPA2 and WPA2/WPA3 mixed networks; a WPA3-only one needs "sae" (Advanced…).
-        "psk" => drop(settings.insert("802-11-wireless-security", HashMap::from([("key-mgmt", "wpa-psk".into()), ("psk", h.password.as_str().into())]))),
+        // wpa-psk joins WPA2 and WPA2/WPA3 mixed networks; a WPA3-only one needs sae.
+        "psk" | "sae" => {
+            let key_mgmt = if h.security == "sae" { "sae" } else { "wpa-psk" };
+            settings.insert("802-11-wireless-security", HashMap::from([("key-mgmt", key_mgmt.into()), ("psk", h.password.as_str().into())]));
+        }
         "eap" => {
             settings.insert("802-11-wireless-security", HashMap::from([("key-mgmt", Value::from("wpa-eap"))]));
             let mut x = HashMap::from([
@@ -639,6 +643,10 @@ mod tests {
         let psk = hidden_settings(&h);
         assert_eq!((text(&psk["802-11-wireless-security"]["key-mgmt"]), text(&psk["802-11-wireless-security"]["psk"])), ("wpa-psk".into(), "hunter22".into()));
         drop(psk);
+        h.security = "sae".into();
+        let sae = hidden_settings(&h);
+        assert_eq!((text(&sae["802-11-wireless-security"]["key-mgmt"]), text(&sae["802-11-wireless-security"]["psk"])), ("sae".into(), "hunter22".into()));
+        drop(sae);
 
         (h.ssid, h.security, h.password, h.eap, h.inner, h.identity, h.ca) =
             ("Corp".into(), "eap".into(), "pw".into(), "peap".into(), "mschapv2".into(), "me".into(), "/etc/ca.pem".into());

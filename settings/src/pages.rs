@@ -1364,7 +1364,7 @@ fn other_network(app: &App) -> Element<'_, Message> {
     let security = value("security");
     let mut rows = vec![
         line(t, "Network name", "", field("ssid", "Name", false)),
-        line(t, "Security", "", pick("security", &[("none", "None"), ("psk", "WPA2/WPA3 Personal"), ("eap", "WPA2 Enterprise")])),
+        line(t, "Security", "", pick("security", &[("none", "None"), ("psk", "WPA2/WPA3 Personal"), ("sae", "WPA3 Personal"), ("eap", "WPA2 Enterprise")])),
     ];
     if security == "eap" {
         rows.push(line(t, "EAP method", "", pick("eap", &[("peap", "PEAP"), ("ttls", "TTLS")])));
