@@ -128,6 +128,70 @@ pub fn cycle(n: usize, active: Option<usize>, forward: bool) -> usize {
     }
 }
 
+/// Hovering an icon with several windows this long shows their previews (E8.3).
+pub const PEEK_DELAY: Duration = Duration::from_millis(500);
+/// Thumbnail height, and the strip's padding and gaps.
+const PEEK_H: i32 = 120;
+const PEEK_PAD: i32 = 12;
+/// Between the strip and the zoomed icon: the pointer crosses it without the strip going.
+const PEEK_GAP: i32 = 8;
+
+/// The window previews (E8.3), output-relative: the glass strip and each window's thumbnail.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Peek {
+    pub strip: Rect,
+    pub thumbs: Vec<Rect>,
+}
+
+/// What a point on the previews is over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeekHit {
+    Close(usize),
+    Thumb(usize),
+    /// The strip between thumbnails, or the gap down to the icon.
+    Strip,
+}
+
+/// The strip for windows of `sizes`, centred over `at` (the zoomed icon's top centre) on a `width`-wide screen: cells
+/// PEEK_H tall, as wide as the window's shape (half to twice the height), all shrunk when they don't fit; each
+/// window fitted and centred in its cell.
+pub fn peek_layout(sizes: &[Size<i32, Logical>], at: Point<i32, Logical>, width: i32) -> Peek {
+    let h = f64::from(PEEK_H);
+    let cells: Vec<f64> = sizes.iter().map(|s| (f64::from(s.w) * h / f64::from(s.h.max(1))).clamp(h / 2.0, h * 2.0)).collect();
+    let gaps = PEEK_PAD * (sizes.len() as i32 + 1);
+    let k = (f64::from(width - 2 * PEEK_PAD - gaps) / cells.iter().sum::<f64>().max(1.0)).min(1.0);
+    let cells: Vec<i32> = cells.iter().map(|c| (c * k).round() as i32).collect();
+    let ch = (h * k).round() as i32;
+    let w = cells.iter().sum::<i32>() + gaps;
+    let x = (at.x - w / 2).clamp(PEEK_PAD, (width - w - PEEK_PAD).max(PEEK_PAD));
+    let strip = Rectangle::new((x, at.y - PEEK_GAP - ch - 2 * PEEK_PAD).into(), (w, ch + 2 * PEEK_PAD).into());
+    let mut left = x + PEEK_PAD;
+    let thumbs = sizes
+        .iter()
+        .zip(cells)
+        .map(|(s, cw)| {
+            let f = (f64::from(cw) / f64::from(s.w.max(1))).min(f64::from(ch) / f64::from(s.h.max(1)));
+            let (tw, th) = ((f64::from(s.w) * f).round() as i32, (f64::from(s.h) * f).round() as i32);
+            let thumb = Rectangle::new((left + (cw - tw) / 2, strip.loc.y + PEEK_PAD + (ch - th) / 2).into(), (tw, th).into());
+            left += cw + PEEK_PAD;
+            thumb
+        })
+        .collect();
+    Peek { strip, thumbs }
+}
+
+/// What `p` is over: the `hover`ed thumbnail's ✕ (Mission Control's `close_button`), a thumbnail, or the strip.
+pub fn peek_hit(peek: &Peek, hover: Option<usize>, p: Point<f64, Logical>) -> Option<PeekHit> {
+    if let Some(i) = hover.filter(|i| peek.thumbs.get(*i).is_some_and(|t| crate::mission::close_button(*t).to_f64().contains(p))) {
+        return Some(PeekHit::Close(i));
+    }
+    if let Some(i) = peek.thumbs.iter().position(|t| t.to_f64().contains(p)) {
+        return Some(PeekHit::Thumb(i));
+    }
+    let s = peek.strip;
+    Rectangle::<i32, Logical>::new(s.loc, (s.size.w, s.size.h + PEEK_GAP).into()).to_f64().contains(p).then_some(PeekHit::Strip)
+}
+
 /// Plank's window names in the menu: the app's name (or a word of it) cut off "App - title", "title - App",
 /// "App: title".
 pub fn short_title(title: &str, app: &str) -> String {
@@ -337,8 +401,64 @@ impl State {
         self.dock_shown() && (layout.zone.to_f64().contains(p) || (self.dock_reveal && hit(layout, p).is_some()))
     }
 
+    /// The hovered icon's window previews once shown (E8.3): their layout, and each window with its frame
+    /// (output-relative). Only windows on screen or on another Space have a frame: minimised ones get no thumbnail.
+    pub fn dock_peek(&self) -> Option<(Peek, Vec<(Window, Rect)>)> {
+        let peek = self.dock_ui.peek.as_ref().filter(|p| p.shown())?;
+        if self.popup.is_some() || self.mission_open() || self.launchpad.is_some() || self.dock_ui.dragging() || !self.dock_shown() {
+            return None;
+        }
+        let output = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?;
+        let windows: Vec<(Window, Rect)> = self
+            .dock_item(&peek.key)?
+            .windows
+            .into_iter()
+            .filter_map(|w| Some((w.clone(), self.frame(&w)?)))
+            .map(|(w, f)| (w, Rectangle::new(f.loc - output.loc, f.size)))
+            .collect();
+        let sizes: Vec<Size<i32, Logical>> = windows.iter().map(|(_, f)| f.size).collect();
+        (windows.len() >= 2).then(|| (peek_layout(&sizes, peek.at, output.size.w), windows))
+    }
+
+    /// What `location` is over on the shown previews, and their windows.
+    fn dock_peek_at(&self, location: Point<f64, Logical>) -> Option<(PeekHit, Vec<(Window, Rect)>)> {
+        let (peek, windows) = self.dock_peek()?;
+        Some((peek_hit(&peek, self.dock_ui.peek.as_ref()?.hover, location)?, windows))
+    }
+
+    /// The pointer is over `item` (or no icon): an icon with several windows starts its preview delay; another icon
+    /// or none ends the previews.
+    fn dock_peek_track(&mut self, over: Option<(&Item, usize)>, layout: &Layout) {
+        let several = over.filter(|(it, _)| it.windows.iter().filter(|w| self.space.element_location(w).is_some()).count() >= 2 && !self.dock_ui.dragging());
+        let Some((item, i)) = several else {
+            if self.dock_ui.peek.take().is_some_and(|p| p.shown()) {
+                self.schedule_redraw();
+            }
+            return;
+        };
+        let zoom = if self.config.dock.zoom { f64::from(self.config.dock.zoom_percent) / 100.0 } else { 1.0 };
+        let (left, right) = layout.columns[i];
+        let top = f64::from(layout.zone.loc.y + layout.zone.size.h) - bottom_pad(layout.icon) - (layout.icon * zoom).round();
+        let at = Point::from((((left + right) / 2.0).round() as i32, top.round() as i32));
+        match self.dock_ui.peek.as_mut() {
+            Some(p) if p.key == item.key => {
+                if !p.shown() {
+                    p.at = at;
+                }
+            }
+            _ => {
+                let since = Instant::now();
+                self.dock_ui.peek = Some(Peeking { key: item.key.clone(), at, since, off: false, hover: None });
+                self.dock_wake(since + PEEK_DELAY);
+            }
+        }
+    }
+
     /// Whether the dock takes the pointer at `location` (output-relative).
     pub fn dock_covers(&self, location: Point<f64, Logical>) -> bool {
+        if self.dock_peek_at(location).is_some() {
+            return true;
+        }
         if !self.near_dock(location) {
             return false;
         }
@@ -348,8 +468,31 @@ impl State {
 
     /// A press at `location`; `true` if the dock took it. With a popup open the shell closes it first.
     pub fn dock_press(&mut self, location: Point<f64, Logical>, button: u32) -> bool {
-        if self.popup.is_some() || self.alert.is_some() || !self.near_dock(location) {
+        if self.popup.is_some() || self.alert.is_some() {
             return false;
+        }
+        // The previews: a thumbnail focuses its window (showing its Space), ✕ or the middle button closes it.
+        if let Some((hit, windows)) = self.dock_peek_at(location) {
+            match (hit, button) {
+                (PeekHit::Close(i), BTN_LEFT) | (PeekHit::Thumb(i), BTN_MIDDLE) => {
+                    if let Some(toplevel) = windows[i].0.toplevel() {
+                        toplevel.send_close();
+                    }
+                }
+                (PeekHit::Thumb(i), BTN_LEFT) => {
+                    self.dock_ui.peek = None;
+                    self.focus_window(Some(windows[i].0.clone()), SERIAL_COUNTER.next_serial());
+                }
+                _ => {}
+            }
+            self.schedule_redraw();
+            return true;
+        }
+        if !self.near_dock(location) {
+            return false;
+        }
+        if let Some(p) = self.dock_ui.peek.as_mut() {
+            p.off = true;
         }
         let items = self.dock_items();
         let Some(layout) = self.dock_layout(items.len()).filter(|l| !items.is_empty() && self.dock_on(l, location)) else { return false };
@@ -528,6 +671,18 @@ impl State {
     /// and lightens the icon under the pointer.
     pub fn dock_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         self.dock_drag_motion(to);
+        // On the previews the dock stays as it is (shown, zoomed where it was); only the hovered thumbnail changes.
+        if let Some((hit, _)) = self.dock_peek_at(to) {
+            let hover = match hit {
+                PeekHit::Close(i) | PeekHit::Thumb(i) => Some(i),
+                PeekHit::Strip => None,
+            };
+            if let Some(p) = self.dock_ui.peek.as_mut().filter(|p| p.hover != hover) {
+                p.hover = hover;
+                self.schedule_redraw();
+            }
+            return;
+        }
         if !self.dock_reveal && !self.near_dock(from) && !self.near_dock(to) {
             return;
         }
@@ -546,6 +701,7 @@ impl State {
         let hovered = in_region || over.is_some();
         let before = self.dock_fx.hovered_key().map(str::to_owned);
         self.dock_fx.hovered(over.map(|i| items[i].key.as_str()));
+        self.dock_peek_track(over.map(|i| (&items[i], i)), &layout);
         self.dock_fx.zoom.set(hovered, now);
         if hovered {
             self.dock_fx.zoom_at = Some(to);
@@ -569,6 +725,26 @@ pub struct Ui {
     drag: Option<Drag>,
     /// The `text/uri-list` of the app drag in progress, read as it starts.
     uris: Arc<Mutex<Option<String>>>,
+    /// The icon whose window previews show (after PEEK_DELAY).
+    pub peek: Option<Peeking>,
+}
+
+/// An icon with several windows, hovered.
+pub struct Peeking {
+    key: String,
+    /// The zoomed icon's top centre, kept once the strip shows so it doesn't follow the zoom.
+    at: Point<i32, Logical>,
+    since: Instant,
+    /// Clicked: no previews until the pointer leaves the icon.
+    off: bool,
+    /// The thumbnail under the pointer.
+    pub hover: Option<usize>,
+}
+
+impl Peeking {
+    pub fn shown(&self) -> bool {
+        !self.off && self.since.elapsed() >= PEEK_DELAY
+    }
 }
 
 /// An icon held down by the left button.
@@ -987,6 +1163,27 @@ mod tests {
             assert_eq!(hit(&z, p), Some(i));
             assert!(z.icons.iter().all(|r| r.size.w <= z.icons[i].size.w));
         }
+    }
+
+    #[test]
+    fn previews_fit_over_the_icon_and_hit_their_parts() {
+        let sizes = [Size::from((1600, 1000)), Size::from((800, 1000))];
+        let peek = peek_layout(&sizes, (960, 1000).into(), 1920);
+        assert_eq!(peek.strip, Rectangle::new((798, 848).into(), (324, 144).into()));
+        assert_eq!(peek.thumbs, vec![Rectangle::new((810, 860).into(), (192, 120).into()), Rectangle::new((1014, 860).into(), (96, 120).into())]);
+        let at = |x, y| Point::from((f64::from(x), f64::from(y)));
+        assert_eq!(peek_hit(&peek, None, at(900, 900)), Some(PeekHit::Thumb(0)));
+        assert_eq!(peek_hit(&peek, None, at(1010, 900)), Some(PeekHit::Strip), "between thumbnails");
+        assert_eq!(peek_hit(&peek, None, at(900, 995)), Some(PeekHit::Strip), "the gap down to the icon");
+        assert_eq!(peek_hit(&peek, None, at(900, 1001)), None);
+        assert_eq!(peek_hit(&peek, None, at(806, 856)), Some(PeekHit::Strip), "no ✕ unless hovered");
+        assert_eq!(peek_hit(&peek, Some(0), at(806, 856)), Some(PeekHit::Close(0)));
+        assert_eq!(peek_hit(&peek, Some(0), at(1020, 870)), Some(PeekHit::Thumb(1)));
+        // Kept on screen at the edge; many windows shrink to fit.
+        assert_eq!(peek_layout(&sizes, (10, 1000).into(), 1920).strip.loc.x, PEEK_PAD);
+        let many = peek_layout(&[Size::from((1600, 1000)); 20], (960, 1000).into(), 1920);
+        assert!(many.strip.loc.x >= PEEK_PAD && many.strip.loc.x + many.strip.size.w <= 1920 - PEEK_PAD, "{:?}", many.strip);
+        assert!(many.thumbs.windows(2).all(|t| t[0].loc.x + t[0].size.w < t[1].loc.x), "no overlap");
     }
 
     #[test]

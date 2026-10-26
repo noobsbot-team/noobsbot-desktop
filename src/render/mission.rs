@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// One rounded shape: rect, fill, radius, glass effects, ring width (0: filled).
-type Shape = (Rect, [f32; 4], f64, bool, i32);
+pub(super) type Shape = (Rect, [f32; 4], f64, bool, i32);
 
 #[derive(Default)]
 pub struct MissionView {
@@ -34,7 +34,7 @@ pub struct MissionView {
 }
 
 /// The cached elements for `shapes`, rebuilt only when they change.
-fn shapes<'a>(
+pub(super) fn shapes<'a>(
     cache: &'a mut Option<(Vec<Shape>, bool, u64, Vec<PixelShaderElement>)>,
     shaders: &Shaders,
     shapes: Vec<Shape>,
@@ -55,11 +55,11 @@ fn shapes<'a>(
     cache.as_ref().map_or(&[], |(_, _, _, e)| e)
 }
 
-fn rgba([r, g, b]: [u8; 3], a: f32) -> [f32; 4] {
+pub(super) fn rgba([r, g, b]: [u8; 3], a: f32) -> [f32; 4] {
     [f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, a]
 }
 
-fn material(material: Material, dark: bool, glass_opacity: f32) -> [f32; 4] {
+pub(super) fn material(material: Material, dark: bool, glass_opacity: f32) -> [f32; 4] {
     let spec = material.spec(dark);
     rgba(spec.tint, spec.opacity * glass_opacity)
 }
