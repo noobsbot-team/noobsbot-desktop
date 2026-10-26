@@ -185,7 +185,7 @@ impl State {
         ms(self.config.accessibility.dwell_click_ms)
     }
 
-    fn now_msec(&self) -> u32 {
+    pub fn now_msec(&self) -> u32 {
         Duration::from(self.protocols.clock.now()).as_millis() as u32
     }
 
