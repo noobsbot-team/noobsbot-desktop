@@ -124,6 +124,8 @@ pub enum Command {
     Brightness(u8),
     /// The keyboard backlight one step up, down, or (`None`) off and on.
     KbdBacklight(Option<bool>),
+    /// Idle: the keyboard backlight off (`true`), or back to the level it had.
+    KbdBacklightIdle(bool),
     /// Percent of the default output (`true`) or input.
     Volume {
         output: bool,
@@ -377,6 +379,8 @@ async fn handle(
     entry: &Answer<Option<String>>,
     admin: &Answer<polkit::Reply>,
 ) {
+    // The keyboard backlight's level before idleness turned it off.
+    let mut kbd_saved = None;
     while let Ok(command) = commands.recv().await {
         let name = command_name(&command);
         match (command, system, session) {
@@ -384,6 +388,7 @@ async fn handle(
             (Command::PowerProfile(profile), Some(bus), _) => profiles::set(bus, &profile).await,
             (Command::Brightness(percent), Some(bus), _) => brightness::set(bus, percent, updates).await,
             (Command::KbdBacklight(change), Some(bus), _) => power::kbd_backlight(bus, change, updates).await,
+            (Command::KbdBacklightIdle(off), Some(bus), _) => power::kbd_idle(bus, off, &mut kbd_saved).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
             (Command::TrayActivate { service, path, x, y }, _, Some(bus)) => tray::activate(bus, &service, &path, x, y).await,
             (Command::TrayMenu { service, menu, parent }, _, Some(bus)) => tray::menu(bus, service, menu, parent, updates).await,

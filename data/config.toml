@@ -249,6 +249,8 @@ dim = 120
 # The screen turns off after screen_off on the power adapter, after screen_off_on_battery on battery.
 screen_off = 300
 screen_off_on_battery = 180
+# The keyboard backlight goes off, back on at the next key or move (at the latest when the screen dims).
+keyboard_backlight_off = 30
 sleep_on_battery = 900
 sleep_on_ac = 0
 # Lock the screen when it turns off. It always locks before sleeping.
