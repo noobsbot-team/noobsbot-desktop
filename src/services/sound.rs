@@ -153,7 +153,11 @@ fn wpctl(args: &[&str]) -> Option<String> {
 fn read() -> Option<Sound> {
     let status = wpctl(&["status"]).unwrap_or_default();
     let outputs = parse_outputs(&status);
-    let output = device(OUTPUT)?;
+    let mut output = device(OUTPUT)?;
+    // wpctl reads one channel; with the balance off centre the louder one is the volume.
+    if let Some((loudest, _)) = crate::pactl::read().filter(|(_, balance)| *balance != 0.0) {
+        output.volume = loudest;
+    }
     // ponytail: two wpctl runs per stream per graph change; one `pw-dump` read if many streams make that slow.
     let streams = parse_streams(&status).into_iter().filter_map(stream).collect();
     Some(Sound { output, input: device(INPUT), outputs, streams })
@@ -220,6 +224,10 @@ fn parse_name(inspect: &str) -> String {
 
 /// Volume and mute go through `wpctl`; the change comes back through the monitor like any other.
 pub fn set_volume(output: bool, percent: u8) {
+    // wpctl would centre the balance; pactl keeps it.
+    if output && crate::pactl::read().is_some_and(|(_, balance)| balance != 0.0 && crate::pactl::set(percent.min(100), balance)) {
+        return;
+    }
     let target = if output { OUTPUT } else { INPUT };
     let _ = wpctl(&["set-volume", target, &format!("{}%", percent.min(100))]);
 }
