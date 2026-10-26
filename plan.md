@@ -415,7 +415,7 @@ Size: S = days, M = 1–2 weeks, L = several weeks (rough estimates).
 
 ## M1 — Compositor, windows & glass foundation (dev mode) — size L
 Goal: Noobsbot Desktop runs as a window inside another desktop (safe development). Apps open inside it in
-macOS-style glass windows.
+glass windows with traffic lights.
 
 ### E1.1 Compositor core
 - **What it is:** the heart of Noobsbot Desktop. It receives every app's window, draws it, and sends keyboard and mouse to the right app.
@@ -430,7 +430,7 @@ macOS-style glass windows.
   `linux-drm-syncobj-v1` (explicit sync: **required** on NVIDIA 555+ to avoid flicker and glitches), `linux-dmabuf`
   v4 feedback (tells apps which buffer formats our GPU can import, so no black windows on mixed GPUs));
   calloop; **winit backend** (runs as a window).
-  - **Clipboard persistence:** Wayland drops the clipboard when the source app quits; macOS keeps it. The compositor
+  - **Clipboard persistence:** Wayland drops the clipboard when the source app quits; we keep it. The compositor
     keeps a copy of the last clipboard contents (up to 10 MB, `clipboard.rs`) so copy → quit the app → paste works.
 - **Why:** Smithay + calloop (C3, C7); the winit backend lets us develop without logging out or risking the
   real session. The protocol list is what modern apps (Helium, Qt, GTK, games, VMs, noobsbot) need to run fully.
@@ -440,7 +440,7 @@ macOS-style glass windows.
 ### E1.2 Windows & window management
 - **What it is:** where windows go and how they move, resize, focus, minimise and zoom.
 - **Design:**
-  - Windows **float** like macOS. New windows open centred, slightly above the middle (golden ratio), or at
+  - Windows **float**. New windows open centred, slightly above the middle (golden ratio), or at
     the position remembered for that app.
   - Click = focus + raise. The focused window gets elevation 5, unfocused gets elevation 4 and its title at
     `label-secondary`.
@@ -450,24 +450,24 @@ macOS-style glass windows.
     | Grab | title bar (left button), or **Super + drag anywhere** in the window (Linux habit, configurable); 1-finger tap-drag and the optional 3-finger drag on the touchpad |
     | Start | the move begins after a **4 px** drag threshold, so a plain click never nudges the window |
     | Follow | the window follows the pointer **1:1 in the same frame** (E1.10). Only the window's texture moves; the app is not asked to redraw, so even a busy app drags smoothly |
-    | Limits | the title bar can never go under the menu bar (macOS rule); at least 40 px of the title bar must stay on screen so it can always be grabbed again; otherwise a window may hang off any edge |
+    | Limits | the title bar can never go under the menu bar; at least 40 px of the title bar must stay on screen so it can always be grabbed again; otherwise a window may hang off any edge |
     | Magnetic edges | within **8 px** of a screen edge, the menu bar, the dock, or another window's edge, the window **sticks** gently (release inside the zone aligns it exactly); holding **Ctrl** disables sticking (Alt is taken by symmetric resize) |
     | Monitors | drag across monitors with different scales seamlessly (the texture is drawn on both at each one's scale); the menu bar of the monitor containing the window's centre becomes the active one on release |
     | Snapping | hold the window at a screen edge for 300 ms → a translucent `panel`-material preview of the half/quarter zone appears; release → the window springs into it (`smooth`); dragging it away restores its previous size |
     | Spaces | drag a window to the screen edge and keep pushing for 600 ms → the Space switches (optional, off by default); dragging onto a Space thumbnail in Mission Control moves it (E5.2) |
-    | Release | no inertia (macOS has none); the window simply stops |
+    | Release | no inertia; the window simply stops |
     | Mission Control / drag | starting a 3-finger swipe while dragging opens Mission Control with the window still in hand |
   - **Resizing a window:**
     | Detail | Behaviour |
     |---|---|
     | Grab zones | **8 px outside** every edge (invisible) plus the outer 4 px of the window frame; corners use a 16 × 16 zone and resize diagonally. The cursor changes to ↔ ↕ ⤡ ⤢ (`cursor-shape` protocol) as soon as the pointer enters a zone |
     | Live resize | each frame we send the app one `xdg_toplevel.configure` with the new size, **never more than one outstanding** (we wait for the app's ack + new buffer before sending the next). This is what keeps resizing smooth instead of flooding slow apps |
-    | While the app lags | the frame (title bar, corners, shadow) is drawn at the **new** size immediately; the app's last buffer is anchored to the edge opposite the one being dragged (drag the right edge → content pinned to the left; drag the top-left corner → content pinned to the bottom-right) and the uncovered strip is filled with the window's background colour (`window-bg`). Exactly what macOS does, so nothing jumps |
+    | While the app lags | the frame (title bar, corners, shadow) is drawn at the **new** size immediately; the app's last buffer is anchored to the edge opposite the one being dragged (drag the right edge → content pinned to the left; drag the top-left corner → content pinned to the bottom-right) and the uncovered strip is filled with the window's background colour (`window-bg`). So nothing jumps |
     | Min / max | the app's `min_size` / `max_size` hints are respected; apps that give none get a floor of 200 × 120 so a window can never vanish |
-    | Modifiers | **Alt + resize** = symmetric resize from the centre; **Shift + resize** = keep the aspect ratio (macOS behaviours) |
-    | Double-click an edge | the window grows to the screen edge in that direction only (macOS: Option-click behaviour, made the default) |
+    | Modifiers | **Alt + resize** = symmetric resize from the centre; **Shift + resize** = keep the aspect ratio |
+    | Double-click an edge | the window grows to the screen edge in that direction only (the default, no modifier needed) |
     | Magnetic edges | the dragged edge sticks to screen and window edges within 8 px, same as moving; Ctrl disables it |
-    | Fullscreen / zoomed | resize handles are disabled; dragging a zoomed window's title bar un-zooms it first (macOS) |
+    | Fullscreen / zoomed | resize handles are disabled; dragging a zoomed window's title bar un-zooms it first |
     | Touchpad | click-drag on a zone; pinch does **not** resize windows (it belongs to apps, E1.7) |
     | Keyboard | Super+Ctrl+arrows nudge/resize by 16 px steps (configurable, off by default) |
   - **Stacking order (bottom → top), fixed so no element can ever be hidden by the wrong one:** wallpaper → desktop
@@ -478,22 +478,22 @@ macOS-style glass windows.
     screenshot overlay → **lock screen** (above everything, always).
   - **Focus stealing:** a new window takes focus only with a valid `xdg-activation` token (it was launched by the
     user's click/keystroke, or the focused app opened it). Otherwise it opens *behind* and its dock icon bounces
-    (macOS behaviour), so typing in one app never lands in another.
+    so typing in one app never lands in another.
   - **Grabs:** opening a shell popover closes any app popup grab and vice versa; a lock, a Space switch or a monitor
     hot-unplug cancels every drag, resize and grab in progress.
-  - Double-click the title bar = zoom (configurable: zoom / minimise / nothing), like macOS.
+  - Double-click the title bar = zoom (configurable: zoom / minimise / nothing).
   - **Zoom** = fill the screen between the menu bar and dock (keeping a 0 px gap; the window still has a title bar).
-  - Window snapping (macOS Sequoia style, on by default, can be turned off): edge → half, corner → quarter; details
+  - Window snapping (on by default, can be turned off): edge → half, corner → quarter; details
     in the Snapping row above.
 - **Built with:** Smithay `Space` + our `wm.rs`.
-- **Why floating:** macOS floats (R1). Remembered positions: macOS behaviour. Snapping: modern macOS
-  has it, and it's cheap to add.
+- **Why floating:** floating windows are the design (R1). Remembered positions: the user's layout survives restarts.
+  Snapping: users expect it, and it's cheap to add.
 - **Done when:** move, resize, focus, raise, zoom, minimise and close all work with mouse and touchpad,
   without flicker; a window being resized by its left edge keeps its content pinned to the right while a
   deliberately slow test app (`sleep 200 ms` per frame) catches up; dragging follows the pointer with no visible lag
   at 120 Hz; magnetic edges and both modifiers work (unit tests for the anchor and sticking math).
 
-### E1.3 macOS title bars & traffic lights
+### E1.3 Title bars & traffic lights
 - **What it is:** the bar on top of every window with close / minimise / zoom buttons.
 - **Design:**
   ```
@@ -503,14 +503,14 @@ macOS-style glass windows.
   │                  (app content)                            │
   ```
   - Height **28 px**; traffic lights **12 px** circles, **8 px** apart, centre 14 px from the left edge, vertically centred.
-  - Colours and hover glyphs per D2. Hovering any one shows the glyphs on all three (macOS behaviour).
+  - Colours and hover glyphs per D2. Hovering any one shows the glyphs on all three.
   - Title: Headline (13 semibold), centred, truncated with "…", `label` when focused / `label-secondary` when not.
   - Unfocused windows: traffic lights turn grey.
   - Window corners: radius 10 (top) and 10 (bottom), continuous squircle; 0.5 px hairline around the window.
 - **Built with:** server-side decorations (we draw them) negotiated through `xdg-decoration` **and** the older
   `org_kde_kwin_server_decoration` (GTK3 and Qt 5 only understand this older one; without it every GTK3 dialog, including
   the portal file picker, draws its own title bar); SDF shader for the circles and glyphs.
-- **Why:** server-side is the only way **every** app gets the same macOS title bar. SDF keeps circles crisp at
+- **Why:** server-side is the only way **every** app gets the same title bar. SDF keeps circles crisp at
   every scale. Apps that refuse server-side decorations (GTK4/libadwaita) keep their own (see L2).
 - **Done when:** noobsbot, Dolphin and Kate show our title bar (Helium keeps its own, see F2), and the
   lights work.
@@ -542,14 +542,14 @@ macOS-style glass windows.
   Ctrl and the F-keys.** Noobsbot Desktop never takes combinations apps rely on: Ctrl+←/→ (word jump in every text
   field), Ctrl+1…9 (browser tabs), F3 (find next), Ctrl+Shift+I (DevTools). Super+key is ours unless listed as
   pass-through: Super+C/V/X/Z/A/S/F/T/R/L go to the focused app untouched, which is what makes the optional mode below
-  possible. **"Mac keys" mode** (optional, off by default, Open-1 at M5): Super becomes Cmd, exactly like macOS.
-  Every Super+letter/digit that isn't a desktop action on macOS is translated to Ctrl+… for the focused app (not for
-  terminals): C/V/X/Z/A/S/F/T/R/L **and** W (close tab), N (new window), 1…9 (tabs). Desktop actions keep their macOS
+  possible. **"Mac keys" mode** (optional, off by default, Open-1 at M5): Super becomes Cmd.
+  Every Super+letter/digit that isn't a desktop action is translated to Ctrl+… for the focused app (not for
+  terminals): C/V/X/Z/A/S/F/T/R/L **and** W (close tab), N (new window), 1…9 (tabs). Desktop actions keep their Cmd-style
   keys: Super+Q quit, Super+H hide, Super+M minimise, Super+Tab, Super+Space; and because apps now receive Ctrl through
-  Super, physical **Ctrl is free for the desktop**, so Spaces and Mission Control move to macOS's own Ctrl+←/→,
+  Super, physical **Ctrl is free for the desktop**, so Spaces and Mission Control move to Ctrl+←/→,
   Ctrl+1…9, Ctrl+↑/↓, and Notification Center to the clock / hot corner only. Switching the mode swaps the whole
   binding set at once, so no key is ever bound twice.
-  **Keyboard layout / input method switch:** Super+Ctrl+Space (macOS's Ctrl+Space clashes with IDE autocomplete),
+  **Keyboard layout / input method switch:** Super+Ctrl+Space (plain Ctrl+Space clashes with IDE autocomplete),
   plus the menu-bar keyboard item (E6.12).
 - **Design:** shortcuts in M1: Super+Enter (noobsbot-terminal), Super+B (Helium), Super+E (Dolphin), Super+Q (quit
   app), Super+W (close window), Super+M (minimise), Super+H (hide), Super+Tab (basic cycling; the full switcher comes
@@ -575,7 +575,7 @@ macOS-style glass windows.
   |---|---|
   | 1-finger tap | click (tap-to-click, on by default) |
   | 2-finger tap / click | right-click |
-  | 2-finger scroll | scroll, **natural** direction by default (like macOS) |
+  | 2-finger scroll | scroll, **natural** direction by default |
   | 2-finger pinch | **passed to the app**: zoom in Helium, Dolphin and image viewers |
   | 2-finger swipe left/right | a horizontal **scroll** passed to the app; Helium turns it into back/forward |
   | Click + drag | select / move windows |
@@ -598,7 +598,7 @@ macOS-style glass windows.
   config starts the desktop with defaults and a notification.
 
 ### E1.9 Window rules
-- **What it is:** per-app rules in `config.toml`, the way macOS remembers how an app's windows behave.
+- **What it is:** per-app rules in `config.toml`, so the desktop remembers how an app's windows behave.
 - **Design:** `[[rules]]` entries matched by Wayland `app_id` and an optional title pattern: `space = "all" | n`,
   `float_above = true` (always on top, e.g. Helium's picture-in-picture window, matched by its title), `size`,
   `position`, `fullscreen`, `decorations = false` and `layer = "overlay"` (the quake terminal, E2.8: above fullscreen apps), `opacity`. Rules apply when a window
