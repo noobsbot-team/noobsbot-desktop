@@ -144,7 +144,141 @@ pub fn edid_names(edid: &[u8]) -> (String, String) {
     (make, model.unwrap_or_default())
 }
 
+/// The serial from an EDID: its serial-string descriptor, else the 32-bit serial number; empty when it has neither.
+pub fn edid_serial(edid: &[u8]) -> String {
+    if edid.len() < 128 || edid[..8] != [0, 255, 255, 255, 255, 255, 255, 0] {
+        return String::new();
+    }
+    let text = (54..126).step_by(18).find(|&d| edid[d..d + 3] == [0, 0, 0] && edid[d + 3] == 0xFF).map(|d| {
+        let s = &edid[d + 5..d + 18];
+        String::from_utf8_lossy(&s[..s.iter().position(|&b| b == b'\n').unwrap_or(s.len())]).trim().to_owned()
+    });
+    let number = u32::from_le_bytes([edid[12], edid[13], edid[14], edid[15]]);
+    text.filter(|t| !t.is_empty()).unwrap_or_else(|| if number == 0 { String::new() } else { number.to_string() })
+}
+
+/// Who a display is, wherever it is plugged in: make, model and serial; its connector when the EDID says nothing.
+fn identity(d: &Display) -> String {
+    let id = [d.make.as_str(), d.model.as_str(), d.serial.as_str()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" ");
+    if id.is_empty() { d.name.clone() } else { id }
+}
+
+/// The key a set of displays' layout is remembered under: their identities, sorted.
+pub fn layout_key(displays: &[Display]) -> String {
+    let mut ids: Vec<String> = displays.iter().map(identity).collect();
+    ids.sort();
+    ids.join(" + ")
+}
+
+/// A set's layout, kept by identity: the `[[display.outputs]]` entries of its displays as they were last used.
+type Saved = Vec<(String, OutputSettings)>;
+
+/// `outputs`' entries for `displays`, by identity, to remember.
+fn remember(outputs: &[OutputSettings], displays: &[Display]) -> Saved {
+    displays.iter().filter_map(|d| Some((identity(d), outputs.iter().find(|o| o.name == d.name)?.clone()))).collect()
+}
+
+/// `outputs` with `displays`' entries replaced by `saved`'s, renamed to the connectors they are on now. Entries for
+/// other connectors stay. Two displays with one identity take the saved entries in order.
+fn restore(saved: &Saved, displays: &[Display], outputs: &[OutputSettings]) -> Vec<OutputSettings> {
+    let mut left: Vec<&(String, OutputSettings)> = saved.iter().collect();
+    let mut kept: Vec<OutputSettings> = outputs.iter().filter(|o| !displays.iter().any(|d| d.name == o.name)).cloned().collect();
+    for d in displays {
+        if let Some(i) = left.iter().position(|(id, _)| *id == identity(d)) {
+            kept.push(OutputSettings { name: d.name.clone(), ..left.remove(i).1.clone() });
+        }
+    }
+    kept
+}
+
+/// `text` (the settings file) with its `[[display.outputs]]` tables replaced by `outputs`, where the first one was
+/// (else at the end); the rest of the file and `[display]`'s own keys and comments stay.
+fn set_outputs(text: &str, outputs: &[OutputSettings]) -> String {
+    let mut tables = String::new();
+    for o in outputs {
+        tables += &format!("[[display.outputs]]\nname = {:?}\n", o.name);
+        if !o.enabled {
+            tables += "enabled = false\n";
+        }
+        if !o.mode.is_empty() {
+            tables += &format!("mode = {:?}\n", o.mode);
+        }
+        if o.refresh > 0.0 {
+            tables += &format!("refresh = {:?}\n", o.refresh);
+        }
+        if o.scale > 0.0 {
+            tables += &format!("scale = {:?}\n", o.scale);
+        }
+        if o.rotation != 0 {
+            tables += &format!("rotation = {}\n", o.rotation);
+        }
+        if let Some([x, y]) = o.position {
+            tables += &format!("position = [{x}, {y}]\n");
+        }
+        if o.primary {
+            tables += "primary = true\n";
+        }
+        tables += "\n";
+    }
+    let (mut out, mut skip, mut placed) = (String::new(), false, false);
+    for line in text.split_inclusive('\n') {
+        if line.trim_start().starts_with('[') {
+            skip = line.trim().strip_prefix("[[").and_then(|l| l.strip_suffix("]]")).is_some_and(|t| t.trim() == "display.outputs");
+            if skip && !placed {
+                out += &tables;
+                placed = true;
+            }
+        }
+        if !skip {
+            out += line;
+        }
+    }
+    if !placed {
+        if !out.is_empty() && !out.ends_with("\n\n") {
+            out += if out.ends_with('\n') { "\n" } else { "\n\n" };
+        }
+        out += tables.trim_end();
+        out += "\n";
+    }
+    out
+}
+
+/// `$XDG_STATE_HOME/noobsbot-desktop/display-layouts.json`: every set of displays' remembered layout, by `layout_key`.
+fn layouts_path() -> std::path::PathBuf {
+    crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").join("noobsbot-desktop/display-layouts.json")
+}
+
 impl State {
+    /// Layouts per set of displays (E6.2): `connected` is a set not seen last time → its remembered layout goes into
+    /// `[[display.outputs]]` (in memory and in the file); then the current entries are remembered for it.
+    // ponytail: no 500 ms settle; a dock bringing up two monitors one after the other passes through the set with one.
+    pub(crate) fn follow_layout(&mut self, connected: &[Display]) {
+        let key = layout_key(connected);
+        let path = layouts_path();
+        let mut layouts: std::collections::HashMap<String, Saved> =
+            std::fs::read_to_string(&path).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default();
+        if key != self.layout_key {
+            self.layout_key = key.clone();
+            if let Some(saved) = layouts.get(&key) {
+                let outputs = restore(saved, connected, &self.config.display.outputs);
+                if outputs != self.config.display.outputs {
+                    tracing::info!("displays: the layout last used with {key}");
+                    crate::config::save_edit(|text| set_outputs(text, &outputs));
+                    self.config.display.outputs = outputs;
+                }
+            }
+        }
+        let now = remember(&self.config.display.outputs, connected);
+        if layouts.get(&key) != Some(&now) {
+            layouts.insert(key, now);
+            if let Ok(json) = serde_json::to_string_pretty(&layouts)
+                && let Err(err) = crate::config::save_atomic(&path, &json)
+            {
+                tracing::warn!("{}: {err}", path.display());
+            }
+        }
+    }
+
     /// Applies the display settings to every display, live: lights, darkens and modesets them (real screen), sets
     /// scale, rotation and position, puts the primary first (the shell draws on the first output), tells every
     /// window and panel its new scale, and rewrites `displays.json`. At start, on hotplug and on config reload.
@@ -509,6 +643,68 @@ mod tests {
         assert!(stranded(rect(5000, 0, 800, 600), &laptop), "on no display");
         assert!(!stranded(rect(1400, 80, 800, 600), &laptop), "more than half still on it");
         assert!(!stranded(rect(1400, 80, 800, 600), &[laptop[0], rect(1920, 0, 1280, 720)]), "the rest on the monitor");
+    }
+
+    #[test]
+    fn layouts_are_kept_per_set_of_displays() {
+        let named = |name: &str, model: &str, serial: &str| Display {
+            name: name.into(),
+            make: "DEL".into(),
+            model: model.into(),
+            serial: serial.into(),
+            ..Default::default()
+        };
+        let laptop = Display { name: "eDP-1".into(), make: "BOE".into(), model: "".into(), ..Default::default() };
+        let desk = [laptop.clone(), named("HDMI-A-1", "U2720Q", "ABC")];
+        assert_eq!(layout_key(&desk), "BOE + DEL U2720Q ABC");
+        assert_eq!(layout_key(&[desk[1].clone(), laptop.clone()]), layout_key(&desk), "order does not matter");
+        assert_eq!(layout_key(&[Display { name: "DP-1".into(), ..Default::default() }]), "DP-1", "no EDID: the connector");
+        // Remembered at the desk, the monitor then comes back on another port.
+        let outputs =
+            vec![OutputSettings { position: Some([-2560, 0]), primary: true, ..output("HDMI-A-1") }, OutputSettings { scale: 1.5, ..output("eDP-1") }];
+        let saved = remember(&outputs, &desk);
+        assert_eq!(saved.len(), 2);
+        let moved = [laptop.clone(), named("DP-2", "U2720Q", "ABC")];
+        assert_eq!(layout_key(&moved), layout_key(&desk));
+        let stale = vec![OutputSettings { scale: 2.0, ..output("eDP-1") }, output("DP-2"), OutputSettings { enabled: false, ..output("DP-9") }];
+        let back = restore(&saved, &moved, &stale);
+        assert_eq!(back.len(), 3);
+        assert_eq!(back[0].name, "DP-9", "other connectors' entries stay");
+        let dp = back.iter().find(|o| o.name == "DP-2").unwrap();
+        assert!(dp.primary && dp.position == Some([-2560, 0]));
+        assert_eq!(back.iter().find(|o| o.name == "eDP-1").unwrap().scale, 1.5);
+        // Planned with the restored entries: the monitor left of the laptop, main.
+        let p = plan(laptop_and_monitor(), &Displays { outputs: restore(&saved, &desk, &[]), ..Default::default() });
+        assert!(p[1].primary && p[1].x < p[0].x);
+    }
+
+    #[test]
+    fn outputs_are_rewritten_in_place() {
+        let text = "[display]\n# mine\nscale = 0.0\n\n[[display.outputs]]\nname = \"eDP-1\"\nscale = 2.0\n\n[windows]\nspaces = 0\n";
+        let outputs =
+            [OutputSettings { position: Some([0, 0]), refresh: 59.95, primary: true, ..output("eDP-1") }, OutputSettings { enabled: false, ..output("DP-1") }];
+        let new = set_outputs(text, &outputs);
+        assert_eq!(
+            new,
+            "[display]\n# mine\nscale = 0.0\n\n[[display.outputs]]\nname = \"eDP-1\"\nrefresh = 59.95\nposition = [0, 0]\nprimary = true\n\n\
+             [[display.outputs]]\nname = \"DP-1\"\nenabled = false\n\n[windows]\nspaces = 0\n"
+        );
+        let parsed: crate::config::Config = toml::from_str(&new).unwrap();
+        assert_eq!(parsed.display.outputs, outputs);
+        assert_eq!(set_outputs("[display]\nscale = 0.0\n", &outputs[1..]), "[display]\nscale = 0.0\n\n[[display.outputs]]\nname = \"DP-1\"\nenabled = false\n");
+        assert_eq!(set_outputs(text, &[]), "[display]\n# mine\nscale = 0.0\n\n[windows]\nspaces = 0\n");
+    }
+
+    #[test]
+    fn edid_serial_string_else_number() {
+        let mut edid = vec![0u8; 128];
+        edid[..8].copy_from_slice(&[0, 255, 255, 255, 255, 255, 255, 0]);
+        assert_eq!(edid_serial(&edid), "");
+        edid[12..16].copy_from_slice(&1234u32.to_le_bytes());
+        assert_eq!(edid_serial(&edid), "1234");
+        edid[90..95].copy_from_slice(&[0, 0, 0, 0xFF, 0]);
+        edid[95..108].copy_from_slice(b"7MT0123AB\n   ");
+        assert_eq!(edid_serial(&edid), "7MT0123AB");
     }
 
     #[test]

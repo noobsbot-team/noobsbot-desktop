@@ -160,7 +160,8 @@ scale = 0.0
 
 # One display's own settings, by connector name (System Settings ▸ Displays writes these; they apply at once).
 # A display without an entry lights at its preferred resolution and highest refresh rate, at the scale above,
-# right of the others. Every key but `name` may be left out.
+# right of the others. Every key but `name` may be left out. Each set of displays keeps its own entries (by make,
+# model and serial, in ~/.local/state/noobsbot-desktop/display-layouts.json): plugging that set in again puts them back.
 #
 # [[display.outputs]]
 # name = "eDP-1"          # the connector: eDP-1 (a laptop's panel), HDMI-A-1, DP-2 …; "winit" when nested
