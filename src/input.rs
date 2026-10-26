@@ -26,10 +26,6 @@ use crate::{
     wm::{self, Edges},
 };
 
-/// Key repeat, ours and the one apps are told: held this long, then once a `REPEAT_RATE`.
-pub const REPEAT_DELAY: std::time::Duration = std::time::Duration::from_millis(500);
-pub const REPEAT_RATE: std::time::Duration = std::time::Duration::from_millis(33);
-
 /// Whether a key repeats while held: not a modifier, nor one whose repeat would act again (Return, Escape, Tab).
 pub fn repeats(sym: Keysym) -> bool {
     !sym.is_modifier_key() && !matches!(sym, Keysym::Return | Keysym::KP_Enter | Keysym::Escape | Keysym::Tab | Keysym::ISO_Left_Tab)
@@ -107,14 +103,17 @@ impl State {
     /// Repeats `sym` into the shell surface that took it while `code` stays down (D14), at the rate apps get; it
     /// stops when the key goes up, another is pressed, or nothing of ours takes it any more.
     fn start_repeat(&mut self, code: Keycode, sym: Keysym, raw: Keysym, mods: ModifiersState) {
-        if !repeats(sym) {
+        // The rate and delay apps are told (`[keyboard] repeat_*`).
+        let (rate, delay) = self.config.keyboard.repeat();
+        if !repeats(sym) || rate == 0 {
             return;
         }
-        let timer = Timer::from_duration(REPEAT_DELAY);
+        let every = std::time::Duration::from_millis(1000 / rate as u64);
+        let timer = Timer::from_duration(std::time::Duration::from_millis(delay as u64));
         let token = self.loop_handle.insert_source(timer, move |_, _, state| {
             if state.key_repeat.as_ref().is_some_and(|(c, _)| *c == code) && state.shell_key(sym, raw, &mods) {
                 state.schedule_redraw();
-                return TimeoutAction::ToDuration(REPEAT_RATE);
+                return TimeoutAction::ToDuration(every);
             }
             state.key_repeat = None;
             TimeoutAction::Drop
@@ -457,7 +456,7 @@ mod tests {
     fn letters_arrows_and_backspace_repeat_modifiers_and_return_dont() {
         assert!([Keysym::a, Keysym::Down, Keysym::BackSpace, Keysym::space, Keysym::Delete].into_iter().all(repeats));
         assert!(![Keysym::Shift_L, Keysym::Control_R, Keysym::Super_L, Keysym::Return, Keysym::KP_Enter, Keysym::Escape, Keysym::Tab].into_iter().any(repeats));
-        // Delay then rate, as told to apps: 500 ms, 30/s.
-        assert_eq!((REPEAT_DELAY.as_millis(), 1000 / REPEAT_RATE.as_millis()), (500, 30));
+        // Rate then delay, as told to apps: 30/s, 500 ms by default; 0 turns repeat off.
+        assert_eq!(crate::config::Keyboard::default().repeat(), (30, 500));
     }
 }

@@ -257,7 +257,7 @@ impl State {
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(&dh, "seat0");
         let keyboard = config.keyboard.resolved();
-        let (delay, rate) = (crate::input::REPEAT_DELAY.as_millis() as i32, 1000 / crate::input::REPEAT_RATE.as_millis() as i32);
+        let (rate, delay) = config.keyboard.repeat();
         if let Err(err) = seat.add_keyboard(crate::input::xkb(&keyboard), delay, rate) {
             // A typo in the layout must not stop the desktop: fall back to xkb's default (us).
             tracing::warn!(?keyboard, "keyboard layout: {err}");

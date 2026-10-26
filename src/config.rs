@@ -126,7 +126,7 @@ pub enum Accent {
     Graphite,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Keyboard {
     /// xkb RMLVO values; empty = the system's (localectl / vconsole.conf).
@@ -135,6 +135,27 @@ pub struct Keyboard {
     pub options: String,
     /// Super acts as Cmd (E1.6).
     pub mac_keys: bool,
+    /// Key repeat: held this many ms, then this many times a second; 0 = off.
+    pub repeat_delay: u32,
+    pub repeat_rate: u32,
+}
+
+impl Default for Keyboard {
+    fn default() -> Self {
+        Self { layout: String::new(), variant: String::new(), options: String::new(), mac_keys: false, repeat_delay: 500, repeat_rate: 30 }
+    }
+}
+
+impl Keyboard {
+    /// The repeat delay and rate apps are told (smithay's order: rate, delay).
+    pub fn repeat(&self) -> (i32, i32) {
+        (self.repeat_rate.min(100) as i32, self.repeat_delay.clamp(100, 3000) as i32)
+    }
+
+    /// The xkb part changed (not just repeat), so the keymap is rebuilt.
+    pub fn xkb_changed(&self, old: &Keyboard) -> bool {
+        (&self.layout, &self.variant, &self.options) != (&old.layout, &old.variant, &old.options)
+    }
 }
 
 /// Where `localectl` keeps the system layout; the X11 file is the one `set-x11-keymap` writes.
@@ -147,7 +168,7 @@ impl Keyboard {
         let system = system.unwrap_or_default();
         let (layout, variant) = if self.layout.is_empty() { (system.layout, system.variant) } else { (self.layout.clone(), self.variant.clone()) };
         let options = if self.options.is_empty() { system.options } else { self.options.clone() };
-        Keyboard { layout, variant, options, mac_keys: self.mac_keys }
+        Keyboard { layout, variant, options, ..self.clone() }
     }
 }
 
@@ -913,7 +934,7 @@ mod tests {
 
     #[test]
     fn config_layout_wins() {
-        let k = Keyboard { layout: "de".into(), variant: "neo".into(), options: "caps:escape".into(), mac_keys: true }.resolved();
+        let k = Keyboard { layout: "de".into(), variant: "neo".into(), options: "caps:escape".into(), mac_keys: true, ..Default::default() }.resolved();
         assert_eq!((k.layout.as_str(), k.variant.as_str(), k.options.as_str(), k.mac_keys), ("de", "neo", "caps:escape", true));
     }
 
