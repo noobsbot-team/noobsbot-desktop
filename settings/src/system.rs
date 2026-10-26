@@ -577,6 +577,23 @@ pub fn about() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// About ▸ Copy System Report: the About rows, the displays, the desktop's version and the session type, as text.
+pub fn report(version: &str) -> String {
+    let session = std::env::var("XDG_SESSION_TYPE").unwrap_or_else(|_| "unknown".into());
+    format_report(&about(), &displays(), version, &session)
+}
+
+fn format_report(about: &[(&str, String)], displays: &[(String, String)], version: &str, session: &str) -> String {
+    let mut out = format!("Noobsbot Desktop {version}\n");
+    for (label, value) in about {
+        out += &format!("{label}: {value}\n");
+    }
+    for (connector, mode) in displays {
+        out += &format!("Display: {connector} {mode}\n");
+    }
+    out + &format!("Session: {session}\n")
+}
+
 /// The kernel driver as the maker's name.
 fn gpu(driver: &str) -> String {
     match driver {
@@ -649,6 +666,16 @@ pub fn user() -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn report_lists_every_fact_as_a_line() {
+        let about = [("Processor", "Ryzen (16 threads)".to_owned()), ("Kernel", "6.18".to_owned())];
+        let displays = [("eDP-1".to_owned(), "2880 × 1800".to_owned())];
+        assert_eq!(
+            format_report(&about, &displays, "0.4.0", "wayland"),
+            "Noobsbot Desktop 0.4.0\nProcessor: Ryzen (16 threads)\nKernel: 6.18\nDisplay: eDP-1 2880 × 1800\nSession: wayland\n"
+        );
+    }
 
     #[test]
     fn manual_time_parses_local_date_and_time() {

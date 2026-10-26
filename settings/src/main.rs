@@ -214,6 +214,8 @@ pub enum Message {
     AppRule(String, pages::AppRule),
     /// The microphone's level, 0 … 1.
     Level(f32),
+    /// About ▸ Copy System Report.
+    CopyReport,
     /// A theme sound plays; `true`: it becomes the alert sound.
     Sound(&'static str, bool),
 }
@@ -357,6 +359,7 @@ impl App {
                 }
             }
             Message::Status(status) => self.status = status,
+            Message::CopyReport => return iced::clipboard::write(system::report(pages::version())),
             Message::Level(level) => self.level = level,
             Message::Sound(name, save) => {
                 if save {
