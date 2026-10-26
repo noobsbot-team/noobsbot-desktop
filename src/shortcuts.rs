@@ -654,6 +654,7 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_WWW, false), Some(&Action::DefaultApp("x-scheme-handler/https".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Mail, false), Some(&Action::DefaultApp("x-scheme-handler/mailto".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Explorer, false), Some(&Action::DefaultApp("inode/directory".into())));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Calculator, false), Some(&Action::DefaultApp("Calculator".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
