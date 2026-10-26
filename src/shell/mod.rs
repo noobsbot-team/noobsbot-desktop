@@ -511,10 +511,10 @@ impl State {
         }
         self.submenu = next.zip(self.popup).map(|(i, popup)| (popup, i));
         // The app may fill a submenu in only when asked (AboutToShow).
-        if let (Some(i), Menu::Tray(_), Some((service, path, rows))) = (next, menu, &self.tray_menu) {
-            if let Some(Some(row)) = rows.get(i) {
-                self.services.send(Command::TrayMenu { service: service.clone(), menu: path.clone(), parent: row.id });
-            }
+        if let (Some(i), Menu::Tray(_), Some((service, path, rows))) = (next, menu, &self.tray_menu)
+            && let Some(Some(row)) = rows.get(i)
+        {
+            self.services.send(Command::TrayMenu { service: service.clone(), menu: path.clone(), parent: row.id });
         }
         self.schedule_redraw();
     }
