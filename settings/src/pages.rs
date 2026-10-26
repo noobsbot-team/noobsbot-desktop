@@ -9,7 +9,13 @@ use iced::{
     widget::{button, canvas, column, container, pick_list, row, slider, space, svg, text, text_input, toggler},
 };
 
-use crate::{App, Message, arrange::Arrangement, display_info::Display, font, style::Tokens};
+use crate::{
+    App, Message,
+    arrange::Arrangement,
+    display_info::Display,
+    font,
+    style::{Tokens, rgb},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
@@ -238,7 +244,14 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Trackpad, "", "touchpad.tap_to_click", "Tap to click", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.natural_scroll", "Natural scrolling", "Content follows your fingers", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.speed", "Tracking speed", "", Kind::Slider { min: -1.0, max: 1.0, step: 0.1 }),
-    s(Page::Trackpad, "", "touchpad.secondary_click", "Secondary click", "", Kind::Choice(&[("two-fingers", "Two fingers"), ("corner", "Bottom-right corner")])),
+    s(
+        Page::Trackpad,
+        "",
+        "touchpad.secondary_click",
+        "Secondary click",
+        "",
+        Kind::Choice(&[("two-fingers", "Two fingers"), ("corner", "Bottom-right corner")]),
+    ),
     s(Page::Trackpad, "", "touchpad.tap_to_drag", "Tap to drag", "Tap, then drag with the finger down", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.drag_lock", "Drag lock", "Keep dragging through a short lift", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.disable_while_typing", "Ignore while typing", "", Kind::Toggle),
@@ -519,8 +532,35 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         }
         Page::Notifications => vec![note(t, "Per-app banners and the Do Not Disturb schedule come here.")],
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
+        Page::Appearance => vec![gallery(app)],
         _ => Vec::new(),
     }
+}
+
+/// Appearance ▸ Wallpaper: the built-in opal, then the pictures found (`gallery`), as tiles that wrap.
+fn gallery(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let current = app.config.str(if t.dark { "appearance.wallpaper_dark" } else { "appearance.wallpaper" });
+    let (w, h) = (crate::gallery::W as f32 / 2.0, crate::gallery::H as f32 / 2.0);
+    let tile = |content: Element<'static, Message>, path: String| -> Element<'static, Message> {
+        let selected = current == path;
+        button(content).padding(3).style(t.tile(selected)).on_press(Message::Wallpaper(path)).into()
+    };
+    // The opal's own blobs (render::opal), as a gradient.
+    let blobs = if t.dark { [0x344E80, 0x683454, 0x285C48] } else { [0xB0CCF4, 0xF6C4DA, 0xC2E8D2] };
+    let gradient = iced::gradient::Linear::new(iced::Radians(0.6)).add_stop(0.0, rgb(blobs[0])).add_stop(0.5, rgb(blobs[1])).add_stop(1.0, rgb(blobs[2]));
+    let opal = container(space()).width(w).height(h).style(move |_| container::Style {
+        background: Some(gradient.into()),
+        border: iced::Border { radius: 5.0.into(), ..Default::default() },
+        ..Default::default()
+    });
+    let mut tiles = vec![tile(opal.into(), String::new())];
+    for (path, handle) in &app.thumbs {
+        let picture = iced::widget::image(handle.clone()).width(w).height(h).border_radius(5.0);
+        tiles.push(tile(picture.into(), path.to_string_lossy().into_owned()));
+    }
+    let grid = row(tiles).spacing(8).wrap().vertical_spacing(8);
+    group(t, "Wallpaper", vec![container(grid).padding(12).width(Length::Fill).into()])
 }
 
 /// Rows below the config settings.
