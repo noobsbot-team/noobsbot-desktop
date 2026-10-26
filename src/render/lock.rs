@@ -13,7 +13,7 @@ use smithay::{
 use super::{
     SceneElement, Shaders,
     titlebar::{Label, keep_buffers, label_element},
-    ui::{Align, BODY, CALLOUT, HEADLINE, Ui},
+    ui::{Align, BODY, CALLOUT, CONTROL_RADIUS, HEADLINE, State, Ui},
 };
 use crate::{
     services::{media::Media, power::Battery},
@@ -207,7 +207,7 @@ impl LockView {
             }
             for (button, rect) in Button::ALL.into_iter().zip(layout.buttons) {
                 if lock.hover == Some(button) {
-                    ui.shape(rect, [1.0, 1.0, 1.0, 0.16], 6.0);
+                    ui.states(rect, CONTROL_RADIUS, State::Hover);
                 }
                 ui.text(button.label(), Style { color: WHITE85, ..CALLOUT }, rect, Align::Centre);
             }
@@ -268,9 +268,7 @@ impl LockView {
 
 /// A listed notification's card: its app, then its title, then its body when previews allow it.
 fn notice(ui: &mut Ui, card: Rect, listed: &lock::Listed) {
-    let spec = super::Material::Sheet.spec(ui.dark);
-    let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
-    ui.glass.push(ui.shaders.glass_shape(card, [r, g, b, spec.opacity * ui.glass_opacity], spec.radius, true, ui.dark, ui.scale));
+    ui.material(card, super::Material::Sheet, None);
     let (label, secondary) = (ui.label(), ui.secondary());
     let (callout_h, line) = (ts(15), ts(16));
     let row = |y: i32, h: i32| Rectangle::new((card.loc.x + 12, y).into(), (card.size.w - 24, h).into());
@@ -284,9 +282,7 @@ fn notice(ui: &mut Ui, card: Rect, listed: &lock::Listed) {
 
 /// The Now Playing card: art (or a note), title and artist, previous / play-pause / next.
 fn now_playing(ui: &mut Ui, card: Rect, media: &Media, art: Option<Arc<Rendered>>) {
-    let spec = super::Material::Sheet.spec(ui.dark);
-    let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
-    ui.glass.push(ui.shaders.glass_shape(card, [r, g, b, spec.opacity * ui.glass_opacity], spec.radius, true, ui.dark, ui.scale));
+    ui.material(card, super::Material::Sheet, None);
     let square = Rectangle::new((card.loc.x + 8, card.loc.y + (card.size.h - ART) / 2).into(), (ART, ART).into());
     match art {
         Some(art) => ui.pieces.push((art, square)),
