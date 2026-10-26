@@ -324,6 +324,32 @@ const DRAG_START: f64 = 8.0;
 /// A press held this long lifts the icon too, and clicks nothing.
 const HOLD: Duration = Duration::from_millis(500);
 
+/// A dragged app held this long over another tile's icon makes a folder on drop (the target grows meanwhile).
+const MERGE_HOLD: Duration = Duration::from_millis(400);
+
+/// Where a dragged tile points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Aim {
+    /// Over another tile's icon: held there, a drop makes a folder.
+    Onto(usize),
+    /// A new place for it.
+    To(usize),
+}
+
+/// What tile `from` (an app: `app`) dragged to `p` on page `page` of `n` tiles aims at. Folders don't nest, so a
+/// folder over an icon just takes its place.
+pub fn aim(grid: &Grid, p: Point<f64, Logical>, page: usize, n: usize, from: usize, app: bool) -> Option<Aim> {
+    let i = grid.cell_at(p)?;
+    let slot = (page * grid.per_page() + i).min(n.saturating_sub(1));
+    if slot == from {
+        None
+    } else if app && page * grid.per_page() + i < n && grid.icon_rect(i).to_f64().contains(p) {
+        Some(Aim::Onto(slot))
+    } else {
+        Some(Aim::To(slot))
+    }
+}
+
 /// A lifted icon held this long at a side edge turns the page (and again while it stays).
 const EDGE_PAUSE: Duration = Duration::from_millis(600);
 
@@ -338,8 +364,8 @@ pub struct Press {
     pub since: Instant,
     /// Dragged past `DRAG_START`.
     pub moved: bool,
-    /// Held over this tile's icon: dropping makes a folder (`merge`).
-    pub onto: Option<usize>,
+    /// Over this tile's icon since then: held `MERGE_HOLD`, dropping makes a folder (`merge`).
+    pub over: Option<(usize, Instant)>,
     /// In the open folder: the app's place in it (`index` is the folder's).
     pub inner: Option<usize>,
 }
@@ -347,6 +373,11 @@ pub struct Press {
 impl Press {
     pub fn lifted(&self, now: Instant) -> bool {
         self.moved || now.saturating_duration_since(self.since) >= HOLD
+    }
+
+    /// The tile a drop now would make a folder with.
+    pub fn onto(&self, now: Instant) -> Option<usize> {
+        self.over.filter(|(_, t)| now.saturating_duration_since(*t) >= MERGE_HOLD).map(|(i, _)| i)
     }
 }
 
@@ -646,7 +677,7 @@ impl State {
             match inner.hit(location).filter(|_| panel.to_f64().contains(location)) {
                 Some(j) => {
                     let grab = location - inner.icon_rect(j).loc.to_f64();
-                    l.press = Some(Press { index, start: location, at: location, grab, since: Instant::now(), moved: false, onto: None, inner: Some(j) });
+                    l.press = Some(Press { index, start: location, at: location, grab, since: Instant::now(), moved: false, over: None, inner: Some(j) });
                 }
                 // Outside the panel: closes the folder.
                 None if !panel.to_f64().contains(location) => l.folder = None,
@@ -684,7 +715,7 @@ impl State {
             grab,
             since: Instant::now(),
             moved: false,
-            onto: None,
+            over: None,
             inner: None,
         });
         // The icon lifts after `HOLD` without moving: draw it then.
@@ -727,17 +758,24 @@ impl State {
             save_order(&l.order);
             return self.schedule_redraw();
         }
-        p.onto = None;
-        if let Some(i) = grid.cell_at(to) {
-            let slot = (l.page * grid.per_page() + i).min(l.order.len().saturating_sub(1));
-            let app = matches!(l.order.get(p.index), Some(Entry::App(_)));
-            // Over another icon (an app only: folders don't nest): a folder on drop; between icons: a new place.
-            if app && slot != p.index && grid.icon_rect(i).to_f64().contains(to) {
-                p.onto = Some(slot);
-            } else if slot != p.index {
+        let app = matches!(l.order.get(p.index), Some(Entry::App(_)));
+        match aim(&grid, to, l.page, l.order.len(), p.index, app) {
+            Some(Aim::Onto(slot)) if p.over.is_some_and(|(s, _)| s == slot) => {}
+            Some(Aim::Onto(slot)) => {
+                p.over = Some((slot, Instant::now()));
+                // Held still, it becomes a folder target without another motion event: draw it then.
+                let grow = self.loop_handle.insert_source(Timer::from_duration(MERGE_HOLD), |_, _, state| {
+                    state.schedule_redraw();
+                    TimeoutAction::Drop
+                });
+                grow.inspect_err(|err| tracing::warn!("launchpad merge timer: {err}")).ok();
+            }
+            Some(Aim::To(slot)) => {
+                p.over = None;
                 let from = std::mem::replace(&mut p.index, slot);
                 l.reorder(&grid, from, slot, Instant::now());
             }
+            None => p.over = None,
         }
         if edge_of(&grid, to).is_some() && !std::mem::replace(&mut l.edge, true) {
             let timer = self.loop_handle.insert_source(Timer::from_duration(EDGE_PAUSE), |_, _, state| state.launchpad_edge());
@@ -767,7 +805,7 @@ impl State {
         let Some(l) = self.launchpad.as_mut() else { return };
         let Some(p) = l.press.take() else { return };
         if p.moved && !l.searching() {
-            if let Some(onto) = p.onto {
+            if let Some(onto) = p.onto(Instant::now()) {
                 merge(&mut l.order, p.index, onto, self.apps.list());
             }
             save_order(&l.order);
@@ -1063,6 +1101,29 @@ mod tests {
         assert!(!merge(&mut order, 0, 0, &games));
         let mut nest = vec![two[0].clone(), Entry::App("x".into())];
         assert!(!merge(&mut nest, 0, 1, &games), "folders don't nest");
+    }
+
+    #[test]
+    fn held_over_an_icon_aims_at_it() {
+        let g = grid((1920, 1080).into(), 101);
+        let pp = g.per_page();
+        let mid = |r: Rect| r.loc.to_f64() + r.size.to_f64().downscale(2.0).to_point();
+        let on_icon = mid(g.icon_rect(3));
+        assert_eq!(aim(&g, on_icon, 0, 10, 0, true), Some(Aim::Onto(3)));
+        assert_eq!(aim(&g, on_icon, 1, pp + 10, 0, true), Some(Aim::Onto(pp + 3)), "on the second page");
+        assert_eq!(aim(&g, on_icon, 0, 10, 0, false), Some(Aim::To(3)), "a folder doesn't go into another");
+        assert_eq!(aim(&g, on_icon, 0, 10, 3, true), None, "its own place");
+        // Beside the icon, in its cell: a new place, not a folder.
+        let beside = Point::from((f64::from(g.cells[3].loc.x) + 2.0, on_icon.y));
+        assert_eq!(aim(&g, beside, 0, 10, 0, true), Some(Aim::To(3)));
+        // An empty cell past the last tile: the end, never a folder.
+        assert_eq!(aim(&g, mid(g.icon_rect(8)), 0, 5, 0, true), Some(Aim::To(4)));
+        assert_eq!(aim(&g, (5.0, 5.0).into(), 0, 10, 0, true), None, "off the grid");
+
+        let t0 = Instant::now();
+        let p = Press { index: 0, start: on_icon, at: on_icon, grab: on_icon, since: t0, moved: true, over: Some((3, t0)), inner: None };
+        assert_eq!(p.onto(t0 + Duration::from_millis(300)), None, "not held long enough yet");
+        assert_eq!(p.onto(t0 + MERGE_HOLD), Some(3));
     }
 
     #[test]
