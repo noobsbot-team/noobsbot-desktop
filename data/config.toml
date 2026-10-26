@@ -373,7 +373,8 @@ super_tap = true
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows, "screen-zoom [in|out]",
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-window (the focused one), screen-record, screenshot-toolbar, emoji,
-# app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard.
+# app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard, "input-source [previous|1…9]" (next, previous or the
+# n-th keyboard layout; 1…9 have no default key, as Super+Ctrl+1…9 are Spaces).
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec helium-browser"
@@ -400,6 +401,7 @@ super_tap = true
 "Super+A" = "app-drawer"
 # Next keyboard layout (E6.12); fcitx5 keeps its own switch key for its input methods.
 "Super+Ctrl+Space" = "input-source"
+"Super+Ctrl+Shift+Space" = "input-source previous"
 # The emoji picker (E7.2): types the emoji into the focused text field, or copies it.
 "Super+Ctrl+E" = "emoji"
 "Super+period" = "emoji"

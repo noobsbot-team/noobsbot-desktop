@@ -131,6 +131,11 @@ fn menu_rows(layouts: &Layouts) -> Vec<Option<Row>> {
     rows
 }
 
+/// The layout `by` steps from `active` among `count`, wrapping round.
+pub(crate) fn step(active: usize, count: usize, by: isize) -> usize {
+    (active as isize + by).rem_euclid(count.max(1) as isize) as usize
+}
+
 fn on_path(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
@@ -146,11 +151,12 @@ impl State {
         self.layouts = Layouts { list: pair(codes, names), active: 0, fcitx: on_path("fcitx5"), methods: self.layouts.methods.take() };
     }
 
-    /// Switches to layout `index`, or the next one (Super+Ctrl+Space), and says which in the OSD.
+    /// Switches to layout `index` (past the last one wraps round), or the next one (Super+Ctrl+Space), and says which
+    /// in the OSD.
     pub fn switch_layout(&mut self, index: Option<usize>) {
         let count = self.layouts.list.len();
         let (Some(keyboard), true) = (self.seat.get_keyboard(), count > 1) else { return };
-        let index = index.unwrap_or(self.layouts.active + 1) % count;
+        let index = index.map_or_else(|| step(self.layouts.active, count, 1), |i| step(i, count, 0));
         keyboard.with_xkb_state(self, |mut ctx| ctx.set_layout(Layout(index as u32)));
         self.layouts.active = index;
         let text = Some(self.layouts.list[index].1.clone());
@@ -311,6 +317,17 @@ mod tests {
         let names = || vec!["English (US)".to_string(), "Nepali".to_string()];
         assert_eq!(pair("us, np", names()), [("us".into(), "English (US)".into()), ("np".into(), "Nepali".into())]);
         assert_eq!(pair("", names()), [("en".into(), "English (US)".into()), ("ne".into(), "Nepali".into())]);
+    }
+
+    #[test]
+    fn steps_wrap_round() {
+        assert_eq!(step(0, 3, 1), 1);
+        assert_eq!(step(2, 3, 1), 0);
+        assert_eq!(step(0, 3, -1), 2);
+        assert_eq!(step(1, 3, -1), 0);
+        assert_eq!(step(0, 0, -1), 0);
+        // "input-source 5" (index 4) with three layouts: the second.
+        assert_eq!(step(4, 3, 0), 1);
     }
 
     #[test]

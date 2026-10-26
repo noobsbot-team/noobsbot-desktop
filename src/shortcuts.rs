@@ -134,6 +134,8 @@ pub enum Action {
     ShowDesktop,
     /// Keyboard layout n, from 0, or the next one (Super+Ctrl+Space, E6.12).
     Layout(Option<usize>),
+    /// The keyboard layout before the active one (Super+Ctrl+Shift+Space).
+    PreviousLayout,
     /// An fcitx5 input method, by unique name (the input menu).
     InputMethod(String),
     /// A row of the window menu (E8.5).
@@ -161,6 +163,7 @@ impl Action {
                 | Action::Media(_)
                 | Action::Eject
                 | Action::Layout(_)
+                | Action::PreviousLayout
         )
     }
 }
@@ -277,6 +280,8 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("app-expose", "") => Some(Action::AppExpose),
         ("show-desktop", "") => Some(Action::ShowDesktop),
         ("input-source", "") => Some(Action::Layout(None)),
+        ("input-source", "previous") => Some(Action::PreviousLayout),
+        ("input-source", n) => dock_n(n).map(|n| Action::Layout(Some(n))),
         ("screen-zoom", "") => Some(Action::ScreenZoom(None)),
         ("screen-zoom", "in") => Some(Action::ScreenZoom(Some(true))),
         ("screen-zoom", "out") => Some(Action::ScreenZoom(Some(false))),
@@ -290,7 +295,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
     }
 }
 
-/// "1"…"9": a dock icon, from 0.
+/// "1"…"9": a dock icon or an input source, from 0.
 fn dock_n(n: &str) -> Option<usize> {
     n.parse::<usize>().ok().filter(|n| (1..=9).contains(n)).map(|n| n - 1)
 }
@@ -467,6 +472,7 @@ impl State {
             Action::Emoji => self.toggle_emoji(),
             Action::OnScreenKeyboard => self.toggle_osk(),
             Action::Layout(index) => self.switch_layout(index),
+            Action::PreviousLayout => self.switch_layout(Some(crate::ime::step(self.layouts.active, self.layouts.list.len(), -1))),
             Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
             // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
@@ -861,6 +867,9 @@ mod tests {
         assert_eq!(lookup(&table, &super_ctrl, Keysym::_3, false), Some(&Action::ShowSpace(2)));
         assert_eq!(lookup(&table, &ModifiersState { ctrl: true, ..Default::default() }, Keysym::_3, false), None, "Ctrl+3 goes to the app");
         assert_eq!(action(&Config::default(), "dock-app 10"), None);
+        assert_eq!(action(&Config::default(), "input-source 3"), Some(Action::Layout(Some(2))));
+        assert_eq!(action(&Config::default(), "input-source previous"), Some(Action::PreviousLayout));
+        assert_eq!(action(&Config::default(), "input-source 0"), None);
         let tile = |left, right, top, bottom| Some(Action::Tile(crate::wm::Edges { left, right, top, bottom }));
         assert_eq!(lookup(&table, &super_ctrl, Keysym::Left, false).cloned(), tile(true, false, false, false));
         assert_eq!(lookup(&table, &super_ctrl, Keysym::Down, false).cloned(), tile(false, false, false, true));

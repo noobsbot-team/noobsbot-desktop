@@ -422,11 +422,26 @@ const WITH_ARGUMENT: &[(&str, &str)] = &[
     ("touchpad", "Media & Hardware"),
     ("default-app", "Apps & Launchers"),
     ("screen-zoom", "Accessibility"),
+    ("input-source", "System"),
 ];
 
-/// The argument-less actions, for the + picker.
+/// Actions with an argument the + picker offers too (they have no default key).
+const PICKABLE: &[&str] = &[
+    "input-source previous",
+    "input-source 1",
+    "input-source 2",
+    "input-source 3",
+    "input-source 4",
+    "input-source 5",
+    "input-source 6",
+    "input-source 7",
+    "input-source 8",
+    "input-source 9",
+];
+
+/// The argument-less actions and `PICKABLE`, for the + picker.
 pub fn known() -> impl Iterator<Item = &'static str> {
-    KNOWN.iter().map(|&(name, ..)| name).filter(|n| !["minimize", "cycle", "centre"].contains(n))
+    KNOWN.iter().map(|&(name, ..)| name).filter(|n| !["minimize", "cycle", "centre"].contains(n)).chain(PICKABLE.iter().copied())
 }
 
 fn split(action: &str) -> (&str, &str) {
@@ -462,6 +477,8 @@ pub fn label(action: &str) -> String {
         ("touchpad", way) if !way.is_empty() => format!("Trackpad {}", capital(way)),
         ("default-app", what) if !what.is_empty() => format!("Open Default App: {what}"),
         ("screen-zoom", way) if !way.is_empty() => format!("Zoom {}", capital(way)),
+        ("input-source", "previous") => "Previous Input Source".into(),
+        ("input-source", n) if !n.is_empty() => format!("Input Source {n}"),
         ("media", "play-pause") => "Play/Pause".into(),
         ("media", "stop") => "Stop".into(),
         ("media", "forward") => "Seek Forward".into(),
@@ -580,6 +597,9 @@ mod tests {
         assert_eq!(label("volume up-fine"), "Volume Up a Little");
         assert_eq!(label("media rewind"), "Seek Back");
         assert_eq!(label("screen-zoom in"), "Zoom In");
+        assert_eq!(label("input-source previous"), "Previous Input Source");
+        assert_eq!(label("input-source 2"), "Input Source 2");
+        assert_eq!(category("input-source 2"), "System");
         assert_eq!(category("screen-zoom"), "Accessibility");
         assert_eq!(category("keyboard-backlight up"), "Media & Hardware");
         assert_eq!(category("screen-record"), "Screenshots");
