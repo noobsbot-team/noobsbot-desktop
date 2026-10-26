@@ -4,7 +4,9 @@
 
 use std::sync::{Arc, Mutex};
 
-use accesskit::{Action, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, Node, NodeId, Role, Toggled, TreeId, TreeInfo, TreeUpdate};
+use accesskit::{
+    Action, ActionHandler, ActionRequest, ActivationHandler, DeactivationHandler, Live, Node, NodeId, Role, Toggled, TreeId, TreeInfo, TreeUpdate,
+};
 use smithay::reexports::calloop::channel::{self, Sender};
 
 use crate::{shell::control::Control, state::State};
@@ -24,6 +26,52 @@ pub struct Shell {
     pub spotlight: Option<Search>,
     /// Open Launchpad.
     pub launchpad: Option<Apps>,
+    /// Banners, newest first; each is read once as it appears.
+    pub banners: Vec<Note>,
+    /// Open Notification Center's cards, newest first.
+    pub center: Option<Vec<Note>>,
+}
+
+/// A notification: its body is `None` while previews are hidden; actions are (key, label).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Note {
+    pub id: u32,
+    pub app: String,
+    pub title: String,
+    pub body: Option<String>,
+    pub critical: bool,
+    pub actions: Vec<(String, String)>,
+}
+
+impl Note {
+    /// What is read: "App, Title, Body".
+    pub fn spoken(&self) -> String {
+        let body = self.body.as_deref().filter(|b| !b.is_empty()).map(|b| format!(", {b}")).unwrap_or_default();
+        format!("{}, {}{body}", self.app, self.title)
+    }
+
+    /// The card at `base`, pressable, with its actions as buttons after it.
+    fn nodes(&self, base: u64, nodes: &mut Vec<(NodeId, Node)>) -> NodeId {
+        let id = NodeId(base + ((self.id as u64) << 8));
+        let buttons: Vec<(NodeId, Node)> = self
+            .actions
+            .iter()
+            .enumerate()
+            .map(|(j, (_, label))| {
+                let mut button = Node::new(Role::Button);
+                button.set_label(label.as_str());
+                button.add_action(Action::Click);
+                (NodeId(id.0 + 1 + j as u64), button)
+            })
+            .collect();
+        let mut card = Node::new(if base == BANNER_ITEM { Role::Status } else { Role::ListItem });
+        card.set_label(self.spoken());
+        card.add_action(Action::Click);
+        card.set_children(buttons.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+        nodes.push((id, card));
+        nodes.extend(buttons);
+        id
+    }
 }
 
 /// Launchpad: its field, the shown page's tiles (name; a folder's app count), "Page 2 of 3" when there are several,
@@ -77,12 +125,17 @@ const LAUNCHPAD: NodeId = NodeId(9);
 const LAUNCHPAD_FIELD: NodeId = NodeId(10);
 const LAUNCHPAD_PAGE: NodeId = NodeId(11);
 const LAUNCHPAD_GRID: NodeId = NodeId(12);
+const BANNERS: NodeId = NodeId(13);
+const CENTER: NodeId = NodeId(14);
 const MISSION_ITEM: NodeId = NodeId(3000);
 const BAR_ITEM: u64 = 100;
 const DOCK_ITEM: u64 = 1000;
 const CONTROL_ITEM: u64 = 2000;
 const SPOTLIGHT_ITEM: u64 = 4000;
 const LAUNCHPAD_ITEM: u64 = 5000;
+/// A notification's node is this plus its id << 8; its actions follow it.
+const BANNER_ITEM: u64 = 1 << 40;
+const CENTER_ITEM: u64 = 2 << 40;
 
 /// The whole tree; every update replaces it.
 pub fn tree(shell: &Shell) -> TreeUpdate {
@@ -179,6 +232,37 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
         nodes.extend(grid);
         children.push(LAUNCHPAD);
     }
+    if !shell.banners.is_empty() {
+        let mut banners = Vec::new();
+        let ids: Vec<NodeId> = shell
+            .banners
+            .iter()
+            .map(|n| {
+                let id = n.nodes(BANNER_ITEM, &mut banners);
+                // A new banner is read as it is added; a critical one interrupts.
+                if let Some((_, card)) = banners.iter_mut().find(|(i, _)| *i == id) {
+                    card.set_live(if n.critical { Live::Assertive } else { Live::Polite });
+                }
+                id
+            })
+            .collect();
+        let mut node = Node::new(Role::Group);
+        node.set_label("Notifications");
+        node.set_children(ids);
+        nodes.push((BANNERS, node));
+        nodes.extend(banners);
+        children.push(BANNERS);
+    }
+    if let Some(cards) = &shell.center {
+        let mut list = Vec::new();
+        let ids: Vec<NodeId> = cards.iter().map(|n| n.nodes(CENTER_ITEM, &mut list)).collect();
+        let mut node = Node::new(Role::Dialog);
+        node.set_label("Notification Center");
+        node.set_children(ids);
+        nodes.push((CENTER, node));
+        nodes.extend(list);
+        children.push(CENTER);
+    }
     let mut root = Node::new(Role::Window);
     root.set_label("Desktop");
     root.set_children(children);
@@ -197,6 +281,8 @@ fn focus(shell: &Shell) -> NodeId {
         MISSION_ITEM
     } else if shell.controls.is_some() {
         CONTROL
+    } else if shell.center.is_some() {
+        CENTER
     } else {
         ROOT
     }
@@ -300,7 +386,25 @@ impl State {
             Search { field: Field::new("Spotlight Search", &s.field), rows, selected: s.selected }
         });
         let launchpad = self.access_launchpad();
-        Shell { bar, dock, controls, mission, spotlight, launchpad }
+        let (banners, center) = self.access_notes();
+        Shell { bar, dock, controls, mission, spotlight, launchpad, banners, center }
+    }
+
+    /// The banners and Notification Center's cards.
+    fn access_notes(&self) -> (Vec<Note>, Option<Vec<Note>>) {
+        let preview = self.previews();
+        let note = |n: &crate::services::notifications::Notification| Note {
+            id: n.id,
+            app: n.app.clone(),
+            title: n.summary.clone(),
+            body: preview.then(|| n.body.clone()),
+            critical: n.urgency >= 2,
+            actions: crate::shell::notify::buttons(n).cloned().collect(),
+        };
+        let store = &self.notifications;
+        let center = matches!(self.popup, Some(crate::shell::Popup::Notifications { .. })).then(|| store.list.iter().rev().map(note).collect());
+        // Banners stay in the tree under an open Notification Center, so closing it doesn't read them again.
+        (store.banners.iter().filter_map(|id| store.get(*id)).map(note).collect(), center)
     }
 
     fn access_launchpad(&self) -> Option<Apps> {
@@ -352,6 +456,21 @@ impl State {
         if (DOCK_ITEM..CONTROL_ITEM).contains(&id) {
             if let Some(item) = self.dock_items().into_iter().nth((id - DOCK_ITEM) as usize) {
                 self.dock_click(item, false);
+            }
+        } else if id >= BANNER_ITEM {
+            let (note, j) = ((id >> 8) as u32, (id & 0xff) as usize);
+            let center = id >= CENTER_ITEM;
+            let key =
+                j.checked_sub(1).and_then(|j| self.notifications.get(note).and_then(|n| crate::shell::notify::buttons(n).nth(j)).map(|(key, _)| key.clone()));
+            match key {
+                Some(key) => self.invoke(note, key),
+                None if j == 0 => {
+                    self.activate(note);
+                    if center {
+                        self.popup = None;
+                    }
+                }
+                None => {}
             }
         } else if (LAUNCHPAD_ITEM..LAUNCHPAD_ITEM + 1000).contains(&id) {
             let i = (id - LAUNCHPAD_ITEM) as usize;
@@ -436,6 +555,33 @@ mod tests {
         assert_eq!(open.focus, LAUNCHPAD_GRID);
         assert_eq!(node(&open, LAUNCHPAD_GRID).label(), Some("Games"));
         assert!(open.nodes.iter().all(|(id, _)| *id != LAUNCHPAD_PAGE));
+    }
+
+    #[test]
+    fn banners_are_read_as_they_come_and_critical_ones_interrupt() {
+        let reply = Note {
+            id: 7,
+            app: "Chat".into(),
+            title: "Ana".into(),
+            body: Some("Lunch?".into()),
+            actions: vec![("reply".into(), "Reply".into())],
+            ..Default::default()
+        };
+        assert_eq!(reply.spoken(), "Chat, Ana, Lunch?");
+        let hidden = Note { id: 8, app: "Mail".into(), title: "New mail".into(), body: None, critical: true, ..Default::default() };
+        assert_eq!(hidden.spoken(), "Mail, New mail", "a hidden preview keeps the body out");
+        let update = tree(&Shell { banners: vec![reply.clone(), hidden], ..Default::default() });
+        let card = node(&update, NodeId(BANNER_ITEM + (7 << 8)));
+        assert_eq!((card.live(), card.label()), (Some(Live::Polite), Some("Chat, Ana, Lunch?")));
+        assert_eq!(node(&update, NodeId(BANNER_ITEM + (8 << 8))).live(), Some(Live::Assertive));
+        let button = node(&update, NodeId(BANNER_ITEM + (7 << 8) + 1));
+        assert_eq!((button.role(), button.label()), (Role::Button, Some("Reply")));
+        assert_eq!(update.focus, ROOT, "a banner doesn't take the keyboard");
+
+        let center = tree(&Shell { center: Some(vec![reply]), ..Default::default() });
+        assert_eq!(center.focus, CENTER);
+        let card = node(&center, NodeId(CENTER_ITEM + (7 << 8)));
+        assert_eq!((card.role(), card.live(), card.children().len()), (Role::ListItem, None, 1));
     }
 
     #[test]
