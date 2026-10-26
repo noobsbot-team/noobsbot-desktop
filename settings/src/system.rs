@@ -144,7 +144,7 @@ pub async fn system(timeout: u64) -> zbus::Result<Connection> {
     zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(Duration::from_secs(timeout)).build().await
 }
 
-async fn property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str) -> zbus::Result<OwnedValue> {
+pub async fn property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str) -> zbus::Result<OwnedValue> {
     let proxy = PropertiesProxy::builder(bus).destination(service.to_owned())?.path(path.to_owned())?.build().await?;
     Ok(proxy.get(InterfaceName::try_from(interface.to_owned())?, name).await?)
 }

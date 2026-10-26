@@ -35,11 +35,12 @@ pub enum Page {
     Battery,
     LockScreen,
     General,
+    Users,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 17] = [
+    pub const ALL: [Page; 18] = [
         Page::Wifi,
         Page::Bluetooth,
         Page::Sound,
@@ -56,6 +57,7 @@ impl Page {
         Page::Battery,
         Page::LockScreen,
         Page::General,
+        Page::Users,
         Page::About,
     ];
 
@@ -77,6 +79,7 @@ impl Page {
             Page::Battery => "Battery",
             Page::LockScreen => "Lock Screen",
             Page::General => "General",
+            Page::Users => "Users",
             Page::About => "About",
         }
     }
@@ -116,6 +119,7 @@ impl Page {
             Page::Battery => ("battery-high", 0x34C759),
             Page::LockScreen => ("lock-simple", 0x3A3A3C),
             Page::General => ("gear-six", 0x8E8E93),
+            Page::Users => ("user-circle", 0xFF9500),
             Page::About => ("info", 0x8E8E93),
         }
     }
@@ -1077,6 +1081,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         }
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
         Page::Appearance => vec![gallery(app)],
+        Page::Users => users_part(app),
         _ => Vec::new(),
     }
 }
@@ -1212,6 +1217,39 @@ fn gallery(app: &App) -> Element<'_, Message> {
     }
     let grid = row(tiles).spacing(8).wrap().vertical_spacing(8);
     group(t, "Wallpaper", vec![container(grid).padding(12).width(Length::Fill).into()])
+}
+
+/// Users: who is signed in, with their picture and names, then everyone else (read-only).
+fn users_part(app: &App) -> Vec<Element<'_, Message>> {
+    let t = app.tokens;
+    // Still reading.
+    let Some(users) = &app.users else { return Vec::new() };
+    let Some(me) = &users.me else { return vec![group(t, "", vec![fact(t, "AccountsService isn't running", String::new())])] };
+    let head =
+        row![picture(t, me, 64.0), column![text(&me.name).size(17).font(font(Weight::Semibold)), text(&me.login).size(12).color(t.secondary())].spacing(2),]
+            .spacing(14)
+            .align_y(Alignment::Center);
+    let mut parts = vec![container(head).padding([0, 4]).into()];
+    if !users.others.is_empty() {
+        let rows = users
+            .others
+            .iter()
+            .map(|a| {
+                let words = column![text(&a.name).size(13), text(&a.login).size(11).color(t.secondary())].spacing(2);
+                row![picture(t, a, 32.0), words].spacing(10).align_y(Alignment::Center).padding([6, 12]).into()
+            })
+            .collect();
+        parts.push(group(t, "Other Users", rows));
+    }
+    parts
+}
+
+/// An account's picture as a circle, or the person symbol without one.
+fn picture<'a>(t: Tokens, account: &crate::users::Account, size: f32) -> Element<'a, Message> {
+    match &account.picture {
+        Some(handle) => iced::widget::image(handle.clone()).width(size).height(size).border_radius(size / 2.0).into(),
+        None => svg(icon("user-circle")).width(size).height(size).style(Tokens::tint(t.secondary())).into(),
+    }
 }
 
 /// Rows below the config settings.
@@ -1570,7 +1608,15 @@ mod tests {
         assert_eq!(Page::parse("date-time"), Some(Page::DateTime));
         assert_eq!(Page::parse("wi-fi"), Some(Page::Wifi));
         assert_eq!(Page::parse("battery"), Some(Page::Battery));
+        assert_eq!(Page::parse("users"), Some(Page::Users));
         assert_eq!(Page::parse("nope"), None);
+    }
+
+    #[test]
+    fn users_sit_between_general_and_about() {
+        let at = |p| Page::ALL.iter().position(|&q| q == p).unwrap();
+        assert_eq!((at(Page::General) + 1, at(Page::Users) + 1), (at(Page::Users), at(Page::About)));
+        assert_eq!(Page::ALL.last(), Some(&Page::About));
     }
 
     #[test]

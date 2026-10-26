@@ -61,12 +61,17 @@ pub async fn load() -> Vec<(PathBuf, Handle)> {
 
 /// `W`×`H` RGBA covering the picture, centred (as the desktop's "fill").
 fn thumbnail(path: &Path) -> Option<Vec<u8>> {
+    cover(path, W, H)
+}
+
+/// `w`×`h` RGBA covering the picture at `path`, centred.
+pub fn cover(path: &Path, w: u32, h: u32) -> Option<Vec<u8>> {
     let (width, height, rgba) = decode(path)?;
-    let scale = (f64::from(W) / width as f64).max(f64::from(H) / height as f64);
-    let (x0, y0) = ((width as f64 - f64::from(W) / scale) / 2.0, (height as f64 - f64::from(H) / scale) / 2.0);
-    let mut out = Vec::with_capacity((W * H * 4) as usize);
-    for y in 0..H {
-        for x in 0..W {
+    let scale = (f64::from(w) / width as f64).max(f64::from(h) / height as f64);
+    let (x0, y0) = ((width as f64 - f64::from(w) / scale) / 2.0, (height as f64 - f64::from(h) / scale) / 2.0);
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
             let sx = ((x0 + (f64::from(x) + 0.5) / scale) as usize).min(width - 1);
             let sy = ((y0 + (f64::from(y) + 0.5) / scale) as usize).min(height - 1);
             let i = (sy * width + sx) * 4;

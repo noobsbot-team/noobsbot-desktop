@@ -15,6 +15,7 @@ mod pages;
 mod shortcuts;
 mod style;
 mod system;
+mod users;
 mod xkb;
 
 use std::{collections::HashMap, sync::OnceLock, time::Instant};
@@ -129,6 +130,8 @@ pub struct App {
     shortcuts: Option<shortcuts::Editor>,
     /// Sound ▸ Input: the microphone's level, 0 … 1.
     level: f32,
+    /// The Users page's accounts; `None` until read (when the page opens).
+    users: Option<users::Users>,
 }
 
 #[derive(Clone, Debug)]
@@ -216,6 +219,7 @@ pub enum Message {
     Level(f32),
     /// A theme sound plays; `true`: it becomes the alert sound.
     Sound(&'static str, bool),
+    Users(users::Users),
 }
 
 impl App {
@@ -245,6 +249,7 @@ impl App {
             notify_app: None,
             shortcuts: None,
             level: 0.0,
+            users: None,
         };
         app.retheme();
         if page == Page::General {
@@ -253,8 +258,9 @@ impl App {
         if page == Page::Dock {
             (app.default_apps, app.terminals) = defaults::load();
         }
+        let users = if page == Page::Users { Task::perform(users::read(), Message::Users) } else { Task::none() };
         // Typing searches at once (see `type_ahead`).
-        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs)]))
+        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs), users]))
     }
 
     fn retheme(&mut self) {
@@ -289,6 +295,9 @@ impl App {
                 }
                 if page == Page::Notifications {
                     self.notifiers = config::notifying_apps();
+                }
+                if page == Page::Users {
+                    return Task::perform(users::read(), Message::Users);
                 }
                 if page.is_system() {
                     return Task::perform(system::read(), Message::Status);
@@ -349,6 +358,7 @@ impl App {
                 system::play(name);
             }
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
+            Message::Users(users) => self.users = Some(users),
             Message::Wallpaper(path) => {
                 self.save("appearance.wallpaper", path.as_str());
                 self.save("appearance.wallpaper_dark", path);
@@ -564,7 +574,8 @@ impl App {
         )
         .padding([4, 6])
         .width(Length::Fill)
-        .style(t.sidebar_row(false));
+        .style(t.sidebar_row(self.page == Page::Users && self.query.trim().is_empty()))
+        .on_press(Message::Page(Page::Users));
         let mut list = column![search, user, container(space()).height(1).width(Length::Fill).style(t.rule())].spacing(8);
         let mut rows = column![].spacing(1);
         for page in Page::ALL {
