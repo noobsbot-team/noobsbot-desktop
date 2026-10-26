@@ -29,6 +29,8 @@ const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// The privileged helper, at the path the polkit action `org.noobsbot.desktop.update` names.
 pub const HELPER: &str = "/usr/lib/noobsbot-desktop/noobsbot-desktop-update";
 const VERSIONS: &str = "/usr/lib/noobsbot-desktop/versions/";
+/// This machine's CPU, as release tarballs name it (`x86_64`, `aarch64`).
+const ARCH: &str = std::env::consts::ARCH;
 
 /// Which releases count (`[update] channel`).
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Deserialize)]
@@ -165,7 +167,7 @@ fn download(release: &Release) -> Download {
     for old in fs::read_dir(&updates).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| *p != dir) {
         let _ = fs::remove_dir_all(old);
     }
-    if check(&dir, &key, &release.version).is_ok() {
+    if check(&dir, &key, &release.version, ARCH).is_ok() {
         return Download::Ready(dir);
     }
     let base = format!("{REPO}/releases/download/{}", release.tag);
@@ -173,11 +175,11 @@ fn download(release: &Release) -> Download {
         let path = dir.join(name);
         curl(&["--max-time", "900", "-o", path.to_str()?, &format!("{base}/{name}")]).map(|_| ())
     };
-    let tarball = format!("noobsbot-desktop-{}-{}.tar.zst", release.version, std::env::consts::ARCH);
+    let tarball = format!("noobsbot-desktop-{}-{ARCH}.tar.zst", release.version);
     if fs::create_dir_all(&dir).is_err() || [tarball.as_str(), "SHA256SUMS", "SHA256SUMS.minisig"].into_iter().any(|f| get(f).is_none()) {
         return Download::None;
     }
-    match check(&dir, &key, &release.version) {
+    match check(&dir, &key, &release.version, ARCH) {
         Ok(()) => Download::Ready(dir),
         Err(err) => {
             tracing::warn!("update {}: {err}; deleted the download", release.version);
@@ -187,10 +189,10 @@ fn download(release: &Release) -> Download {
     }
 }
 
-/// The download in `dir` is signed by `key`, is `version`, and its tarball matches the signed SHA-256.
-fn check(dir: &Path, key: &str, version: &Version) -> Result<(), String> {
+/// The download in `dir` is signed by `key`, is `version`, and its `arch` tarball matches the signed SHA-256.
+fn check(dir: &Path, key: &str, version: &Version, arch: &str) -> Result<(), String> {
     let read = |name: &str| fs::read(dir.join(name)).map_err(|e| format!("{name}: {e}"));
-    let signed = verify::signed(key, &read("SHA256SUMS")?, &String::from_utf8_lossy(&read("SHA256SUMS.minisig")?))?;
+    let signed = verify::signed(key, &read("SHA256SUMS")?, &String::from_utf8_lossy(&read("SHA256SUMS.minisig")?), arch)?;
     if signed.version != *version {
         // A correctly signed but different (older) release served under this tag: a replay.
         return Err(format!("signed for {}, not {version}", signed.version));
@@ -313,10 +315,10 @@ mod tests {
         let key = fs::read_to_string(data.join("minisign.pub")).unwrap();
         let tarball = dir.join("noobsbot-desktop-1.3.0-x86_64.tar.zst");
         fs::write(&tarball, "pretend tarball\n").unwrap();
-        assert_eq!(check(&dir, &key, &v("1.3.0")), Ok(()));
-        assert!(check(&dir, &key, &v("1.3.1")).unwrap_err().starts_with("signed for 1.3.0"));
+        assert_eq!(check(&dir, &key, &v("1.3.0"), "x86_64"), Ok(()));
+        assert!(check(&dir, &key, &v("1.3.1"), "x86_64").unwrap_err().starts_with("signed for 1.3.0"));
         fs::write(&tarball, "tampered tarball\n").unwrap();
-        assert!(check(&dir, &key, &v("1.3.0")).unwrap_err().contains("doesn't match"));
+        assert!(check(&dir, &key, &v("1.3.0"), "x86_64").unwrap_err().contains("doesn't match"));
         fs::remove_dir_all(&dir).unwrap();
     }
 }
