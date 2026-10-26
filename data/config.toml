@@ -251,6 +251,21 @@ dnd = false
 # Super for more than half a second, and Super with another modifier never count as a tap.
 super_tap = true
 
+[accessibility]
+# Sticky keys: a tapped modifier (Shift, Ctrl, Alt, Super) holds for the next key; tap it twice to keep it until the
+# next tap.
+sticky_keys = false
+# Pressing Shift five times in a row turns sticky keys on or off.
+sticky_keys_shortcut = false
+# Slow keys: a key counts only once held this many ms; 0 = off.
+slow_keys_ms = 0
+# Bounce keys: a key pressed again within this many ms of letting it go is ignored; 0 = off.
+bounce_keys_ms = 0
+# Mouse keys: the keypad moves the pointer (1–9), clicks (5), holds the button (0), lets it go (.) and right-clicks (*).
+mouse_keys = false
+# An app's bell: "sound" (the theme's bell), "flash" (the screen flashes), "both" or "off".
+bell = "sound"
+
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right|1…16",
