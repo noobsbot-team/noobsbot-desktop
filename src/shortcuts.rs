@@ -586,6 +586,8 @@ mod tests {
         assert_eq!(parse("Super+B").map(|b| b.key), Some(Keysym::b), "letters are case-insensitive");
         assert!(parse("Super+Alt+Esc").is_some_and(|b| b.alt && b.key == Keysym::Escape));
         assert!(parse("F12").is_some_and(|b| !b.desktop && b.key == Keysym::F12));
+        assert_eq!(parse("Super+Ctrl+X"), parse("ctrl+super+x"), "any order, any case");
+        assert_ne!(parse("Super+X"), parse("Super+Shift+X"));
         assert_eq!(parse("Super+Hyper+B"), None);
         assert_eq!(parse("Super+NoSuchKey"), None);
     }
