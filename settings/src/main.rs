@@ -4,6 +4,7 @@
 mod arrange;
 mod autostart;
 mod config;
+mod defaults;
 #[path = "../../src/display_info.rs"]
 mod display_info;
 mod gallery;
@@ -115,6 +116,9 @@ pub struct App {
     /// General ▸ Login Items, and the apps "+" offers; read when General opens.
     login_items: Vec<autostart::Item>,
     installed: Vec<autostart::Installed>,
+    /// Desktop & Dock ▸ Default Apps, and the terminal emulators with their commands; read when the page opens.
+    default_apps: defaults::Kinds,
+    terminals: Vec<(autostart::Installed, String)>,
     /// Keyboard ▸ Input Sources' picker, open, with what is typed in its search field.
     picker: Option<String>,
     /// Apps in the notification history, read when Notifications opens.
@@ -191,6 +195,10 @@ pub enum Message {
     LoginItem(String, bool),
     AddLoginItem(autostart::Installed),
     RemoveLoginItem(String),
+    /// A Default Apps row (by index in `defaults::KINDS`) gets this app.
+    DefaultApp(usize, autostart::Installed),
+    /// Default Apps ▸ Terminal: this app's command becomes `terminal`.
+    Terminal(autostart::Installed),
     /// The chosen input sources, as (layout, variant), in order.
     Sources(Vec<(String, String)>),
     /// Open (or filter) the input source picker; `None` closes it.
@@ -228,6 +236,8 @@ impl App {
             thumbs: Vec::new(),
             login_items: Vec::new(),
             installed: Vec::new(),
+            default_apps: Vec::new(),
+            terminals: Vec::new(),
             picker: None,
             notifiers: config::notifying_apps(),
             notify_app: None,
@@ -237,6 +247,9 @@ impl App {
         app.retheme();
         if page == Page::General {
             (app.login_items, app.installed) = autostart::load();
+        }
+        if page == Page::Dock {
+            (app.default_apps, app.terminals) = defaults::load();
         }
         // Typing searches at once (see `type_ahead`).
         (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs)]))
@@ -268,6 +281,9 @@ impl App {
                 self.query.clear();
                 if page == Page::General {
                     (self.login_items, self.installed) = autostart::load();
+                }
+                if page == Page::Dock {
+                    (self.default_apps, self.terminals) = defaults::load();
                 }
                 if page == Page::Notifications {
                     self.notifiers = config::notifying_apps();
@@ -400,6 +416,18 @@ impl App {
             Message::RemoveLoginItem(file) => {
                 let done = autostart::remove(&autostart::user_dir(), &file);
                 self.login_changed(done, &file);
+            }
+            Message::DefaultApp(kind, app) => {
+                let (label, mimes) = defaults::KINDS[kind];
+                match defaults::set(mimes, &defaults::id(&app)) {
+                    Ok(()) => self.default_apps = defaults::load().0,
+                    Err(err) => self.error = Some(format!("Couldn't set the default {}: {err}", label.to_lowercase())),
+                }
+            }
+            Message::Terminal(app) => {
+                if let Some((_, command)) = self.terminals.iter().find(|(t, _)| *t == app) {
+                    self.save("terminal", command.clone());
+                }
             }
             Message::Keep => self.keep(),
             Message::Revert => self.revert(),

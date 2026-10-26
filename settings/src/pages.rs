@@ -1142,6 +1142,7 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             parts
         }
         Page::Notifications => notifying_apps(app),
+        Page::Dock => vec![default_apps(app)],
         Page::General => {
             let clear = button(text("Clear").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ClearRecent);
             vec![
@@ -1152,6 +1153,30 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         }
         _ => Vec::new(),
     }
+}
+
+/// Desktop & Dock ▸ Default Apps: a picker of the apps that open each kind (`mimeapps.list`), and the terminal.
+fn default_apps(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let pick = |apps: Vec<crate::autostart::Installed>, selected, placeholder: String, message: Box<dyn Fn(crate::autostart::Installed) -> Message>| {
+        pick_list(apps, selected, message).placeholder(placeholder).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu())
+    };
+    let mut rows: Vec<Element<'_, Message>> = crate::defaults::KINDS
+        .iter()
+        .zip(&app.default_apps)
+        .enumerate()
+        .map(|(i, ((label, _), (current, apps)))| {
+            let selected = apps.iter().find(|a| Some(crate::defaults::id(a)) == *current).cloned();
+            let placeholder = current.as_deref().map_or("None", |id| id.trim_end_matches(".desktop")).to_owned();
+            line(t, *label, "", pick(apps.clone(), selected, placeholder, Box::new(move |a| Message::DefaultApp(i, a))).into())
+        })
+        .collect();
+    let terminal = app.config.str("terminal");
+    // `noobsbot` is also the entry's `/usr/bin/noobsbot`.
+    let selected = app.terminals.iter().find(|(_, c)| c == terminal || c.rsplit_once('/').is_some_and(|(_, p)| p == terminal)).map(|(a, _)| a.clone());
+    let apps = app.terminals.iter().map(|(a, _)| a.clone()).collect();
+    rows.push(line(t, "Terminal", "Opened by Super+Return", pick(apps, selected, terminal.to_owned(), Box::new(Message::Terminal)).into()));
+    group(t, "Default Apps", rows)
 }
 
 /// General ▸ Login Items (`autostart`): a toggle each, − for the user's own, + from the installed apps.
