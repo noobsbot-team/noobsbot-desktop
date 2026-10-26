@@ -38,7 +38,12 @@ fn main() -> iced::Result {
             }
             // Only while "Keep these display settings?" counts down: no timer otherwise.
             if app.keep.is_some() {
-                all.push(iced::Subscription::run(arrange::ticks).map(|()| Message::Tick));
+                all.push(iced::Subscription::run_with(std::time::Duration::from_millis(500), arrange::ticks).map(|()| Message::Tick));
+            }
+            // Nearby devices: discovery, and a re-read every 3 s, only while the Bluetooth page shows.
+            if app.page == Page::Bluetooth {
+                all.push(iced::Subscription::run(system::discover).map(|()| Message::Rescan));
+                all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::Rescan));
             }
             iced::Subscription::batch(all)
         })
@@ -109,6 +114,14 @@ pub enum Message {
     Status(system::Status),
     Wifi(bool),
     Bluetooth(bool),
+    /// A device (BlueZ path): pair if need be and connect (`true`), or disconnect.
+    Device(String, bool),
+    /// A paired device is removed.
+    Forget(String),
+    /// A Bluetooth action finished: the new status and what went wrong.
+    Acted((system::Status, Option<String>)),
+    /// Re-read while looking for nearby devices.
+    Rescan,
     /// Output (`true`) or input muted.
     Mute(bool, bool),
     /// A PipeWire sink or source becomes the default.
@@ -225,6 +238,13 @@ impl App {
             }
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
+            Message::Device(path, on) => return Task::perform(system::connect_device(path, on), Message::Acted),
+            Message::Forget(path) => return Task::perform(system::forget(path), Message::Acted),
+            Message::Acted((status, error)) => {
+                self.status = status;
+                self.error = error;
+            }
+            Message::Rescan => return Task::perform(system::read(), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
             Message::DefaultDevice(id) => return Task::perform(system::set_default(id), Message::Status),
             Message::Reload => {
