@@ -14,6 +14,7 @@ pub mod notifications;
 pub mod polkit;
 pub mod power;
 pub mod profiles;
+pub mod shortcuts;
 pub mod sound;
 pub mod tray;
 pub mod update;
@@ -82,6 +83,8 @@ pub enum Update {
     Resumed,
     /// fcitx5's input methods; `None`: fcitx5 isn't on the bus.
     Fcitx(Option<fcitx::Fcitx>),
+    /// Settings starts or stops recording a shortcut (`org.noobsbot.Desktop.Shortcuts.Record`).
+    Record(bool),
 }
 
 /// Requests from the frame loop.
@@ -247,6 +250,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     let session_clients = async {
         if let Some(bus) = &session {
             let ours = future::zip(future::zip(notifications::serve(bus, &updates), launcher::watch(bus, &updates)), fcitx::watch(bus, &updates));
+            let ours = future::zip(ours, shortcuts::serve(bus, &updates));
             future::zip(future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)), ours).await;
         }
     };
