@@ -12,7 +12,7 @@ use super::{Material, Shaders};
 use crate::{
     shell::{control::slider_fill, menu},
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     ui::field::TextField,
     wm::Rect,
 };
@@ -256,13 +256,13 @@ impl Ui<'_> {
             }
             if state == State::Focused && !field.all {
                 let x = inner.loc.x + self.width(&shown[start..caret], style).min(inner.size.w);
-                let h = i32::from(style.line_height);
+                let h = ts(i32::from(style.line_height));
                 let caret = Rectangle::new((x, rect.loc.y + (rect.size.h - h) / 2).into(), (if large { 2 } else { 1 }, h).into());
                 self.shape(caret, self.accent(1.0), 0.0);
             }
         }
         if shown.is_empty() && state == State::Focused {
-            let h = i32::from(style.line_height);
+            let h = ts(i32::from(style.line_height));
             self.shape(Rectangle::new((inner.loc.x, rect.loc.y + (rect.size.h - h) / 2).into(), (if large { 2 } else { 1 }, h).into()), self.accent(1.0), 0.0);
         }
         if let Some(radius) = ring {
@@ -294,7 +294,7 @@ impl Ui<'_> {
     /// Returns its rect.
     pub fn menu(&mut self, at: Point<i32, smithay::utils::Logical>, width: i32, rows: &[MenuItem], hovered: Option<usize>) -> Rect {
         use menu::{PAD, SEPARATOR};
-        let (row_h, side_pad) = (crate::text::ts(menu::ROW), crate::text::ts(menu::SIDE));
+        let (row_h, side_pad) = (ts(menu::ROW), ts(menu::SIDE));
         let height = rows.iter().map(|r| if r.is_some() { row_h } else { SEPARATOR }).sum::<i32>() + 2 * PAD;
         let rect = Rectangle::new(at, (width, height).into());
         self.material(rect, Material::Popover, None);
@@ -332,10 +332,14 @@ impl Ui<'_> {
         rect
     }
 
+    /// A tooltip's size around `words`: the text plus 6 × 8 padding, grown with the text size.
+    pub fn tooltip_size(&mut self, words: &str) -> (i32, i32) {
+        (self.width(words, CALLOUT) + ts(16), ts(i32::from(CALLOUT.line_height) + 12))
+    }
+
     /// Tooltip (D8): `popover`, radius 6, Callout text, 6 × 8 padding, level-2 shadow; top-left at `at`.
     pub fn tooltip(&mut self, at: Point<i32, smithay::utils::Logical>, words: &str) {
-        let w = self.width(words, CALLOUT);
-        let rect = Rectangle::new(at, (w + 16, i32::from(CALLOUT.line_height) + 12).into());
+        let rect = Rectangle::new(at, self.tooltip_size(words).into());
         let spec = Material::Popover.spec(self.dark);
         self.glass.extend(self.shaders.shadow(rect, 6.0, 2, self.dark, self.scale, false));
         let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
@@ -345,9 +349,10 @@ impl Ui<'_> {
 
     /// Badge (D8): a red pill, at least 16 px, Caption white text, on the top-right corner of `icon`.
     pub fn badge(&mut self, icon: Rect, count: &str) {
-        let w = (self.width(count, CAPTION) + 8).max(16);
-        let rect = Rectangle::new((icon.loc.x + icon.size.w + 4 - w, icon.loc.y - 4).into(), (w, 16).into());
-        self.shape(rect, RED, 8.0);
+        let h = ts(16);
+        let w = (self.width(count, CAPTION) + ts(8)).max(h);
+        let rect = Rectangle::new((icon.loc.x + icon.size.w + 4 - w, icon.loc.y - 4).into(), (w, h).into());
+        self.shape(rect, RED, f64::from(h) / 2.0);
         self.text(count, Style { color: WHITE, ..CAPTION }, rect, Align::Centre);
     }
 
