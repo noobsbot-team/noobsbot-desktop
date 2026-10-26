@@ -432,6 +432,36 @@ impl State {
         }
     }
 
+    /// An auto-hiding bar shows while the pointer touches the top edge of a display, and stays while it is on the bar.
+    // ponytail: one flag for every display's bar, so they slide together.
+    pub fn bar_motion(&mut self, at: Point<f64, Logical>) {
+        if !self.config.menu_bar.auto_hide {
+            return;
+        }
+        let output = self.space.output_under(at).next().and_then(|o| self.space.output_geometry(o));
+        let y = output.map_or(f64::MAX, |g| at.y - f64::from(g.loc.y));
+        let hover = menubar::reveals(self.bar_pointer || self.popup.is_some(), y);
+        if hover != self.bar_pointer {
+            self.bar_pointer = hover;
+            self.schedule_redraw();
+        }
+    }
+
+    /// How far an auto-hiding bar is out of sight this frame, 0 (shown) to 1 (gone); keeps frames coming while it
+    /// slides. Open menus keep it shown.
+    pub fn bar_hidden(&mut self) -> f64 {
+        let now = self.frame_time;
+        let hide = self.config.menu_bar.auto_hide && !self.bar_pointer && self.popup.is_none();
+        if self.config.appearance.reduce_motion {
+            return f64::from(u8::from(hide));
+        }
+        self.bar_hide.set(hide, now);
+        if self.bar_hide.moving(now) {
+            crate::anim::extend(&mut self.anim_until, now + crate::shell::dock_fx::HIDE_TIME);
+        }
+        self.bar_hide.value(now)
+    }
+
     /// A click on tray item `i`: its menu (fetched, then shown by `show_tray_menu`) if it is a menu or this is a
     /// right click, else Activate at the click.
     fn tray_press(&mut self, i: usize, location: Point<f64, Logical>, secondary: bool) {

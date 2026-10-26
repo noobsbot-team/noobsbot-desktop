@@ -284,6 +284,23 @@ impl MenuBar {
     }
 }
 
+/// Whether an auto-hiding bar shows with the pointer `y` px below its display's top: at the very edge, or anywhere
+/// on the bar once `shown`.
+pub fn reveals(shown: bool, y: f64) -> bool {
+    (0.0..if shown { f64::from(HEIGHT) } else { 1.0 }).contains(&y)
+}
+
+/// The bar's elements moved `hidden` (0 to 1) of the way up out of sight, shadow included.
+pub fn slid(renderer: &mut GlesRenderer, strip: Vec<SceneElement>, hidden: f64, scale: f64) -> Vec<SceneElement> {
+    if hidden <= 0.0 {
+        return strip;
+    }
+    super::motion::transformed(renderer, strip, scale, |mut rect| {
+        rect.loc.y -= hidden * (rect.loc.y + rect.size.h);
+        crate::anim::Look::at(rect)
+    })
+}
+
 /// The part of the output windows may use: everything below the bar.
 pub fn below(area: Rect) -> Rect {
     let cut = (HEIGHT - area.loc.y).clamp(0, area.size.h);
@@ -333,6 +350,15 @@ mod tests {
         assert_eq!(EDGE + 16 + LOGO_GAP + room + GAP, 1024 - EDGE - 700);
         // Portrait: the right group leaves nothing worth showing, so the name goes.
         assert!(app_room(600, 16, 540) < MIN_APP);
+    }
+
+    #[test]
+    fn auto_hide_reveals_at_the_top_edge() {
+        assert!(reveals(false, 0.0));
+        assert!(!reveals(false, 5.0), "hidden: only the very edge brings it");
+        assert!(reveals(true, 20.0), "shown: it stays while the pointer is on it");
+        assert!(!reveals(true, 30.0));
+        assert!(!reveals(true, -1.0), "above the display: another one's bottom");
     }
 
     #[test]

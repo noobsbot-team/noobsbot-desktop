@@ -213,6 +213,10 @@ pub struct State {
     pub icons: crate::apps::Icons,
     /// The pointer touched the bottom edge: the dock shows over the focused window until the pointer leaves it.
     pub dock_reveal: bool,
+    /// The pointer is at the top edge (or on the bar it revealed): an auto-hiding menu bar shows.
+    pub bar_pointer: bool,
+    /// An auto-hiding menu bar sliding out of sight (on) and back.
+    pub bar_hide: crate::shell::dock_fx::Ease,
     /// `--show dock-zoom`: a fake pointer position the dock zooms around.
     pub dock_pointer: Option<Point<f64, Logical>>,
     /// The dock's bounces, glow, slide, zoom easing and badges.
@@ -513,6 +517,8 @@ impl State {
             apps_epoch: 0,
             icons: crate::apps::Icons::new(icons_tx),
             dock_reveal: false,
+            bar_pointer: false,
+            bar_hide: crate::shell::dock_fx::Ease::new(crate::shell::dock_fx::HIDE_TIME, true),
             dock_pointer: None,
             dock_fx: Default::default(),
             dock_ui: Default::default(),

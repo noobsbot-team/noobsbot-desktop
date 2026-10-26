@@ -195,7 +195,8 @@ impl State {
             let scale = output.current_scale().fractional_scale();
             let dark = render::is_dark(&self.config.appearance);
             let (locked, idle_shade, animating) = (self.lock.is_some(), self.idle_shade(), self.animating());
-            let content = self.bar_content(output);
+            let hidden = self.bar_hidden();
+            let content = self.bar_content(output).filter(|_| hidden < 1.0);
             let views = self.backend.as_mut()?;
             // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
             let mut elements = if locked {
@@ -205,11 +206,19 @@ impl State {
                 let now = self.frame_time;
                 views.ghosts.retain(|g| !g.anim.done(now));
                 let bar = views.bars.entry(output.name()).or_default();
-                let mut front = content.map_or_else(Vec::new, |content| {
-                    let appearance = &self.config.appearance;
-                    let (text, symbols, icons) = (&mut self.text, &mut self.symbols, &mut self.icons);
-                    bar.elements(renderer, &views.shaders, text, symbols, icons, &content, None, geo.size.w, dark, appearance.glass_opacity, scale)
-                });
+                let mut front = match content {
+                    Some(content) => {
+                        let appearance = &self.config.appearance;
+                        let (text, symbols, icons) = (&mut self.text, &mut self.symbols, &mut self.icons);
+                        let strip =
+                            bar.elements(renderer, &views.shaders, text, symbols, icons, &content, None, geo.size.w, dark, appearance.glass_opacity, scale);
+                        render::menubar::slid(renderer, strip, hidden, scale)
+                    }
+                    None => {
+                        bar.hide();
+                        Vec::new()
+                    }
+                };
                 front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
                 render::scene(
                     renderer,
@@ -235,6 +244,7 @@ impl State {
         self.capture_ask();
         let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
         let thumbnail = self.thumbnail_rect().zip(self.screenshots.thumbnail.as_ref().map(|(t, _)| t.clone()));
+        let hidden = self.bar_hidden();
         let content = self.bar_content(output);
         let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
         let quit_list = self.force_quit.clone().map(|f| {
@@ -440,20 +450,23 @@ impl State {
         // The bar is laid out before its menus, so they line up with this frame's items (it is drawn behind them).
         let active = self.popup.and_then(Popup::item);
         // Launchpad covers the menu bar.
-        let strip = match content.as_ref().filter(|_| pad.is_none() && overview.is_none()) {
-            Some(content) => menu_bar.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                &mut self.icons,
-                content,
-                active,
-                width,
-                dark,
-                appearance.glass_opacity,
-                scale,
-            ),
+        let strip = match content.as_ref().filter(|_| pad.is_none() && overview.is_none() && hidden < 1.0) {
+            Some(content) => {
+                let strip = menu_bar.elements(
+                    renderer,
+                    shaders,
+                    &mut self.text,
+                    &mut self.symbols,
+                    &mut self.icons,
+                    content,
+                    active,
+                    width,
+                    dark,
+                    appearance.glass_opacity,
+                    scale,
+                );
+                render::menubar::slid(renderer, strip, hidden, scale)
+            }
             None => {
                 menu_bar.hide();
                 Vec::new()
