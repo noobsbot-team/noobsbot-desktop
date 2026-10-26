@@ -299,7 +299,7 @@ pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize,
         y += card.size.h + GAP;
         (card, (0..up_next as i32).map(|i| row(inner_x + 12, card.loc.y + UP_NEXT_TOP + i * UP_NEXT_ROW, inner_w - 24, UP_NEXT_ROW - 6)).collect())
     });
-    let cal_h = super::calendar::GRID_Y + rows as i32 * super::calendar::CELL_H + super::calendar::BOTTOM;
+    let cal_h = super::calendar::height(rows);
     let calendar = (row(inner_x, y, inner_w, cal_h), calendar_layout(inner_x + (inner_w - super::calendar::WIDTH) / 2, y, rows));
     y += cal_h + GAP;
     let weather = weather.then(|| {

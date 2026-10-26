@@ -298,6 +298,12 @@ pub mod calendar {
     pub const BOTTOM: i32 = 8;
     /// The grid is centred: 7 cells of 36 px in 280.
     pub const GRID_X: i32 = (WIDTH - 7 * CELL_W) / 2;
+
+    /// The card's height with `rows` weeks; rows grow with the text size, the width stays.
+    pub fn height(rows: usize) -> i32 {
+        use crate::text::ts;
+        ts(GRID_Y) + rows as i32 * ts(CELL_H) + BOTTOM
+    }
 }
 
 /// Where each part of the calendar is, output-relative.
@@ -314,18 +320,21 @@ pub struct CalendarLayout {
 
 /// The calendar with its top-left corner at (`x`, `y`), output-relative.
 pub fn calendar_layout(x: i32, y: i32, rows: usize) -> CalendarLayout {
+    use crate::text::ts;
     use calendar::*;
-    let height = GRID_Y + rows as i32 * CELL_H + BOTTOM;
     let at = |dx: i32, dy: i32, w: i32, h: i32| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
-    let next = at(WIDTH - PAD + 4 - ARROW, TITLE_Y - 2, ARROW, ARROW);
-    let prev = at(WIDTH - PAD + 4 - 2 * ARROW, TITLE_Y - 2, ARROW, ARROW);
+    // The arrows are icons: their size stays, they centre on the taller title row.
+    let arrow_y = ts(TITLE_Y) + (ts(TITLE_H) - ARROW) / 2;
+    let next = at(WIDTH - PAD + 4 - ARROW, arrow_y, ARROW, ARROW);
+    let prev = at(WIDTH - PAD + 4 - 2 * ARROW, arrow_y, ARROW, ARROW);
+    let (grid_y, cell_h) = (ts(GRID_Y), ts(CELL_H));
     CalendarLayout {
-        rect: at(0, 0, WIDTH, height),
-        title: at(PAD, TITLE_Y, WIDTH - 2 * PAD - 2 * ARROW, TITLE_H),
+        rect: at(0, 0, WIDTH, height(rows)),
+        title: at(PAD, ts(TITLE_Y), WIDTH - 2 * PAD - 2 * ARROW, ts(TITLE_H)),
         prev,
         next,
-        header: std::array::from_fn(|i| at(GRID_X + i as i32 * CELL_W, HEADER_Y, CELL_W, HEADER_H)),
-        cells: (0..rows * 7).map(|i| at(GRID_X + (i % 7) as i32 * CELL_W, GRID_Y + (i / 7) as i32 * CELL_H, CELL_W, CELL_H)).collect(),
+        header: std::array::from_fn(|i| at(GRID_X + i as i32 * CELL_W, ts(HEADER_Y), CELL_W, ts(HEADER_H))),
+        cells: (0..rows * 7).map(|i| at(GRID_X + (i % 7) as i32 * CELL_W, grid_y + (i / 7) as i32 * cell_h, CELL_W, cell_h)).collect(),
     }
 }
 
@@ -725,6 +734,16 @@ mod tests {
         assert!(layout.cells.iter().chain([&layout.prev, &layout.next, &layout.title]).all(|c| layout.rect.contains_rect(*c)));
         assert_eq!(layout.cells.len(), 35);
         assert!(!layout.prev.overlaps(layout.next) && !layout.title.overlaps(layout.prev));
+    }
+
+    #[test]
+    fn calendar_rows_grow_with_text() {
+        let big = crate::text::with_scale(1.5, || calendar_layout(992, 28, 5));
+        let small = calendar_layout(992, 28, 5);
+        assert_eq!(big.rect.size.w, small.rect.size.w);
+        assert!(big.rect.size.h > small.rect.size.h && big.cells[0].size.h == 48 && big.title.size.h == 30 && big.header[0].size.h == 21);
+        assert!(big.cells.iter().chain([&big.prev, &big.next, &big.title]).chain(&big.header).all(|c| big.rect.contains_rect(*c)));
+        assert!(big.header[0].loc.y >= big.title.loc.y + big.title.size.h && big.cells[0].loc.y >= big.header[0].loc.y + big.header[0].size.h);
     }
 
     #[test]
