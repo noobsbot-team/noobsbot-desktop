@@ -1,8 +1,8 @@
 //! `zwlr_output_manager_v1` (E6.2, E6.11): every connected display as a head (modes, on/off, position, scale,
-//! rotation) for wlr-randr, kanshi and the like, and their changes applied the way System Settings applies its own:
+//! rotation, adaptive sync) for wlr-randr, kanshi and the like, and their changes applied the way System Settings applies its own:
 //! written to `[[display.outputs]]` in config.toml, then `apply_displays`. Unsandboxed clients only (perms.rs).
 // ponytail: every change sends all heads anew (old ones finished); custom modes, flipped transforms and adaptive sync
-// are refused. Positions go through `displays::plan`, so overlapping ones are snapped edge to edge.
+// on a display without `vrr_capable` are refused. Positions go through `displays::plan`, so overlapping ones are snapped edge to edge.
 
 use std::sync::{
     Arc, Mutex,
@@ -13,7 +13,7 @@ use smithay::reexports::{
     wayland_protocols_wlr::output_management::v1::server::{
         zwlr_output_configuration_head_v1::{self, ZwlrOutputConfigurationHeadV1},
         zwlr_output_configuration_v1::{self, ZwlrOutputConfigurationV1},
-        zwlr_output_head_v1::ZwlrOutputHeadV1,
+        zwlr_output_head_v1::{AdaptiveSyncState, ZwlrOutputHeadV1},
         zwlr_output_manager_v1::{self, ZwlrOutputManagerV1},
         zwlr_output_mode_v1::ZwlrOutputModeV1,
     },
@@ -45,7 +45,7 @@ pub struct OutputManagement {
 
 impl OutputManagement {
     pub fn new(dh: &DisplayHandle) -> Self {
-        Self { _global: dh.create_global::<State, ZwlrOutputManagerV1, _>(3, ()), managers: Vec::new(), displays: Vec::new(), serial: 0 }
+        Self { _global: dh.create_global::<State, ZwlrOutputManagerV1, _>(4, ()), managers: Vec::new(), displays: Vec::new(), serial: 0 }
     }
 }
 
@@ -56,6 +56,7 @@ pub struct Change {
     position: Option<[i32; 2]>,
     rotation: Option<u16>,
     scale: Option<f64>,
+    vrr: Option<bool>,
     /// A custom mode, a flipped transform or a mode of another head: the configuration fails.
     refused: bool,
 }
@@ -116,6 +117,12 @@ pub fn settings(displays: &[Display], outputs: &[OutputSettings], changes: &[(St
                 return None;
             }
             entry.scale = scale;
+        }
+        if let Some(vrr) = change.vrr {
+            if vrr && !display.vrr_capable {
+                return None;
+            }
+            entry.vrr = vrr;
         }
         entry.rotation = change.rotation.unwrap_or(entry.rotation);
         entry.position = change.position.or(entry.position);
@@ -194,6 +201,9 @@ fn send_heads(dh: &DisplayHandle, manager: &ZwlrOutputManagerV1, displays: &[Dis
                 .into_iter()
                 .filter(|(v, _)| !v.is_empty())
                 .for_each(|(v, send)| send(&head, v.clone()));
+        }
+        if head.version() >= 4 {
+            head.adaptive_sync(if d.vrr { AdaptiveSyncState::Enabled } else { AdaptiveSyncState::Disabled });
         }
         sent.push((head, modes));
     }
@@ -327,6 +337,10 @@ impl Dispatch<ZwlrOutputConfigurationHeadV1, Arc<Mutex<Change>>> for State {
                 Some(r) => change.rotation = Some(r),
                 None => change.refused = true,
             },
+            Request::SetAdaptiveSync { state } => match state.into_result() {
+                Ok(s) => change.vrr = Some(s == AdaptiveSyncState::Enabled),
+                Err(_) => change.refused = true,
+            },
             // Custom modes and anything newer.
             _ => change.refused = true,
         }
@@ -351,7 +365,7 @@ mod tests {
         let d = |name: &str| Display { name: name.into(), modes: vec![mode(1920, 1080, 60000), mode(1280, 720, 59940)], ..Default::default() };
         let displays = [d("eDP-1"), d("HDMI-A-1")];
         let kept = OutputSettings { name: "DP-9".into(), scale: 2.0, ..Default::default() };
-        let change = Change { mode: Some(mode(1280, 720, 59940)), position: Some([1920, 0]), rotation: Some(90), scale: Some(1.5), refused: false };
+        let change = Change { mode: Some(mode(1280, 720, 59940)), position: Some([1920, 0]), rotation: Some(90), scale: Some(1.5), vrr: None, refused: false };
         let out = settings(&displays, std::slice::from_ref(&kept), &[("HDMI-A-1".into(), Some(change)), ("eDP-1".into(), None)]).unwrap();
         assert_eq!(out[0], kept, "other displays' entries stay");
         assert_eq!(
@@ -371,5 +385,13 @@ mod tests {
         assert_eq!(settings(&displays, &[], &[("eDP-1".into(), Some(other))]), None, "a mode the display hasn't");
         assert_eq!(settings(&displays, &[], &[("eDP-1".into(), Some(Change { refused: true, ..Default::default() }))]), None);
         assert_eq!(settings(&displays, &[], &[("gone".into(), None)]), None);
+        // Adaptive sync: on and off where capable, only off where not.
+        let vrr = |on| Some(Change { vrr: Some(on), ..Default::default() });
+        let capable = [Display { vrr_capable: true, ..d("DP-1") }];
+        let on = settings(&capable, &[], &[("DP-1".into(), vrr(true))]).unwrap();
+        assert!(on[0].vrr);
+        assert!(!settings(&capable, &on, &[("DP-1".into(), vrr(false))]).unwrap()[0].vrr);
+        assert_eq!(settings(&displays, &[], &[("eDP-1".into(), vrr(true))]), None, "a display without vrr_capable");
+        assert!(!settings(&displays, &[], &[("eDP-1".into(), vrr(false))]).unwrap()[0].vrr);
     }
 }
