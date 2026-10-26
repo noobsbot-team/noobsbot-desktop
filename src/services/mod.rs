@@ -2,6 +2,7 @@
 //! two channels, so a stuck service can never freeze the screen (E1.11). A missing service is a state, not an error:
 //! its client reports `None` and picks it up again when it appears.
 
+pub mod a11y;
 pub mod bluetooth;
 pub mod brightness;
 pub mod disks;
@@ -189,6 +190,8 @@ pub enum Command {
 
 pub struct Services {
     commands: async_channel::Sender<Command>,
+    /// The screen reader's key monitor.
+    pub keys: a11y::Keys,
 }
 
 impl Services {
@@ -201,15 +204,20 @@ impl Services {
 /// `agents`: answer for the system (BlueZ pairing, Wi-Fi passwords, polkit). Off when nested, so the host desktop keeps its own agent.
 pub fn spawn(updates: Sender<Update>, agents: bool) -> Services {
     let (commands, rx) = async_channel::unbounded();
+    let (events, key_rx) = async_channel::unbounded();
+    let keys = a11y::Keys { monitor: Arc::default(), events };
+    let monitor = keys.monitor.clone();
     sound::spawn(updates.clone());
-    let thread = std::thread::Builder::new().name("services".into()).spawn(move || future::block_on(run(updates, rx, agents)));
+    let thread = std::thread::Builder::new().name("services".into()).spawn(move || future::block_on(run(updates, rx, agents, (monitor, key_rx))));
     if let Err(err) = thread {
         tracing::warn!("system services off: {err}");
     }
-    Services { commands }
+    Services { commands, keys }
 }
 
-async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>, agents: bool) {
+type KeyMonitor = (Arc<Mutex<a11y::Monitor>>, async_channel::Receiver<(Vec<String>, a11y::Key)>);
+
+async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>, agents: bool, (monitor, keys): KeyMonitor) {
     // A missing bus leaves its states at `None` (hidden) in the frame loop, so there is nothing to send.
     let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into())
         .await
@@ -247,6 +255,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     let session_clients = async {
         if let Some(bus) = &session {
             let ours = future::zip(future::zip(notifications::serve(bus, &updates), launcher::watch(bus, &updates)), fcitx::watch(bus, &updates));
+            let ours = future::zip(ours, a11y::serve(bus, monitor, keys));
             future::zip(future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)), ours).await;
         }
     };
