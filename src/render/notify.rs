@@ -313,7 +313,7 @@ impl NotificationViews {
                         center.date,
                         Align::Left,
                     );
-                    // ponytail: ⚙ shows the sliders glyph and opens nothing until the Settings app (M7).
+                    // ⚙ opens Settings ▸ Notifications.
                     pieces.put(symbols.get(Symbol::Sliders, Weight::Regular, 16, scale, ink.secondary), center.settings, Align::Centre);
                 }
                 if let Some((strip, off)) = center.dnd.filter(|(strip, _)| dnd && shown(*strip)) {
