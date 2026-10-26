@@ -10,18 +10,26 @@ use smithay::{
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
 };
 
-use crate::{spaces::Tween, state::State, wm::Rect};
+use crate::{spaces::Tween, state::State, text::ts, wm::Rect};
 
 /// Between windows and around the grid.
 pub const GAP: i32 = 32;
-/// The Spaces bar, collapsed: name pills.
+/// The Spaces bar, collapsed: name pills, grown with the text size (`pill`).
 const PILL: (i32, i32) = (120, 24);
-/// Expanded: thumbnails this tall, their names under them.
+/// Expanded: thumbnails this tall, their names under them (`NAME_H` grown with the text size).
 pub const THUMB_H: i32 = 96;
 pub const NAME_H: i32 = 16;
 const BAR_TOP: i32 = 12;
+
+/// A collapsed name pill, grown with the text size.
+fn pill() -> Size<i32, Logical> {
+    Size::from((ts(PILL.0), ts(PILL.1)))
+}
+
 /// Windows start below the expanded bar, so expanding never moves them.
-pub const AREA_TOP: i32 = BAR_TOP + THUMB_H + 4 + NAME_H + 20;
+pub fn area_top() -> i32 {
+    BAR_TOP + THUMB_H + 4 + ts(NAME_H) + 20
+}
 const BAR_GAP: i32 = 16;
 /// The ✕ on a hovered Space.
 const CLOSE: i32 = 20;
@@ -60,9 +68,10 @@ pub struct Bar {
 
 /// The bar on an `output`-sized screen with `count` Spaces.
 pub fn bar(output: Size<i32, Logical>, count: usize, expanded: bool, dynamic: bool) -> Bar {
-    let mut size = if expanded { Size::from((THUMB_H * output.w / output.h.max(1), THUMB_H)) } else { Size::from(PILL) };
+    let pill = pill();
+    let mut size = if expanded { Size::from((THUMB_H * output.w / output.h.max(1), THUMB_H)) } else { pill };
     let n = count as i32;
-    let side = if expanded { 40 } else { PILL.1 };
+    let side = if expanded { 40 } else { pill.h };
     // Many Spaces on a narrow screen: the cells shrink (thumbnails keep their shape) so `+` stays clear of them.
     // ponytail: past 24 px a cell the bar overflows anyway; nobody has 40 Spaces on a phone.
     let room = output.w - 2 * (3 * BAR_GAP + side);
@@ -74,9 +83,9 @@ pub fn bar(output: Size<i32, Logical>, count: usize, expanded: bool, dynamic: bo
     let x = (output.w - width) / 2;
     let cells = (0..n).map(|i| Rectangle::new((x + i * (size.w + BAR_GAP), BAR_TOP + if expanded { 0 } else { 4 }).into(), size)).collect();
     let plus = dynamic.then(|| {
-        Rectangle::new((output.w - 2 * BAR_GAP - side, BAR_TOP + (if expanded { THUMB_H } else { PILL.1 + 8 } - side) / 2).into(), (side, side).into())
+        Rectangle::new((output.w - 2 * BAR_GAP - side, BAR_TOP + (if expanded { THUMB_H } else { pill.h + 8 } - side) / 2).into(), (side, side).into())
     });
-    let y = BAR_TOP + (if expanded { THUMB_H } else { PILL.1 + 8 } - side) / 2;
+    let y = BAR_TOP + (if expanded { THUMB_H } else { pill.h + 8 } - side) / 2;
     let all = Rectangle::new((2 * BAR_GAP, y).into(), (side, side).into());
     Bar { cells, plus, all, expanded }
 }
@@ -289,13 +298,14 @@ impl State {
         let frames: Vec<Rect> = windows.iter().filter_map(|w| self.frame(w)).map(|f| Rectangle::new(f.loc - output.loc, f.size)).collect();
         let (expanded, dynamic) = (mission.expanded, self.config.windows.spaces == 0);
         let bottom = output.size.h - crate::shell::dock::reserve(&self.config.dock);
-        let area = Rectangle::new((GAP, AREA_TOP).into(), (output.size.w - 2 * GAP, bottom - AREA_TOP - GAP / 2).into());
+        let top = area_top();
+        let area = Rectangle::new((GAP, top).into(), (output.size.w - 2 * GAP, bottom - top - GAP / 2).into());
         let (count, current) = self.desks().map_or((1, 0), |d| (d.list.len(), d.current));
         let mut bar = bar(output.size, count, expanded || all, dynamic);
         let targets = if all {
             // Below the bar's buttons, room for the last row's names.
             let top = bar.all.loc.y + bar.all.size.h + BAR_GAP;
-            bar.cells = tiles(output.size, count, Rectangle::new((GAP, top).into(), (output.size.w - 2 * GAP, bottom - top - GAP / 2 - NAME_H - 4).into()));
+            bar.cells = tiles(output.size, count, Rectangle::new((GAP, top).into(), (output.size.w - 2 * GAP, bottom - top - GAP / 2 - ts(NAME_H) - 4).into()));
             windows
                 .iter()
                 .zip(&frames)
@@ -418,7 +428,7 @@ impl State {
         let bar_hover = layout.bar.cells.iter().position(|c| c.to_f64().contains(to));
         let Some(m) = self.mission.as_mut() else { return };
         // Expands at the top edge, collapses once the pointer is back among the windows.
-        let expanded = if m.expanded { to.y < f64::from(AREA_TOP) } else { to.y < f64::from(BAR_TOP + PILL.1 + 8) };
+        let expanded = if m.expanded { to.y < f64::from(area_top()) } else { to.y < f64::from(BAR_TOP + pill().h + 8) };
         let mut changed = m.hover != hover || m.bar_hover != bar_hover || m.expanded != expanded;
         (m.hover, m.bar_hover, m.expanded) = (hover, bar_hover, expanded);
         if let Some((_, at, dragging)) = m.press.as_mut()
@@ -611,9 +621,25 @@ mod tests {
         assert!(!collapsed.cells[0].overlaps(collapsed.cells[1]));
         let expanded = bar(output, 3, true, true);
         assert_eq!(expanded.cells[0].size, Size::from((153, THUMB_H)), "thumbnails have the screen's shape");
-        assert!(expanded.cells.iter().all(|c| c.loc.y + c.size.h + 4 + NAME_H < AREA_TOP));
+        assert!(expanded.cells.iter().all(|c| c.loc.y + c.size.h + 4 + NAME_H < area_top()));
         assert!(expanded.plus.is_some_and(|p| expanded.cells.iter().all(|c| !c.overlaps(p))));
         assert_eq!(bar(output, 3, false, false).plus, None, "a fixed count has no +");
+    }
+
+    #[test]
+    fn bar_text_grows_with_text_size() {
+        let output = Size::from((1280, 800));
+        let at = |k, expanded| crate::text::with_scale(k, || (bar(output, 3, expanded, true), area_top()));
+        assert_eq!(at(1.0, false), (bar(output, 3, false, true), area_top()));
+        let ((one, _), (big, _)) = (at(1.0, false), at(1.5, false));
+        // Callout (15 px lines) at 1.5 fits the pill; the pills and their + grow, still apart and on screen.
+        assert_eq!(big.cells[0].size, Size::from((180, 36)));
+        assert!(big.cells[0].size.w > one.cells[0].size.w && big.cells.windows(2).all(|c| !c[0].overlaps(c[1])));
+        assert!(big.plus.is_some_and(|p| p.size.h == 36 && p.loc.x + p.size.w <= 1280 && big.cells.iter().all(|c| !c.overlaps(p))));
+        // Expanded: the thumbnails keep their size, the names under them grow and windows start below them.
+        let (big, top) = at(1.5, true);
+        assert_eq!(big.cells[0].size, Size::from((153, THUMB_H)));
+        assert!(big.cells.iter().all(|c| c.loc.y + c.size.h + 4 + 24 < top));
     }
 
     #[test]

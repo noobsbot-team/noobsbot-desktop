@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     mission::{NAME_H, Overview, close_button},
-    text::{Style, Text},
+    text::{Style, Text, ts},
     wm::Rect,
 };
 
@@ -92,15 +92,15 @@ impl MissionView {
         let mut pieces = Vec::new();
         let mut rects = Vec::new();
         for (cell, name) in bar.cells.iter().zip(&overview.names) {
-            let rect = if bar.expanded { Rectangle::new((cell.loc.x, cell.loc.y + cell.size.h + 4).into(), (cell.size.w, NAME_H).into()) } else { *cell };
+            let rect = if bar.expanded { Rectangle::new((cell.loc.x, cell.loc.y + cell.size.h + 4).into(), (cell.size.w, ts(NAME_H)).into()) } else { *cell };
             pieces.push(text.label(name, callout, (rect.size.w - 8).max(0) as u32, scale));
             rects.push(rect);
         }
         let title = overview.hover.as_ref().map(|(i, title)| {
             let thumb = overview.thumbs[*i].to;
             let label = text.label(title, Style { size: 13, line_height: 16, ..callout }, (thumb.size.w.max(120) - 24) as u32, scale);
-            let w = (f64::from(label.width) / scale).round() as i32 + 24;
-            let pill = Rectangle::new((thumb.loc.x + (thumb.size.w - w) / 2, thumb.loc.y + thumb.size.h + 8).into(), (w, 24).into());
+            let w = (f64::from(label.width) / scale).round() as i32 + ts(24);
+            let pill = Rectangle::new((thumb.loc.x + (thumb.size.w - w) / 2, thumb.loc.y + thumb.size.h + 8).into(), (w, ts(24)).into());
             pieces.push(label);
             rects.push(pill);
             (thumb, pill)
@@ -134,7 +134,7 @@ impl MissionView {
         front.push((a, hud, f64::from(a.size.w) / 2.0, true, 0));
         if let Some((thumb, pill)) = title {
             front.push((thumb, rgba(accent, 1.0), WINDOW_RADIUS, false, 3));
-            front.push((pill, hud, 12.0, true, 0));
+            front.push((pill, hud, f64::from(pill.size.h) / 2.0, true, 0));
         }
         out.extend(shapes(&mut self.front, shaders, front, dark, scale).iter().cloned().map(SceneElement::Shader));
 
