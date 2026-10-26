@@ -427,6 +427,8 @@ impl State {
         render::motion::appear(entrances.osd(), renderer, &mut bar, mark, scale, now);
         let reduce = appearance.reduce_motion;
         entrances.fade_osd.track(renderer, &mut bar, mark, false, false, reduce, scale, now, &mut self.anim_until);
+        // Locked: the OSD shows over the lock screen (E8.7), everything else in `bar` is dropped below.
+        let locked_osd: Vec<SceneElement> = if self.lock.is_some() { bar.drain(mark..).collect() } else { Vec::new() };
         let hour24 = self.config.clock.format.hour24;
         let mark = bar.len();
         // Only the new card slides in, drawn on its own; the cards under it are already there.
@@ -760,7 +762,8 @@ impl State {
         // ponytail: the desktop's elements above are still built (cheap, and only on a redraw); skip them if a
         // locked frame ever shows up in a profile.
         if let (Some(lock), Some(geo)) = (&self.lock, self.space.output_geometry(output)) {
-            elements = match lock.client_surface() {
+            elements = locked_osd;
+            elements.extend(match lock.client_surface() {
                 Some(surface) => smithay::backend::renderer::element::surface::render_elements_from_surface_tree(
                     renderer,
                     surface.wl_surface(),
@@ -784,7 +787,7 @@ impl State {
                     };
                     lock_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, &content, geo.size, dark, accent, appearance.glass_opacity, scale)
                 }
-            };
+            });
             elements.extend(wallpaper.element(shaders, geo.size, scale, dark));
         }
         // Idle (E6.5): dimmed, or black while the screen is off.
