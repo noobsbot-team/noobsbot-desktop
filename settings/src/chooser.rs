@@ -12,6 +12,7 @@ const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 /// A `filters` entry: its name and `(0, glob)` or `(1, MIME type)` patterns.
 pub type Filter = (&'static str, &'static [(u32, &'static str)]);
 pub const IMAGES: Filter = ("Images", &[(1, "image/png"), (1, "image/jpeg")]);
+pub const CALENDARS: Filter = ("Calendars", &[(0, "*.ics")]);
 pub const WIREGUARD: Filter = ("WireGuard configuration", &[(0, "*.conf")]);
 
 /// What the chooser answered: `Ok(Some(path))` chosen, `Ok(None)` cancelled, `Err(())` no portal (or it failed), so

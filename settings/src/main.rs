@@ -432,6 +432,13 @@ impl App {
                     };
                     self.save(gallery::FOLDERS, folders.as_str());
                     return Task::perform(gallery::load(folders), Message::Thumbs);
+                } else if key == pages::CALENDAR_ADD {
+                    let value = value.trim();
+                    let mut files: Vec<String> = self.config.list("calendar.files").into_iter().map(str::to_owned).collect();
+                    if !value.is_empty() && !files.iter().any(|f| f == value) {
+                        files.push(value.to_owned());
+                        self.save("calendar.files", files.into_iter().collect::<toml_edit::Array>());
+                    }
                 } else if let Some(path) = key.strip_prefix(system::RENAME) {
                     return Task::perform(system::rename_device(path.to_owned(), value.trim().to_owned()), Message::Acted);
                 } else if let Some(name) = key.strip_prefix("display.custom_scale.") {
@@ -588,6 +595,7 @@ impl App {
                 let (title, directory, filter) = match key {
                     users::PICTURE_FILE => ("Choose a Picture", false, Some(chooser::IMAGES)),
                     gallery::ADD => ("Add a Wallpaper Folder", true, None),
+                    pages::CALENDAR_ADD => ("Add a Calendar", false, Some(chooser::CALENDARS)),
                     _ => ("Import WireGuard", false, Some(chooser::WIREGUARD)),
                 };
                 return Task::perform(chooser::open(title, directory, filter), move |chosen| Message::Chosen(key, chosen));
