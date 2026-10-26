@@ -365,6 +365,43 @@ pub async fn set_volume(output: bool, percent: u8) -> Status {
     read().await
 }
 
+/// The freedesktop sound theme's sounds, the ones the desktop can always play: (name, label), by label.
+pub static SOUNDS: std::sync::LazyLock<Vec<(String, String)>> = std::sync::LazyLock::new(|| {
+    let files = std::fs::read_dir(SOUND_DIR).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    sounds(files)
+});
+
+const SOUND_DIR: &str = "/usr/share/sounds/freedesktop/stereo";
+
+/// `dialog-warning.oga` → ("dialog-warning", "Dialog warning"); test tones and channel checks left out.
+fn sounds(files: Vec<String>) -> Vec<(String, String)> {
+    let mut out: Vec<_> = files
+        .into_iter()
+        .filter_map(|file| Some(file.strip_suffix(".oga")?.to_owned()))
+        .filter(|name| !name.is_empty() && !name.starts_with("audio-channel-") && name != "audio-test-signal")
+        .map(|name| {
+            let mut label = name.replace(['-', '_'], " ");
+            if let Some(first) = label.get_mut(..1) {
+                first.make_ascii_uppercase();
+            }
+            (name, label)
+        })
+        .collect();
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out
+}
+
+/// Plays theme sound `name` as the desktop does: the sound theme's, else the freedesktop file straight to PipeWire.
+pub fn play(name: &str) {
+    let name = name.to_owned();
+    std::thread::spawn(move || {
+        let quiet = |c: &mut Command| c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+        if !quiet(Command::new("canberra-gtk-play").args(["-i", &name])) {
+            quiet(Command::new("pw-play").arg(format!("{SOUND_DIR}/{name}.oga")));
+        }
+    });
+}
+
 /// The default microphone's level, 0 … 1, twenty times a second while subscribed: `pw-record` to a pipe, ended
 /// when the subscription is.
 pub fn level() -> impl iced::futures::Stream<Item = f32> {
@@ -548,6 +585,13 @@ pub fn user() -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_sounds() {
+        let files = [".oga", "message.oga", "dialog-warning.oga", "audio-channel-front-left.oga", "audio-test-signal.oga", "index.theme", "bell.oga"];
+        let names: Vec<_> = sounds(files.map(String::from).to_vec()).into_iter().map(|(n, l)| format!("{n}={l}")).collect();
+        assert_eq!(names, ["bell=Bell", "dialog-warning=Dialog warning", "message=Message"]);
+    }
 
     #[test]
     fn meter_is_peak_decibels() {

@@ -187,6 +187,8 @@ pub enum Kind {
     XkbOption(fn(&str) -> bool, &'static [(&'static str, &'static str)]),
     /// A whole number from a few steps: value written, label shown.
     Steps(&'static [(i64, &'static str)]),
+    /// A sound from the system's sound theme, with a button that plays it.
+    Sound,
 }
 
 pub struct Setting {
@@ -204,6 +206,8 @@ const fn s(page: Page, group: &'static str, key: &'static str, label: &'static s
 
 /// Every setting in `config.toml` (`data/config.toml`), in page order.
 pub const SETTINGS: &[Setting] = &[
+    s(Page::Sound, "Sound Effects", "sound.alert", "Alert sound", "Played when an app rings the bell", Kind::Sound),
+    s(Page::Sound, "Sound Effects", "sound.ui_sounds", "Play user interface sound effects", "Screenshots, emptying the Trash, volume keys", Kind::Toggle),
     s(
         Page::Appearance,
         "",
@@ -604,6 +608,20 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
             swatches.into()
         }
         Kind::Zone => zone_picker(app, key),
+        Kind::Sound => {
+            let current = app.config.str(key);
+            let sounds = &*crate::system::SOUNDS;
+            let selected = sounds.iter().find(|s| s.0 == current).map(|(v, l)| Labelled(v, l));
+            let pick = pick_list(sounds.iter().map(|(v, l)| Labelled(v, l)).collect::<Vec<_>>(), selected, |c: Labelled| Message::Sound(c.0, true));
+            let play = selected.map(|s| Message::Sound(s.0, false));
+            row![
+                pick.placeholder(current).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()),
+                button(text("Play").size(12)).padding([3, 10]).style(t.push(false)).on_press_maybe(play),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into()
+        }
         Kind::XkbOption(family, choices) => {
             let options = app.config.str(key);
             let current = crate::xkb::current(options, family);

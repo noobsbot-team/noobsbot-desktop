@@ -198,6 +198,8 @@ pub enum Message {
     Shortcuts(shortcuts::Msg),
     /// The microphone's level, 0 … 1.
     Level(f32),
+    /// A theme sound plays; `true`: it becomes the alert sound.
+    Sound(&'static str, bool),
 }
 
 impl App {
@@ -312,6 +314,12 @@ impl App {
             }
             Message::Status(status) => self.status = status,
             Message::Level(level) => self.level = level,
+            Message::Sound(name, save) => {
+                if save {
+                    self.save("sound.alert", name);
+                }
+                system::play(name);
+            }
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Wallpaper(path) => {
                 self.save("appearance.wallpaper", path.as_str());
