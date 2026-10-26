@@ -166,6 +166,9 @@ pub fn squircle<'a>(page: Page, size: f32) -> Element<'a, Message> {
     container(glyph).center(size).style(Tokens::squircle(crate::style::rgb(color), size * 0.24)).into()
 }
 
+/// Off or a wait, for dwell and hold clicks.
+const DWELL: &[(i64, &str)] = &[(0, "Off"), (500, "0.5 s"), (1000, "1 s"), (1500, "1.5 s"), (2000, "2 s")];
+
 #[derive(Clone, Copy, Debug)]
 pub enum Kind {
     Toggle,
@@ -258,6 +261,23 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Slider { min: 0.0, max: 96.0, step: 8.0 },
     ),
     s(Page::Accessibility, "Display", "appearance.reduce_motion", "Reduce motion", "Windows, menus and banners crossfade instead of moving", Kind::Toggle),
+    s(Page::Accessibility, "Pointer", "accessibility.shake_to_find", "Shake pointer to locate", "Shake it quickly and it grows for a moment", Kind::Toggle),
+    s(
+        Page::Accessibility,
+        "Pointer",
+        "accessibility.dwell_click_ms",
+        "Dwell click",
+        "Resting the pointer clicks; a ring shrinks while it waits",
+        Kind::Steps(DWELL),
+    ),
+    s(
+        Page::Accessibility,
+        "Pointer",
+        "accessibility.hold_secondary_ms",
+        "Hold for secondary click",
+        "Holding the primary button still gives a right click",
+        Kind::Steps(DWELL),
+    ),
     s(Page::Appearance, "Desktop", "desktop.icons", "Show Desktop folder on the wallpaper", "", Kind::Toggle),
     s(Page::Appearance, "Apps", "appearance.theme_apps", "Theme Qt apps", "Dark Mode also rewrites the Noobsbot Glass theme files", Kind::Toggle),
     s(Page::Displays, "Night Light", "night_light.enabled", "Night Light", "Warmer colours on a schedule; screenshots stay true", Kind::Toggle),
