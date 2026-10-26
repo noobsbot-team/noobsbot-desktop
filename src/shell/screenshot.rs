@@ -22,6 +22,7 @@ use smithay::{
 use crate::{
     shell::{Anchor, Row, menu_layout},
     state::State,
+    text::ts,
     wm::Rect,
 };
 
@@ -132,6 +133,7 @@ const MODE_W: i32 = 44;
 const MODE_H: i32 = 36;
 const GAP: i32 = 4;
 const DIVIDER_GAP: i32 = 8;
+/// `OPTIONS_W`, `CAPTURE_W`, `BUTTON_H` and the Options menu's width grow with the text size (`text::ts`).
 const OPTIONS_W: i32 = 84;
 const CAPTURE_W: i32 = 80;
 const BUTTON_H: i32 = 28;
@@ -147,7 +149,8 @@ const OPTIONS_MENU_W: i32 = 210;
 
 pub fn toolbar(output: Size<i32, Logical>) -> Toolbar {
     let divider = DIVIDER_GAP * 2 + 1;
-    let w = PAD + CLOSE + divider + 3 * MODE_W + 2 * GAP + divider + MODE_W + divider + OPTIONS_W + GAP + CAPTURE_W + PAD;
+    let (options_w, capture_w, button_h) = (ts(OPTIONS_W), ts(CAPTURE_W), ts(BUTTON_H));
+    let w = PAD + CLOSE + divider + 3 * MODE_W + 2 * GAP + divider + MODE_W + divider + options_w + GAP + capture_w + PAD;
     let rect = Rectangle::new(((output.w - w) / 2, (output.h - BOTTOM - BAR_H).max(0)).into(), (w, BAR_H).into());
     let y = rect.loc.y;
     let mut x = rect.loc.x + PAD;
@@ -173,9 +176,9 @@ pub fn toolbar(output: Size<i32, Logical>) -> Toolbar {
     let second = line(&mut take);
     let record = take(MODE_W, MODE_H);
     let third = line(&mut take);
-    let options = take(OPTIONS_W, BUTTON_H);
+    let options = take(options_w, button_h);
     take(GAP, 0);
-    let capture = take(CAPTURE_W, BUTTON_H);
+    let capture = take(capture_w, button_h);
     Toolbar { rect, close, modes: [screen, window, region], record, options, capture, dividers: [first, second, third] }
 }
 
@@ -183,7 +186,7 @@ pub fn toolbar(output: Size<i32, Logical>) -> Toolbar {
 pub fn options_menu(bar: &Toolbar, output: Size<i32, Logical>) -> (Rect, Vec<Rect>) {
     let rows: Vec<Option<Row>> = OPTION_ROWS.iter().map(|r| r.map(|label| Row { sub: Vec::new(), label: label.into(), shortcut: "", action: None })).collect();
     let at = (bar.options.loc.x + bar.options.size.w / 2, bar.rect.loc.y).into();
-    menu_layout(Anchor::Above(at), output, OPTIONS_MENU_W, &rows, 0)
+    menu_layout(Anchor::Above(at), output, ts(OPTIONS_MENU_W), &rows, 0)
 }
 
 /// The rectangle between two drag points, at least 1 px.
@@ -669,6 +672,18 @@ mod tests {
         // The menu opens above the bar.
         let (menu, rows) = options_menu(&bar, (1280, 800).into());
         assert!(menu.loc.y + menu.size.h <= bar.rect.loc.y && rows.len() == OPTION_ROWS.len());
+    }
+
+    #[test]
+    fn toolbar_grows_with_text_size() {
+        let at = |k| crate::text::with_scale(k, || (toolbar((1280, 800).into()), options_menu(&toolbar((1280, 800).into()), (1280, 800).into())));
+        let (one, big) = (at(1.0), at(1.5));
+        assert_eq!(one.0, toolbar((1280, 800).into()), "1.0 is the default");
+        assert_eq!((one.1.0.size.w, big.1.0.size.w), (210, 315), "the Options menu");
+        assert_eq!((big.0.options.size, big.0.capture.size), ((126, 42).into(), (120, 42).into()));
+        let (bar, (menu, _)) = big;
+        assert!([bar.options, bar.capture].iter().all(|p| bar.rect.contains_rect(*p)) && bar.options.loc.x + bar.options.size.w < bar.capture.loc.x);
+        assert!(menu.loc.y + menu.size.h <= bar.rect.loc.y && (1280 - (bar.rect.loc.x * 2 + bar.rect.size.w)).abs() <= 1);
     }
 
     #[test]
