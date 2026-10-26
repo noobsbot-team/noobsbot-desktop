@@ -1,8 +1,8 @@
 //! Touchpad system gestures (E5.3) and hot corners (E5.4). The recogniser and the corner logic are pure; the `State`
 //! glue at the bottom feeds them libinput's events and the pointer.
 //!
-//! The Space slide follows a sideways swipe 1:1 and springs on from where the fingers let go (`Live`); Launchpad pages
-//! follow too. Reduce motion: the action happens on release instead.
+//! The Space slide follows a sideways swipe 1:1, and Mission Control a swipe up or down; both spring on from where the
+//! fingers let go (`Live`). Launchpad pages follow too. Reduce motion: the action happens on release instead.
 
 use std::time::{Duration, Instant};
 
@@ -67,6 +67,8 @@ pub fn rubber(x: f64) -> f64 {
 pub enum Live {
     /// The Spaces under this key, slid over a screen this wide.
     Space(String, f64),
+    /// Mission Control opening, or (`true`) closing.
+    Mission(bool),
 }
 
 /// One system gesture in progress: begin → update* → end.
@@ -275,13 +277,14 @@ impl State {
         }
         match self.gesture.as_ref().and_then(|t| t.live.clone()) {
             Some(Live::Space(key, width)) => self.swipe_space(&key, -dx / width),
+            Some(Live::Mission(closing)) => self.mission_hold(f64::from(u8::from(closing)) - dy / FULL),
             None => {}
         }
         true
     }
 
     /// What follows a swipe that just turned out sideways (or up and down, `dy` so far): nothing under reduce motion.
-    fn live(&self, horizontal: bool, _dy: f64) -> Option<Live> {
+    fn live(&self, horizontal: bool, dy: f64) -> Option<Live> {
         if self.config.appearance.reduce_motion {
             return None;
         }
@@ -291,7 +294,12 @@ impl State {
             let width = self.space.output_geometry(&output)?.size.w;
             return Some(Live::Space(self.output_key(&output), f64::from(width.max(1))));
         }
-        None
+        // Up opens Mission Control, down closes it (or App Exposé); the rest acts on release.
+        match self.mission.as_ref().map(|m| m.progress.target() == 1.0) {
+            None if !horizontal && dy < 0.0 => Some(Live::Mission(false)),
+            Some(true) if !horizontal && dy > 0.0 => Some(Live::Mission(true)),
+            _ => None,
+        }
     }
 
     /// The end of our gesture: its action; `false`: not ours, forward it.
@@ -300,11 +308,17 @@ impl State {
         let Some(tracker) = self.gesture.take() else { return locked };
         // Whatever followed the fingers springs on or back; locked meanwhile, back.
         let cancelled = cancelled || locked;
-        let (dx, _) = tracker.delta();
-        let (vx, _) = tracker.speed(time);
+        let (dx, dy) = tracker.delta();
+        let (vx, vy) = tracker.speed(time);
         match tracker.live {
             Some(Live::Space(key, width)) => {
                 self.swipe_space_end(&key, -dx / width, -vx * 1000.0 / width, !cancelled && commits(dx, width, vx));
+                return true;
+            }
+            Some(Live::Mission(closing)) => {
+                // Only a swipe the way it started commits.
+                let commit = !cancelled && (dy < 0.0) != closing && commits(dy, FULL, vy);
+                self.mission_let_go(commit != closing, -vy * 1000.0 / FULL);
                 return true;
             }
             None if locked => return true,
