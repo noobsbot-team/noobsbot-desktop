@@ -98,6 +98,8 @@ pub struct Screenshots {
     pub output: Option<smithay::output::Output>,
     /// Read from that display's next frame, relative to it, logical px.
     pub pending: Option<(smithay::output::Output, Rect)>,
+    /// The display the last shot was of, where its thumbnail shows.
+    pub thumb_output: Option<smithay::output::Output>,
     /// The floating thumbnail and the file it opens, until its 5 s are up.
     pub thumbnail: Option<(Thumb, PathBuf)>,
     thumb_timer: Option<RegistrationToken>,
@@ -566,6 +568,7 @@ impl State {
         self.screenshots.last_mode = if toolbar { mode } else { self.screenshots.last_mode };
         let Some(output) = self.overlay_output(self.screenshots.output.as_ref()) else { return };
         let size = self.shot_size();
+        self.screenshots.thumb_output = Some(output.clone());
         let rect = rect.and_then(|r| r.intersection(Rectangle::from_size(size))).unwrap_or_else(|| Rectangle::from_size(size));
         // The thumbnail of the last one is not in the next.
         self.hide_thumbnail();
@@ -660,29 +663,35 @@ impl State {
         }
     }
 
-    /// The thumbnail's rect, output-relative.
+    /// The display the thumbnail shows on: the shot's, or the pointer's while it is dragged.
+    pub fn thumbnail_output(&self) -> Option<smithay::output::Output> {
+        if self.screenshots.dragging { self.pointer_output() } else { self.overlay_output(self.screenshots.thumb_output.as_ref()) }
+    }
+
+    /// The thumbnail's rect, relative to `thumbnail_output`.
     pub fn thumbnail_rect(&self) -> Option<Rect> {
         let ((w, h), _) = self.screenshots.thumbnail.as_ref().map(|(t, p)| (t.size, p))?;
-        let size = self.output_size();
+        let size = self.overlay_geometry(self.thumbnail_output().as_ref())?.size;
         let th = (i64::from(THUMB_W) * i64::from(h) / i64::from(w.max(1))) as i32;
         Some(Rectangle::new((size.w - THUMB_MARGIN - THUMB_W, size.h - THUMB_MARGIN - th).into(), (THUMB_W, th).into()))
     }
 
-    /// The thumbnail's rect (output-relative) and opacity; while dragged it is half size and centred on the pointer.
+    /// The thumbnail's rect (relative to `thumbnail_output`) and opacity; while dragged it is half size and centred
+    /// on the pointer.
     pub fn thumbnail_frame(&self) -> Option<(Rect, Thumb, f32)> {
         let rect = self.thumbnail_rect()?;
         let thumb = self.screenshots.thumbnail.as_ref()?.0.clone();
         if !self.screenshots.dragging {
             return Some((rect, thumb, 1.0));
         }
-        let at = self.to_output(self.seat.get_pointer()?.current_location()).to_i32_round();
+        let at = self.to_display(self.thumbnail_output().as_ref(), self.to_output(self.seat.get_pointer()?.current_location())).to_i32_round();
         let size = rect.size.downscale(2);
         Some((Rectangle::new(at - Point::from((size.w / 2, size.h / 2)), size), thumb, 0.6))
     }
 
     /// A press on the thumbnail: a click (see `thumbnail_release`) opens the screenshot, a drag drops it into an app.
     fn thumbnail_press(&mut self, at: Point<f64, Logical>, left: bool) -> bool {
-        if !self.thumbnail_rect().is_some_and(|r| r.to_f64().contains(at)) {
+        if !self.thumbnail_rect().is_some_and(|r| r.to_f64().contains(self.to_display(self.thumbnail_output().as_ref(), at))) {
             return false;
         }
         self.screenshots.thumb_press = left.then_some(at);
