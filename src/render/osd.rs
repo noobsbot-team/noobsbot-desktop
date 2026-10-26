@@ -13,7 +13,7 @@ use super::{
 use crate::{
     shell::{self, Osd},
     symbols::{Symbols, Weight},
-    text::{Style, Text},
+    text::{Style, Text, ts},
     wm::Rect,
 };
 
@@ -52,7 +52,9 @@ impl OsdPopover {
         let (x, y, h) = (rect.loc.x, rect.loc.y, rect.size.h);
         let symbol = Rectangle::new((x + PAD, y + (h - SYMBOL) / 2).into(), (SYMBOL, SYMBOL).into());
         let content_x = x + PAD + SYMBOL + GAP;
-        let value = Rectangle::new((x + rect.size.w - PAD - VALUE, y).into(), (VALUE, h).into());
+        // The pill's 48 px hold a line of text up to 2×; only the value's column has to widen with it.
+        let value_w = ts(VALUE);
+        let value = Rectangle::new((x + rect.size.w - PAD - value_w, y).into(), (value_w, h).into());
         let track = Rectangle::new((content_x, y + (h - BAR_H) / 2).into(), (value.loc.x - GAP - content_x, BAR_H).into());
 
         let key = (rect, osd.level, dark, accent, glass_opacity.to_bits(), scale.to_bits());
@@ -81,7 +83,7 @@ impl OsdPopover {
         let body = Style { size: 13, line_height: 16, weight: 400, color, tabular: true };
         let (words, place) = match (osd.level, &osd.text) {
             (Some(level), _) => (level.to_string(), value),
-            (None, text) => (text.clone().unwrap_or_default(), Rectangle::new((content_x, y).into(), (value.loc.x + VALUE - content_x, h).into())),
+            (None, text) => (text.clone().unwrap_or_default(), Rectangle::new((content_x, y).into(), (value.loc.x + value_w - content_x, h).into())),
         };
         let line = text.label(&words, body, place.size.w as u32, scale);
         // The value is right-aligned, a line of text left-aligned.

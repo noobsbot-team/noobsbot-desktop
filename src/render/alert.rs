@@ -1,4 +1,4 @@
-//! Alerts (D8): `sheet` glass, 260 px wide, radius 12, centred on the output; the system icon at 64 px, Title 2 and
+//! Alerts (D8): `sheet` glass, 260 px wide (growing with the text size), radius 12, centred on the output; the system icon at 64 px, Title 2 and
 //! Body centred, a text field when it asks for one (Wi-Fi password), then Cancel and the default (accent) button
 //! side by side. A power alert has a checkbox above the buttons: reopen windows at the next login (E8.8).
 
@@ -17,14 +17,13 @@ use super::{
 use crate::{
     shell::alert::{Alert, Button, Kind},
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     ui::field::TextField,
     wm::Rect,
 };
 
 const WIDTH: i32 = 260;
 const PAD: i32 = 20;
-const INNER: i32 = WIDTH - 2 * PAD;
 const ICON: i32 = 64;
 const BUTTON_H: i32 = 28;
 const BUTTON_GAP: i32 = 8;
@@ -41,8 +40,15 @@ const MARGIN: i32 = 40;
 /// Body lines that leave the buttons on a screen `output_h` tall, under a `title_h`-tall title (and a field):
 /// the text is ellipsised past that.
 fn body_lines(output_h: i32, title_h: i32, field_h: i32) -> u8 {
-    let fixed = 2 * MARGIN + PAD + ICON + 12 + title_h + 8 + field_h + PAD + BUTTON_H + PAD;
-    ((output_h - fixed) / BODY_LINE).clamp(1, i32::from(u8::MAX)) as u8
+    let fixed = 2 * MARGIN + PAD + ICON + 12 + title_h + 8 + field_h + PAD + ts(BUTTON_H) + PAD;
+    ((output_h - fixed) / ts(BODY_LINE)).clamp(1, i32::from(u8::MAX)) as u8
+}
+
+/// The sheet's width, the width inside its padding, and the button and field heights: they grow with the text
+/// size (E8.4); the icon and paddings stay.
+fn sizes() -> (i32, i32, i32, i32) {
+    let width = ts(WIDTH);
+    (width, width - 2 * PAD, ts(BUTTON_H), ts(FIELD_H))
 }
 
 /// What the glass depends on: sheet and confirm-button rects, the checkbox's state, dark, accent, opacity, scale.
@@ -99,36 +105,37 @@ impl AlertSheet {
         let title2 = Style { size: 17, line_height: 22, weight: 600, color: label, tabular: false };
         let body = Style { size: 13, line_height: 16, weight: 400, color: label, tabular: false };
         let logical = |px: u32| (f64::from(px) / scale).round() as i32;
-        let field_h = if alert.field().is_some() { 12 + FIELD_H } else { 0 };
-        let title = text.centred(&alert.title(), title2, INNER as u32, TITLE_LINES, scale);
+        let (width, inner, button_h, field_line) = sizes();
+        let field_h = if alert.field().is_some() { 12 + field_line } else { 0 };
+        let title = text.centred(&alert.title(), title2, inner as u32, TITLE_LINES, scale);
         let title_h = logical(title.height);
-        let words = text.centred(&alert.body(Instant::now()), body, INNER as u32, body_lines(output.h, title_h, field_h), scale);
+        let words = text.centred(&alert.body(Instant::now()), body, inner as u32, body_lines(output.h, title_h, field_h), scale);
         let body_h = logical(words.height);
         let reopen = matches!(alert.kind, Kind::Power(_)).then_some(reopen);
         let small = Style { size: 11, line_height: 14, ..body };
         let check_label =
-            text.wrapped(if reopen.is_some() { "Reopen windows when logging back in" } else { "" }, small, (INNER - CHECK - CHECK_GAP) as u32, 2, scale);
+            text.wrapped(if reopen.is_some() { "Reopen windows when logging back in" } else { "" }, small, (inner - CHECK - CHECK_GAP) as u32, 2, scale);
         let check_h = if reopen.is_some() { 12 + logical(check_label.height).max(CHECK) } else { 0 };
 
-        let height = PAD + ICON + 12 + title_h + 8 + body_h + field_h + check_h + PAD + BUTTON_H + PAD;
-        let x = (output.w - WIDTH) / 2;
+        let height = PAD + ICON + 12 + title_h + 8 + body_h + field_h + check_h + PAD + button_h + PAD;
+        let x = (output.w - width) / 2;
         let y = ((output.h - height) / 2).max(0);
-        let rect = Rectangle::new((x, y).into(), (WIDTH, height).into());
-        let icon = Rectangle::new((x + (WIDTH - ICON) / 2, y + PAD).into(), (ICON, ICON).into());
-        let title_rect = Rectangle::new((x + PAD, icon.loc.y + ICON + 12).into(), (INNER, title_h).into());
-        let body_rect = Rectangle::new((x + PAD, title_rect.loc.y + title_h + 8).into(), (INNER, body_h).into());
-        let button_w = if alert.cancellable() { (INNER - BUTTON_GAP) / 2 } else { INNER };
+        let rect = Rectangle::new((x, y).into(), (width, height).into());
+        let icon = Rectangle::new((x + (width - ICON) / 2, y + PAD).into(), (ICON, ICON).into());
+        let title_rect = Rectangle::new((x + PAD, icon.loc.y + ICON + 12).into(), (inner, title_h).into());
+        let body_rect = Rectangle::new((x + PAD, title_rect.loc.y + title_h + 8).into(), (inner, body_h).into());
+        let button_w = if alert.cancellable() { (inner - BUTTON_GAP) / 2 } else { inner };
         // Shaken sideways after a wrong password (polkit).
-        let field_rect = Rectangle::new((x + PAD + alert.shake().unwrap_or(0), body_rect.loc.y + body_h + 12).into(), (INNER, FIELD_H).into());
-        let check_row = Rectangle::new((x + PAD, body_rect.loc.y + body_h + field_h + 12).into(), (INNER, check_h - 12).into());
+        let field_rect = Rectangle::new((x + PAD + alert.shake().unwrap_or(0), body_rect.loc.y + body_h + 12).into(), (inner, field_line).into());
+        let check_row = Rectangle::new((x + PAD, body_rect.loc.y + body_h + field_h + 12).into(), (inner, check_h - 12).into());
         let check = Rectangle::new((check_row.loc.x, check_row.loc.y + (check_row.size.h - CHECK) / 2).into(), (CHECK, CHECK).into());
         let check_text = Rectangle::new(
             (check.loc.x + CHECK + CHECK_GAP, check_row.loc.y + (check_row.size.h - logical(check_label.height)) / 2).into(),
             (logical(check_label.width), logical(check_label.height)).into(),
         );
         let button_y = body_rect.loc.y + body_h + field_h + check_h + PAD;
-        let cancel = Rectangle::new((x + PAD, button_y).into(), (button_w, BUTTON_H).into());
-        let confirm = Rectangle::new((x + PAD + INNER - button_w, button_y).into(), (button_w, BUTTON_H).into());
+        let cancel = Rectangle::new((x + PAD, button_y).into(), (button_w, button_h).into());
+        let confirm = Rectangle::new((x + PAD + inner - button_w, button_y).into(), (button_w, button_h).into());
 
         let key = (rect, confirm, reopen, dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
@@ -209,5 +216,15 @@ mod tests {
         assert!(body_lines(768, 44, 12 + FIELD_H) < lines, "a field costs lines");
         assert_eq!(body_lines(200, 44, 0), 1, "never no lines at all");
         assert!(body_lines(2160, 22, 0) > 100, "a tall screen hardly limits it");
+    }
+
+    #[test]
+    fn the_sheet_grows_with_the_text_size() {
+        assert_eq!(sizes(), (WIDTH, WIDTH - 2 * PAD, BUTTON_H, FIELD_H));
+        let ((width, inner, button_h, field_h), lines) = crate::text::with_scale(1.5, || (sizes(), body_lines(768, 66, 12 + 33)));
+        // Body and button text are 24 px tall at 1.5, the field's 24 too.
+        assert!(width > WIDTH && inner == width - 2 * PAD && button_h >= 24 + 8 && field_h >= 24 + 8);
+        let fixed = 2 * MARGIN + PAD + ICON + 12 + 66 + 8 + 12 + field_h + PAD + button_h + PAD;
+        assert!(fixed + i32::from(lines) * 24 <= 768 && fixed + i32::from(lines + 1) * 24 > 768);
     }
 }
