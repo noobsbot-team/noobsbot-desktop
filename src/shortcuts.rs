@@ -190,6 +190,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("media", "play-pause") => Some(Action::Media(MediaAction::PlayPause)),
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
+        ("media", "stop") => Some(Action::Media(MediaAction::Stop)),
         ("notification-center", "") => Some(Action::NotificationCenter),
         ("spotlight", "") => Some(Action::Spotlight),
         ("emoji", "") => Some(Action::Emoji),
@@ -376,6 +377,7 @@ impl State {
                     MediaAction::PlayPause => Symbol::Play,
                     MediaAction::Next => Symbol::SkipForward,
                     MediaAction::Previous => Symbol::SkipBack,
+                    MediaAction::Stop => Symbol::Stop,
                 };
                 let osd = Osd { symbol, level: None, text: Some(now.title.clone()).filter(|t| !t.is_empty()) };
                 self.services.send(Command::Media { player: now.player.clone(), action: media });
@@ -589,6 +591,7 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioMicMute, false), Some(&Action::MicMute));
         assert_eq!(lookup(&table, &none, Keysym::XF86_MonBrightnessDown, false), Some(&Action::Brightness(false)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_AudioPlay, false), Some(&Action::Media(MediaAction::PlayPause)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_AudioStop, false), Some(&Action::Media(MediaAction::Stop)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
