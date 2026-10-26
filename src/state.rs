@@ -1079,6 +1079,13 @@ impl XdgShellHandler for State {
         }
     }
 
+    /// The app's own title bar was right-clicked: our window menu, at `location` on its surface.
+    fn show_window_menu(&mut self, surface: ToplevelSurface, _seat: WlSeat, _serial: Serial, location: Point<i32, Logical>) {
+        let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
+        let Some(origin) = self.space.element_location(&window).map(|l| l - window.geometry().loc) else { return };
+        self.open_window_menu(window, self.to_output((origin + location).to_f64()));
+    }
+
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         self.fill(&surface, xdg_toplevel::State::Maximized);
     }

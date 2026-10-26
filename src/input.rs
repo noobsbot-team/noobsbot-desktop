@@ -56,6 +56,8 @@ pub struct Zones {
     pub lights_hover: Option<Window>,
     /// `focus = "hover"`: the window the pointer rests on, focused when its timer fires.
     pub hover_focus: Option<(Window, smithay::reexports::calloop::RegistrationToken)>,
+    /// The window the window menu acts on, and where it opened (output-relative).
+    pub window_menu: Option<(Window, Point<i32, Logical>)>,
 }
 
 /// How long the pointer rests on a window before hover focus gives it the keyboard.
@@ -280,8 +282,12 @@ impl State {
                             self.start_resize(window, wm::nearest_corner(frame, location), start_data, serial);
                         } else if let Some((window, edges)) = zone.filter(|_| event.button_code() == BTN_LEFT) {
                             self.zone_press(window, edges, start_data, serial);
-                        } else if let Some((window, part)) = bar.filter(|_| event.button_code() == BTN_LEFT) {
-                            self.bar_press(window, part, start_data, serial);
+                        } else if let Some((window, part)) = bar {
+                            match event.button_code() {
+                                BTN_LEFT => self.bar_press(window, part, start_data, serial),
+                                BTN_RIGHT => self.open_window_menu(window, self.to_output(location)),
+                                _ => {}
+                            }
                         }
                     }
                 }

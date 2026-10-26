@@ -71,7 +71,7 @@ impl Popup {
             Popup::Menu(Menu::App) => BarItem::App,
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
             Popup::Menu(Menu::Input) => BarItem::Input,
-            Popup::Menu(Menu::Dock | Menu::Desktop | Menu::Drawer) => return None,
+            Popup::Menu(Menu::Dock | Menu::Desktop | Menu::Drawer | Menu::Window) => return None,
             Popup::Control => BarItem::ControlCenter,
         })
     }
@@ -109,6 +109,8 @@ pub enum Menu {
     Desktop,
     /// An app's right-click menu in the app drawer: `State::drawer_menu_rows`.
     Drawer,
+    /// A title bar's right-click menu (E8.5): `State::window_menu_rows`.
+    Window,
 }
 
 /// Where a menu opens: under the bar with its left edge at x, centred over (x, bottom) like the dock's, or with its
@@ -165,7 +167,7 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) 
         ],
         Menu::Tray(_) => tray.iter().map(|r| r.as_ref().and_then(|r| row(r.label.clone(), "", r.enabled.then_some(Action::TrayMenu(r.id))))).collect(),
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
-        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer => Vec::new(),
+        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window => Vec::new(),
     }
 }
 
@@ -399,6 +401,7 @@ impl State {
                     Menu::Input => self.input_menu_rows(),
                     Menu::Desktop => self.desktop_menu_rows(),
                     Menu::Drawer => self.drawer_menu_rows(),
+                    Menu::Window => self.window_menu_rows(),
                     _ => menu_rows(menu, "", tray, self.update_ready()),
                 };
                 if let Some(action) = index.and_then(|i| rows.into_iter().nth(i)).flatten().and_then(|row| row.action) {

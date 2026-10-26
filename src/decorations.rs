@@ -226,6 +226,114 @@ impl State {
     }
 }
 
+/// A row of the window menu (E8.5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Command {
+    Minimise,
+    Zoom,
+    Fill,
+    Center,
+    /// `TILES[n]`.
+    Tile(usize),
+    Fullscreen,
+    KeepOnTop,
+    /// Space n, from 0.
+    ToSpace(usize),
+    ToDisplay,
+    Close,
+}
+
+/// Move & Resize: a name and the work-area edges it tiles against.
+pub const TILES: [(&str, wm::Edges); 8] = {
+    const fn e(left: bool, right: bool, top: bool, bottom: bool) -> wm::Edges {
+        wm::Edges { left, right, top, bottom }
+    }
+    [
+        ("Left", e(true, false, false, false)),
+        ("Right", e(false, true, false, false)),
+        ("Top", e(false, false, true, false)),
+        ("Bottom", e(false, false, false, true)),
+        ("Top Left", e(true, false, true, false)),
+        ("Top Right", e(false, true, true, false)),
+        ("Bottom Left", e(true, false, false, true)),
+        ("Bottom Right", e(false, true, false, true)),
+    ]
+};
+
+/// The window menu: `full` (a full-screen window) greys what would move or resize it; Keep on Top ticked while
+/// `on_top`; `spaces` (name, can move there) and Next Display with more than one of `displays`.
+// ponytail: Move & Resize and Move to are inline sections under a greyed heading, since menus have no submenus yet.
+pub fn menu_rows(full: bool, on_top: bool, spaces: &[(String, bool)], displays: usize) -> Vec<Option<crate::shell::Row>> {
+    let row = |label: &str, shortcut, command: Option<Command>| {
+        Some(crate::shell::Row { label: label.to_owned(), shortcut, action: command.map(crate::shortcuts::Action::WindowMenu) })
+    };
+    let free = |command| (!full).then_some(command);
+    let mut rows = vec![
+        row("Minimize", "", free(Command::Minimise)),
+        row("Zoom", "", free(Command::Zoom)),
+        row("Fill", "", free(Command::Fill)),
+        row("Center", "", free(Command::Center)),
+        None,
+        row("Move & Resize", "", None),
+    ];
+    rows.extend(TILES.iter().enumerate().map(|(i, (name, ..))| row(&format!("    {name}"), "", free(Command::Tile(i)))));
+    rows.extend([
+        None,
+        row(if full { "Exit Full Screen" } else { "Enter Full Screen" }, "", Some(Command::Fullscreen)),
+        row("Keep on Top", if on_top { "✓" } else { "" }, Some(Command::KeepOnTop)),
+        None,
+        row("Move to", "", None),
+    ]);
+    rows.extend(spaces.iter().enumerate().map(|(i, (name, can))| row(&format!("    {name}"), "", (*can && !full).then_some(Command::ToSpace(i)))));
+    rows.push(row("    Next Display", "", (displays > 1).then_some(Command::ToDisplay)));
+    rows.extend([None, row("Close", "", Some(Command::Close))]);
+    rows
+}
+
+impl State {
+    /// Opens the window menu for `window` at `at` (output-relative): a right click on its title bar, or the app asked.
+    pub fn open_window_menu(&mut self, window: Window, at: Point<f64, Logical>) {
+        self.zones.window_menu = Some((window, at.to_i32_round()));
+        self.popup = Some(crate::shell::Popup::Menu(crate::shell::Menu::Window));
+        self.schedule_redraw();
+    }
+
+    pub fn window_menu_rows(&mut self) -> Vec<Option<crate::shell::Row>> {
+        let Some((window, _)) = self.zones.window_menu.clone() else { return Vec::new() };
+        let full = window.toplevel().is_some_and(|t| t.with_pending_state(|s| s.states.contains(xdg_toplevel::State::Fullscreen)));
+        let on_top = crate::state::on_top(&window);
+        let here = self.desk_of_window(&window);
+        let list = self.desks().map(|d| d.list.clone()).unwrap_or_default();
+        let (names, _) = self.desk_names();
+        // Not its own Space, nor another window's full-screen Space.
+        let spaces: Vec<_> = names.into_iter().enumerate().map(|(i, n)| (n, i != here && list.get(i).is_none_or(Option::is_none))).collect();
+        menu_rows(full, on_top, &spaces, self.space.outputs().count())
+    }
+
+    pub fn window_menu_anchor(&self) -> Option<crate::shell::Anchor> {
+        self.zones.window_menu.as_ref().map(|(_, at)| crate::shell::Anchor::At(*at))
+    }
+
+    pub fn window_menu_command(&mut self, command: Command) {
+        let Some((window, _)) = self.zones.window_menu.take() else { return };
+        if !smithay::utils::IsAlive::alive(&window) {
+            return;
+        }
+        match command {
+            Command::Minimise => self.minimise(vec![window]),
+            Command::Zoom => self.toggle_zoom(&window),
+            Command::Fill => self.tile_to(&window, wm::Edges::default()),
+            Command::Center => self.center(&window),
+            Command::Tile(n) => self.tile_to(&window, TILES[n].1),
+            Command::Fullscreen => self.toggle_fullscreen(&window),
+            Command::KeepOnTop => self.keep_on_top(&window),
+            Command::ToSpace(n) => self.move_window_to_space(&window, n),
+            Command::ToDisplay => self.move_to_display(&window, 1),
+            Command::Close => self.close_window(&window),
+        }
+    }
+}
+
 impl XdgDecorationHandler for State {
     /// Every app that can leave the title bar to us gets ours.
     fn new_decoration(&mut self, toplevel: ToplevelSurface) {
@@ -288,5 +396,27 @@ mod tests {
         assert_eq!(at(24.0, 14.0), Part::Title, "the gap between lights is title");
         assert_eq!(at(200.0, 14.0), Part::Title);
         assert_eq!(at(14.0, 2.0), Part::Title, "above the light");
+    }
+
+    #[test]
+    fn window_menu_rows() {
+        let spaces = [("Desktop 1".to_owned(), false), ("Desktop 2".to_owned(), true)];
+        let rows = menu_rows(false, true, &spaces, 1);
+        let find = |rows: &[Option<crate::shell::Row>], label: &str| rows.iter().flatten().find(|r| r.label.trim() == label).cloned().unwrap();
+        let labels: Vec<_> = rows.iter().map(|r| r.as_ref().map(|r| r.label.trim().to_owned())).collect();
+        assert_eq!(labels.len(), 24);
+        assert_eq!(labels[..6], [Some("Minimize".into()), Some("Zoom".into()), Some("Fill".into()), Some("Center".into()), None, Some("Move & Resize".into())]);
+        assert_eq!(labels.last(), Some(&Some("Close".to_owned())));
+        assert_eq!(find(&rows, "Keep on Top").shortcut, "✓");
+        assert_eq!(find(&menu_rows(false, false, &spaces, 1), "Keep on Top").shortcut, "");
+        let greyed =
+            |rows: &[Option<crate::shell::Row>]| rows.iter().flatten().filter(|r| r.action.is_none()).map(|r| r.label.trim().to_owned()).collect::<Vec<_>>();
+        assert_eq!(greyed(&rows), ["Move & Resize", "Move to", "Desktop 1", "Next Display"]);
+        assert_eq!(find(&rows, "Desktop 2").action, Some(crate::shortcuts::Action::WindowMenu(Command::ToSpace(1))));
+        assert!(find(&menu_rows(false, false, &spaces, 2), "Next Display").action.is_some());
+        // Full screen: only Exit Full Screen, Keep on Top, displays and Close stay.
+        let full = menu_rows(true, false, &spaces, 2);
+        assert!(find(&full, "Exit Full Screen").action.is_some());
+        assert_eq!(full.iter().flatten().filter(|r| r.action.is_some()).count(), 4);
     }
 }
