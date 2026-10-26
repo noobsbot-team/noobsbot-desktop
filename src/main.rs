@@ -18,6 +18,7 @@ mod events;
 mod frame;
 mod gestures;
 mod grabs;
+mod housekeep;
 mod ical;
 mod idle;
 mod ime;
