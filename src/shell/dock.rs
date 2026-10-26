@@ -520,8 +520,7 @@ impl State {
 
     /// `location` (first-output-relative, as the shell gets it) relative to `dock_output`'s display.
     pub fn to_dock(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
-        let origin = |o: Option<Output>| o.and_then(|o| self.space.output_geometry(&o)).map_or((0, 0).into(), |g| g.loc);
-        location + origin(self.space.outputs().next().cloned()).to_f64() - origin(self.dock_output()).to_f64()
+        self.to_display(self.dock_output().as_ref(), location)
     }
 
     /// The pointer moved to `location` (first-output-relative): onto another display's dock, that one becomes
