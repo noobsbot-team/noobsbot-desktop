@@ -329,9 +329,10 @@ longitude = 0.0
 units = "celsius"
 [widgets]
 # Widgets other apps show over D-Bus (org.noobsbot.Desktop.Widgets), by id. Notification Center shows them in this
-# order, then any not listed anywhere; ids in `desktop` show on the desktop instead.
+# order, then any not listed anywhere; ids in `desktop` show on the desktop instead, and ids in `hidden` nowhere.
 center = []
 desktop = []
+hidden = []
 [calendar]
 # Events for Notification Center's Up Next, the calendar's dots and reminders: .ics files, folders, or "dir/*.ics".
 # Saved changes show at once. (CalDAV and Google calendars: later.)

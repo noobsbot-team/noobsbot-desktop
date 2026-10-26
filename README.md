@@ -342,7 +342,7 @@ doesn't understand is skipped and reported in the journal.
 | `[notifications]` | Do Not Disturb, on a schedule too (`dnd_scheduled`, `dnd_from`, `dnd_until`), banners over full-screen windows (`full_screen`), previews always, when unlocked or never (`previews`) |
 | `[notification_apps]` | per app: banners, alerts, Notification Center only or off; sound, dock badge, kept in Notification Center, shown on the lock screen (`lock`) |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
-| `[widgets]` | order of other apps' widgets in Notification Center, and which go on the desktop instead |
+| `[widgets]` | order of other apps' widgets in Notification Center, which go on the desktop instead, and which are hidden |
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
 | `[desktop]` | desktop icons on or off, mounted drives among them (`show_drives`) |
@@ -480,7 +480,7 @@ busctl --user call org.noobsbot.Desktop /org/noobsbot/Desktop org.noobsbot.Deskt
 A widget belongs to the connection that set it and goes when that connection leaves the bus, so the one above shows
 only for a moment (`busctl` exits); a real app keeps its connection open. A click sends the `Activated(id)` signal
 to the owner alone. `[widgets]` in `config.toml` sets the order in Notification Center and puts chosen ids on the
-desktop instead. Each app may have up to eight widgets.
+desktop instead (or hides them); Settings ▸ Notifications edits it. Each app may have up to eight widgets.
 
 ## Known limits
 - Most Linux apps don't publish their menus, so the menu bar's app menu has only About, Hide and Quit.
