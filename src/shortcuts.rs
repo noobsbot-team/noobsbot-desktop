@@ -151,6 +151,11 @@ pub enum Action {
 }
 
 impl Action {
+    /// Steps again while its key is held (`repeat_every`).
+    pub fn held_repeats(&self) -> bool {
+        matches!(self, Action::Volume(_) | Action::VolumeFine(_) | Action::Brightness(_))
+    }
+
     /// Runs while locked (E8.7): sound, brightness, media, eject and the keyboard layout; nothing that shows the
     /// desktop or an app.
     pub fn while_locked(&self) -> bool {
@@ -172,6 +177,13 @@ impl Action {
 
 /// A volume or brightness key press, in percent (about 1/16 steps).
 const STEP: u8 = 6;
+/// Held volume and brightness keys step at most this many times a second.
+const HELD_RATE: i32 = 30;
+
+/// How often a held volume or brightness key steps at the keyboard's repeat `rate`; `None` when repeat is off.
+pub fn repeat_every(rate: i32) -> Option<std::time::Duration> {
+    (rate > 0).then(|| std::time::Duration::from_secs(1) / rate.min(HELD_RATE) as u32)
+}
 /// About a quarter of `STEP`.
 const FINE_STEP: u8 = 2;
 
@@ -478,7 +490,6 @@ impl State {
             Action::Layout(index) => self.switch_layout(index),
             Action::PreviousLayout => self.switch_layout(Some(crate::ime::step(self.layouts.active, self.layouts.list.len(), -1))),
             Action::InputMethod(name) => self.services.send(crate::services::Command::InputMethod(name)),
-            // ponytail: one step per press, no repeat while held.
             // Each changes the local copy at once, so presses faster than the service's echo still add up.
             Action::Volume(up) | Action::VolumeFine(up) => {
                 let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
@@ -490,7 +501,10 @@ impl State {
                 output.volume = step(output.volume, up, if matches!(action, Action::VolumeFine(_)) { FINE_STEP } else { STEP });
                 self.services.send(Command::Volume { output: true, percent: output.volume });
                 self.show_volume();
-                self.ui_sound("audio-volume-change");
+                // Once per press: a held key's steps (`repeat_action`, with `key_repeat` set) stay quiet.
+                if self.key_repeat.is_none() {
+                    self.ui_sound("audio-volume-change");
+                }
             }
             Action::Mute | Action::MicMute => {
                 let output = action == Action::Mute;
@@ -744,6 +758,15 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn held_keys_step_at_the_repeat_rate_up_to_30_a_second() {
+        use std::time::Duration;
+        assert_eq!(repeat_every(0), None);
+        assert_eq!(repeat_every(25), Some(Duration::from_millis(40)));
+        assert_eq!(repeat_every(30), repeat_every(100));
+        assert_eq!(repeat_every(100), Some(Duration::from_secs(1) / 30));
+    }
 
     fn mods(logo: bool, alt: bool, shift: bool) -> ModifiersState {
         ModifiersState { logo, alt, shift, ..Default::default() }
