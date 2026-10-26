@@ -468,7 +468,7 @@ impl State {
         let up_next = self.calendar_view(year, month, self.config.clock.week_start.into()).1.len();
         let widgets: Vec<bool> = self.shown_widgets(false).iter().map(|w| w.medium).collect();
         let (dnd, batteries, weather) = (self.config.notifications.dnd, self.batteries().len(), self.weather.is_some());
-        Some(center(&self.notifications, self.output_size(), dnd, rows, up_next, batteries, weather, &widgets, self.previews()))
+        Some(center(&self.notifications, self.popup_size(), dnd, rows, up_next, batteries, weather, &widgets, self.previews()))
     }
 
     /// Bodies shown: `[notifications] previews`, and whether the screen is locked.
@@ -635,6 +635,8 @@ impl State {
         match (id, close, action) {
             (None, ..) => {
                 let (year, month) = super::this_month();
+                // On the banners' display, the first.
+                self.bar_output = None;
                 self.popup = Some(Popup::Notifications { year, month });
                 self.schedule_redraw();
             }
@@ -684,16 +686,20 @@ impl State {
 
     /// The pointer at `location`: the card under it shows its ✕ and buttons, and a hovered banner's timer waits.
     pub fn notify_motion(&mut self, location: Point<f64, Logical>) {
+        let at = self.to_popup(location);
         let hovered = match self.center_layout() {
-            Some(center) if center.rect.to_f64().contains(location) => center
-                .groups
-                .iter()
-                .flat_map(|g| g.cards.iter().map(move |c| (c, g.plate)))
-                .find(|(c, plate)| {
-                    let grown = Rectangle::new(c.rect.loc - Point::from((6, 6)), c.rect.size + Size::from((6, 6)));
-                    center.visible(c.rect) && (grown.to_f64().contains(location) || plate.is_some_and(|p| p.to_f64().contains(location)))
-                })
-                .map(|(c, _)| c.id),
+            Some(center) if center.rect.to_f64().contains(at) => {
+                let location = at;
+                center
+                    .groups
+                    .iter()
+                    .flat_map(|g| g.cards.iter().map(move |c| (c, g.plate)))
+                    .find(|(c, plate)| {
+                        let grown = Rectangle::new(c.rect.loc - Point::from((6, 6)), c.rect.size + Size::from((6, 6)));
+                        center.visible(c.rect) && (grown.to_f64().contains(location) || plate.is_some_and(|p| p.to_f64().contains(location)))
+                    })
+                    .map(|(c, _)| c.id)
+            }
             Some(_) => None,
             None => {
                 let (cards, _) = self.banner_layout();
@@ -721,7 +727,7 @@ impl State {
     /// A scroll at `location`: scrolls Notification Center, or swipes a banner away. `true`: the shell took it.
     pub fn notify_scroll(&mut self, location: Point<f64, Logical>, dx: f64, dy: f64) -> bool {
         if let Some(center) = self.center_layout() {
-            if !center.rect.to_f64().contains(location) {
+            if !center.rect.to_f64().contains(self.to_popup(location)) {
                 return false;
             }
             let scroll = (self.notifications.scroll + dy.round() as i32).clamp(0, center.max_scroll);

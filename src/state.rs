@@ -191,6 +191,8 @@ pub struct State {
     pub symbols: crate::symbols::Symbols,
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
+    /// The display whose bar the popup hangs from (`State::popup_output`); `None`: the first.
+    pub bar_output: Option<smithay::output::Output>,
     /// The open menu's row whose submenu is open, while that menu is the popup.
     pub submenu: Option<(crate::shell::Popup, usize)>,
     /// The logo menu's Recent Items while it is open (`refresh_recent`).
@@ -535,6 +537,7 @@ impl State {
             disks: Default::default(),
             symbols: Default::default(),
             popup: None,
+            bar_output: None,
             osd: None,
             alert: None,
             alert_timer: None,
@@ -640,18 +643,13 @@ impl State {
         })
     }
 
-    /// The bar on `output`: the focused app's name only on its window's display, tray icons only on the first one.
-    // ponytail: the other displays' bars are drawn but take no clicks, as popups and hit tests live on the first
-    // output; per-display popups need the shell's caches per output.
+    /// The bar on `output`: the focused app's name only on its window's display.
     pub fn bar_content(&self, output: &smithay::output::Output) -> Option<crate::render::menubar::Content> {
         let mut content = self.menu_bar()?;
         let first = self.space.outputs().next() == Some(output);
         let on = self.focused_window().and_then(|w| self.window_output(&w));
         if on.as_ref().map_or(!first, |o| o != output) {
             content.app = None;
-        }
-        if !first {
-            content.tray.clear();
         }
         Some(content)
     }

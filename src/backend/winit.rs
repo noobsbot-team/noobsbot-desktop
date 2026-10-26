@@ -186,8 +186,190 @@ impl State {
         views.switcher.elements(renderer, &views.shaders, &mut self.text, &mut self.icons, &names, &icon_names, selected, geo.size, dark, opacity, scale)
     }
 
-    // ponytail: the shell (dock, popups) is on the first output only, since its caches and hit tests are for one
-    // output; the other displays get a menu bar of their own, drawn only (`State::bar_content`).
+    /// `output`'s menu bar (none while `covered`, by Launchpad or Mission Control) and, when the open popup shows on
+    /// this display (`State::popup_output`), it and its submenu; each front to back.
+    fn bar_elements(&mut self, renderer: &mut GlesRenderer, output: &Output, covered: bool) -> (Vec<SceneElement>, Vec<SceneElement>) {
+        // A popup that hangs from no bar item is on the first display, and so is its fade after it closes.
+        if self.popup.is_some_and(|p| p.item().is_none()) {
+            self.bar_output = None;
+        }
+        let here = self.popup_output().as_ref() == Some(output);
+        let first = self.space.outputs().next() == Some(output);
+        let Some(geo) = self.space.output_geometry(output) else { return Default::default() };
+        let (geo_origin, size, width) = (geo.loc, geo.size, geo.size.w);
+        let hidden = self.bar_hidden();
+        let content = self.bar_content(output);
+        let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
+        let center = self.center_layout();
+        let batteries = self.batteries();
+        let calendar = match self.popup {
+            Some(Popup::Notifications { year, month }) => Some(self.calendar_view(year, month, self.config.clock.week_start.into())),
+            _ => None,
+        };
+        let dock_menu =
+            self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
+        let input_menu = self.input_menu_rows();
+        let overflow_menu = self.overflow_menu_rows();
+        self.refresh_recent();
+        let update_ready = self.update_ready();
+        let desktop_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Desktop)))
+            .then(|| self.desktop_menu_rows())
+            .and_then(|rows| Some((self.desktop_menu_anchor(&rows)?, rows)));
+        let drawer_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Drawer)))
+            .then(|| self.drawer_menu_rows())
+            .and_then(|rows| Some((self.drawer_menu_anchor(&rows)?, rows)));
+        let window_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Window)))
+            .then(|| self.window_menu_rows())
+            .and_then(|rows| Some((self.window_menu_anchor()?, rows)));
+        let open_sub = self.open_submenu();
+        let (now, scale) = (self.frame_time, output.current_scale().fractional_scale());
+        let appearance = &self.config.appearance;
+        let (dark, reduce, hour24) = (render::is_dark(appearance), appearance.reduce_motion, self.config.clock.format.hour24);
+        let accent = render::accent(appearance.accent, dark);
+        let Some(Views { shaders, menu_bar, bars, notifications, menu, submenu, control, entrances, .. }) = self.backend.as_mut() else {
+            return Default::default();
+        };
+        let menu_bar = if first { menu_bar } else { bars.entry(output.name()).or_default() };
+        // The bar is laid out before its menus, so they line up with this frame's items (it is drawn behind them).
+        let active = self.popup.and_then(Popup::item).filter(|_| here);
+        let strip = match content.as_ref().filter(|_| !covered && hidden < 1.0) {
+            Some(content) => {
+                let strip = menu_bar.elements(
+                    renderer,
+                    shaders,
+                    &mut self.text,
+                    &mut self.symbols,
+                    &mut self.icons,
+                    content,
+                    active,
+                    width,
+                    dark,
+                    appearance.glass_opacity,
+                    scale,
+                );
+                render::menubar::slid(renderer, strip, hidden, scale)
+            }
+            None => {
+                menu_bar.hide();
+                Vec::new()
+            }
+        };
+        if !here {
+            return (strip, Vec::new());
+        }
+        let mut popups = Vec::new();
+        match self.popup {
+            Some(Popup::Notifications { year, month }) => {
+                let week_start = self.config.clock.week_start.into();
+                let (dots, up_next) = calendar.clone().unwrap_or_default();
+                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots };
+                if let Some(center) = &center {
+                    let view = View::Center {
+                        center,
+                        month: &shown,
+                        up_next: &up_next,
+                        batteries: &batteries,
+                        dnd: self.config.notifications.dnd,
+                        weather: self.weather.as_ref(),
+                        widgets: &crate::services::widgets::shown(&self.widgets, &self.config.widgets, false),
+                    };
+                    popups.extend(notifications.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &mut self.symbols,
+                        view,
+                        &self.notifications,
+                        hour24,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
+                }
+            }
+            Some(popup @ Popup::Menu(kind)) => {
+                let app = content.as_ref().and_then(|c| c.app.as_deref()).map(|id| menu_bar.name(id)).unwrap_or_default();
+                let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
+                let (rows, anchor) = match (kind, dock_menu) {
+                    (crate::shell::Menu::Dock, Some((rows, at))) => (rows, crate::shell::Anchor::Above(at)),
+                    (crate::shell::Menu::Desktop, _) => {
+                        desktop_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
+                    }
+                    (crate::shell::Menu::Drawer, _) => {
+                        drawer_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
+                    }
+                    (crate::shell::Menu::Window, _) => {
+                        window_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
+                    }
+                    _ => (
+                        match kind {
+                            crate::shell::Menu::Input => input_menu.clone(),
+                            crate::shell::Menu::Overflow => overflow_menu.clone(),
+                            _ => crate::shell::menu_rows(kind, &app, tray, update_ready, self.recent_menu.as_deref().unwrap_or_default()),
+                        },
+                        // A tray item opened from "»" hangs from it.
+                        crate::shell::Anchor::Below(
+                            popup
+                                .item()
+                                .and_then(|i| menu_bar.pill(i))
+                                .or_else(|| menu_bar.pill(crate::render::menubar::BarItem::Overflow))
+                                .map_or(0, |r| r.loc.x),
+                        ),
+                    ),
+                };
+                let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
+                let main =
+                    menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, open_sub, dark, accent, appearance.glass_opacity, scale);
+                // The submenu beside its row, in front of the menu.
+                let beside = open_sub.and_then(|i| Some((rows.get(i)?.as_ref()?.sub.clone(), menu.cell(i)?, menu.rect()?)));
+                if let Some((sub, row, parent)) = beside {
+                    let anchor =
+                        crate::shell::Anchor::Beside(smithay::utils::Rectangle::new((parent.loc.x, row.loc.y).into(), (parent.size.w, row.size.h).into()));
+                    popups.extend(submenu.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &sub,
+                        anchor,
+                        size,
+                        hover,
+                        None,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
+                }
+                popups.extend(main);
+            }
+            Some(Popup::Control) => {
+                if let Some(status) = &status {
+                    popups.extend(control.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &mut self.symbols,
+                        &mut self.icons,
+                        status,
+                        size,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
+                }
+            }
+            None => {}
+        }
+        render::motion::appear(entrances.popup(), renderer, &mut popups, 0, scale, now);
+        let replaced = entrances.replaced;
+        entrances.fade_popup.track(renderer, &mut popups, 0, replaced, true, reduce, scale, now, &mut self.anim_until);
+        (strip, popups)
+    }
+
+    // ponytail: the shell (dock, alerts, banners) is on the first output only, since its caches and hit tests are for
+    // one output; the other displays get a menu bar of their own and the popups opened from it (`bar_elements`).
     fn scene_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
         let switcher_elements = self.switcher_elements(renderer, output);
         if self.space.outputs().next() != Some(output) {
@@ -195,35 +377,23 @@ impl State {
             let scale = output.current_scale().fractional_scale();
             let dark = render::is_dark(&self.config.appearance);
             let (locked, idle_shade, animating) = (self.lock.is_some(), self.idle_shade(), self.animating());
-            let hidden = self.bar_hidden();
-            let content = self.bar_content(output).filter(|_| hidden < 1.0);
             // Its own Mission Control, Space slide and indicator (E8.7).
             let overview = self.mission_frame(output);
             let slide = if overview.is_none() { self.slide_frame(output) } else { None };
             let indicator = self.space_indicator(output);
             let animating = animating || overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
+            // Its own menu bar and the popups opened from it.
+            let (strip, popups) = self.bar_elements(renderer, output, locked);
             let views = self.backend.as_mut()?;
             // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
             let mut elements = if locked {
                 views.wallpaper.element(&views.shaders, geo.size, scale, dark)
             } else {
-                // Its own menu bar, and ghosts of closing and minimising windows, in front of the windows.
+                // Its popups and menu bar, and ghosts of closing and minimising windows, in front of the windows.
                 let now = self.frame_time;
                 views.ghosts.retain(|g| !g.anim.done(now));
-                let bar = views.bars.entry(output.name()).or_default();
-                let mut front = match content {
-                    Some(content) => {
-                        let appearance = &self.config.appearance;
-                        let (text, symbols, icons) = (&mut self.text, &mut self.symbols, &mut self.icons);
-                        let strip =
-                            bar.elements(renderer, &views.shaders, text, symbols, icons, &content, None, geo.size.w, dark, appearance.glass_opacity, scale);
-                        render::menubar::slid(renderer, strip, hidden, scale)
-                    }
-                    None => {
-                        bar.hide();
-                        Vec::new()
-                    }
-                };
+                let mut front = popups;
+                front.extend(strip);
                 front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
                 let appearance = &self.config.appearance;
                 let mission = views.missions.entry(output.name()).or_default();
@@ -263,9 +433,6 @@ impl State {
         self.capture_ask();
         let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
         let thumbnail = self.thumbnail_rect().zip(self.screenshots.thumbnail.as_ref().map(|(t, _)| t.clone()));
-        let hidden = self.bar_hidden();
-        let content = self.bar_content(output);
-        let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
         let quit_list = self.force_quit.clone().map(|f| {
             let entries = self.force_quit_entries();
             let selected = f.selection(&entries);
@@ -275,13 +442,7 @@ impl State {
             let hits = self.spotlight_results();
             Some((self.spotlight_layout(hits.len())?, hits, s))
         });
-        let center = self.center_layout();
         let (cards, more) = self.banner_layout();
-        let batteries = self.batteries();
-        let calendar = match self.popup {
-            Some(Popup::Notifications { year, month }) => Some(self.calendar_view(year, month, self.config.clock.week_start.into())),
-            _ => None,
-        };
         let dock_items = self.dock_items();
         let dock_frame = self.dock_frame(&dock_items);
         let dock_layout = dock_frame.layout.clone();
@@ -292,24 +453,9 @@ impl State {
         let now = self.frame_time;
         self.launchpad_frame(now);
         let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
-        let dock_menu =
-            self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
-        let input_menu = self.input_menu_rows();
-        let overflow_menu = self.overflow_menu_rows();
-        self.refresh_recent();
-        let update_ready = self.update_ready();
-        let desktop_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Desktop)))
-            .then(|| self.desktop_menu_rows())
-            .and_then(|rows| Some((self.desktop_menu_anchor(&rows)?, rows)));
         let desktop_frame = self.desktop_frame();
         let desktop_widgets = self.desktop_widgets();
         let drawer_frame = self.drawer_frame();
-        let drawer_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Drawer)))
-            .then(|| self.drawer_menu_rows())
-            .and_then(|rows| Some((self.drawer_menu_anchor(&rows)?, rows)));
-        let window_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Window)))
-            .then(|| self.window_menu_rows())
-            .and_then(|rows| Some((self.window_menu_anchor()?, rows)));
         let overview = self.mission_frame(output);
         let slide = if overview.is_none() { self.slide_frame(output) } else { None };
         let indicator = self.space_indicator(output);
@@ -317,20 +463,25 @@ impl State {
         let ripple = output_size.and_then(|size| self.ripple_frame(size));
         let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some() || ripple.is_some();
         let idle_shade = self.idle_shade();
-        let open_sub = self.open_submenu();
+        let banner = cards.iter().map(|c| c.id).max();
+        if let Some(views) = self.backend.as_mut() {
+            views.entrances.update(self.popup, self.osd.is_some(), banner, self.config.appearance.reduce_motion, now, &mut self.anim_until);
+        }
+        // Launchpad and Mission Control cover the menu bar.
+        let (strip, popups) = self.bar_elements(renderer, output, pad.is_some() || overview.is_some());
         let Views {
             shaders,
             wallpaper,
             gallery,
             components,
-            menu_bar,
+            menu_bar: _,
             bars: _,
             notifications,
             entering,
-            menu,
-            submenu,
+            menu: _,
+            submenu: _,
             osd,
-            control,
+            control: _,
             alert: sheet,
             dock,
             switcher: _,
@@ -354,10 +505,8 @@ impl State {
         let scale = output.current_scale().fractional_scale();
         let appearance = &self.config.appearance;
         let dark = render::is_dark(appearance);
-        let (geo_origin, width) = self.space.output_geometry(output).map_or(((0, 0).into(), 0), |g| (g.loc, g.size.w));
+        let width = self.space.output_geometry(output).map_or(0, |g| g.size.w);
         let accent = render::accent(appearance.accent, dark);
-        let banner = cards.iter().map(|c| c.id).max();
-        entrances.update(self.popup, self.osd.is_some(), banner, appearance.reduce_motion, now, &mut self.anim_until);
         // The alert in front of the switcher and the Force Quit window, those in front of the OSD, the OSD in front of popups, popups in front of the bar, the bar in
         // front of windows.
         let mut bar = Vec::new();
@@ -487,139 +636,7 @@ impl State {
             ));
         }
         entrances.fade_banners.track(renderer, &mut bar, mark, false, false, reduce, scale, now, &mut self.anim_until);
-        // The bar is laid out before its menus, so they line up with this frame's items (it is drawn behind them).
-        let active = self.popup.and_then(Popup::item);
-        // Launchpad covers the menu bar.
-        let strip = match content.as_ref().filter(|_| pad.is_none() && overview.is_none() && hidden < 1.0) {
-            Some(content) => {
-                let strip = menu_bar.elements(
-                    renderer,
-                    shaders,
-                    &mut self.text,
-                    &mut self.symbols,
-                    &mut self.icons,
-                    content,
-                    active,
-                    width,
-                    dark,
-                    appearance.glass_opacity,
-                    scale,
-                );
-                render::menubar::slid(renderer, strip, hidden, scale)
-            }
-            None => {
-                menu_bar.hide();
-                Vec::new()
-            }
-        };
-        let mark = bar.len();
-        match self.popup {
-            Some(Popup::Notifications { year, month }) => {
-                let week_start = self.config.clock.week_start.into();
-                let (dots, up_next) = calendar.clone().unwrap_or_default();
-                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots };
-                if let Some(center) = &center {
-                    let view = View::Center {
-                        center,
-                        month: &shown,
-                        up_next: &up_next,
-                        batteries: &batteries,
-                        dnd: self.config.notifications.dnd,
-                        weather: self.weather.as_ref(),
-                        widgets: &crate::services::widgets::shown(&self.widgets, &self.config.widgets, false),
-                    };
-                    bar.extend(notifications.elements(
-                        renderer,
-                        shaders,
-                        &mut self.text,
-                        &mut self.symbols,
-                        view,
-                        &self.notifications,
-                        hour24,
-                        dark,
-                        accent,
-                        appearance.glass_opacity,
-                        scale,
-                    ));
-                }
-            }
-            Some(popup @ Popup::Menu(kind)) => {
-                let app = content.as_ref().and_then(|c| c.app.as_deref()).map(|id| menu_bar.name(id)).unwrap_or_default();
-                let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
-                let (rows, anchor) = match (kind, dock_menu) {
-                    (crate::shell::Menu::Dock, Some((rows, at))) => (rows, crate::shell::Anchor::Above(at)),
-                    (crate::shell::Menu::Desktop, _) => {
-                        desktop_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
-                    }
-                    (crate::shell::Menu::Drawer, _) => {
-                        drawer_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
-                    }
-                    (crate::shell::Menu::Window, _) => {
-                        window_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
-                    }
-                    _ => (
-                        match kind {
-                            crate::shell::Menu::Input => input_menu.clone(),
-                            crate::shell::Menu::Overflow => overflow_menu.clone(),
-                            _ => crate::shell::menu_rows(kind, &app, tray, update_ready, self.recent_menu.as_deref().unwrap_or_default()),
-                        },
-                        // A tray item opened from "»" hangs from it.
-                        crate::shell::Anchor::Below(
-                            popup
-                                .item()
-                                .and_then(|i| menu_bar.pill(i))
-                                .or_else(|| menu_bar.pill(crate::render::menubar::BarItem::Overflow))
-                                .map_or(0, |r| r.loc.x),
-                        ),
-                    ),
-                };
-                let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
-                let main =
-                    menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, open_sub, dark, accent, appearance.glass_opacity, scale);
-                // The submenu beside its row, in front of the menu.
-                let beside = open_sub.and_then(|i| Some((rows.get(i)?.as_ref()?.sub.clone(), menu.cell(i)?, menu.rect()?)));
-                if let Some((sub, row, parent)) = beside {
-                    let anchor =
-                        crate::shell::Anchor::Beside(smithay::utils::Rectangle::new((parent.loc.x, row.loc.y).into(), (parent.size.w, row.size.h).into()));
-                    bar.extend(submenu.elements(
-                        renderer,
-                        shaders,
-                        &mut self.text,
-                        &sub,
-                        anchor,
-                        size,
-                        hover,
-                        None,
-                        dark,
-                        accent,
-                        appearance.glass_opacity,
-                        scale,
-                    ));
-                }
-                bar.extend(main);
-            }
-            Some(Popup::Control) => {
-                if let Some(status) = &status {
-                    bar.extend(control.elements(
-                        renderer,
-                        shaders,
-                        &mut self.text,
-                        &mut self.symbols,
-                        &mut self.icons,
-                        status,
-                        size,
-                        dark,
-                        accent,
-                        appearance.glass_opacity,
-                        scale,
-                    ));
-                }
-            }
-            None => {}
-        }
-        render::motion::appear(entrances.popup(), renderer, &mut bar, mark, scale, now);
-        let replaced = entrances.replaced;
-        entrances.fade_popup.track(renderer, &mut bar, mark, replaced, true, reduce, scale, now, &mut self.anim_until);
+        bar.extend(popups);
         // The app drawer: behind its right-click menu, in front of the bar and the dock.
         let mark = bar.len();
         if let Some(frame) = &drawer_frame {
