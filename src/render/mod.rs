@@ -21,6 +21,7 @@ pub mod motion;
 mod night;
 mod notify;
 mod osd;
+mod osk;
 mod screenshot;
 mod spotlight;
 mod switcher;
@@ -48,6 +49,7 @@ pub use mission::{MissionView, sliding};
 pub use night::{NightLight, TintElement};
 pub use notify::{NotificationViews, View};
 pub use osd::OsdPopover;
+pub use osk::OnScreenKeyboard;
 pub use screenshot::ScreenshotView;
 use smithay::{
     backend::renderer::{

@@ -76,6 +76,9 @@ bounce_keys_ms = 0
 mouse_keys = false
 # An app's bell: "sound" (the theme's bell), "flash" (the screen flashes), "both" or "off".
 bell = "sound"
+# The on-screen keyboard always shows at the bottom of the screen (the "on-screen-keyboard" action and the input
+# menu show it for a while). A click types the key; Shift, Ctrl, Alt and Super stay down for the next key.
+on_screen_keyboard = false
 
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).
@@ -282,7 +285,7 @@ super_tap = true
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows, "screen-zoom [in|out]",
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
-# app-drawer, "dock-app 1…9", "dock-app-new 1…9".
+# app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard.
 [bindings]
 "Super+Return" = "terminal"
 "Super+B" = "exec helium-browser"

@@ -167,8 +167,12 @@ impl State {
 
     /// The input menu: every layout (the active one ticked), fcitx5's input methods while it runs, then its settings
     /// when it's installed.
+    /// The input menu: `menu_rows` and the on-screen keyboard.
     pub fn input_menu_rows(&self) -> Vec<Option<Row>> {
-        menu_rows(&self.layouts)
+        let label = if self.osk_shown() { "Hide On-Screen Keyboard" } else { "Show On-Screen Keyboard" };
+        let mut rows = menu_rows(&self.layouts);
+        rows.extend([None, Some(Row { label: label.into(), shortcut: "", action: Some(Action::OnScreenKeyboard) })]);
+        rows
     }
 
     /// Moves an input-method popup to under its text cursor, now that its size or the cursor changed.

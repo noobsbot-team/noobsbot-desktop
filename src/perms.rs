@@ -4,7 +4,8 @@
 //! |---|---|
 //! | `wlr-screencopy` (screenshots, recording, screen sharing) | trusted clients; any other unsandboxed app once the user allows it in the "would like to record this computer's screen" alert (remembered in `[privacy]`); never sandboxed apps |
 //! | `wlr-layer-shell`, `keyboard-shortcuts-inhibit`, `security-context` | unsandboxed clients (third-party bars, launchers, VMs) |
-//! | `virtual-keyboard`, `virtual-pointer`, `wlr-output-management`, `ext-foreign-toplevel-list`, `ext-workspace`, `ext-image-copy-capture` | not implemented, so nobody |
+//! | `virtual-keyboard` (external on-screen keyboards, remote input) | trusted-socket clients |
+//! | `virtual-pointer`, `wlr-output-management`, `ext-foreign-toplevel-list`, `ext-workspace`, `ext-image-copy-capture` | not implemented, so nobody |
 //!
 //! Trusted: clients of the `<WAYLAND_DISPLAY>-trusted` socket (what `noobsbot-desktop --trusted <command>` connects
 //! its command to, and our own `wf-recorder`), and the programs in `TRUSTED` by their path (root-owned, so an app
@@ -65,6 +66,12 @@ fn program(dh: &DisplayHandle, client: &Client) -> Option<(PathBuf, String)> {
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok().map(|c| c.trim().to_owned());
     let name = comm.filter(|c| !c.is_empty()).unwrap_or_else(|| exe.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
     Some((exe, name))
+}
+
+/// Connected through the trusted socket. ponytail: `TRUSTED` paths aren't checked here (a global filter has no
+/// DisplayHandle); start an external keyboard with `noobsbot-desktop --trusted`.
+pub fn trusted(client: &Client) -> bool {
+    client.get_data::<ClientState>().is_some_and(|d| d.trusted)
 }
 
 /// `Some(true)`: allowed, `Some(false)`: denied, `None`: ask. `program`: the client's path, if known.

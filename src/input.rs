@@ -373,8 +373,8 @@ impl State {
         self.show_osd(Osd { symbol: Symbol::Keyboard, level: None, text: Some(text) });
     }
 
-    /// A key to the shell, its shortcuts and the focused app.
-    fn key(&mut self, code: Keycode, key_state: KeyState, time: u32) {
+    /// A key to the shell, its shortcuts and the focused app; the on-screen keyboard types through it too.
+    pub fn key(&mut self, code: Keycode, key_state: KeyState, time: u32) {
         let Some(keyboard) = self.seat.get_keyboard() else { return };
         let serial = SERIAL_COUNTER.next_serial();
         // Settings recording a shortcut gets every key, as an app that inhibits shortcuts does.
@@ -451,6 +451,10 @@ impl State {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let serial = SERIAL_COUNTER.next_serial();
         let location = pointer.current_location();
+        // The on-screen keyboard is above everything, the lock screen too; its clicks reach no app.
+        if state == ButtonState::Pressed && self.osk_press(self.to_output(location)) {
+            return;
+        }
         if self.locked() {
             if state == ButtonState::Pressed {
                 self.lock_press(self.to_output(location));

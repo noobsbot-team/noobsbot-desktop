@@ -146,6 +146,8 @@ pub struct Accessibility {
     pub mouse_keys: bool,
     /// What an app ringing the bell does.
     pub bell: Bell,
+    /// The on-screen keyboard always shows (the `on-screen-keyboard` action shows it for a while).
+    pub on_screen_keyboard: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
