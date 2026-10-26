@@ -19,6 +19,18 @@ pub struct Status {
     pub bluetooth: Option<Bluetooth>,
     pub output: Option<Device>,
     pub input: Option<Device>,
+    /// Every output and input, for the pickers.
+    pub outputs: Vec<Choice>,
+    pub inputs: Vec<Choice>,
+}
+
+/// A PipeWire sink or source from `wpctl status`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice {
+    pub id: u32,
+    pub name: String,
+    /// The default one.
+    pub current: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -50,7 +62,8 @@ pub async fn read() -> Status {
         Some(bus) => (wifi(bus).await, bluetooth(bus).await),
         None => (None, None),
     };
-    Status { wifi, bluetooth, output: device(OUTPUT), input: device(INPUT) }
+    let pw = wpctl(&["status"]).unwrap_or_default();
+    Status { wifi, bluetooth, output: device(OUTPUT), input: device(INPUT), outputs: section(&pw, "Sinks:"), inputs: section(&pw, "Sources:") }
 }
 
 /// The desktop's connect (`src/services/mod.rs`): on this thread, not zbus's pool, whose idle thread wakes every
@@ -156,6 +169,27 @@ pub async fn set_volume(output: bool, percent: u8) -> Status {
 pub async fn set_muted(output: bool, muted: bool) -> Status {
     let _ = wpctl(&["set-mute", if output { OUTPUT } else { INPUT }, if muted { "1" } else { "0" }]);
     read().await
+}
+
+/// Makes sink or source `id` the default, then the new status.
+pub async fn set_default(id: u32) -> Status {
+    let _ = wpctl(&["set-default", &id.to_string()]);
+    read().await
+}
+
+/// The first (audio) `Sinks:` or `Sources:` section of `wpctl status`: `│  *   63. Speaker   [vol: 0.89]`. The
+/// desktop's `sound::parse_outputs`.
+fn section(status: &str, header: &str) -> Vec<Choice> {
+    let lines = status.lines().skip_while(|line| !line.ends_with(header)).skip(1);
+    // The section ends at its blank `│` line.
+    lines
+        .map_while(|line| {
+            let line = line.trim_start_matches([' ', '│']);
+            let (id, rest) = line.trim_start_matches(['*', ' ']).split_once(". ")?;
+            let name = rest.rsplit_once(" [vol:").map_or(rest, |(name, _)| name).trim();
+            Some(Choice { id: id.parse().ok()?, name: name.to_owned(), current: line.starts_with('*') })
+        })
+        .collect()
 }
 
 /// `Volume: 0.40 [MUTED]` → (40, true). The desktop's `sound::parse_volume`.
@@ -280,6 +314,18 @@ mod tests {
         assert_eq!(parse_volume("nonsense"), None);
         assert_eq!(parse_name("  * node.description = \"Built-in Audio\"\n    node.nick = \"Speaker\"\n"), "Speaker");
         assert_eq!(parse_name("  node.description = \"HDMI\"\n"), "HDMI");
+    }
+
+    #[test]
+    fn sinks_and_sources() {
+        let status = "Audio\n ├─ Devices:\n │      57. Raptor Lake-P/U/H cAVS              [alsa]\n │  \n ├─ Sinks:\n │  *   44. Raptor Lake-P/U/H cAVS Speaker      [vol: 0.96]\n │      49. Raptor Lake-P/U/H cAVS HDMI / DisplayPort 3 Output (Stereo) [vol: 1.00]\n │  \n ├─ Sources:\n │      72. Raptor Lake-P/U/H cAVS Digital Microphone [vol: 1.00]\n │  *   80. USB Headset [vol: 0.50 MUTED]\n │  \n ├─ Filters:\n\nVideo\n ├─ Sources:\n │  *   81. HP 5MP Camera (V4L2)               \n";
+        let choice = |id, name: &str, current| Choice { id, name: name.into(), current };
+        assert_eq!(
+            section(status, "Sinks:"),
+            [choice(44, "Raptor Lake-P/U/H cAVS Speaker", true), choice(49, "Raptor Lake-P/U/H cAVS HDMI / DisplayPort 3 Output (Stereo)", false)]
+        );
+        assert_eq!(section(status, "Sources:"), [choice(72, "Raptor Lake-P/U/H cAVS Digital Microphone", false), choice(80, "USB Headset", true)]);
+        assert_eq!(section("", "Sinks:"), []);
     }
 
     #[test]

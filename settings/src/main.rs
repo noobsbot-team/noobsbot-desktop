@@ -111,6 +111,8 @@ pub enum Message {
     Bluetooth(bool),
     /// Output (`true`) or input muted.
     Mute(bool, bool),
+    /// A PipeWire sink or source becomes the default.
+    DefaultDevice(u32),
     /// `config.toml` was written (here or elsewhere, e.g. the Control Center's Dark toggle).
     Reload,
     /// Typed with no field focused: goes to the search field.
@@ -224,6 +226,7 @@ impl App {
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
+            Message::DefaultDevice(id) => return Task::perform(system::set_default(id), Message::Status),
             Message::Reload => {
                 // A half-written or broken file keeps what is shown, with the error under it.
                 let (config, error) = config::Config::load(config::path());
