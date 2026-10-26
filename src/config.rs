@@ -594,6 +594,8 @@ pub struct Dock {
     pub minimise_into_icon: bool,
     /// How a window goes into the dock and comes back (E5.5).
     pub minimise_effect: MinimiseEffect,
+    /// The Trash at the dock's right end, after a separator (E8.8).
+    pub show_trash: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -763,6 +765,7 @@ impl Default for Dock {
             scroll: DockScroll::On,
             minimise_into_icon: false,
             minimise_effect: MinimiseEffect::Scale,
+            show_trash: true,
         }
     }
 }
