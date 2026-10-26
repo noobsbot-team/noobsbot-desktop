@@ -48,6 +48,26 @@ natural_scroll = true
 swipe_fingers = 3
 # Higher = a shorter swipe or pinch is enough (0.25 … 4).
 gesture_sensitivity = 1.0
+# Tracking speed, -1 (slow) … 1 (fast).
+speed = 0.0
+# Right-click: "two-fingers" (click with two fingers) or "corner" (click the bottom-right corner).
+secondary_click = "two-fingers"
+# Tap, then drag with the finger down; drag_lock keeps the drag going through a short lift.
+tap_to_drag = true
+drag_lock = false
+disable_while_typing = true
+# Turn the trackpad off while a mouse is plugged in.
+ignore_with_mouse = false
+
+[mouse]
+# Tracking speed, -1 (slow) … 1 (fast); acceleration off = flat (movement maps 1:1).
+speed = 0.0
+acceleration = true
+# Primary button on the right (the trackpad follows).
+left_handed = false
+natural_scroll = false
+# Pressing left and right together acts as the middle button.
+middle_click_emulation = false
 
 [hot_corners]
 # Rest the pointer in a screen corner for a moment to trigger an action (any action from [bindings] below, like

@@ -47,7 +47,7 @@ use smithay::{
             timer::{TimeoutAction, Timer},
         },
         drm::control::{self as drm_control, Device as _, ModeTypeFlags, ResourceHandles, connector, crtc},
-        input::{Device as InputDevice, Libinput},
+        input::{AccelProfile, ClickMethod, Device as InputDevice, DeviceCapability, Libinput, SendEventsMode},
         rustix::fs::OFlags,
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::{DisplayHandle, backend::GlobalId},
@@ -58,7 +58,7 @@ use smithay::{
 
 use super::{CLEAR, Device, Views, cursor};
 use crate::{
-    config::Touchpad,
+    config::{Mouse, SecondaryClick, Touchpad},
     display_info::{self, Display},
     displays,
     frame::FrameClock,
@@ -546,7 +546,7 @@ impl State {
     fn libinput_event(&mut self, event: InputEvent<LibinputInputBackend>) {
         match event {
             InputEvent::DeviceAdded { mut device } => {
-                configure(&mut device, &self.config.touchpad);
+                configure(&mut device, &self.config.touchpad, &self.config.mouse);
                 if let Some(Device::Udev(udev)) = self.device.as_mut() {
                     udev.inputs.push(device);
                 }
@@ -668,19 +668,38 @@ fn refresh(output: &Output) -> Duration {
 }
 
 impl Udev {
-    /// The touchpad settings changed: apply them to every plugged-in device.
-    pub fn configure_inputs(&mut self, touchpad: &Touchpad) {
+    /// The trackpad or mouse settings changed: apply them to every plugged-in device.
+    pub fn configure_inputs(&mut self, touchpad: &Touchpad, mouse: &Mouse) {
         for device in &mut self.inputs {
-            configure(device, touchpad);
+            configure(device, touchpad, mouse);
         }
     }
 }
 
-/// The touchpad settings (E1.7), applied as a device appears and on reload.
-fn configure(device: &mut InputDevice, touchpad: &Touchpad) {
+/// The trackpad (E1.7) and mouse settings, applied as a device appears and on reload. A setting a device lacks is
+/// skipped by libinput.
+fn configure(device: &mut InputDevice, touchpad: &Touchpad, mouse: &Mouse) {
     if device.config_tap_finger_count() > 0 {
         let _ = device.config_tap_set_enabled(touchpad.tap_to_click);
+        let _ = device.config_tap_set_drag_enabled(touchpad.tap_to_drag);
+        let _ = device.config_tap_set_drag_lock_enabled(touchpad.drag_lock);
         let _ = device.config_scroll_set_natural_scroll_enabled(touchpad.natural_scroll);
+        let _ = device.config_accel_set_speed(touchpad.speed.clamp(-1.0, 1.0));
+        let _ = device.config_dwt_set_enabled(touchpad.disable_while_typing);
+        let _ = device.config_left_handed_set(mouse.left_handed);
+        let method = match touchpad.secondary_click {
+            SecondaryClick::TwoFingers => ClickMethod::Clickfinger,
+            SecondaryClick::Corner => ClickMethod::ButtonAreas,
+        };
+        let _ = device.config_click_set_method(method);
+        let mode = if touchpad.ignore_with_mouse { SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE } else { SendEventsMode::ENABLED };
+        let _ = device.config_send_events_set_mode(mode);
+    } else if device.has_capability(DeviceCapability::Pointer) {
+        let _ = device.config_accel_set_speed(mouse.speed.clamp(-1.0, 1.0));
+        let _ = device.config_accel_set_profile(if mouse.acceleration { AccelProfile::Adaptive } else { AccelProfile::Flat });
+        let _ = device.config_left_handed_set(mouse.left_handed);
+        let _ = device.config_scroll_set_natural_scroll_enabled(mouse.natural_scroll);
+        let _ = device.config_middle_emulation_set_enabled(mouse.middle_click_emulation);
     }
 }
 

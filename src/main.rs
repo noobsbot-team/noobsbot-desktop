@@ -178,10 +178,10 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             let displays = config.display != state.config.display;
-            if config.touchpad != state.config.touchpad
+            if (config.touchpad != state.config.touchpad || config.mouse != state.config.mouse)
                 && let Some(backend::Device::Udev(udev)) = state.device.as_mut()
             {
-                udev.configure_inputs(&config.touchpad);
+                udev.configure_inputs(&config.touchpad, &config.mouse);
             }
             let idle = config.idle != state.config.idle;
             state.config = config;
