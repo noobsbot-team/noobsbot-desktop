@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
 Name=Noobsbot Desktop
-Comment=A macOS-style Wayland desktop
+Comment=A glassy Wayland desktop
 Exec=noobsbot-desktop-session
 TryExec=noobsbot-desktop
 DesktopNames=noobsbot-desktop
