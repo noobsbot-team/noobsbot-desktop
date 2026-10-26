@@ -226,6 +226,11 @@ pub enum Message {
     PictureChooser,
     /// This file becomes the account's picture.
     Picture(std::path::PathBuf),
+    /// Users ▸ Change Password…: the fields open or close.
+    PasswordForm,
+    ChangePassword,
+    /// `passwd` finished: what went wrong, if anything.
+    PasswordChanged(Option<String>),
 }
 
 impl App {
@@ -377,6 +382,22 @@ impl App {
                 let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
                 self.texts.remove(users::PICTURE_FILE);
                 return Task::perform(users::set_picture(me.path.clone(), file), Message::UsersActed);
+            }
+            Message::PasswordForm => self.password_form(!self.texts.contains_key(users::PASSWORD[0])),
+            Message::ChangePassword => {
+                let field = |key| self.texts.get(key).map_or("", String::as_str);
+                if let Err(why) = users::check(field(users::PASSWORD[0]), field(users::PASSWORD[1]), field(users::PASSWORD[2])) {
+                    self.error = Some(why.into());
+                    return Task::none();
+                }
+                let [old, new, verify] = users::PASSWORD.map(|key| self.texts.remove(key).unwrap_or_default());
+                users::wipe(verify);
+                return Task::perform(users::change_password(old, new), Message::PasswordChanged);
+            }
+            Message::PasswordChanged(error) => {
+                // Failed: the fields open again, empty, under the reason.
+                self.password_form(error.is_some());
+                self.error = error;
             }
             Message::UsersActed((users, error)) => {
                 self.users = Some(users);
@@ -553,6 +574,18 @@ impl App {
         match self.config.set_outputs(changes) {
             Ok(()) => self.error = None,
             Err(err) => self.error = Some(format!("Couldn't save the display settings: {err}")),
+        }
+    }
+
+    /// Users ▸ Change Password…'s fields open (empty), or close with what was typed wiped.
+    fn password_form(&mut self, open: bool) {
+        for key in users::PASSWORD {
+            if let Some(typed) = self.texts.remove(key) {
+                users::wipe(typed);
+            }
+            if open {
+                self.texts.insert(key.into(), String::new());
+            }
         }
     }
 

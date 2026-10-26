@@ -1238,7 +1238,24 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
         .width(200)
         .style(t.input(false));
     let change = button(text("Change Picture…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::PictureChooser);
-    let mut rows = vec![line(t, "Picture", "", change.into()), line(t, "Full name", "Press Return to save", name.into())];
+    let password = button(text("Change Password…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::PasswordForm);
+    let mut rows =
+        vec![line(t, "Picture", "", change.into()), line(t, "Full name", "Press Return to save", name.into()), line(t, "Password", "", password.into())];
+    if app.texts.contains_key(crate::users::PASSWORD[0]) {
+        for (key, label) in crate::users::PASSWORD.into_iter().zip(["Current password", "New password", "Verify"]) {
+            let field = text_input("", app.texts.get(key).map_or("", String::as_str))
+                .secure(true)
+                .on_input(move |v| Message::Type(key.into(), v))
+                .on_submit(Message::ChangePassword)
+                .size(13)
+                .padding([3, 8])
+                .width(200)
+                .style(t.input(false));
+            rows.push(line(t, label, "", field.into()));
+        }
+        let go = button(text("Change Password").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::ChangePassword);
+        rows.push(line(t, "", "", go.into()));
+    }
     if let Some(typed) = app.texts.get(crate::users::PICTURE_FILE) {
         // The wallpaper gallery's pictures, then any file by its path.
         let tiles = app.thumbs.iter().map(|(path, handle)| {
