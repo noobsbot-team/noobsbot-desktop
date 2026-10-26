@@ -133,7 +133,7 @@ pub enum Anchor {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub label: String,
-    /// macOS-style glyphs; ⌘ is the desktop key.
+    /// Modifier glyphs; ⌘ is the desktop key.
     pub shortcut: &'static str,
     pub action: Option<Action>,
     /// A submenu's rows: non-empty makes the row open them to the side instead of running an action.
@@ -409,7 +409,7 @@ impl State {
                 self.popup_press(popup, location);
                 true
             }
-            // Its own item again closes the popup, as on macOS.
+            // Its own item again closes the popup.
             (_, Some(item)) => {
                 let again = open.and_then(Popup::item) == Some(item);
                 self.popup = if again { None } else { popup_for(item) };
@@ -460,7 +460,7 @@ impl State {
     }
 
     /// The pointer moved from `from` to `to` (output-relative). With a popup open, sliding along the bar opens the
-    /// next item's popup, as on macOS; in a menu, the hovered row follows.
+    /// next item's popup; in a menu, the hovered row follows.
     pub fn shell_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         if self.shell_drag.is_some() {
             return self.control_drag(to);
