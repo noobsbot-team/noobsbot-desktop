@@ -21,16 +21,16 @@ pub struct Signed {
     pub sha256: String,
 }
 
-/// Checks `sig` over `sums` with `pubkey` (a `minisign.pub` file or its base64 line), then finds this machine's
-/// tarball in `sums`.
-pub fn signed(pubkey: &str, sums: &[u8], sig: &str) -> Result<Signed, String> {
+/// Checks `sig` over `sums` with `pubkey` (a `minisign.pub` file or its base64 line), then finds the tarball for `arch`
+/// (`std::env::consts::ARCH`, this machine's) in `sums`.
+pub fn signed(pubkey: &str, sums: &[u8], sig: &str, arch: &str) -> Result<Signed, String> {
     let line = pubkey.lines().map(str::trim).rfind(|l| !l.is_empty() && !l.starts_with("untrusted comment:"));
     let key = PublicKey::from_base64(line.ok_or("no release key")?).map_err(|e| format!("release key: {e}"))?;
     let sig = Signature::decode(sig).map_err(|e| format!("signature: {e}"))?;
     // Legacy (non-prehashed) signatures are refused: release.yml's minisign always prehashes.
     key.verify(sums, &sig, false).map_err(|e| format!("bad signature: {e}"))?;
     let sums = std::str::from_utf8(sums).map_err(|_| "SHA256SUMS is not text")?;
-    let suffix = format!("-{}.tar.zst", std::env::consts::ARCH);
+    let suffix = format!("-{arch}.tar.zst");
     sums.lines()
         .find_map(|line| {
             let (sha256, name) = line.split_once("  ")?;
@@ -67,43 +67,45 @@ mod tests {
     const SUMS: &[u8] = include_bytes!("testdata/SHA256SUMS");
     const SIG: &str = include_str!("testdata/SHA256SUMS.minisig");
     const TARBALL: &[u8] = b"pretend tarball\n";
+    /// The testdata's tarball is the x86_64 one, whatever machine runs the tests.
+    const ARCH: &str = "x86_64";
 
     #[test]
     fn good_signature() {
-        let signed = signed(KEY, SUMS, SIG).unwrap();
+        let signed = signed(KEY, SUMS, SIG, ARCH).unwrap();
         assert_eq!(signed.version, Version::parse("1.3.0").unwrap());
         assert_eq!(signed.tarball, "noobsbot-desktop-1.3.0-x86_64.tar.zst");
         assert_eq!(sha256(TARBALL, |_| Ok(())).unwrap(), signed.sha256);
         // The base64 line alone works too (install.sh's MINISIGN_PUBKEY).
-        assert!(super::signed(KEY.lines().last().unwrap(), SUMS, SIG).is_ok());
+        assert!(super::signed(KEY.lines().last().unwrap(), SUMS, SIG, ARCH).is_ok());
     }
 
     #[test]
     fn tampered_sums_fail() {
         let mut sums = SUMS.to_vec();
         sums[0] ^= 1;
-        assert!(signed(KEY, &sums, SIG).unwrap_err().starts_with("bad signature"));
+        assert!(signed(KEY, &sums, SIG, ARCH).unwrap_err().starts_with("bad signature"));
     }
 
     #[test]
     fn tampered_tarball_mismatches() {
-        let signed = signed(KEY, SUMS, SIG).unwrap();
+        let signed = signed(KEY, SUMS, SIG, ARCH).unwrap();
         assert_ne!(sha256(&b"pretend tarball!\n"[..], |_| Ok(())).unwrap(), signed.sha256);
     }
 
     #[test]
     fn other_key_or_garbage_fails() {
         // minisign-verify's doc key: a valid key, but not the one that signed.
-        assert!(signed("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3", SUMS, SIG).is_err());
-        assert!(signed("", SUMS, SIG).is_err());
-        assert!(signed(KEY, SUMS, "not a signature").is_err());
+        assert!(signed("RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3", SUMS, SIG, ARCH).is_err());
+        assert!(signed("", SUMS, SIG, ARCH).is_err());
+        assert!(signed(KEY, SUMS, "not a signature", ARCH).is_err());
     }
 
     #[test]
     fn shipped_release_key_parses() {
         // Decodes (so the error is the key id, not the key), and never accepts the test signature.
         let shipped = include_str!("../../data/system/usr/share/noobsbot-desktop/minisign.pub");
-        assert!(signed(shipped, SUMS, SIG).unwrap_err().starts_with("bad signature"));
+        assert!(signed(shipped, SUMS, SIG, ARCH).unwrap_err().starts_with("bad signature"));
     }
 
     #[test]
