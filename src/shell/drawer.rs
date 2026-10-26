@@ -359,6 +359,8 @@ pub struct Drawer {
     pub menu: Option<(String, Point<i32, Logical>)>,
     /// Touchpad scrolling that hasn't made a whole row yet, in px.
     pub scroll_px: f64,
+    /// The display it shows on: its dock's, else the pointer's.
+    pub output: Option<smithay::output::Output>,
     /// The category the pointer rests on, and since when: shown after `HOVER_DELAY` (crossing the sidebar on the
     /// way to the list shouldn't flip through every one).
     pub pending: Option<(Category, Instant)>,
@@ -392,6 +394,7 @@ impl Drawer {
             hover: None,
             menu: None,
             scroll_px: 0.0,
+            output: None,
             pending: None,
         }
     }
@@ -564,6 +567,16 @@ impl State {
         self.drawer.is_some()
     }
 
+    /// The drawer's display (the first while closed).
+    pub fn drawer_output(&self) -> Option<smithay::output::Output> {
+        self.overlay_output(self.drawer.as_ref().and_then(|d| d.output.as_ref()))
+    }
+
+    /// `location` (first-output-relative) relative to the drawer's display.
+    pub fn to_drawer(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
+        self.to_display(self.drawer_output().as_ref(), location)
+    }
+
     /// Opens the drawer at `anchor`, or closes it when open.
     pub fn toggle_drawer(&mut self, anchor: Anchor) {
         if !self.close_drawer() {
@@ -576,10 +589,15 @@ impl State {
         self.close_spotlight();
         self.close_launchpad();
         self.emoji = None;
-        // With the dock hidden there's nothing to sit above: the corner is the screen's.
-        let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.h);
-        let anchor = if anchor == Anchor::Corner && !self.dock_shown() { Anchor::Dock((0, height).into()) } else { anchor };
-        self.drawer = Some(Drawer::new(anchor, load(&state_file("favorites")), load(&state_file("recent-apps"))));
+        // Over its dock icon on that dock's display; in the corner of the pointer's.
+        let output = if matches!(anchor, Anchor::Dock(_)) { self.dock_output() } else { self.pointer_output() };
+        // With no dock shown there's nothing to sit above: the corner is the screen's.
+        let height = self.overlay_geometry(output.as_ref()).map_or(0, |g| g.size.h);
+        let docked = output.as_ref().is_some_and(|o| self.dock_outputs().contains(o) && self.dock_shown_on(o));
+        let anchor = if anchor == Anchor::Corner && !docked { Anchor::Dock((0, height).into()) } else { anchor };
+        let mut drawer = Drawer::new(anchor, load(&state_file("favorites")), load(&state_file("recent-apps")));
+        drawer.output = output;
+        self.drawer = Some(drawer);
         self.schedule_redraw();
     }
 
@@ -601,9 +619,10 @@ impl State {
         if d.searching() { search(self.apps.list(), &d.field.text) } else { list(self.apps.list(), d.category, &d.favorites, &d.recent) }
     }
 
+    /// Its layout, relative to its display.
     pub fn drawer_layout(&self) -> Option<Layout> {
         let d = self.drawer.as_ref()?;
-        let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
+        let size = self.overlay_geometry(d.output.as_ref())?.size;
         Some(layout(d.anchor, size, super::dock::reserve(&self.config.dock), shown(self.apps.list()).len()))
     }
 
@@ -681,6 +700,7 @@ impl State {
     /// A press at `location` (output-relative): an app opens (a right click opens its menu), a category shows, a
     /// session button acts; outside, the drawer closes. `true`: taken. With its menu open the menu gets the press.
     pub fn drawer_press(&mut self, location: Point<f64, Logical>, secondary: bool) -> bool {
+        let location = self.to_drawer(location);
         if self.drawer.is_none() || self.popup == Some(Popup::Menu(Menu::Drawer)) {
             return false;
         }
@@ -723,6 +743,7 @@ impl State {
 
     /// The pointer moved to `to`: hovering a row selects it, hovering a category shows it.
     pub fn drawer_motion(&mut self, to: Point<f64, Logical>) {
+        let to = self.to_drawer(to);
         if self.popup == Some(Popup::Menu(Menu::Drawer)) {
             return;
         }
@@ -767,6 +788,7 @@ impl State {
 
     /// Scrolling over the list: `dy` px, or `wheel` notches in v120 units (one is a row). `true`: taken.
     pub fn drawer_scroll(&mut self, location: Point<f64, Logical>, dy: f64, wheel: f64) -> bool {
+        let location = self.to_drawer(location);
         let Some(l) = self.drawer_layout().filter(|l| l.rect.to_f64().contains(location)) else { return false };
         let count = self.drawer_apps().len();
         let Some(d) = self.drawer.as_mut() else { return false };
@@ -806,7 +828,7 @@ impl State {
     /// Where the menu opens: its top-left at the click, or its bottom-left there when it wouldn't fit below.
     pub fn drawer_menu_anchor(&self, rows: &[Option<Row>]) -> Option<super::Anchor> {
         let at = self.drawer.as_ref()?.menu.as_ref()?.1;
-        let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size.h;
+        let height = self.overlay_geometry(self.drawer_output().as_ref())?.size.h;
         let menu = super::menu_height(rows);
         Some(super::Anchor::At(if at.y + menu > height - layout::GAP { (at.x, at.y - menu).into() } else { at }))
     }

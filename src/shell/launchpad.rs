@@ -482,10 +482,12 @@ pub struct Launchpad {
     edge: bool,
     /// The open folder (or the one fading out).
     pub folder: Option<Folder>,
+    /// The display it shows on: the pointer's, or the dock's it was opened from.
+    pub output: Option<smithay::output::Output>,
 }
 
 impl Launchpad {
-    fn new(now: Instant) -> Self {
+    fn new(now: Instant, output: Option<smithay::output::Output>) -> Self {
         Self {
             field: TextField::default(),
             order: load_order(),
@@ -498,6 +500,7 @@ impl Launchpad {
             moves: HashMap::new(),
             edge: false,
             folder: None,
+            output,
         }
     }
 
@@ -606,9 +609,14 @@ impl State {
         self.schedule_redraw();
     }
 
+    /// The grid on its display (relative to it).
     pub fn launchpad_grid(&self) -> Option<Grid> {
-        let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
+        let size = self.overlay_geometry(self.launchpad_output().as_ref())?.size;
         Some(grid(size, super::dock::reserve(&self.config.dock)))
+    }
+
+    fn launchpad_output(&self) -> Option<smithay::output::Output> {
+        self.launchpad.as_ref()?.output.clone()
     }
 
     /// Open and not on its way out: it takes the keyboard and the pointer.
@@ -622,7 +630,7 @@ impl State {
         match self.launchpad.as_mut() {
             // Closing: turn back.
             Some(l) => l.shown.go(1.0, now),
-            None => self.launchpad = Some(Launchpad::new(now)),
+            None => self.launchpad = Some(Launchpad::new(now, self.pointer_output())),
         }
         self.schedule_redraw();
     }
@@ -740,10 +748,11 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// A press at `location` (output-relative) while open: an icon opens its app, a dot turns to its page, the field
-    /// keeps it open, anything else closes it. `true`: taken.
+    /// A press at `location` (first-output-relative) while open: an icon opens its app, a dot turns to its page, the
+    /// field keeps it open, anything else closes it. `true`: taken.
     pub fn launchpad_press(&mut self, location: Point<f64, Logical>, secondary: bool) -> bool {
         let Some(page) = self.launchpad.as_ref().filter(|l| !l.closing()).map(|l| l.page) else { return false };
+        let location = self.to_display(self.launchpad_output().as_ref(), location);
         let Some(grid) = self.launchpad_grid() else { return false };
         if secondary || grid.field.to_f64().contains(location) {
             return true;
@@ -833,8 +842,9 @@ impl State {
         true
     }
 
-    /// The pointer moved to `to` (output-relative): a lifted icon follows it, and takes the place under it.
+    /// The pointer moved to `to` (first-output-relative): a lifted icon follows it, and takes the place under it.
     pub fn launchpad_motion(&mut self, to: Point<f64, Logical>) {
+        let to = self.to_display(self.launchpad_output().as_ref(), to);
         let Some(grid) = self.launchpad_grid() else { return };
         let folder = self.launchpad_folder();
         let Some(l) = self.launchpad.as_mut() else { return };
@@ -914,16 +924,18 @@ impl State {
     pub fn launchpad_release(&mut self) {
         let Some(l) = self.launchpad.as_mut() else { return };
         let Some(mut p) = l.press.take() else { return };
+        let output = l.output.clone();
         let app = match l.order.get(p.index) {
             Some(Entry::App(id)) if p.moved && !l.searching() => Some(id.clone()),
             _ => None,
         };
-        if let Some(id) = app.filter(|_| self.dock_covers(self.to_dock(p.at))) {
+        let at = self.display_to_output(output.as_ref(), p.at);
+        if let Some(id) = app.filter(|_| self.dock_covers(self.to_dock(at))) {
             if let Some((l, before)) = self.launchpad.as_mut().zip(p.before.take()) {
                 l.order = before;
                 save_order(&l.order);
             }
-            return self.launchpad_pin(&id, p.at);
+            return self.launchpad_pin(&id, at);
         }
         let Some(l) = self.launchpad.as_mut() else { return };
         if p.moved && !l.searching() {
@@ -950,7 +962,7 @@ impl State {
         }
     }
 
-    /// App `id` dropped on the dock at `at`: pinned in the slot under it (unless already pinned, or items are locked).
+    /// App `id` dropped on the dock at `at` (first-output-relative): pinned in the slot under it (unless already pinned, or items are locked).
     fn launchpad_pin(&mut self, id: &str, at: Point<f64, Logical>) {
         let pinned = self.dock_pinned();
         if self.config.dock.lock_items || pinned.iter().any(|(_, key)| key == id) {
@@ -1173,7 +1185,7 @@ mod tests {
         let dots = g.dots(3);
         assert_eq!(dots[1].loc.x + layout::DOT / 2, 960, "the middle dot is centred");
         assert_eq!(dots[1].loc.x - dots[0].loc.x, layout::DOT_STEP);
-        let mut l = Launchpad::new(Instant::now());
+        let mut l = Launchpad::new(Instant::now(), None);
         let now = Instant::now();
         l.turn_to(5, 3, now);
         assert_eq!(l.page, 2, "clamped to the last page");
@@ -1185,7 +1197,7 @@ mod tests {
     fn others_slide_aside() {
         let g = grid((1920, 1080).into(), 101);
         let now = Instant::now();
-        let mut l = Launchpad::new(now);
+        let mut l = Launchpad::new(now, None);
         l.order = ["a", "b", "c", "d"].map(|id| Entry::App(id.into())).to_vec();
         l.reorder(&g, 0, 2, now);
         assert_eq!(l.order.iter().map(key).collect::<Vec<_>>(), ["b", "c", "a", "d"]);
