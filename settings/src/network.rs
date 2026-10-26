@@ -21,6 +21,8 @@ const SAVED: &str = "org.freedesktop.NetworkManager.Settings.Connection";
 const EDITOR: &str = "nm-connection-editor";
 /// `App::texts` key prefix of a network's password field, then its name.
 pub const PASSWORD: &str = "wifi.password.";
+/// `App::texts` key prefix of the Details sheet's fields (`path`, `method`, `address`, …); open while `path` is there.
+pub const DETAILS: &str = "wifi.details.";
 /// `App::texts` key prefix of the "Other…" form's fields (`ssid`, `security`, …); open while its `ssid` is there.
 pub const OTHER: &str = "wifi.other.";
 
@@ -32,7 +34,7 @@ type Dict<'a> = HashMap<&'static str, HashMap<&'static str, Value<'a>>>;
 pub struct Network {
     /// In range, strongest first, one per name.
     pub networks: Vec<Ap>,
-    /// Saved Wi-Fi connections, by network name.
+    /// Saved Wi-Fi and wired connections, by name.
     pub known: Vec<Known>,
     /// The Wi-Fi and Ethernet devices that are up.
     pub details: Vec<Details>,
@@ -62,8 +64,23 @@ pub struct Ap {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Known {
     pub path: String,
+    /// The network name; a wired connection's own name.
     pub ssid: String,
+    pub wifi: bool,
     pub auto_join: bool,
+    pub ip4: Ip4,
+}
+
+/// A saved connection's IPv4 setup, as typed in its Details sheet.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Ip4 {
+    /// Manual addresses; else DHCP.
+    pub manual: bool,
+    pub address: String,
+    pub prefix: String,
+    pub gateway: String,
+    /// Comma separated.
+    pub dns: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -99,14 +116,79 @@ async fn known(bus: &Connection) -> zbus::Result<Vec<Known>> {
     Ok(found)
 }
 
-/// A saved connection, if it is a Wi-Fi one.
+/// A saved connection, if it is a Wi-Fi or wired one.
 fn saved(path: String, settings: &Settings) -> Option<Known> {
     let connection = settings.get("connection")?;
-    let text = |v: &OwnedValue| String::try_from(v.try_clone().ok()?).ok();
-    (connection.get("type").and_then(text)? == "802-11-wireless").then_some(())?;
-    let ssid = String::from_utf8_lossy(&settings.get("802-11-wireless")?.get("ssid").and_then(bytes)?).into_owned();
+    let wifi = match connection.get("type").and_then(text)?.as_str() {
+        "802-11-wireless" => true,
+        "802-3-ethernet" => false,
+        _ => return None,
+    };
+    let ssid = match wifi {
+        true => String::from_utf8_lossy(&settings.get("802-11-wireless")?.get("ssid").and_then(bytes)?).into_owned(),
+        false => connection.get("id").and_then(text)?,
+    };
     let auto_join = connection.get("autoconnect").and_then(|v| bool::try_from(v).ok()).unwrap_or(true);
-    Some(Known { path, ssid, auto_join })
+    Some(Known { path, ssid, wifi, auto_join, ip4: settings.get("ipv4").map(ip4).unwrap_or_default() })
+}
+
+fn text(v: &OwnedValue) -> Option<String> {
+    String::try_from(v.try_clone().ok()?).ok()
+}
+
+/// The `ipv4` setting: method, the first address, gateway and DNS (`dns` is `au` in network byte order).
+fn ip4(setting: &HashMap<String, OwnedValue>) -> Ip4 {
+    let address = dicts(setting.get("address-data")).into_iter().next().unwrap_or_default();
+    let dns = setting.get("dns").and_then(|v| Vec::<u32>::try_from(v.try_clone().ok()?).ok()).unwrap_or_default();
+    let dns: Vec<String> = dns.into_iter().map(|n| std::net::Ipv4Addr::from(n.to_ne_bytes()).to_string()).collect();
+    Ip4 {
+        manual: setting.get("method").and_then(text).as_deref() == Some("manual"),
+        address: address.get("address").and_then(text).unwrap_or_default(),
+        prefix: address.get("prefix").map(|p| number(Some(p)).to_string()).unwrap_or_default(),
+        gateway: setting.get("gateway").and_then(text).unwrap_or_default(),
+        dns: dns.join(", "),
+    }
+}
+
+/// Writes `ip4` into a saved connection's settings; the error says which field isn't an address.
+fn set_ip4(settings: &mut Settings, ip4: &Ip4) -> Result<(), String> {
+    use std::net::Ipv4Addr;
+    let parse = |what: &str, s: &str| s.trim().parse::<Ipv4Addr>().map_err(|_| format!("“{}” isn't an IPv4 {what}", s.trim()));
+    let owned = |v: Value| OwnedValue::try_from(v).map_err(|e| e.to_string());
+    let dns = ip4.dns.split([',', ' ']).filter(|s| !s.is_empty()).map(|s| parse("DNS server", s)).collect::<Result<Vec<_>, _>>()?;
+    let mut new = HashMap::from([("method", owned(Value::from(if ip4.manual { "manual" } else { "auto" }))?)]);
+    if !dns.is_empty() {
+        new.insert("dns", owned(Value::from(dns.iter().map(|a| u32::from_ne_bytes(a.octets())).collect::<Vec<u32>>()))?);
+    }
+    if ip4.manual {
+        let address = parse("address", &ip4.address)?;
+        let prefix = ip4
+            .prefix
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|p| (1..=32).contains(p))
+            .ok_or_else(|| format!("“{}” isn't a prefix length (1–32)", ip4.prefix.trim()))?;
+        new.insert("address-data", owned(Value::from(vec![HashMap::from([("address", Value::from(address.to_string())), ("prefix", Value::from(prefix))])]))?);
+        if !ip4.gateway.trim().is_empty() {
+            new.insert("gateway", owned(Value::from(parse("router", &ip4.gateway)?.to_string()))?);
+        }
+    }
+    let setting = settings.entry("ipv4".into()).or_default();
+    // The older `addresses` and newer `dns-data` would win over (or clash with) what is written here.
+    for key in ["method", "addresses", "address-data", "gateway", "dns", "dns-data"] {
+        setting.remove(key);
+    }
+    setting.extend(new.into_iter().map(|(k, v)| (k.to_owned(), v)));
+    Ok(())
+}
+
+/// Details ▸ Update: the connection's IPv4 setup; it applies the next time the connection comes up.
+pub async fn update_ip4(bus: Connection, path: String, ip4: Ip4) -> zbus::Result<()> {
+    let mut settings: Settings = bus.call_method(Some(NM), path.as_str(), Some(SAVED), "GetSettings", &()).await?.body().deserialize()?;
+    set_ip4(&mut settings, &ip4).map_err(zbus::Error::Failure)?;
+    bus.call_method(Some(NM), path.as_str(), Some(SAVED), "Update", &(settings,)).await?;
+    Ok(())
 }
 
 fn bytes(value: &OwnedValue) -> Option<Vec<u8>> {
@@ -142,7 +224,7 @@ fn networks(objects: &ManagedObjects, known: &[Known]) -> Vec<Ap> {
                 strength: get(objects, &ap, ACCESS_POINT, "Strength").and_then(|v| u8::try_from(v).ok()).unwrap_or(0),
                 // Flags bit 0 = privacy (WEP); any WPA/RSN flag = WPA.
                 secure: flag("Flags") & 1 != 0 || flag("WpaFlags") != 0 || flag("RsnFlags") != 0,
-                saved: known.iter().find(|k| k.ssid == ssid).map(|k| k.path.clone()),
+                saved: known.iter().find(|k| k.wifi && k.ssid == ssid).map(|k| k.path.clone()),
                 connected: current.contains(&name),
                 ssid,
                 ap: ap.to_string(),
@@ -356,6 +438,28 @@ mod tests {
     }
 
     #[test]
+    fn manual_ip4_round_trip() {
+        let mut settings: Settings = HashMap::from([(
+            "ipv4".to_string(),
+            HashMap::from([("method".to_string(), value(Value::from("auto"))), ("addresses".to_string(), value(Value::from(Vec::<Vec<u32>>::new())))]),
+        )]);
+        let typed = Ip4 { manual: true, address: "192.168.1.20".into(), prefix: "24".into(), gateway: "192.168.1.1".into(), dns: "1.1.1.1, 9.9.9.9".into() };
+        set_ip4(&mut settings, &typed).unwrap();
+        assert!(!settings["ipv4"].contains_key("addresses"));
+        // `dns` is in network byte order: 1.1.1.1's bytes as they are.
+        assert_eq!(Vec::<u32>::try_from(settings["ipv4"]["dns"].try_clone().unwrap()).unwrap()[0], u32::from_ne_bytes([1, 1, 1, 1]));
+        assert_eq!(ip4(&settings["ipv4"]), typed);
+
+        let auto = Ip4 { dns: String::new(), ..typed.clone() };
+        set_ip4(&mut settings, &Ip4 { manual: false, ..auto }).unwrap();
+        assert_eq!(ip4(&settings["ipv4"]), Ip4::default());
+
+        for bad in [Ip4 { prefix: "33".into(), ..typed.clone() }, Ip4 { gateway: "router".into(), ..typed.clone() }, Ip4 { dns: "1.1.1".into(), ..typed }] {
+            assert!(set_ip4(&mut settings, &bad).is_err());
+        }
+    }
+
+    #[test]
     fn wipe_empties() {
         let mut secret = String::from("hunter22");
         wipe(&mut secret);
@@ -375,9 +479,14 @@ mod tests {
             ])
         };
         let known = saved("/s/1".into(), &settings("802-11-wireless", None)).unwrap();
-        assert_eq!((known.ssid.as_str(), known.auto_join), ("Home", true));
+        assert_eq!((known.ssid.as_str(), known.wifi, known.auto_join), ("Home", true, true));
         assert!(!saved("/s/1".into(), &settings("802-11-wireless", Some(false))).unwrap().auto_join);
+        // A wired connection needs its own name; a VPN isn't listed here.
         assert_eq!(saved("/s/2".into(), &settings("802-3-ethernet", None)), None);
+        let mut wired = settings("802-3-ethernet", None);
+        wired.get_mut("connection").unwrap().insert("id".into(), value(Value::from("Office")));
+        assert_eq!(saved("/s/2".into(), &wired).map(|k| (k.ssid, k.wifi)), Some(("Office".into(), false)));
+        assert_eq!(saved("/s/3".into(), &settings("vpn", None)), None);
     }
 
     #[test]
@@ -424,7 +533,7 @@ mod tests {
                 ),
             ),
         ]);
-        let known = [Known { path: "/s/1".into(), ssid: "Home".into(), auto_join: true }];
+        let known = [Known { path: "/s/1".into(), ssid: "Home".into(), wifi: true, auto_join: true, ip4: Ip4::default() }];
         let found = networks(&objects, &known);
         let summary: Vec<_> = found.iter().map(|n| (n.ssid.as_str(), n.strength, n.secure, n.saved.as_deref(), n.connected, n.ap.as_str())).collect();
         assert_eq!(summary, [("Home", 90, true, Some("/s/1"), true, "/ap/3"), ("Cafe", 70, false, None, false, "/ap/2")]);
