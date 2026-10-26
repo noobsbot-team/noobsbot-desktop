@@ -127,7 +127,7 @@ pub enum Anchor {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub label: String,
-    /// macOS-style glyphs; ⌘ is the desktop key.
+    /// Modifier glyphs; ⌘ is the desktop key.
     pub shortcut: &'static str,
     pub action: Option<Action>,
 }
@@ -365,7 +365,7 @@ impl State {
                 self.popup_press(popup, location);
                 true
             }
-            // Its own item again closes the popup, as on macOS.
+            // Its own item again closes the popup.
             (_, Some(item)) => {
                 let again = open.and_then(Popup::item) == Some(item);
                 self.popup = if again { None } else { popup_for(item) };
@@ -395,7 +395,7 @@ impl State {
             Popup::Notifications { .. } => self.center_press(location),
             Popup::Menu(menu) => {
                 let index = self.backend.as_ref().and_then(|b| b.menu.row_at(location));
-                // Separators and disabled rows keep the menu open, as on macOS.
+                // Separators and disabled rows keep the menu open.
                 let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
                 let rows = match menu {
                     Menu::Dock => self.dock_menu_rows(),
@@ -415,7 +415,7 @@ impl State {
     }
 
     /// The pointer moved from `from` to `to` (output-relative). With a popup open, sliding along the bar opens the
-    /// next item's popup, as on macOS; in a menu, the hovered row follows.
+    /// next item's popup; in a menu, the hovered row follows.
     pub fn shell_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         if self.shell_drag.is_some() {
             return self.control_drag(to);
