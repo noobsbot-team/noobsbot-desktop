@@ -230,6 +230,9 @@ fn set_outputs(text: &str, outputs: &[OutputSettings]) -> String {
         if o.primary {
             tables += "primary = true\n";
         }
+        if !o.mirror.is_empty() {
+            tables += &format!("mirror = {:?}\n", o.mirror);
+        }
         tables += "\n";
     }
     let (mut out, mut skip, mut placed) = (String::new(), false, false);
@@ -719,6 +722,22 @@ mod tests {
         assert_eq!(parsed.display.outputs, outputs);
         assert_eq!(set_outputs("[display]\nscale = 0.0\n", &outputs[1..]), "[display]\nscale = 0.0\n\n[[display.outputs]]\nname = \"DP-1\"\nenabled = false\n");
         assert_eq!(set_outputs(text, &[]), "[display]\n# mine\nscale = 0.0\n\n[windows]\nspaces = 0\n");
+        let mirrored = [OutputSettings { mirror: "eDP-1".into(), ..output("HDMI-A-1") }];
+        let new = set_outputs("", &mirrored);
+        assert_eq!(new, "[[display.outputs]]\nname = \"HDMI-A-1\"\nmirror = \"eDP-1\"\n");
+        assert_eq!(toml::from_str::<crate::config::Config>(&new).unwrap().display.outputs, mirrored);
+    }
+
+    #[test]
+    fn remembered_layouts_keep_the_mirror() {
+        let desk = laptop_and_monitor();
+        let saved = remember(&[OutputSettings { mirror: "eDP-1".into(), ..output("HDMI-A-1") }], &desk);
+        let json = serde_json::to_string(&saved).unwrap();
+        let back: Saved = serde_json::from_str(&json).unwrap();
+        assert_eq!(restore(&back, &desk, &[])[0].mirror, "eDP-1");
+        // Saved before mirroring existed: extended.
+        let old: Saved = serde_json::from_str(r#"[["HDMI-A-1", {"name": "HDMI-A-1", "primary": true}]]"#).unwrap();
+        assert_eq!(old[0].1.mirror, "");
     }
 
     #[test]
