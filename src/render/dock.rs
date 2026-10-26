@@ -81,6 +81,8 @@ pub struct DockView {
     /// The tooltip, made for these words, top-left, mode and scale.
     tip: Option<(TipKey, Vec<PixelShaderElement>, Vec<Piece>)>,
     tip_labels: Vec<Label>,
+    /// The line before the minimised windows' tiles.
+    separator: Option<(Rect, PixelShaderElement)>,
 }
 
 type TipKey = (String, Point<i32, Logical>, bool, u64);
@@ -274,6 +276,15 @@ impl DockView {
             })
             .collect();
         out.extend(self.marks.iter().map(|(_, e)| SceneElement::Shader(e.clone())));
+        // A thin line down the bar, a sixth of it clear at either end.
+        let line = layout.separator.map(|x| {
+            let (top, h) = (layout.bar.loc.y, layout.bar.size.h);
+            Rectangle::new(((x - 0.5).round() as i32, top + h / 6).into(), (1, h - h / 3).into())
+        });
+        if self.separator.as_ref().map(|(r, _)| *r) != line {
+            self.separator = line.map(|rect| (rect, shaders.light(rect, [1.0, 1.0, 1.0, 0.35], false, scale)));
+        }
+        out.extend(self.separator.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
 
         match self.bar.as_mut() {
             Some((s, element)) if *s == scale.to_bits() => element.resize(grow(layout.bar, 1), None),

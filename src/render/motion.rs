@@ -59,6 +59,7 @@ fn area(frame: Rectangle<f64, Logical>) -> Rectangle<f64, Logical> {
 }
 
 /// Some elements drawn offscreen: `src` is where they are in `texture` (and on the output, physical px).
+#[derive(Clone)]
 struct Shot {
     texture: GlesTexture,
     src: Rectangle<i32, Physical>,
@@ -106,12 +107,17 @@ fn max_texture_size(renderer: &mut GlesRenderer) -> i32 {
 
 /// The shot drawn so `frame` (logical, output-relative) lands on `look`.
 fn quad(renderer: &GlesRenderer, shot: &Shot, frame: Rectangle<f64, Logical>, look: Look, scale: f64) -> SceneElement {
+    quad_as(Id::new(), renderer, shot, frame, look, scale)
+}
+
+/// `quad` as element `id`: kept between frames, a still quad damages nothing.
+fn quad_as(id: Id, renderer: &GlesRenderer, shot: &Shot, frame: Rectangle<f64, Logical>, look: Look, scale: f64) -> SceneElement {
     let at = look.map(frame, shot.src.to_f64().to_logical(scale));
     let size = at.size.to_i32_round::<i32>();
     // Buffer scale 1: the source rect is in texture pixels.
     let src = Rectangle::new((f64::from(shot.src.loc.x), f64::from(shot.src.loc.y)).into(), (f64::from(shot.src.size.w), f64::from(shot.src.size.h)).into());
     SceneElement::Texture(TextureRenderElement::from_static_texture(
-        Id::new(),
+        id,
         renderer.context_id(),
         at.loc.to_physical(scale),
         shot.texture.clone(),
@@ -261,6 +267,7 @@ pub fn appear(entrance: Option<Entrance>, renderer: &mut GlesRenderer, bar: &mut
 
 /// What a window looked like, to animate after it is gone.
 pub struct Ghost {
+    id: Id,
     pub window: Window,
     /// The display it was on: `frame` is relative to it, and it is drawn there.
     pub output: Output,
@@ -289,7 +296,7 @@ impl Ghost {
         let shot = snapshot(renderer, &elements, area(frame).to_physical_precise_round(scale), scale)?;
         let look = Look::at(frame);
         let anim = Anim::new(crate::anim::Curve::Ease(crate::anim::FADE_OUT));
-        Some(Ghost { window: window.clone(), output: output.clone(), shot, frame, from: look, to: look, anim })
+        Some(Ghost { id: Id::new(), window: window.clone(), output: output.clone(), shot, frame, from: look, to: look, anim })
     }
 
     pub fn frame(&self) -> Rectangle<f64, Logical> {
@@ -302,5 +309,15 @@ impl Ghost {
 
     pub fn element(&self, renderer: &GlesRenderer, now: Instant, scale: f64) -> SceneElement {
         quad(renderer, &self.shot, self.frame, self.look(now), scale)
+    }
+
+    /// A copy that keeps the last frame for good (a minimised window's tile).
+    pub fn still(&self) -> Ghost {
+        Ghost { id: Id::new(), window: self.window.clone(), output: self.output.clone(), shot: self.shot.clone(), ..*self }
+    }
+
+    /// The frame drawn at `look`, as the same element every frame.
+    pub fn drawn(&self, renderer: &GlesRenderer, look: Look, scale: f64) -> SceneElement {
+        quad_as(self.id.clone(), renderer, &self.shot, self.frame, look, scale)
     }
 }
