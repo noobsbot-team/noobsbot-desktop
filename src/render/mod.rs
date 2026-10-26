@@ -275,8 +275,8 @@ impl Shaders {
         Some(PixelShaderElement::new(self.shadow.clone(), shadow.area(rect), None, 1.0, uniforms, Kind::Unspecified))
     }
 
-    /// The built-in opal wallpaper (D11) over `area`.
-    fn opal(&self, area: Rect, dark: bool) -> PixelShaderElement {
+    /// The built-in opal wallpaper (D11) over `area`, at `alpha` (opaque only at 1).
+    fn opal(&self, area: Rect, dark: bool, alpha: f32) -> PixelShaderElement {
         let rgba = |r: u8, g: u8, b: u8, a: f32| (f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, a);
         let (base, blobs) = if dark {
             (rgba(0x15, 0x16, 0x1A, 1.0), [rgba(52, 78, 128, 0.85), rgba(104, 52, 84, 0.8), rgba(40, 92, 72, 0.8), rgba(70, 72, 82, 0.7)])
@@ -285,7 +285,7 @@ impl Shaders {
         };
         let mut uniforms = vec![Uniform::new("base", (base.0, base.1, base.2))];
         uniforms.extend(["blob1", "blob2", "blob3", "blob4"].into_iter().zip(blobs).map(|(n, c)| Uniform::new(n, c)));
-        PixelShaderElement::new(self.opal.clone(), area, Some(vec![area]), 1.0, uniforms, Kind::Unspecified)
+        PixelShaderElement::new(self.opal.clone(), area, (alpha >= 1.0).then(|| vec![area]), alpha, uniforms, Kind::Unspecified)
     }
 }
 

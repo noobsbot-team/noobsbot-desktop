@@ -288,7 +288,7 @@ doesn't understand is skipped and reported in the journal.
 
 | Section | What it controls |
 |---|---|
-| `[appearance]` | light / dark / auto, accent colour, glass opacity, wallpapers, theming Qt apps to match, reduce motion |
+| `[appearance]` | light / dark / auto, accent colour, glass opacity, wallpapers and slideshow, theming Qt apps to match, reduce motion |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
 | `[touchpad]` | tap to click, natural scrolling, three or four-finger swipes, gesture sensitivity |
 | `[hot_corners]` | an action for each screen corner (off by default) |

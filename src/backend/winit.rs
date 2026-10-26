@@ -11,7 +11,10 @@ use smithay::{
     desktop::{layer_map_for_output, utils::OutputPresentationFeedback},
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        calloop::{EventLoop, channel},
+        calloop::{
+            EventLoop, channel,
+            timer::{TimeoutAction, Timer},
+        },
         wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         wayland_server::protocol::wl_surface::WlSurface,
     },
@@ -93,6 +96,15 @@ pub fn wallpaper(event_loop: &mut EventLoop<State>, state: &State) -> Result<Wal
             state.schedule_redraw();
         }
     })?;
+    // The slideshow (E8.4) checks for its next picture twice a minute.
+    // ponytail: polled, so a change lands up to 30 s late; a timer re-armed per interval if that ever matters.
+    let poll = Duration::from_secs(30);
+    event_loop.handle().insert_source(Timer::from_duration(poll), move |_, _, state| {
+        if state.backend.as_mut().is_some_and(|views| views.wallpaper.tick()) {
+            state.schedule_redraw();
+        }
+        TimeoutAction::ToDuration(poll)
+    })?;
     let mut wallpaper = Wallpaper::new(tx);
     wallpaper.set(&state.config.appearance);
     Ok(wallpaper)
@@ -136,7 +148,7 @@ impl State {
             if let Some(alpha) = idle_shade.into_iter().chain(lock_shade).reduce(f32::max) {
                 elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
             }
-            return Some((elements, animating));
+            return Some((elements, animating || views.wallpaper.fading()));
         }
         self.capture_ask();
         let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
@@ -559,13 +571,15 @@ impl State {
         let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows, now);
         if let (Some(gallery), Some(geo)) = (gallery.as_mut(), self.space.output_geometry(output)) {
             let cards = gallery.elements(renderer, shaders, &mut self.text, geo.size, self.config.appearance.glass_opacity, scale);
-            // Above the wallpaper (the last element), below every window.
-            elements.splice(elements.len().saturating_sub(1)..elements.len().saturating_sub(1), cards);
+            // Above the wallpaper (the last elements), below every window.
+            let at = elements.len().saturating_sub(wallpaper.drawn);
+            elements.splice(at..at, cards);
         }
         // Desktop icons (E7.2): above the wallpaper, below every window; Launchpad's dim covers them.
         if let Some(frame) = &desktop_frame {
             let icons = desktop_view.elements(renderer, shaders, &mut self.text, &mut self.icons, frame, dark, accent, scale);
-            elements.splice(elements.len().saturating_sub(1)..elements.len().saturating_sub(1), icons);
+            let at = elements.len().saturating_sub(wallpaper.drawn);
+            elements.splice(at..at, icons);
         }
         // Locked (E6.4): only the lock screen, ours or a client's, over the wallpaper.
         // ponytail: the desktop's elements above are still built (cheap, and only on a redraw); skip them if a
@@ -601,7 +615,7 @@ impl State {
         if let (Some(alpha), Some(geo)) = (idle_shade, self.space.output_geometry(output)) {
             elements.insert(0, SceneElement::Shader(lock_view.shade(shaders, geo.size, alpha, scale)));
         }
-        let animating = gallery.is_some() || dock_frame.animating || animating;
+        let animating = gallery.is_some() || dock_frame.animating || animating || wallpaper.fading();
         Some((elements, animating || self.animating()))
     }
 
