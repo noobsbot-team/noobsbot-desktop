@@ -15,7 +15,7 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::protocol::wl_surface::WlSurface,
     },
-    utils::{Logical, Point, SERIAL_COUNTER},
+    utils::{IsAlive, Logical, Point, SERIAL_COUNTER},
 };
 
 use crate::{
@@ -54,7 +54,12 @@ pub struct Zones {
     pub last_title_press: Option<(std::time::Instant, Window)>,
     /// The window whose traffic lights the pointer is over (they show their glyphs).
     pub lights_hover: Option<Window>,
+    /// `focus = "hover"`: the window the pointer rests on, focused when its timer fires.
+    pub hover_focus: Option<(Window, smithay::reexports::calloop::RegistrationToken)>,
 }
+
+/// How long the pointer rests on a window before hover focus gives it the keyboard.
+const HOVER_FOCUS: std::time::Duration = std::time::Duration::from_millis(200);
 
 /// ↔ ↕ ⤡ ⤢ for a zone.
 pub fn resize_icon(edges: Edges) -> CursorIcon {
@@ -233,6 +238,7 @@ impl State {
                 // pointer comes to the front.
                 if state == ButtonState::Pressed
                     && !pointer.is_grabbed()
+                    && !self.switcher_press(location)
                     && !self.shot_press(self.to_output(location), event.button_code() == BTN_LEFT)
                     && !self.drawer_press(self.to_output(location), event.button_code() == BTN_RIGHT)
                     && !self.dock_press(self.to_output(location), event.button_code())
@@ -265,8 +271,13 @@ impl State {
                         }
                         let start_data = GrabStartData { focus: None, button: BTN_LEFT, location };
                         // Super + drag anywhere in a window moves it (the click never reaches the app).
-                        if let Some(window) = window.filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {
+                        if let Some(window) = window.clone().filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {
                             self.start_move(window, start_data, serial);
+                        } else if let Some((window, frame)) =
+                            window.filter(|_| event.button_code() == BTN_RIGHT && self.move_key_held()).and_then(|w| Some((w.clone(), self.frame(&w)?)))
+                        {
+                            // Super + right-drag resizes from the nearest corner.
+                            self.start_resize(window, wm::nearest_corner(frame, location), start_data, serial);
                         } else if let Some((window, edges)) = zone.filter(|_| event.button_code() == BTN_LEFT) {
                             self.zone_press(window, edges, start_data, serial);
                         } else if let Some((window, part)) = bar.filter(|_| event.button_code() == BTN_LEFT) {
@@ -397,6 +408,37 @@ impl State {
         }
     }
 
+    /// `focus = "hover"`: the window under `location` gets the keyboard once the pointer rests there, unraised.
+    pub fn hover_focus(&mut self, location: Point<f64, Logical>) {
+        let grabbed = self.seat.get_pointer().is_some_and(|p| p.is_grabbed());
+        let target = (self.config.windows.focus == crate::config::FocusMode::Hover
+            && !grabbed
+            && self.switcher.open.is_none()
+            && !self.shell_covers(self.to_output(location))
+            && self.layer_under(location, true).is_none())
+        .then(|| self.space.element_under(location).map(|(w, _)| w.clone()))
+        .flatten()
+        .filter(|w| self.focused_window().as_ref() != Some(w));
+        if self.zones.hover_focus.as_ref().map(|(w, _)| w) == target.as_ref() {
+            return;
+        }
+        if let Some((_, token)) = self.zones.hover_focus.take() {
+            self.loop_handle.remove(token);
+        }
+        let Some(window) = target else { return };
+        let token = self.loop_handle.insert_source(Timer::from_duration(HOVER_FOCUS), |_, _, state| {
+            if let Some((window, _)) = state.zones.hover_focus.take()
+                && window.alive()
+            {
+                state.focus_unraised(&window);
+            }
+            TimeoutAction::Drop
+        });
+        if let Ok(token) = token {
+            self.zones.hover_focus = Some((window, token));
+        }
+    }
+
     /// The resize zone at `location`, if any: the topmost window whose zone or content is there decides, so a zone
     /// never reaches into a window above (or under a bar). Zoomed and fullscreen windows have none.
     pub fn zone_under(&self, location: Point<f64, Logical>) -> Option<(Window, Edges)> {
@@ -431,7 +473,7 @@ impl State {
             let origin = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.loc.to_f64()).unwrap_or_default();
             return lock.client_surface().map(|s| (s.wl_surface().clone(), origin));
         }
-        if self.shell_covers(self.to_output(location)) {
+        if self.shell_covers(self.to_output(location)) || self.switcher_covers(location) {
             return None;
         }
         let window = || {

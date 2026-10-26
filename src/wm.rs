@@ -236,9 +236,24 @@ pub fn grow_to(rect: Rect, area: Rect, edges: Edges) -> Rect {
     Rectangle::new((l, t).into(), (r - l, b - t).into())
 }
 
+/// The corner of `rect` nearest `p`, which a modifier + right-drag resizes from.
+pub fn nearest_corner(rect: Rect, p: Point<f64, Logical>) -> Edges {
+    let left = p.x < f64::from(rect.loc.x) + f64::from(rect.size.w) / 2.0;
+    let top = p.y < f64::from(rect.loc.y) + f64::from(rect.size.h) / 2.0;
+    Edges { left, right: !left, top, bottom: !top }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nearest_corner_by_quadrant() {
+        let rect = Rect::new((100, 100).into(), (200, 100).into());
+        assert_eq!(nearest_corner(rect, (110.0, 110.0).into()), Edges { left: true, top: true, ..Default::default() });
+        assert_eq!(nearest_corner(rect, (290.0, 190.0).into()), Edges { right: true, bottom: true, ..Default::default() });
+        assert_eq!(nearest_corner(rect, (250.0, 120.0).into()), Edges { right: true, top: true, ..Default::default() });
+    }
 
     #[test]
     fn tiles_follow_the_pointer_to_an_edge() {

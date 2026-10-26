@@ -121,9 +121,22 @@ impl State {
         Some((elements, animating || fading))
     }
 
+    /// The app switcher on `output`, when it shows there (the display it opened on).
+    fn switcher_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let Some(open) = self.switcher.open.as_ref().filter(|o| o.visible && o.output.as_ref() == Some(output)) else { return Vec::new() };
+        let Some(geo) = self.space.output_geometry(output) else { return Vec::new() };
+        let icon_names: Vec<Option<String>> = open.apps.iter().map(|a| a.windows.first().and_then(|w| self.app_icon(w))).collect();
+        let names: Vec<String> = open.apps.iter().map(|a| a.name.clone()).collect();
+        let (selected, scale) = (open.selected, output.current_scale().fractional_scale());
+        let (dark, opacity) = (render::is_dark(&self.config.appearance), self.config.appearance.glass_opacity);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        views.switcher.elements(renderer, &views.shaders, &mut self.text, &mut self.icons, &names, &icon_names, selected, geo.size, dark, opacity, scale)
+    }
+
     // ponytail: the shell (bar, dock, popups) is on the first output only, since its caches and hit tests are for one
     // output; a bar and dock per display (E6.2) needs a `Views` per output.
     fn scene_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
+        let switcher_elements = self.switcher_elements(renderer, output);
         if self.space.outputs().next() != Some(output) {
             let geo = self.space.output_geometry(output)?;
             let scale = output.current_scale().fractional_scale();
@@ -156,6 +169,7 @@ impl State {
             if let Some(alpha) = idle_shade.into_iter().chain(lock_shade).reduce(f32::max) {
                 elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
             }
+            elements.splice(0..0, switcher_elements);
             return Some((elements, animating || views.wallpaper.fading()));
         }
         self.capture_ask();
@@ -163,8 +177,6 @@ impl State {
         let thumbnail = self.thumbnail_rect().zip(self.screenshots.thumbnail.as_ref().map(|(t, _)| t.clone()));
         let content = self.menu_bar();
         let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
-        let icon_names: Vec<Option<String>> =
-            self.switcher.open.as_ref().map(|o| o.apps.iter().map(|a| a.windows.first().and_then(|w| self.app_icon(w))).collect()).unwrap_or_default();
         let quit_list = self.force_quit.clone().map(|f| {
             let entries = self.force_quit_entries();
             let selected = f.selection(&entries);
@@ -223,7 +235,7 @@ impl State {
             control,
             alert: sheet,
             dock,
-            switcher,
+            switcher: _,
             force_quit,
             spotlight,
             emoji: emoji_view,
@@ -277,22 +289,7 @@ impl State {
             None => screenshot.hide_thumbnail(),
         }
         let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
-        if let Some(open) = self.switcher.open.as_ref().filter(|o| o.visible) {
-            let names: Vec<String> = open.apps.iter().map(|a| a.name.clone()).collect();
-            bar.extend(switcher.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.icons,
-                &names,
-                &icon_names,
-                open.selected,
-                size,
-                dark,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
+        bar.extend(switcher_elements);
         if let Some((entries, selected)) = &quit_list {
             bar.extend(force_quit.elements(renderer, shaders, &mut self.text, &mut self.icons, entries, *selected, size, dark, accent, scale));
         }
