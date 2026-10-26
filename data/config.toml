@@ -190,6 +190,8 @@ date = true
 seconds = false
 # The calendar's first day: "sunday", "monday" or "saturday".
 week_start = "sunday"
+# ISO week numbers in a narrow column at the left of the Notification Center calendar.
+week_numbers = false
 
 [menu_bar]
 # Hide the menu bar until the pointer touches the top of the screen (or a menu is open); zoomed windows then use the

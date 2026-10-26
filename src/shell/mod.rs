@@ -355,6 +355,9 @@ pub mod calendar {
     pub const BOTTOM: i32 = 8;
     /// The grid is centred: 7 cells of 36 px in 280.
     pub const GRID_X: i32 = (WIDTH - 7 * CELL_W) / 2;
+    /// With week numbers: a column this wide at the padding, and narrower cells beside it.
+    pub const WEEK_W: i32 = 24;
+    pub const WEEK_CELL_W: i32 = (WIDTH - 2 * PAD - WEEK_W) / 7;
 
     /// The card's height with `rows` weeks; rows grow with the text size, the width stays.
     pub fn height(rows: usize) -> i32 {
@@ -373,10 +376,12 @@ pub struct CalendarLayout {
     /// Column headers, then one rect per grid cell, row by row.
     pub header: [Rect; 7],
     pub cells: Vec<Rect>,
+    /// One week-number rect per row, at the left; empty when they are off.
+    pub weeks: Vec<Rect>,
 }
 
-/// The calendar with its top-left corner at (`x`, `y`), output-relative.
-pub fn calendar_layout(x: i32, y: i32, rows: usize) -> CalendarLayout {
+/// The calendar with its top-left corner at (`x`, `y`), output-relative, with a week-number column when `weeks`.
+pub fn calendar_layout(x: i32, y: i32, rows: usize, weeks: bool) -> CalendarLayout {
     use crate::text::ts;
     use calendar::*;
     let at = |dx: i32, dy: i32, w: i32, h: i32| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
@@ -385,13 +390,15 @@ pub fn calendar_layout(x: i32, y: i32, rows: usize) -> CalendarLayout {
     let next = at(WIDTH - PAD + 4 - ARROW, arrow_y, ARROW, ARROW);
     let prev = at(WIDTH - PAD + 4 - 2 * ARROW, arrow_y, ARROW, ARROW);
     let (grid_y, cell_h) = (ts(GRID_Y), ts(CELL_H));
+    let (grid_x, cell_w) = if weeks { (PAD + WEEK_W, WEEK_CELL_W) } else { (GRID_X, CELL_W) };
     CalendarLayout {
         rect: at(0, 0, WIDTH, height(rows)),
         title: at(PAD, ts(TITLE_Y), WIDTH - 2 * PAD - 2 * ARROW, ts(TITLE_H)),
         prev,
         next,
-        header: std::array::from_fn(|i| at(GRID_X + i as i32 * CELL_W, ts(HEADER_Y), CELL_W, ts(HEADER_H))),
-        cells: (0..rows * 7).map(|i| at(GRID_X + (i % 7) as i32 * CELL_W, grid_y + (i / 7) as i32 * cell_h, CELL_W, cell_h)).collect(),
+        header: std::array::from_fn(|i| at(grid_x + i as i32 * cell_w, ts(HEADER_Y), cell_w, ts(HEADER_H))),
+        cells: (0..rows * 7).map(|i| at(grid_x + (i % 7) as i32 * cell_w, grid_y + (i / 7) as i32 * cell_h, cell_w, cell_h)).collect(),
+        weeks: (0..rows).filter(|_| weeks).map(|row| at(PAD, grid_y + row as i32 * cell_h, WEEK_W, cell_h)).collect(),
     }
 }
 
@@ -932,7 +939,7 @@ mod tests {
 
     #[test]
     fn calendar_layout_holds_its_cells() {
-        let layout = calendar_layout(992, 28, 5);
+        let layout = calendar_layout(992, 28, 5, false);
         assert_eq!(layout.rect, Rectangle::new((992, 28).into(), (280, 228).into()));
         // Every cell and both arrows sit inside the popover.
         assert!(layout.cells.iter().chain([&layout.prev, &layout.next, &layout.title]).all(|c| layout.rect.contains_rect(*c)));
@@ -942,12 +949,30 @@ mod tests {
 
     #[test]
     fn calendar_rows_grow_with_text() {
-        let big = crate::text::with_scale(1.5, || calendar_layout(992, 28, 5));
-        let small = calendar_layout(992, 28, 5);
+        let big = crate::text::with_scale(1.5, || calendar_layout(992, 28, 5, false));
+        let small = calendar_layout(992, 28, 5, false);
         assert_eq!(big.rect.size.w, small.rect.size.w);
         assert!(big.rect.size.h > small.rect.size.h && big.cells[0].size.h == 48 && big.title.size.h == 30 && big.header[0].size.h == 21);
         assert!(big.cells.iter().chain([&big.prev, &big.next, &big.title]).chain(&big.header).all(|c| big.rect.contains_rect(*c)));
         assert!(big.header[0].loc.y >= big.title.loc.y + big.title.size.h && big.cells[0].loc.y >= big.header[0].loc.y + big.header[0].size.h);
+    }
+
+    #[test]
+    fn week_numbers_take_a_column_at_the_left() {
+        for scale in [1.0, 1.5] {
+            let (plain, weeks) = crate::text::with_scale(scale, || (calendar_layout(992, 28, 6, false), calendar_layout(992, 28, 6, true)));
+            assert_eq!((weeks.rect, weeks.cells.len(), weeks.weeks.len()), (plain.rect, 42, 6));
+            assert!(plain.weeks.is_empty());
+            for (row, week) in weeks.weeks.iter().enumerate() {
+                let first = weeks.cells[row * 7];
+                // Level with its row, left of it, and the row still ends inside the card's padding.
+                assert_eq!((week.loc.y, week.size.h), (first.loc.y, first.size.h));
+                assert!(week.loc.x + week.size.w <= first.loc.x && week.loc.x >= weeks.rect.loc.x + calendar::PAD);
+                assert!(weeks.cells[row * 7 + 6].loc.x + weeks.cells[row * 7 + 6].size.w <= weeks.rect.loc.x + calendar::WIDTH - calendar::PAD);
+            }
+            assert!(weeks.cells.iter().chain(&weeks.weeks).chain(&weeks.header).all(|c| weeks.rect.contains_rect(*c)));
+            assert_eq!(weeks.header[0].loc.x, weeks.cells[0].loc.x);
+        }
     }
 
     #[test]
@@ -1119,7 +1144,7 @@ mod tests {
 
     #[test]
     fn clicks_step_months() {
-        let layout = calendar_layout(992, 28, 5);
+        let layout = calendar_layout(992, 28, 5, false);
         let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
         assert_eq!(calendar_click(&layout, centre(layout.next), (2026, 12)), Some((2027, 1)));
         assert_eq!(calendar_click(&layout, centre(layout.prev), (2026, 1)), Some((2025, 12)));
