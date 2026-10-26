@@ -24,6 +24,7 @@ use crate::{
     decorations::{FIRST_LIGHT, LIGHT, LIGHT_STEP},
     shell::{alert, switcher},
     state::State,
+    text::ts,
     wm::Rect,
 };
 
@@ -97,7 +98,8 @@ pub struct Entry {
     pub frozen: bool,
 }
 
-/// The window (E4.7): 360 × 320, `sheet`, radius 12, centred.
+/// The window (E4.7): 360 × 320, `sheet`, radius 12, centred. All but the bar, radius and icons grow with the text
+/// size (`text::ts`).
 pub mod layout {
     pub const WIDTH: i32 = 360;
     pub const HEIGHT: i32 = 320;
@@ -128,24 +130,26 @@ pub struct Layout {
 
 pub fn layout(output: Size<i32, Logical>, count: usize) -> Layout {
     use layout::*;
-    let (x, y) = (((output.w - WIDTH) / 2).max(0), ((output.h - HEIGHT) / 2).max(0));
+    let (width, height, line, row) = (ts(WIDTH), ts(HEIGHT), ts(LINE), ts(ROW));
+    let (button_w, button_h) = (ts(BUTTON_W), ts(BUTTON_H));
+    let (x, y) = (((output.w - width) / 2).max(0), ((output.h - height) / 2).max(0));
     let at = |dx: i32, dy: i32, w: i32, h: i32| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
     let light = |i: i32| {
         let c = FIRST_LIGHT + f64::from(i) * LIGHT_STEP - LIGHT / 2.0;
         at(c.round() as i32, ((f64::from(BAR) - LIGHT) / 2.0).round() as i32, LIGHT as i32, LIGHT as i32)
     };
-    let list_y = BAR + 8 + 2 * LINE + 10;
-    let button_y = HEIGHT - PAD - BUTTON_H;
-    let list = at(PAD, list_y, WIDTH - 2 * PAD, button_y - PAD - list_y);
-    let fits = ((list.size.h - 8) / ROW) as usize;
+    let list_y = BAR + 8 + 2 * line + 10;
+    let button_y = height - PAD - button_h;
+    let list = at(PAD, list_y, width - 2 * PAD, button_y - PAD - list_y);
+    let fits = ((list.size.h - 8) / row) as usize;
     Layout {
-        rect: at(0, 0, WIDTH, HEIGHT),
+        rect: at(0, 0, width, height),
         lights: [light(0), light(1), light(2)],
-        title: at(0, 0, WIDTH, BAR),
-        lines: [at(PAD + 4, BAR + 8, WIDTH - 2 * PAD - 4, LINE), at(PAD + 4, BAR + 8 + LINE, WIDTH - 2 * PAD - 4, LINE)],
-        rows: (0..count.min(fits) as i32).map(|i| at(PAD + 4, list_y + 4 + i * ROW, WIDTH - 2 * PAD - 8, ROW)).collect(),
+        title: at(0, 0, width, BAR),
+        lines: [at(PAD + 4, BAR + 8, width - 2 * PAD - 4, line), at(PAD + 4, BAR + 8 + line, width - 2 * PAD - 4, line)],
+        rows: (0..count.min(fits) as i32).map(|i| at(PAD + 4, list_y + 4 + i * row, width - 2 * PAD - 8, row)).collect(),
         list,
-        button: at(WIDTH - PAD - BUTTON_W, button_y, BUTTON_W, BUTTON_H),
+        button: at(width - PAD - button_w, button_y, button_w, button_h),
     }
 }
 
@@ -375,5 +379,16 @@ mod tests {
         // More apps than rows: only what fits.
         let many = layout((1280, 800).into(), 50);
         assert_eq!(many.rows.len(), 6);
+    }
+
+    #[test]
+    fn window_grows_with_text_size() {
+        let at = |k| crate::text::with_scale(k, || layout((1280, 800).into(), 50));
+        assert_eq!(at(1.0), layout((1280, 800).into(), 50), "1.0 is the default");
+        let l = at(1.5);
+        assert_eq!((l.rect.size, l.button.size), ((540, 480).into(), (144, 42).into()));
+        assert!(l.lines.iter().all(|r| r.size.h == 23) && l.rows.iter().all(|r| r.size.h == 42) && l.rows.len() == 7);
+        let parts = l.lights.iter().chain(&l.lines).chain(&l.rows).chain([&l.list, &l.button, &l.title]);
+        assert!(parts.into_iter().all(|r| l.rect.contains_rect(*r)) && l.rows.iter().all(|r| l.list.contains_rect(*r)) && !l.list.overlaps(l.button));
     }
 }
