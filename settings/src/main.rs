@@ -15,6 +15,7 @@ mod pages;
 mod shortcuts;
 mod style;
 mod system;
+mod users;
 mod xkb;
 
 use std::{collections::HashMap, sync::OnceLock, time::Instant};
@@ -131,6 +132,8 @@ pub struct App {
     shortcuts: Option<shortcuts::Editor>,
     /// Sound ▸ Input: the microphone's level, 0 … 1.
     level: f32,
+    /// The Users page's accounts; `None` until read (when the page opens).
+    users: Option<users::Users>,
 }
 
 #[derive(Clone, Debug)]
@@ -224,6 +227,18 @@ pub enum Message {
     Level(f32),
     /// A theme sound plays; `true`: it becomes the alert sound.
     Sound(&'static str, bool),
+    Users(users::Users),
+    /// An account change finished: the accounts again and what went wrong.
+    UsersActed((users::Users, Option<String>)),
+    /// Users ▸ Change Picture…: the chooser opens or closes.
+    PictureChooser,
+    /// This file becomes the account's picture.
+    Picture(std::path::PathBuf),
+    /// Users ▸ Change Password…: the fields open or close.
+    PasswordForm,
+    ChangePassword,
+    /// `passwd` finished: what went wrong, if anything.
+    PasswordChanged(Option<String>),
 }
 
 impl App {
@@ -254,6 +269,7 @@ impl App {
             notify_app: None,
             shortcuts: None,
             level: 0.0,
+            users: None,
         };
         app.retheme();
         if page == Page::General {
@@ -262,8 +278,9 @@ impl App {
         if page == Page::Dock {
             (app.default_apps, app.terminals) = defaults::load();
         }
+        let users = if page == Page::Users { Task::perform(users::read(), Message::Users) } else { Task::none() };
         // Typing searches at once (see `type_ahead`).
-        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs)]))
+        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs), users]))
     }
 
     fn retheme(&mut self) {
@@ -298,6 +315,9 @@ impl App {
                 }
                 if page == Page::Notifications {
                     self.notifiers = config::notifying_apps();
+                }
+                if page == Page::Users {
+                    return Task::perform(users::read(), Message::Users);
                 }
                 if page.is_system() {
                     return Task::perform(system::read(), Message::Status);
@@ -345,6 +365,9 @@ impl App {
                         return Task::none();
                     }
                     return self.join(ssid, Some(value));
+                } else if key == users::NAME {
+                    let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
+                    return Task::perform(users::set(me.path.clone(), "SetRealName", value.trim().to_owned()), Message::UsersActed);
                 } else if let Some(name) = key.strip_prefix("display.custom_scale.") {
                     match pages::parse_scale(&value) {
                         Some(scale) => self.change_outputs(vec![(name.to_owned(), "scale", scale.into())], false),
@@ -363,6 +386,39 @@ impl App {
                 system::play(name);
             }
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
+            Message::Users(users) => self.users = Some(users),
+            Message::PictureChooser => {
+                if self.texts.remove(users::PICTURE_FILE).is_none() {
+                    self.texts.insert(users::PICTURE_FILE.into(), String::new());
+                }
+            }
+            Message::Picture(file) => {
+                let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
+                self.texts.remove(users::PICTURE_FILE);
+                return Task::perform(users::set_picture(me.path.clone(), file), Message::UsersActed);
+            }
+            Message::PasswordForm => self.password_form(!self.texts.contains_key(users::PASSWORD[0])),
+            Message::ChangePassword => {
+                let field = |key| self.texts.get(key).map_or("", String::as_str);
+                if let Err(why) = users::check(field(users::PASSWORD[0]), field(users::PASSWORD[1]), field(users::PASSWORD[2])) {
+                    self.error = Some(why.into());
+                    return Task::none();
+                }
+                let [old, new, verify] = users::PASSWORD.map(|key| self.texts.remove(key).unwrap_or_default());
+                users::wipe(verify);
+                return Task::perform(users::change_password(old, new), Message::PasswordChanged);
+            }
+            Message::PasswordChanged(error) => {
+                // Failed: the fields open again, empty, under the reason.
+                self.password_form(error.is_some());
+                self.error = error;
+            }
+            Message::UsersActed((users, error)) => {
+                self.users = Some(users);
+                self.error = error;
+                // The sidebar's name comes from /etc/passwd, which AccountsService rewrote.
+                self.user = system::user();
+            }
             Message::Wallpaper(path) => {
                 self.save("appearance.wallpaper", path.as_str());
                 self.save("appearance.wallpaper_dark", path);
@@ -548,6 +604,18 @@ impl App {
         true
     }
 
+    /// Users ▸ Change Password…'s fields open (empty), or close with what was typed wiped.
+    fn password_form(&mut self, open: bool) {
+        for key in users::PASSWORD {
+            if let Some(typed) = self.texts.remove(key) {
+                users::wipe(typed);
+            }
+            if open {
+                self.texts.insert(key.into(), String::new());
+            }
+        }
+    }
+
     /// After a Login Items change: the error if it failed, and the list read again.
     fn login_changed(&mut self, done: std::io::Result<()>, what: &str) {
         self.error = done.err().map(|err| format!("Couldn't change the login item {what}: {err}"));
@@ -591,7 +659,8 @@ impl App {
         )
         .padding([4, 6])
         .width(Length::Fill)
-        .style(t.sidebar_row(false));
+        .style(t.sidebar_row(self.page == Page::Users && self.query.trim().is_empty()))
+        .on_press(Message::Page(Page::Users));
         let mut list = column![search, user, container(space()).height(1).width(Length::Fill).style(t.rule())].spacing(8);
         let mut rows = column![].spacing(1);
         for page in Page::ALL {
