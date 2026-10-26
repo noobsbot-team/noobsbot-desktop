@@ -1094,6 +1094,21 @@ mod tests {
     }
 
     #[test]
+    fn screenshots_are_of_the_pointers_display() {
+        let [main, left] = two_displays();
+        // The toolbar and a region drag on the left display, above the main one's top.
+        assert_eq!(display_for(&[main, left], None, (-1000.0, -100.0).into()), 1);
+        let a = rebase((-1000.0, -100.0).into(), main.loc, left.loc);
+        let b = rebase((100.0, 0.0).into(), main.loc, left.loc);
+        assert_eq!(a, (280.0, 100.0).into());
+        // A drag past the display's edge is cut to it: a capture reads one display's frame.
+        let rect = screenshot::region(a, b).intersection(Rectangle::from_size(left.size));
+        assert_eq!(rect, Some(Rectangle::new((280, 100).into(), (1000, 100).into())));
+        // Window: the focused window's display.
+        assert_eq!(display_for(&[main, left], Some((-300, 400).into()), (500.0, 500.0).into()), 1);
+    }
+
+    #[test]
     fn spotlight_opens_on_the_focused_windows_display() {
         let screens = two_displays();
         // The focused window's centre on the left display, the pointer on the main one.
