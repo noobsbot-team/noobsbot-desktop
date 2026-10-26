@@ -44,10 +44,12 @@ pub struct Config {
     pub display: Displays,
     pub windows: Windows,
     pub clock: Clock,
+    pub menu_bar: MenuBar,
     pub dock: Dock,
     pub idle: Idle,
     pub privacy: Privacy,
     pub weather: Weather,
+    pub widgets: Widgets,
     pub calendar: Calendar,
     pub update: Update,
     pub desktop: Desktop,
@@ -199,6 +201,14 @@ pub enum ColourFilter {
     Greyscale,
 }
 
+/// The menu bar (E8.8).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct MenuBar {
+    /// Slides away until the pointer touches the top edge or a menu opens; zoomed windows get the full height.
+    pub auto_hide: bool,
+}
+
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(default)]
@@ -230,7 +240,7 @@ impl From<WeekStart> for chrono::Weekday {
     }
 }
 
-/// Wallpaper fit (macOS: Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen).
+/// Wallpaper fit (Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WallpaperFit {
@@ -252,7 +262,7 @@ pub enum Mode {
     Auto,
 }
 
-/// The macOS accent set (Part D); theme.rs maps each to its light and dark colour.
+/// Part D's accent set; theme.rs maps each to its light and dark colour.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Accent {
@@ -360,7 +370,7 @@ pub struct Touchpad {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SecondaryClick {
-    /// Click with two fingers (macOS).
+    /// Click with two fingers.
     TwoFingers,
     /// Click in the bottom-right corner.
     Corner,
@@ -457,6 +467,8 @@ pub struct Windows {
     pub spaces: u8,
     /// Which window gets the keyboard: the one clicked, or (advanced) the one under the pointer.
     pub focus: FocusMode,
+    /// The Log Out alert's "Reopen windows when logging back in" box, as last left (E8.8).
+    pub reopen_at_login: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -498,10 +510,12 @@ impl Default for Config {
             display: Displays::default(),
             windows: Windows::default(),
             clock: Clock::default(),
+            menu_bar: MenuBar::default(),
             dock: Dock::default(),
             idle: Idle::default(),
             privacy: Privacy::default(),
             weather: Weather::default(),
+            widgets: Widgets::default(),
             calendar: Calendar::default(),
             update: Update::default(),
             desktop: Desktop::default(),
@@ -545,6 +559,16 @@ pub struct Weather {
     pub units: Units,
 }
 
+/// Where widgets from other processes show (E8.8), by id, in order.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Widgets {
+    /// Notification Center's order; widgets in neither list follow these.
+    pub center: Vec<String>,
+    /// On the desktop instead, top to bottom.
+    pub desktop: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Units {
@@ -584,6 +608,8 @@ pub struct Dock {
     pub minimise_into_icon: bool,
     /// How a window goes into the dock and comes back (E5.5).
     pub minimise_effect: MinimiseEffect,
+    /// The Trash at the dock's right end, after a separator (E8.8).
+    pub show_trash: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -769,6 +795,7 @@ impl Default for Dock {
             scroll: DockScroll::On,
             minimise_into_icon: false,
             minimise_effect: MinimiseEffect::Scale,
+            show_trash: true,
         }
     }
 }
@@ -845,7 +872,15 @@ impl Default for Touchpad {
 
 impl Default for Windows {
     fn default() -> Self {
-        Self { move_modifier: Modifier::Super, magnetic_edges: true, snapping: true, double_click_title: TitleAction::Zoom, spaces: 0, focus: FocusMode::Click }
+        Self {
+            move_modifier: Modifier::Super,
+            magnetic_edges: true,
+            snapping: true,
+            double_click_title: TitleAction::Zoom,
+            spaces: 0,
+            focus: FocusMode::Click,
+            reopen_at_login: true,
+        }
     }
 }
 

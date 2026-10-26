@@ -21,7 +21,7 @@ impl Default for Format {
     }
 }
 
-/// `Sat 17 Oct  9:41 AM`, `21:41:07`, …: two spaces between the date and the time, like macOS.
+/// `Sat 17 Oct  9:41 AM`, `21:41:07`, …: two spaces between the date and the time.
 pub fn text<Tz: TimeZone>(now: &DateTime<Tz>, format: Format) -> String
 where
     Tz::Offset: std::fmt::Display,

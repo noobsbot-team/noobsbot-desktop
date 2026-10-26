@@ -1,5 +1,5 @@
-//! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s, as on
-//! macOS. Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. A frozen app asks
+//! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s.
+//! Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. A frozen app asks
 //! Wait / Force Quit (E4.7).
 //! Drawn by render/alert.rs, which keeps the button rects of the last frame.
 
@@ -62,6 +62,8 @@ pub enum Kind {
         exe: String,
         client: ClientId,
     },
+    /// The Trash's Empty Trash (E8.8).
+    EmptyTrash,
     /// An admin password for polkit (E7.2): `user` indexes `auth.users` (Tab picks the next); `checking` while
     /// polkit's helper has it; `wrong` since the last wrong one (the field shakes, the body says so).
     Polkit {
@@ -102,6 +104,7 @@ impl Alert {
             Kind::Pin { device, .. } => format!("Pair with “{device}”"),
             Kind::ScreenRecording { app, .. } => format!("“{app}” would like to record this computer's screen."),
             Kind::Polkit { auth, .. } => auth.message.clone(),
+            Kind::EmptyTrash => "Are you sure you want to permanently erase the items in the Trash?".into(),
         }
     }
 
@@ -119,6 +122,7 @@ impl Alert {
             Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
             Kind::ScreenRecording { .. } => "It will see everything on the screen, including other apps' windows. The answer is kept in config.toml.".into(),
+            Kind::EmptyTrash => "You can't undo this action.".into(),
             Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
             Kind::Polkit { auth, user, .. } => {
                 let name = auth.users.get(*user).map_or("", String::as_str);
@@ -147,6 +151,7 @@ impl Alert {
             Kind::Wifi { .. } => "Join",
             Kind::Pin { .. } => "Pair",
             Kind::ScreenRecording { .. } => "Allow",
+            Kind::EmptyTrash => "Empty Trash",
             Kind::Polkit { .. } => "OK",
         }
     }
@@ -179,6 +184,8 @@ impl Alert {
 pub enum Button {
     Cancel,
     Confirm,
+    /// A power alert's "Reopen windows when logging back in" row: toggles it.
+    Reopen,
 }
 
 impl State {
@@ -311,6 +318,9 @@ impl State {
     /// Cancel (Esc) or the default button (Return, or the countdown running out).
     pub fn alert_answer(&mut self, button: Button) {
         let Some(alert) = self.alert.clone() else { return };
+        if button == Button::Reopen {
+            return self.toggle_reopen();
+        }
         if let Kind::Polkit { auth, user, field, checking, .. } = &alert.kind {
             if button == Button::Confirm {
                 if !*checking && !field.text.is_empty() {
@@ -337,7 +347,10 @@ impl State {
                 return;
             }
             Kind::Power(_) if button == Button::Cancel => return,
-            Kind::Power(power) => power,
+            Kind::Power(power) => {
+                self.session_save(self.config.windows.reopen_at_login);
+                power
+            }
             Kind::NotResponding { .. } if button == Button::Cancel => return,
             Kind::NotResponding { pid, client, .. } => return self.kill(pid, client),
             Kind::Pin { field, .. } => return self.services.send(Command::PinEntry((button == Button::Confirm).then_some(field.text))),
@@ -347,9 +360,28 @@ impl State {
                 return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
             }
             Kind::ScreenRecording { exe, client, .. } => return self.recording_answer(client, exe, button == Button::Confirm),
+            Kind::EmptyTrash if button == Button::Cancel => return,
+            Kind::EmptyTrash => {
+                // Off the frame thread: a big trash takes a while; the watcher turns the icon empty.
+                let _ = std::thread::Builder::new().name("empty-trash".into()).spawn(|| crate::shell::trash::empty(&crate::shell::trash::dir()));
+                return;
+            }
             Kind::Polkit { .. } => return,
         };
         self.power_now(power);
+    }
+
+    /// The checkbox: remembered in `[windows] reopen_at_login`.
+    fn toggle_reopen(&mut self) {
+        let on = !self.config.windows.reopen_at_login;
+        self.config.windows.reopen_at_login = on;
+        let path = crate::config::path();
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        if let Err(err) = crate::config::save_atomic(&path, &crate::config::set_key(&text, "windows", "reopen_at_login", &on.to_string())) {
+            tracing::warn!("{}: {err}", path.display());
+        }
+        self.schedule_redraw();
     }
 
     /// Restart, shut down or log out without asking (the alert asked, or the lock screen's buttons).
@@ -364,7 +396,7 @@ impl State {
     }
 
     /// A press at `location` (output-relative): `true` if the alert took it. Outside, the click goes on (the alert
-    /// isn't modal, as on macOS).
+    /// isn't modal).
     pub(super) fn alert_press(&mut self, location: Point<f64, Logical>) -> bool {
         let Some(backend) = self.backend.as_ref() else { return false };
         if !backend.alert.rect().is_some_and(|r| r.to_f64().contains(location)) {
