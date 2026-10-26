@@ -952,15 +952,32 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                     };
                     let (mine, nearby): (Vec<_>, Vec<_>) = bt.devices.iter().partition(|d| d.paired);
                     if !mine.is_empty() {
-                        let rows = mine
-                            .into_iter()
-                            .map(|d| {
-                                let (state, action) = if d.connected { ("Connected", "Disconnect") } else { ("Not connected", "Connect") };
-                                let buttons =
-                                    row![push(action, Message::Device(d.path.clone(), !d.connected)), push("Forget", Message::Forget(d.path.clone()))];
-                                line(t, &d.name, state, buttons.spacing(8).into())
-                            })
-                            .collect();
+                        let mut rows = Vec::new();
+                        for d in mine {
+                            let (state, action) = if d.connected { ("Connected", "Disconnect") } else { ("Not connected", "Connect") };
+                            let key = format!("{}{}", crate::system::RENAME, d.path);
+                            let buttons = row![
+                                push(action, Message::Device(d.path.clone(), !d.connected)),
+                                push("Rename", Message::Type(key.clone(), d.name.clone())),
+                                push("Forget", Message::Forget(d.path.clone()))
+                            ];
+                            rows.push(line(t, &d.name, state, buttons.spacing(8).into()));
+                            // Rename opens a field under the row; Return saves it.
+                            if let Some(name) = app.texts.get(&key) {
+                                let field = text_input(&d.name, name)
+                                    .on_input({
+                                        let key = key.clone();
+                                        move |v| Message::Type(key.clone(), v)
+                                    })
+                                    .on_submit(Message::Submit(key.clone()))
+                                    .size(13)
+                                    .padding([3, 8])
+                                    .width(180)
+                                    .style(t.input(false));
+                                let save = button(text("Save").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::Submit(key));
+                                rows.push(line(t, "Name", "", row![field, save].spacing(8).align_y(Alignment::Center).into()));
+                            }
+                        }
                         parts.push(group(t, "My Devices", rows));
                     }
                     let rows: Vec<_> = nearby.into_iter().map(|d| line(t, &d.name, "", push("Connect", Message::Device(d.path.clone(), true)))).collect();
