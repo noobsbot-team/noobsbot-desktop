@@ -363,11 +363,11 @@ impl Apps {
     }
 
     /// The app a key names: a desktop-file id (with or without `.desktop`), a window's app id or `StartupWMClass`, the
-    /// last part of a reverse-DNS id either way (`kate` → `org.kde.kate`, `org.gnome.Nautilus` → `nautilus`), or the
+    /// last part of a reverse-DNS id either way (`kate` → `org.kde.kate`, `org.example.Files` → `files`), or the
     /// program `Exec` runs. Case-insensitive.
     pub fn find(&self, key: &str) -> Option<&App> {
         let key = key.strip_suffix(".desktop").unwrap_or(key).to_ascii_lowercase();
-        // A reverse-DNS key for a plain file (`org.gnome.Nautilus` → `nautilus`): the key's last part, second.
+        // A reverse-DNS key for a plain file (`org.example.Files` → `files`): the key's last part, second.
         let hit = self.index.get(&key).or_else(|| self.index.get(key.rsplit('.').next()?))?;
         Some(&self.apps[hit.1])
     }
@@ -702,7 +702,7 @@ mod tests {
     use super::*;
 
     fn app(text: &str) -> Option<Entry> {
-        parse("test", text, "de_DE.UTF-8", "noobsbot-desktop:GNOME")
+        parse("test", text, "de_DE.UTF-8", "noobsbot-desktop:Shared")
     }
 
     fn exec(exec: &str) -> Vec<String> {
@@ -751,11 +751,11 @@ mod tests {
         assert_eq!(app("[Desktop Entry]\nType=Application\nName=x\n"), None, "no Exec");
         // Meant for another desktop: out of launchers, still an app (its windows get matched).
         let shown = |line: &str| matches!(app(&format!("{base}{line}\n")), Some(Entry::App(App { no_display: false, .. })));
-        assert!(shown("OnlyShowIn=KDE;GNOME;"));
-        assert!(!shown("OnlyShowIn=KDE;"));
-        assert!(shown("NotShowIn=KDE;"));
-        assert!(!shown("NotShowIn=KDE;noobsbot-desktop;"));
-        assert!(matches!(app(&format!("{base}NotShowIn=KDE;noobsbot-desktop;\n")), Some(Entry::App(_))));
+        assert!(shown("OnlyShowIn=Other;Shared;"));
+        assert!(!shown("OnlyShowIn=Other;"));
+        assert!(shown("NotShowIn=Other;"));
+        assert!(!shown("NotShowIn=Other;noobsbot-desktop;"));
+        assert!(matches!(app(&format!("{base}NotShowIn=Other;noobsbot-desktop;\n")), Some(Entry::App(_))));
         assert!(shown("TryExec=sh"), "on PATH");
         assert_eq!(app(&format!("{base}TryExec=/nowhere/such-program\n")), None, "not installed");
         // Keys of other groups (actions) never leak into the main entry.
@@ -766,11 +766,11 @@ mod tests {
     #[test]
     fn comment_keywords_and_categories() {
         let base =
-            "[Desktop Entry]\nType=Application\nName=Kate\nExec=kate\nGenericName=Text Editor\nKeywords=text;editor;\nCategories=Qt;KDE;Utility;TextEditor;\n";
+            "[Desktop Entry]\nType=Application\nName=Kate\nExec=kate\nGenericName=Text Editor\nKeywords=text;editor;\nCategories=Qt;Utility;TextEditor;\n";
         let Some(Entry::App(kate)) = app(&format!("{base}Comment=Edit text\nComment[de]=Text bearbeiten\nKeywords[de]=Text;Bearbeiter\n")) else { panic!() };
         assert_eq!((kate.comment.as_str(), kate.generic_name.as_str()), ("Text bearbeiten", "Text Editor"));
         assert_eq!(kate.keywords, ["Text", "Bearbeiter", "text", "editor"], "translated first, then the plain ones");
-        assert_eq!(kate.categories, ["Qt", "KDE", "Utility", "TextEditor"]);
+        assert_eq!(kate.categories, ["Qt", "Utility", "TextEditor"]);
         let Some(Entry::App(bare)) = app(base) else { panic!() };
         assert_eq!(bare.comment, "Text Editor", "no Comment: the generic name");
         assert_eq!(bare.keywords, ["text", "editor"]);
@@ -814,11 +814,11 @@ mod tests {
         write(&user, "org.kde.dolphin.desktop", &entry("My Dolphin", "dolphin", ""));
         write(&system, "org.kde.dolphin.desktop", &entry("Dolphin", "dolphin", ""));
         write(&system, "kde/term.desktop", &entry("Term", "/usr/bin/noobsbot", "StartupWMClass=Noobsbot\n"));
-        write(&system, "nautilus.desktop", &entry("Files", "nautilus", ""));
+        write(&system, "files.desktop", &entry("Files", "files", ""));
         write(&system, "a-wrapper.desktop", &entry("A wrapper", "kate --wrapped", ""));
         let apps = Apps::scan(&[user, system], "", "");
         let ids: Vec<&str> = apps.list().iter().map(|a| a.id.as_str()).collect();
-        assert_eq!(ids, ["a-wrapper", "nautilus", "org.kde.kate", "org.kde.dolphin", "kde-term"], "sorted by name, gone hidden");
+        assert_eq!(ids, ["a-wrapper", "files", "org.kde.kate", "org.kde.dolphin", "kde-term"], "sorted by name, gone hidden");
         assert_eq!(apps.find("KATE").map(|a| a.id.as_str()), Some("org.kde.kate"), "an id's last segment beats a program, whatever the sort order");
         assert_eq!(apps.index.len(), 8, "one key per distinct id, wm class, id tail and program");
         assert_eq!(apps.find("org.kde.dolphin").map(|a| a.name.as_str()), Some("My Dolphin"));
@@ -828,8 +828,8 @@ mod tests {
         assert_eq!(apps.find("gone"), None);
         // A window's app id and the pinned name land on one dock item: the same app either way round.
         let id = |key: &str| apps.find(key).map(|a| a.id.as_str());
-        assert_eq!(id("org.gnome.Nautilus"), Some("nautilus"), "a reverse-DNS app id for a plain desktop file");
-        assert_eq!(id("org.gnome.Nautilus"), id("nautilus"));
+        assert_eq!(id("org.example.Files"), Some("files"), "a reverse-DNS app id for a plain desktop file");
+        assert_eq!(id("org.example.Files"), id("files"));
         assert_eq!(id("io.github.Noobsbot"), id("Noobsbot"), "by the last part against StartupWMClass");
         assert_eq!(id("org.kde.kate"), id("Kate"));
         let _ = std::fs::remove_dir_all(root);

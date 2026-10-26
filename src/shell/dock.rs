@@ -160,7 +160,7 @@ pub fn short_title(title: &str, app: &str) -> String {
 pub enum Builtin {
     Launchpad,
     AppDrawer,
-    /// The screenshot toolbar. Spectacle's entry runs it too: Spectacle refuses to start outside KWin.
+    /// The screenshot toolbar. Spectacle's entry runs it too: Spectacle refuses to start outside its own compositor.
     Screenshot,
 }
 
@@ -1006,7 +1006,7 @@ mod tests {
         assert_eq!(Builtin::of("launchpad"), Some(Builtin::Launchpad));
         assert_eq!(Builtin::of("screenshot"), Some(Builtin::Screenshot));
         assert_eq!(Builtin::of("app-drawer"), Some(Builtin::AppDrawer));
-        assert_eq!(Builtin::of("org.kde.spectacle"), Some(Builtin::Screenshot), "Spectacle needs KWin: it opens our toolbar");
+        assert_eq!(Builtin::of("org.kde.spectacle"), Some(Builtin::Screenshot), "Spectacle needs its own compositor: it opens our toolbar");
         assert_eq!(Builtin::of("org.kde.kate"), None);
         let item = |key: &str| Item { key: key.into(), app: None, windows: Vec::new() };
         assert_eq!((item("screenshot").icon(), item("screenshot").title()), ("spectacle", "Screenshot"));

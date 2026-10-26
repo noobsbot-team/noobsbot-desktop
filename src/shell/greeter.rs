@@ -444,9 +444,13 @@ mod tests {
 
     #[test]
     fn session_files() {
-        let s = session("[Desktop Entry]\nName=Plasma (Wayland)\nName[de]=X\nExec=/usr/lib/plasma-dbus-run-session-if-needed startplasma-wayland %U\n[Desktop Action x]\nExec=no", "plasma".into()).unwrap();
-        assert_eq!(s.name, "Plasma (Wayland)");
-        assert_eq!(s.cmd, ["/usr/lib/plasma-dbus-run-session-if-needed", "startplasma-wayland"]);
+        let s = session(
+            "[Desktop Entry]\nName=Other (Wayland)\nName[de]=X\nExec=/usr/lib/other-dbus-run-session-if-needed start-other %U\n[Desktop Action x]\nExec=no",
+            "other".into(),
+        )
+        .unwrap();
+        assert_eq!(s.name, "Other (Wayland)");
+        assert_eq!(s.cmd, ["/usr/lib/other-dbus-run-session-if-needed", "start-other"]);
         assert!(session("[Desktop Entry]\nName=Gone\nExec=x\nHidden=true", "g".into()).is_none());
         assert!(session("[Desktop Entry]\nName=No command", "n".into()).is_none());
         let ours = sessions(Path::new("data/system/usr/share/wayland-sessions"));

@@ -4,7 +4,7 @@
 # ponytail: plain shell; the Rust wrapper (src/bin/session.rs, E6.13) replaces it to add the heartbeat watchdog
 # (E6.4), keeping this environment, the rollback rule and the session target.
 
-# KDE apps read the app menu named by XDG_MENU_PREFIX: Arch's archlinux-xdg-menu, or on Debian the one install.sh writes.
+# Dolphin and Kate read the app menu named by XDG_MENU_PREFIX: Arch's archlinux-xdg-menu, or on Debian the one install.sh writes.
 menu=noobsbot-
 [ -f /etc/xdg/menus/arch-applications.menu ] && menu=arch-
 export XDG_CURRENT_DESKTOP=noobsbot-desktop XDG_SESSION_DESKTOP=noobsbot-desktop XDG_SESSION_TYPE=wayland \

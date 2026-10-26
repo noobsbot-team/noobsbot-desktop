@@ -854,7 +854,7 @@ mod tests {
 
     #[test]
     fn categories_from_freedesktop() {
-        assert_eq!(categories(&app("Kate", "Qt;KDE;Utility;TextEditor;")), [Category::Accessories]);
+        assert_eq!(categories(&app("Kate", "Qt;Utility;TextEditor;")), [Category::Accessories]);
         assert_eq!(categories(&app("VLC", "AudioVideo;Player;Recorder;Audio;Video")), [Category::Multimedia], "once");
         assert_eq!(categories(&app("Helium", "Network;WebBrowser")), [Category::Internet]);
         assert_eq!(categories(&app("Stellarium", "Education;Science;Astronomy")), [Category::Education, Category::Science]);

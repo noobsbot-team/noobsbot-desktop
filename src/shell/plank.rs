@@ -116,7 +116,7 @@ fn dock_keys(dump: &Dump, launchers: &HashMap<String, String>, kept: &[String]) 
         names.sort();
         names
     });
-    // Spectacle needs KWin, so its launcher becomes the screenshot toolbar.
+    // Spectacle needs its own compositor, so its launcher becomes the screenshot toolbar.
     let plank = order.iter().filter_map(|n| launchers.get(n)).filter_map(|t| launcher_id(t)).map(|id| match Builtin::of(&id) {
         Some(Builtin::Screenshot) => dock::SCREENSHOT_KEY.to_owned(),
         _ => id,
@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(found.len(), 8);
         let defaults = config::Config::default().dock.items;
         let config = config::parse(&set_keys(config::DEFAULT_TOML, "dock", &dock_keys(&parse_dump(&dump), &found, &defaults))).expect("parses");
-        // Launchpad stays in front; Spectacle (KWin only) becomes the screenshot toolbar in its place.
+        // Launchpad stays in front; Spectacle (its own compositor only) becomes the screenshot toolbar in its place.
         let expected =
             ["launchpad", "google-chrome", "com.microsoft.VSCode", "brave-browser", "org.kde.dolphin", "org.kde.kate", "screenshot", "kitty", "noobsbot"];
         assert_eq!(config.dock.items, expected);

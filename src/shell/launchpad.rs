@@ -479,10 +479,10 @@ mod tests {
     fn filters_by_name() {
         let mut hidden = app("Settings Daemon");
         hidden.no_display = true;
-        let apps = [app("Ark"), app("Dolphin"), app("Firefox"), app("Kate"), app("KDE Partition Manager"), hidden];
+        let apps = [app("Ark"), app("Dolphin"), app("Firefox"), app("Kate"), app("Kdenlive"), hidden];
         let names = |q: &str| filter(&apps, q).iter().map(|a| a.name.as_str()).collect::<Vec<_>>();
-        assert_eq!(names(""), ["Ark", "Dolphin", "Firefox", "Kate", "KDE Partition Manager"], "no NoDisplay apps");
-        assert_eq!(names("k"), ["Kate", "KDE Partition Manager", "Ark"], "prefix matches first");
+        assert_eq!(names(""), ["Ark", "Dolphin", "Firefox", "Kate", "Kdenlive"], "no NoDisplay apps");
+        assert_eq!(names("k"), ["Kate", "Kdenlive", "Ark"], "prefix matches first");
         assert_eq!(names("FIRE"), ["Firefox"]);
         assert_eq!(names(" set"), Vec::<&str>::new());
     }

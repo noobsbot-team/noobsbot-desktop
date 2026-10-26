@@ -240,7 +240,7 @@ pub struct State {
 struct Process(Option<String>);
 
 /// The file name of what `pid` runs: its `exe` link, else the first word of its command line (`comm` would cut
-/// `gnome-system-monitor` at 15 chars).
+/// `a-system-monitor` at 15 chars).
 pub fn program_name(pid: i32) -> Option<String> {
     let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok().and_then(|p| Some(p.file_name()?.to_str()?.trim_end_matches(" (deleted)").to_owned()));
     let argv0 = || {
