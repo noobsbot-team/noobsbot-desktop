@@ -690,7 +690,12 @@ impl State {
                         if joined {
                         } else if network.secure && !network.known {
                             let field = crate::ui::field::TextField::secure();
-                            self.open_ask(crate::shell::alert::Kind::Wifi { ssid, join: Some((ap, device)), field });
+                            self.open_ask(crate::shell::alert::Kind::Wifi {
+                                ssid,
+                                join: Some((ap, device)),
+                                field,
+                                secret: crate::services::network::Secret::Psk,
+                            });
                         } else {
                             self.services.send(Command::WifiJoin { ssid, ap, device, password: None });
                         }
