@@ -538,7 +538,7 @@ impl std::fmt::Display for Rate {
     }
 }
 
-/// The scale presets (Cinnamon's and macOS's steps).
+/// The scale presets (the common desktop and macOS steps).
 const SCALES: [f64; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// `1.25` → `125%`, `1.333` → `133%`.
@@ -675,7 +675,7 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
     parts
 }
 
-/// "Keep these display settings?" over the page, counting down to the revert (Cinnamon's safety prompt).
+/// "Keep these display settings?" over the page, counting down to the revert (a safety prompt).
 pub fn keep_sheet<'a>(t: Tokens, left: u64) -> Element<'a, Message> {
     let card = column![
         text("Keep these display settings?").size(15).font(font(Weight::Semibold)),

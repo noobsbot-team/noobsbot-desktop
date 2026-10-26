@@ -169,7 +169,7 @@ icons = true
 
 [app_drawer]
 # The app drawer (Super+A, or the "app-drawer" dock item): apps by category, search, Favorites and Recent.
-# Press and release Super on its own to open it, like Cinnamon's menu. Super+key shortcuts, Super+drag, holding
+# Press and release Super on its own to open it, like a classic start menu. Super+key shortcuts, Super+drag, holding
 # Super for more than half a second, and Super with another modifier never count as a tap.
 super_tap = true
 
