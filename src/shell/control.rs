@@ -474,16 +474,22 @@ impl State {
                         Link::Wifi { ssid, .. } => Some(ssid.as_str()),
                         _ => None,
                     };
-                    n.networks
-                        .iter()
-                        .map(|w| ListRow {
-                            symbol: wifi_symbol(w.bars),
-                            name: w.ssid.clone(),
-                            detail: None,
-                            lock: w.secure,
-                            on: current == Some(w.ssid.as_str()),
-                        })
-                        .collect()
+                    let networks = n.networks.iter().map(|w| ListRow {
+                        symbol: wifi_symbol(w.bars),
+                        name: w.ssid.clone(),
+                        detail: None,
+                        lock: w.secure,
+                        on: current == Some(w.ssid.as_str()),
+                    });
+                    // The VPNs follow the networks; a click brings one up or down.
+                    let vpns = n.vpns.iter().map(|v| ListRow {
+                        symbol: Symbol::Lock,
+                        name: v.name.clone(),
+                        detail: Some("VPN".into()),
+                        lock: false,
+                        on: v.active.is_some(),
+                    });
+                    networks.chain(vpns).collect()
                 }),
                 Some(Module::Bluetooth) => self.bluetooth.as_ref().map_or_else(Vec::new, |b| {
                     b.devices
@@ -603,7 +609,10 @@ impl State {
                     }
                 }
                 Some(Module::Wifi) => {
-                    if let Some(network) = self.network.as_ref().and_then(|n| n.networks.get(i)) {
+                    let vpn = self.network.as_ref().and_then(|n| n.vpns.get(i.checked_sub(n.networks.len())?));
+                    if let Some(vpn) = vpn {
+                        self.services.send(Command::Vpn { path: vpn.path.clone(), active: vpn.active.clone() });
+                    } else if let Some(network) = self.network.as_ref().and_then(|n| n.networks.get(i)) {
                         let joined = matches!(&self.network.as_ref().map(|n| &n.link), Some(Link::Wifi { ssid, .. }) if *ssid == network.ssid);
                         let (ssid, ap, device) = (network.ssid.clone(), network.ap.clone(), network.device.clone());
                         if joined {

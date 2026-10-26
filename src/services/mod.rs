@@ -126,6 +126,11 @@ pub enum Command {
         device: String,
         password: Option<String>,
     },
+    /// Bring a saved VPN up, or its active connection (`active`) down.
+    Vpn {
+        path: String,
+        active: Option<String>,
+    },
     /// Percent.
     Brightness(u8),
     /// The keyboard backlight one step up, down, or (`None`) off and on.
@@ -404,6 +409,7 @@ async fn handle(
             (Command::Bluetooth(on), Some(bus), _) => bluetooth::set_powered(bus, on).await,
             (Command::BluetoothDevice { path, connect }, Some(bus), _) => bluetooth::connect(bus, &path, connect).await,
             (Command::WifiScan, Some(bus), _) => network::scan(bus).await,
+            (Command::Vpn { path, active }, Some(bus), _) => network::vpn(bus, &path, active.as_deref()).await,
             (Command::Thunderbolt(uid), Some(bus), _) => bolt::enroll(bus, &uid).await,
             (Command::PairingAnswer(yes), ..) => pairing.give(yes),
             (Command::SleepReady, ..) => login::release_sleep(),

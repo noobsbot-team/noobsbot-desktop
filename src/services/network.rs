@@ -22,6 +22,17 @@ pub struct Network {
     pub link: Link,
     /// Networks in range, strongest first, one per name.
     pub networks: Vec<WifiNetwork>,
+    /// Saved VPN and WireGuard connections, by name.
+    pub vpns: Vec<Vpn>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Vpn {
+    pub name: String,
+    /// The saved connection.
+    pub path: String,
+    /// Its active connection while it is up (or coming up).
+    pub active: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +75,7 @@ trait Manager {
     #[zbus(property)]
     fn primary_connection(&self) -> zbus::Result<OwnedObjectPath>;
     fn activate_connection(&self, connection: &ObjectPath<'_>, device: &ObjectPath<'_>, specific_object: &ObjectPath<'_>) -> zbus::Result<OwnedObjectPath>;
+    fn deactivate_connection(&self, active: &ObjectPath<'_>) -> zbus::Result<()>;
     fn add_and_activate_connection(
         &self,
         connection: HashMap<&str, HashMap<&str, Value<'_>>>,
@@ -93,6 +105,7 @@ trait Wireless {
 
 const WIRELESS: &str = "org.freedesktop.NetworkManager.Device.Wireless";
 const ACCESS_POINT: &str = "org.freedesktop.NetworkManager.AccessPoint";
+const ACTIVE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 
 #[zbus::proxy(interface = "org.freedesktop.NetworkManager.Connection.Active", default_service = "org.freedesktop.NetworkManager")]
 trait Active {
@@ -150,7 +163,7 @@ pub async fn join(bus: &Connection, ssid: &str, ap: &str, device: &str, password
     let result = async {
         let (ap, device) = (ObjectPath::try_from(ap)?, ObjectPath::try_from(device)?);
         let manager = ManagerProxy::builder(bus).cache_properties(CacheProperties::No).build().await?;
-        let saved = saved(bus).await?.into_iter().find(|(_, s)| s == ssid.as_bytes());
+        let saved = saved(bus).await?.0.into_iter().find(|(_, s)| s == ssid.as_bytes());
         match (saved, password) {
             (Some((connection, _)), None) => drop(manager.activate_connection(&connection, &device, &ap).await?),
             (_, password) => {
@@ -169,16 +182,41 @@ pub async fn join(bus: &Connection, ssid: &str, ap: &str, device: &str, password
     }
 }
 
-/// Saved Wi-Fi connections and their network names.
-async fn saved(bus: &Connection) -> zbus::Result<Vec<(OwnedObjectPath, Vec<u8>)>> {
-    let mut found = Vec::new();
+/// Saved Wi-Fi connections and their network names, and the VPNs (not yet marked active).
+async fn saved(bus: &Connection) -> zbus::Result<(Vec<(OwnedObjectPath, Vec<u8>)>, Vec<Vpn>)> {
+    let (mut found, mut vpns) = (Vec::new(), Vec::new());
     for path in SettingsProxy::new(bus).await?.list_connections().await? {
         let settings = SavedProxy::builder(bus).path(&path)?.cache_properties(CacheProperties::No).build().await?.get_settings().await?;
         if let Some(ssid) = settings.get("802-11-wireless").and_then(|w| w.get("ssid")).and_then(bytes) {
             found.push((path, ssid));
+        } else if let Some(name) = vpn_name(&settings) {
+            vpns.push(Vpn { name, path: path.to_string(), active: None });
         }
     }
-    Ok(found)
+    vpns.sort_by_key(|v| v.name.to_lowercase());
+    Ok((found, vpns))
+}
+
+/// A VPN plugin's or WireGuard connection's name.
+fn vpn_name(settings: &Settings) -> Option<String> {
+    let connection = settings.get("connection")?;
+    let text = |key| String::try_from(connection.get(key)?.try_clone().ok()?).ok();
+    matches!(text("type")?.as_str(), "vpn" | "wireguard").then(|| text("id"))?
+}
+
+/// Control Center ▸ a VPN: up, or its active connection down.
+pub async fn vpn(bus: &Connection, path: &str, active: Option<&str>) {
+    let result = async {
+        let manager = ManagerProxy::builder(bus).cache_properties(CacheProperties::No).build().await?;
+        let none = ObjectPath::from_static_str_unchecked("/");
+        match active {
+            Some(active) => manager.deactivate_connection(&ObjectPath::try_from(active)?).await,
+            None => manager.activate_connection(&ObjectPath::try_from(path)?, &none, &none).await.map(drop),
+        }
+    };
+    if let Err(err) = result.await {
+        tracing::warn!("VPN {path}: {err}");
+    }
 }
 
 fn bytes(value: &OwnedValue) -> Option<Vec<u8>> {
@@ -221,14 +259,15 @@ async fn read(bus: &Connection) -> Option<Network> {
     // A connection that vanishes while we read it is simply gone; the signal that follows corrects the rest.
     let link = if primary.as_str() == "/" { Link::None } else { link(bus, primary).await.unwrap_or(Link::None) };
     // ponytail: re-reads every saved connection on each NetworkManager signal (a few a minute); cache it if that shows up.
-    let networks = async {
-        let known: Vec<Vec<u8>> = saved(bus).await.unwrap_or_default().into_iter().map(|(_, s)| s).collect();
-        let objects =
-            ObjectManagerProxy::builder(bus).destination(SERVICE).ok()?.path("/org/freedesktop").ok()?.build().await.ok()?.get_managed_objects().await.ok()?;
-        Some(networks(&objects, &known))
-    };
-    let networks = if wifi_enabled { networks.await.unwrap_or_default() } else { Vec::new() };
-    Some(Network { wifi_enabled, link, networks })
+    let (known, mut vpns) = saved(bus).await.unwrap_or_default();
+    let known: Vec<Vec<u8>> = known.into_iter().map(|(_, s)| s).collect();
+    let objects = async { ObjectManagerProxy::builder(bus).destination(SERVICE)?.path("/org/freedesktop")?.build().await?.get_managed_objects().await };
+    let objects = objects.await.unwrap_or_default();
+    let networks = if wifi_enabled { networks(&objects, &known) } else { Vec::new() };
+    for vpn in &mut vpns {
+        vpn.active = active_of(&objects, &vpn.path);
+    }
+    Some(Network { wifi_enabled, link, networks, vpns })
 }
 
 async fn link(bus: &Connection, path: OwnedObjectPath) -> zbus::Result<Link> {
@@ -241,6 +280,12 @@ async fn link(bus: &Connection, path: OwnedObjectPath) -> zbus::Result<Link> {
         "802-3-ethernet" => Link::Ethernet,
         _ => Link::Other(active.id().await?),
     })
+}
+
+/// The active connection of the saved connection at `path`.
+fn active_of(objects: &ManagedObjects, path: &str) -> Option<String> {
+    let of = |i| get(i, ACTIVE, "Connection").and_then(|v| OwnedObjectPath::try_from(v.try_clone().ok()?).ok());
+    objects.iter().find(|(_, i)| of(i).is_some_and(|c| c.as_str() == path)).map(|(a, _)| a.to_string())
 }
 
 /// NetworkManager's 0–100 strength as the 1–3 arcs of the menu-bar symbol.
@@ -299,6 +344,24 @@ mod tests {
         // Hidden networks (no name) are left out; each name keeps its strongest access point.
         assert_eq!(summary, [("Home", 3, true, true, "/ap/2"), ("Cafe", 3, false, false, "/ap/3")]);
         assert_eq!(found[0].device, "/dev/2");
+    }
+
+    #[test]
+    fn vpns_and_their_active_connection() {
+        use zbus::names::OwnedInterfaceName;
+        let value = |v: Value| OwnedValue::try_from(v).unwrap();
+        let settings = |kind: &str| -> Settings {
+            HashMap::from([("connection".into(), HashMap::from([("type".into(), value(Value::from(kind))), ("id".into(), value(Value::from("Work")))]))])
+        };
+        assert_eq!(vpn_name(&settings("wireguard")).as_deref(), Some("Work"));
+        assert_eq!(vpn_name(&settings("vpn")).as_deref(), Some("Work"));
+        assert_eq!(vpn_name(&settings("802-3-ethernet")), None);
+        let path = |p: &str| OwnedObjectPath::try_from(p).unwrap();
+        let active =
+            HashMap::from([(OwnedInterfaceName::try_from(ACTIVE).unwrap(), HashMap::from([("Connection".to_string(), value(Value::from(path("/s/7"))))]))]);
+        let objects: ManagedObjects = HashMap::from([(path("/a/1"), active)]);
+        assert_eq!(active_of(&objects, "/s/7").as_deref(), Some("/a/1"));
+        assert_eq!(active_of(&objects, "/s/8"), None);
     }
 
     #[test]
