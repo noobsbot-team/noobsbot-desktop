@@ -263,6 +263,9 @@ pub enum Message {
     ChangePassword,
     /// `passwd` finished: what went wrong, if anything.
     PasswordChanged(Option<String>),
+    /// Users ▸ Add User…: the sheet opens or closes.
+    AddUserForm,
+    AddUser,
 }
 
 impl App {
@@ -465,7 +468,29 @@ impl App {
                 self.password_form(error.is_some());
                 self.error = error;
             }
+            Message::AddUserForm => self.add_user_form(!self.texts.contains_key(users::NEW[0])),
+            Message::AddUser => {
+                let field = |key| self.texts.get(key).map_or("", String::as_str);
+                let full = field(users::NEW[0]).trim().to_owned();
+                let login = match field(users::NEW[1]).trim() {
+                    "" => users::suggest(&full),
+                    typed => typed.to_owned(),
+                };
+                let passwd = std::fs::read_to_string("/etc/passwd").unwrap_or_default();
+                if let Err(why) = users::check_new(&login, field(users::NEW[2]), field(users::NEW[3]), &passwd) {
+                    self.error = Some(why.into());
+                    return Task::none();
+                }
+                let admin = !field(users::NEW[4]).is_empty();
+                // ponytail: the sheet keeps its fields until the account is added (to try again); wiped when it closes.
+                let password = field(users::NEW[2]).to_owned();
+                return Task::perform(users::create(full, login, admin, password), Message::UsersActed);
+            }
             Message::UsersActed((users, error)) => {
+                // Done: Add User's sheet closes; failed: it stays, under the reason.
+                if error.is_none() {
+                    self.add_user_form(false);
+                }
                 self.users = Some(users);
                 self.error = error;
                 // The sidebar's name comes from /etc/passwd, which AccountsService rewrote.
@@ -678,7 +703,10 @@ impl App {
         match (&self.keep, &self.shortcuts) {
             (Some(keep), _) => stack![window, pages::keep_sheet(t, keep.left(Instant::now()))].into(),
             (None, Some(editor)) => stack![window, shortcuts::view(self, editor)].into(),
-            (None, None) => window.into(),
+            (None, None) => match pages::users_sheet(self) {
+                Some(sheet) => stack![window, sheet].into(),
+                None => window.into(),
+            },
         }
     }
 
@@ -738,6 +766,19 @@ impl App {
                 self.texts.insert(key.into(), String::new());
             }
         }
+    }
+
+    /// Users ▸ Add User…'s sheet opens (empty), or closes with what was typed wiped.
+    fn add_user_form(&mut self, open: bool) {
+        for key in users::NEW {
+            if let Some(typed) = self.texts.remove(key) {
+                users::wipe(typed);
+            }
+            if open {
+                self.texts.insert(key.into(), String::new());
+            }
+        }
+        self.error = None;
     }
 
     /// After a Login Items change: the error if it failed, and the list read again.

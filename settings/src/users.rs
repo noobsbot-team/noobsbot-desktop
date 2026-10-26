@@ -173,6 +173,100 @@ fn passwd_error(stderr: &str) -> String {
     }
 }
 
+/// Add User…'s fields (full name, account name, password, verify, `admin` when set), as text keys; open while the
+/// first is there.
+pub const NEW: [&str; 5] = ["users.new.name", "users.new.login", "users.new.password", "users.new.verify", "users.new.admin"];
+
+/// An account name from a full name: its ASCII letters lower-cased, digits, `-` and `_` (none of these first), at
+/// most 32 characters. ponytail: accented letters are dropped, not transliterated.
+pub fn suggest(full: &str) -> String {
+    let mut login = String::new();
+    for c in full.chars().map(|c| c.to_ascii_lowercase()) {
+        if c.is_ascii_lowercase() || c == '_' || (!login.is_empty() && (c.is_ascii_digit() || c == '-')) {
+            login.push(c);
+        }
+    }
+    login.truncate(32);
+    login
+}
+
+/// What is wrong with Add User's fields, if anything; `passwd` is `/etc/passwd`, whose names are taken.
+pub fn check_new(login: &str, password: &str, verify: &str, passwd: &str) -> Result<(), &'static str> {
+    let mut chars = login.chars();
+    let valid = chars.next().is_some_and(|c| c.is_ascii_lowercase() || c == '_')
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+        && login.len() <= 32;
+    if login.is_empty() {
+        Err("Enter an account name")
+    } else if !valid {
+        Err("An account name has lower-case letters, digits, - and _, starts with a letter, and is at most 32 long")
+    } else if passwd.lines().any(|l| l.split(':').next() == Some(login)) {
+        Err("That account name is taken")
+    } else if password.is_empty() {
+        Err("Enter a password")
+    } else if password != verify {
+        Err("The passwords don't match")
+    } else if password.contains(['\n', '\r']) {
+        Err("A password can't have a line break")
+    } else {
+        Ok(())
+    }
+}
+
+/// AccountsService's `CreateUser` arguments: name, full name, account type (0 standard, 1 administrator).
+fn create_args<'a>(login: &'a str, full: &'a str, admin: bool) -> (&'a str, &'a str, i32) {
+    (login, full, i32::from(admin))
+}
+
+/// The words of a D-Bus error (a polkit denial says "Not authorized").
+fn reason(err: zbus::Error) -> String {
+    match err {
+        zbus::Error::MethodError(_, Some(words), _) => words,
+        err => err.to_string(),
+    }
+}
+
+/// Adds an account (`CreateUser`, then `SetPassword` with a SHA-512 crypt hash from `openssl passwd`), then the
+/// accounts again and what went wrong. Interactive: polkit asks for an administrator through the desktop's agent.
+pub async fn create(full: String, login: String, admin: bool, password: String) -> (Users, Option<String>) {
+    let hash = crypt(&password);
+    wipe(password);
+    let error = async {
+        let hash = hash?;
+        let bus = crate::system::system(120).await.map_err(reason)?;
+        let added = bus.call_method(Some(ACCOUNTS), ACCOUNTS_PATH, Some(ACCOUNTS), "CreateUser", &create_args(&login, &full, admin)).await;
+        let added = added.map_err(|err| format!("Couldn't add {login}: {}", reason(err)))?;
+        let path: OwnedObjectPath = added.body().deserialize().map_err(|err| format!("Couldn't add {login}: {err}"))?;
+        let set = bus.call_method(Some(ACCOUNTS), path.as_str(), Some(USER), "SetPassword", &(hash.as_str(), "")).await;
+        set.map_err(|err| format!("Added {login}, but couldn't set the password: {}", reason(err))).map(drop)
+    };
+    let error = error.await.err();
+    (read().await, error)
+}
+
+/// `password`'s SHA-512 crypt hash, which `SetPassword` takes; the password goes through a pipe.
+fn crypt(password: &str) -> Result<String, String> {
+    use std::{io::Write, process::Stdio};
+    let failed = |err: &dyn std::fmt::Display| format!("Couldn't run openssl for the password: {err}");
+    let mut child = std::process::Command::new("openssl")
+        .args(["passwd", "-6", "-stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| failed(&err))?;
+    let mut input = Vec::with_capacity(password.len() + 1);
+    input.extend_from_slice(password.as_bytes());
+    input.push(b'\n');
+    let written = child.stdin.take().expect("piped").write_all(&input);
+    input.fill(0);
+    std::hint::black_box(&input);
+    written.map_err(|err| failed(&err))?;
+    let out = child.wait_with_output().map_err(|err| failed(&err))?;
+    let hash = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    if out.status.success() && hash.starts_with("$6$") { Ok(hash) } else { Err(failed(&"no hash")) }
+}
+
 async fn text(bus: &Connection, path: &str, name: &str) -> String {
     crate::system::property(bus, ACCOUNTS, path, USER, name).await.ok().and_then(|v| String::try_from(v).ok()).unwrap_or_default()
 }
@@ -221,6 +315,45 @@ mod tests {
             "Couldn't change the password: Have exhausted maximum number of retries for service"
         );
         assert_eq!(passwd_error(""), "Couldn't change the password");
+    }
+
+    #[test]
+    fn account_name_suggested() {
+        assert_eq!(suggest("Anil Shrestha"), "anilshrestha");
+        assert_eq!(suggest("  2nd-José_O'Neil 3 "), "nd-jos_oneil3");
+        assert_eq!(suggest("日本"), "");
+        assert_eq!(suggest(&"a".repeat(40)).len(), 32);
+    }
+
+    #[test]
+    fn new_user_checks() {
+        let passwd = "root:x:0:0::/root:/bin/bash\nanil:x:1000:1000::/home/anil:/bin/zsh\n";
+        assert_eq!(check_new("", "pw", "pw", passwd), Err("Enter an account name"));
+        for bad in ["1abc", "-abc", "Abc", "a b", "josé", &"a".repeat(33)] {
+            assert!(check_new(bad, "pw", "pw", passwd).is_err_and(|e| e.starts_with("An account name has")), "{bad}");
+        }
+        assert_eq!(check_new("anil", "pw", "pw", passwd), Err("That account name is taken"));
+        assert_eq!(check_new("ani", "", "", passwd), Err("Enter a password"));
+        assert_eq!(check_new("ani", "pw", "wp", passwd), Err("The passwords don't match"));
+        assert_eq!(check_new("ani", "p\nw", "p\nw", passwd), Err("A password can't have a line break"));
+        assert_eq!(check_new("_ani-2", "pw", "pw", passwd), Ok(()));
+        assert_eq!(check_new(&"a".repeat(32), "pw", "pw", passwd), Ok(()));
+    }
+
+    #[test]
+    fn dbus_arguments() {
+        assert_eq!(create_args("ani", "Ani S", false), ("ani", "Ani S", 0));
+        assert_eq!(create_args("ani", "Ani S", true), ("ani", "Ani S", 1));
+        // The signatures AccountsService declares: CreateUser(ssi).
+        use zbus::zvariant::Type;
+        assert_eq!(<(&str, &str, i32)>::SIGNATURE.to_string(), "(ssi)");
+    }
+
+    #[test]
+    fn crypt_hashes() {
+        // Needs `openssl`, as the live call does.
+        let hash = crypt("hunter22").unwrap();
+        assert!(hash.starts_with("$6$") && !hash.contains("hunter22"), "{hash}");
     }
 
     #[test]

@@ -1436,7 +1436,7 @@ fn gallery(app: &App) -> Element<'_, Message> {
     group(t, "Wallpaper", rows)
 }
 
-/// Users: who is signed in, with their picture and names, then everyone else (read-only).
+/// Users: who is signed in, with their picture and names, then everyone else, and Add User….
 fn users_part(app: &App) -> Vec<Element<'_, Message>> {
     let t = app.tokens;
     // Still reading.
@@ -1501,7 +1501,58 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
             .collect();
         parts.push(group(t, "Other Users", rows));
     }
+    let add = button(text("Add User…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::AddUserForm);
+    parts.push(row![space().width(Length::Fill), add].into());
     parts
+}
+
+/// Users' Add User… sheet over the window, when it is open.
+pub fn users_sheet(app: &App) -> Option<Element<'_, Message>> {
+    use crate::users::NEW;
+    let t = app.tokens;
+    let value = |key: &str| app.texts.get(key).map(String::as_str);
+    let full = value(NEW[0])?;
+    let suggested = crate::users::suggest(full);
+    let field = |key: &'static str, placeholder: &str, secure: bool| -> Element<'_, Message> {
+        text_input(placeholder, value(key).unwrap_or_default())
+            .secure(secure)
+            .on_input(move |v| Message::Type(key.into(), v))
+            .on_submit(Message::AddUser)
+            .size(13)
+            .padding([3, 8])
+            .width(200)
+            .style(t.input(false))
+            .into()
+    };
+    let admin = value(NEW[4]).is_some_and(|v| !v.is_empty());
+    let kind = segments(
+        t,
+        vec![
+            ("Standard".into(), !admin, Message::Type(NEW[4].into(), String::new())),
+            ("Administrator".into(), admin, Message::Type(NEW[4].into(), "admin".into())),
+        ],
+    );
+    let mut card = column![
+        text("Add User").size(15).font(font(Weight::Semibold)),
+        line(t, "Full name", "", field(NEW[0], "", false)),
+        line(t, "Account name", "Can't be changed later", field(NEW[1], &suggested, false)),
+        line(t, "Password", "", field(NEW[2], "", true)),
+        line(t, "Verify", "", field(NEW[3], "", true)),
+        line(t, "Account type", "Administrators can change the system", kind),
+    ]
+    .spacing(2)
+    .width(420);
+    if let Some(error) = &app.error {
+        card = card.push(container(text(error).size(11).color(rgb(0xFF3B30))).padding([4, 12]));
+    }
+    let buttons = row![
+        space().width(Length::Fill),
+        button(text("Cancel").size(13)).padding([4, 14]).style(t.push(false)).on_press(Message::AddUserForm),
+        button(text("Add User").size(13)).padding([4, 14]).style(t.push(true)).on_press(Message::AddUser),
+    ]
+    .spacing(8);
+    let sheet = container(card.push(buttons)).padding(18).style(t.sheet());
+    Some(iced::widget::opaque(container(sheet).center(Length::Fill).style(t.dim())))
 }
 
 /// An account's picture as a circle, or the person symbol without one.
