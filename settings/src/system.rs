@@ -268,6 +268,28 @@ pub async fn set_ntp(on: bool) -> Status {
     read().await
 }
 
+/// Date & Time's manual fields, as text keys.
+pub const DATE: &str = "time.date";
+pub const CLOCK: &str = "time.clock";
+
+/// The date (`2026-10-27`) and time (`14:05` or `14:05:30`) typed by hand, in the local zone, as UTC microseconds;
+/// `None` if either doesn't parse.
+pub fn manual_time(date: &str, time: &str) -> Option<i64> {
+    use chrono::{Local, NaiveDate, NaiveTime, TimeZone};
+    let date = NaiveDate::parse_from_str(date.trim(), "%Y-%m-%d").ok()?;
+    let time = NaiveTime::parse_from_str(time.trim(), "%H:%M:%S").or_else(|_| NaiveTime::parse_from_str(time.trim(), "%H:%M")).ok()?;
+    // A time the clocks skip (DST) has no local reading; one they repeat takes the first.
+    Some(Local.from_local_datetime(&date.and_time(time)).earliest()?.timestamp_micros())
+}
+
+/// Sets the system clock (timedated `SetTime`), then the new status; interactive like `set_ntp`.
+pub async fn set_time(usec: i64) -> Status {
+    if let Ok(bus) = system(120).await {
+        let _ = bus.call_method(Some(TIMEDATE), TIMEDATE_PATH, Some(TIMEDATE), "SetTime", &(usec, false, true)).await;
+    }
+    read().await
+}
+
 /// Every time-zone name timedated accepts (zones and their aliases), from tzdata.
 pub static ZONES: std::sync::LazyLock<Vec<String>> =
     std::sync::LazyLock::new(|| zones(&std::fs::read_to_string("/usr/share/zoneinfo/tzdata.zi").unwrap_or_default()));
@@ -585,6 +607,18 @@ pub fn user() -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_time_parses_local_date_and_time() {
+        use chrono::{Local, TimeZone};
+        let at = |y, mo, d, h, mi, s| Local.with_ymd_and_hms(y, mo, d, h, mi, s).earliest().unwrap().timestamp_micros();
+        assert_eq!(manual_time("2026-10-27", "14:05"), Some(at(2026, 10, 27, 14, 5, 0)));
+        assert_eq!(manual_time(" 2026-12-31 ", "23:59:30"), Some(at(2026, 12, 31, 23, 59, 30)));
+        assert_eq!(manual_time("2026-02-30", "10:00"), None);
+        assert_eq!(manual_time("2026-10-27", "25:00"), None);
+        assert_eq!(manual_time("27/10/2026", "10:00"), None);
+        assert_eq!(manual_time("2026-10-27", ""), None);
+    }
 
     #[test]
     fn theme_sounds() {
