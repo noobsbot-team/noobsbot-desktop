@@ -499,6 +499,7 @@ impl State {
             _ => {}
         }
         self.services.send(Command::ScreenReader(on));
+        self.access_enable(on);
     }
 
     /// Is `window` the quake terminal's (opened by the process the `quake` action started)?
