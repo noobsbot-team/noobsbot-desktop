@@ -118,7 +118,23 @@ impl State {
         let size = self.space.output_geometry(output)?.size.to_physical_precise_round(output.current_scale().fractional_scale());
         let (tint, fading) = self.night_light.element(&self.config.night_light, self.frame_time, size);
         elements.splice(0..0, tint.map(SceneElement::Tint));
-        Some((elements, animating || fading))
+        // The bell's flash (E8.6), in front of everything.
+        let flash = self.bell_flash();
+        if let (Some(alpha), Some(views), Some(geo)) = (flash, self.backend.as_ref(), self.space.output_geometry(output)) {
+            let scale = output.current_scale().fractional_scale();
+            elements.insert(
+                0,
+                SceneElement::Shader(views.shaders.glass_shape(
+                    smithay::utils::Rectangle::from_size(geo.size),
+                    [1.0, 1.0, 1.0, alpha],
+                    0.0,
+                    false,
+                    false,
+                    scale,
+                )),
+            );
+        }
+        Some((elements, animating || fading || flash.is_some()))
     }
 
     /// The app switcher on `output`, when it shows there (the display it opened on).

@@ -65,6 +65,7 @@ pub struct Protocols {
     _tearing_control: GlobalId,
     _text_input: TextInputManagerState,
     _input_method: InputMethodManagerState,
+    _system_bell: smithay::wayland::xdg_system_bell::XdgSystemBellState,
 }
 
 impl Protocols {
@@ -89,6 +90,7 @@ impl Protocols {
             _text_input: TextInputManagerState::new::<State>(dh),
             // An input method sees every key typed: not for sandboxed apps.
             _input_method: InputMethodManagerState::new::<State, _>(dh, unsandboxed),
+            _system_bell: smithay::wayland::xdg_system_bell::XdgSystemBellState::new::<State>(dh),
         }
     }
 }

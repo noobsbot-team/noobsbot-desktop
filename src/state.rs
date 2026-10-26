@@ -192,6 +192,8 @@ pub struct State {
     pub shell_drag: Option<crate::shell::control::Control>,
     /// Hides the OSD; replaced on every key press.
     pub osd_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// When the bell last rang (E8.6).
+    pub bell: Option<std::time::Instant>,
     /// Puts the display settings back unless they are kept in time (`arm_display_revert`).
     pub display_revert: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Installed apps (E2.1); empty until the first scan lands.
@@ -479,6 +481,7 @@ impl State {
             control_scroll: 0.0,
             shell_drag: None,
             osd_timer: None,
+            bell: None,
             display_revert: None,
             apps: Default::default(),
             apps_epoch: 0,
