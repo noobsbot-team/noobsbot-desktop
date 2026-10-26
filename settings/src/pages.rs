@@ -1717,7 +1717,8 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
     }
     let selected = app.selected_display();
     let mut parts = Vec::new();
-    let on: Vec<&Display> = app.displays.iter().filter(|d| d.enabled).collect();
+    // Mirrors show another display's picture: they have no place of their own.
+    let on: Vec<&Display> = app.displays.iter().filter(|d| d.enabled && d.mirror.is_empty()).collect();
     let arrangement = Arrangement { displays: on, selected: selected.map(|d| d.name.as_str()), tokens: t };
     parts.push(group(t, "", vec![container(canvas(arrangement).width(Length::Fill).height(200)).padding(4).into()]));
     parts.push(note(
@@ -1758,7 +1759,16 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
     if !d.nested {
         rows.push(line(t, "Use this display", "", toggle(t, d.enabled, move |on| change(vec![("enabled", on.into())]))));
     }
-    if d.enabled && app.displays.len() > 1 {
+    // Extended or a mirror of another display that is itself extended (no chains); a display others mirror stays.
+    let sources: Vec<&Display> = app.displays.iter().filter(|o| o.name != d.name && o.enabled && o.mirror.is_empty()).collect();
+    if d.enabled && !sources.is_empty() && !app.displays.iter().any(|o| o.mirror == d.name) {
+        let mut items = vec![("Extended".to_string(), d.mirror.is_empty(), change(vec![("mirror", "".into())]))];
+        items.extend(
+            sources.iter().map(|o| (format!("Mirror for {}", display_name(&o.name)), d.mirror == o.name, change(vec![("mirror", o.name.clone().into())]))),
+        );
+        rows.push(line(t, "Use as", "", segments(t, items)));
+    }
+    if d.enabled && d.mirror.is_empty() && app.displays.len() > 1 {
         let control: Element<'a, Message> = if d.primary {
             text("Main display").size(13).color(t.secondary()).into()
         } else {
@@ -1788,34 +1798,36 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
         let pick = pick_list(rates, Some(Rate(d.mode.refresh)), move |r: Rate| change(vec![("refresh", ((f64::from(r.0) / 10.0).round() / 100.0).into())]));
         rows.push(line(t, "Refresh rate", "", pick.text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()));
     }
-    // The entry's own scale; 0 or none = the default ([display] scale, else auto).
-    let own = app.config.output(&d.name).and_then(|e| e.get("scale")).and_then(|v| v.as_float().or(v.as_integer().map(|i| i as f64))).unwrap_or(0.0);
-    let global = app.config.num("display.scale");
-    let default = if global > 0.0 { global } else { d.auto_scale };
-    let mut items = vec![("Default".to_string(), own <= 0.0, change(vec![("scale", 0.0.into())]))];
-    items.extend(SCALES.iter().map(|&s| (percent(s), own == s, change(vec![("scale", s.into())]))));
-    let custom_key = format!("display.custom_scale.{}", d.name);
-    let typed = app.texts.get(&custom_key).cloned().unwrap_or_else(|| if own > 0.0 && !SCALES.contains(&own) { percent(own) } else { String::new() });
-    let custom = text_input("Custom", &typed)
-        .on_input({
-            let key = custom_key.clone();
-            move |v| Message::Type(key.clone(), v)
-        })
-        .on_submit(Message::Submit(custom_key))
-        .size(12)
-        .padding([3, 6])
-        .width(64)
-        .style(t.input(false));
-    let help = format!("Default: {} ({})", percent(default), if global > 0.0 { "every display" } else { "from the pixel density" });
-    let scale_row = row![segments(t, items), custom].spacing(8).align_y(Alignment::Center);
-    rows.push(
-        column![
-            line(t, "Scale", "", space().into()),
-            container(scale_row).padding(iced::Padding { top: 0.0, right: 12.0, bottom: 4.0, left: 12.0 }),
-            container(text(help).size(11).color(t.secondary())).padding(iced::Padding { top: 0.0, right: 12.0, bottom: 8.0, left: 12.0 })
-        ]
-        .into(),
-    );
+    // The entry's own scale; 0 or none = the default ([display] scale, else auto). A mirror is drawn in its own pixels.
+    if d.mirror.is_empty() {
+        let own = app.config.output(&d.name).and_then(|e| e.get("scale")).and_then(|v| v.as_float().or(v.as_integer().map(|i| i as f64))).unwrap_or(0.0);
+        let global = app.config.num("display.scale");
+        let default = if global > 0.0 { global } else { d.auto_scale };
+        let mut items = vec![("Default".to_string(), own <= 0.0, change(vec![("scale", 0.0.into())]))];
+        items.extend(SCALES.iter().map(|&s| (percent(s), own == s, change(vec![("scale", s.into())]))));
+        let custom_key = format!("display.custom_scale.{}", d.name);
+        let typed = app.texts.get(&custom_key).cloned().unwrap_or_else(|| if own > 0.0 && !SCALES.contains(&own) { percent(own) } else { String::new() });
+        let custom = text_input("Custom", &typed)
+            .on_input({
+                let key = custom_key.clone();
+                move |v| Message::Type(key.clone(), v)
+            })
+            .on_submit(Message::Submit(custom_key))
+            .size(12)
+            .padding([3, 6])
+            .width(64)
+            .style(t.input(false));
+        let help = format!("Default: {} ({})", percent(default), if global > 0.0 { "every display" } else { "from the pixel density" });
+        let scale_row = row![segments(t, items), custom].spacing(8).align_y(Alignment::Center);
+        rows.push(
+            column![
+                line(t, "Scale", "", space().into()),
+                container(scale_row).padding(iced::Padding { top: 0.0, right: 12.0, bottom: 4.0, left: 12.0 }),
+                container(text(help).size(11).color(t.secondary())).padding(iced::Padding { top: 0.0, right: 12.0, bottom: 8.0, left: 12.0 })
+            ]
+            .into(),
+        );
+    }
     let rotations = [(0, "Normal"), (90, "90°"), (180, "180°"), (270, "270°")];
     let items = rotations.iter().map(|&(deg, label)| (label.to_string(), d.rotation == deg, change(vec![("rotation", i64::from(deg).into())]))).collect();
     rows.push(line(t, "Rotation", "", segments(t, items)));

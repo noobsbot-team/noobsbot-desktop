@@ -596,7 +596,7 @@ impl App {
             Message::SelectDisplay(name) => self.selected = Some(name),
             Message::Output(name, changes) => {
                 // What could leave a screen dark or unusable asks to be kept.
-                let risky = changes.iter().any(|(key, _)| ["mode", "refresh", "rotation", "enabled"].contains(key));
+                let risky = changes.iter().any(|(key, _)| ["mode", "refresh", "rotation", "enabled", "mirror"].contains(key));
                 self.change_outputs(changes.into_iter().map(|(key, value)| (name.clone(), key, value)).collect(), risky);
             }
             Message::Arrange(places) => {
