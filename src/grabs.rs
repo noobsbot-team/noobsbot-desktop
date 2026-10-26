@@ -107,7 +107,12 @@ impl PointerGrab<State> for MoveGrab {
         let loc = wm::move_to(rect, area, &others, data.config.windows.magnetic_edges && !data.modifiers().ctrl);
         data.set_visible_loc(&self.window, loc);
         let tiles = data.edge_hold(&self.window, event.location);
-        let tile = if tiles && data.config.windows.snapping && !data.modifiers().ctrl { wm::tile_at(event.location, area) } else { None };
+        let tile = if tiles && data.config.windows.snapping && !data.modifiers().ctrl {
+            let screens: Vec<Rect> = data.space.outputs().filter_map(|o| data.space.output_geometry(o)).collect();
+            wm::tile_at(event.location, area, &screens)
+        } else {
+            None
+        };
         if tile != self.tile {
             self.tile = tile;
             data.tile_preview = tile.map(|t| t.rect(area));

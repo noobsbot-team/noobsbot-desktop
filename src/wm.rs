@@ -84,12 +84,17 @@ impl Tile {
 /// The pointer is this close to a side for a tile.
 pub const TILE_EDGE: f64 = 3.0;
 
-/// The tile for a window dragged with the pointer at `p`, if any.
-pub fn tile_at(p: Point<f64, Logical>, area: Rect) -> Option<Tile> {
+/// The tile for a window dragged with the pointer at `p`, if any. A side with another of `screens` just beyond it is
+/// for crossing over, not tiling.
+pub fn tile_at(p: Point<f64, Logical>, area: Rect, screens: &[Rect]) -> Option<Tile> {
     let (x, y, w, h) = (f64::from(area.loc.x), f64::from(area.loc.y), f64::from(area.size.w), f64::from(area.size.h));
     let (left, right) = (p.x <= x + TILE_EDGE, p.x >= x + w - 1.0 - TILE_EDGE);
     if !left && !right {
         return (p.y <= y + TILE_EDGE).then_some(Tile::Zoom);
+    }
+    let beyond = Point::from((p.x + if left { -1.0 } else { 1.0 } * (TILE_EDGE + 1.0), p.y));
+    if screens.iter().any(|s| !s.to_f64().contains(p) && s.to_f64().contains(beyond)) {
+        return None;
     }
     let (top, bottom) = (p.y < y + h / 4.0, p.y > y + h * 3.0 / 4.0);
     Some(Tile::Part(tile_part(area, Edges { left, right: !left, top, bottom })))
@@ -321,13 +326,18 @@ mod tests {
     #[test]
     fn tiles_follow_the_pointer_to_an_edge() {
         let area = Rect::new((0, 24).into(), (1000, 800).into());
-        let at = |x: f64, y: f64| tile_at((x, y).into(), area);
+        let at = |x: f64, y: f64| tile_at((x, y).into(), area, &[]);
         assert_eq!(at(500.0, 400.0), None);
         assert_eq!(at(500.0, 10.0), Some(Tile::Zoom));
         assert_eq!(at(0.0, 400.0), Some(Tile::Part(Rect::new((0, 24).into(), (500, 800).into()))));
         assert_eq!(at(999.0, 400.0), Some(Tile::Part(Rect::new((500, 24).into(), (500, 800).into()))));
         assert_eq!(at(0.0, 30.0), Some(Tile::Part(Rect::new((0, 24).into(), (500, 400).into()))));
         assert_eq!(at(999.0, 820.0), Some(Tile::Part(Rect::new((500, 424).into(), (500, 400).into()))));
+        // Another display to the right: that side is for crossing over; the left one still tiles.
+        let screens = [Rect::new((0, 0).into(), (1000, 824).into()), Rect::new((1000, 0).into(), (800, 600).into())];
+        assert_eq!(tile_at((999.0, 400.0).into(), area, &screens), None);
+        assert_eq!(tile_at((999.0, 700.0).into(), area, &screens), Some(Tile::Part(Rect::new((500, 424).into(), (500, 400).into()))), "below it");
+        assert_eq!(tile_at((0.0, 400.0).into(), area, &screens), at(0.0, 400.0));
     }
 
     #[test]
