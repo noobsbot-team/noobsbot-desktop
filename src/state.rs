@@ -227,6 +227,8 @@ pub struct State {
     pub spotlight: Option<crate::shell::spotlight::Spotlight>,
     /// The emoji picker (E7.2), when open.
     pub emoji: Option<crate::shell::emoji::Picker>,
+    /// The on-screen keyboard (E8.6).
+    pub osk: crate::shell::osk::Osk,
     /// Launchpad (E4.4), while open or fading out.
     pub launchpad: Option<crate::shell::launchpad::Launchpad>,
     /// The app drawer, when open.
@@ -509,6 +511,7 @@ impl State {
             force_quit: None,
             spotlight: None,
             emoji: None,
+            osk: Default::default(),
             launchpad: None,
             drawer: None,
             super_tap: Default::default(),

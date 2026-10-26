@@ -127,6 +127,7 @@ impl State {
         let mut elements = self.zoom.apply(renderer, &views.shaders, elements, &output.name(), geo.size.to_f64(), pointer, &self.config.accessibility, scale);
         let size = geo.size.to_physical_precise_round(scale);
         let (tint, fading) = self.night_light.element(&self.config.night_light, self.frame_time, size);
+        elements.splice(0..0, self.osk_elements(renderer, output));
         elements.splice(0..0, tint.map(SceneElement::Tint));
         // The bell's flash (E8.6), in front of everything.
         let flash = self.bell_flash();
@@ -144,6 +145,33 @@ impl State {
             );
         }
         Some((elements, animating || fading || flash.is_some() || zooming))
+    }
+
+    /// The on-screen keyboard, in front of everything (the lock screen too), on the shell's output.
+    // ponytail: the first output, like the rest of the shell; follow the pointer's display with a per-output hit test.
+    fn osk_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let Some(geo) = self.osk_panel().filter(|_| self.space.outputs().next() == Some(output)).and_then(|_| self.space.output_geometry(output)) else {
+            return Vec::new();
+        };
+        let labels = self.osk_labels();
+        let appearance = &self.config.appearance;
+        let (dark, scale) = (render::is_dark(appearance), output.current_scale().fractional_scale());
+        let accent = render::accent(appearance.accent, dark);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        let latched = &self.osk.latched;
+        views.osk.elements(
+            renderer,
+            &views.shaders,
+            &mut self.text,
+            &mut self.symbols,
+            geo.size,
+            labels,
+            latched,
+            dark,
+            accent,
+            appearance.glass_opacity,
+            scale,
+        )
     }
 
     /// The app switcher on `output`, when it shows there (the display it opened on).
@@ -267,6 +295,7 @@ impl State {
             force_quit,
             spotlight,
             emoji: emoji_view,
+            osk: _,
             launchpad: pad_view,
             drawer: drawer_view,
             mission,

@@ -302,6 +302,7 @@ pub const SETTINGS: &[Setting] = &[
         "When an app rings the bell",
         Kind::Choice(&[("sound", "Play sound"), ("flash", "Flash the screen"), ("both", "Sound and flash"), ("off", "Off")]),
     ),
+    s(Page::Accessibility, "Keyboard", "accessibility.on_screen_keyboard", "On-screen keyboard", "Click keys to type, on the lock screen too", Kind::Toggle),
     s(Page::Appearance, "Desktop", "desktop.icons", "Show Desktop folder on the wallpaper", "", Kind::Toggle),
     s(Page::Appearance, "Apps", "appearance.theme_apps", "Theme Qt apps", "Dark Mode also rewrites the Noobsbot Glass theme files", Kind::Toggle),
     s(Page::Displays, "Night Light", "night_light.enabled", "Night Light", "Warmer colours on a schedule; screenshots stay true", Kind::Toggle),
