@@ -18,6 +18,7 @@ use crate::{
     services::{
         Command,
         bluetooth::Pairing,
+        bolt::Accessory,
         polkit::{Auth, Event},
     },
     state::State,
@@ -62,6 +63,8 @@ pub enum Kind {
         exe: String,
         client: ClientId,
     },
+    /// A Thunderbolt device waits for boltd's authorization (E8.8): Don't Allow / Allow.
+    Thunderbolt(Accessory),
     /// An admin password for polkit (E7.2): `user` indexes `auth.users` (Tab picks the next); `checking` while
     /// polkit's helper has it; `wrong` since the last wrong one (the field shakes, the body says so).
     Polkit {
@@ -101,6 +104,7 @@ impl Alert {
             Kind::Wifi { ssid, .. } => format!("Join “{ssid}”?"),
             Kind::Pin { device, .. } => format!("Pair with “{device}”"),
             Kind::ScreenRecording { app, .. } => format!("“{app}” would like to record this computer's screen."),
+            Kind::Thunderbolt(a) => format!("Allow “{}” to connect?", a.name),
             Kind::Polkit { auth, .. } => auth.message.clone(),
         }
     }
@@ -119,6 +123,7 @@ impl Alert {
             Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
             Kind::ScreenRecording { .. } => "It will see everything on the screen, including other apps' windows. The answer is kept in config.toml.".into(),
+            Kind::Thunderbolt(_) => "Allow only accessories you trust. Once allowed, it connects by itself next time.".into(),
             Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
             Kind::Polkit { auth, user, .. } => {
                 let name = auth.users.get(*user).map_or("", String::as_str);
@@ -131,7 +136,7 @@ impl Alert {
     pub fn cancel(&self) -> &'static str {
         match &self.kind {
             Kind::NotResponding { .. } => "Wait",
-            Kind::ScreenRecording { .. } => "Don't Allow",
+            Kind::ScreenRecording { .. } | Kind::Thunderbolt(_) => "Don't Allow",
             _ => "Cancel",
         }
     }
@@ -146,7 +151,7 @@ impl Alert {
             Kind::NotResponding { .. } => "Force Quit",
             Kind::Wifi { .. } => "Join",
             Kind::Pin { .. } => "Pair",
-            Kind::ScreenRecording { .. } => "Allow",
+            Kind::ScreenRecording { .. } | Kind::Thunderbolt(_) => "Allow",
             Kind::Polkit { .. } => "OK",
         }
     }
@@ -299,6 +304,31 @@ impl State {
         }
     }
 
+    /// boltd's waiting devices changed: keep which were asked, close the alert of one that went, ask the next.
+    pub fn thunderbolt_changed(&mut self, waiting: Vec<Accessory>) {
+        let before = std::mem::take(&mut self.thunderbolt);
+        let asked = |uid: &str| before.iter().any(|(a, asked)| *asked && a.uid == uid);
+        self.thunderbolt = waiting.into_iter().map(|a| (a.clone(), asked(&a.uid))).collect();
+        if let Some(Alert { kind: Kind::Thunderbolt(shown), .. }) = &self.alert
+            && !self.thunderbolt.iter().any(|(a, _)| a.uid == shown.uid)
+        {
+            self.close_alert();
+        }
+        self.ask_thunderbolt();
+    }
+
+    /// Asks about the next waiting Thunderbolt device, unless locked (unlocking asks) or one is already up.
+    // ponytail: another alert opening over it drops that question; the device stays unauthorized until replugged.
+    pub fn ask_thunderbolt(&mut self) {
+        if self.lock.is_some() || matches!(&self.alert, Some(Alert { kind: Kind::Thunderbolt(_), .. })) {
+            return;
+        }
+        let Some((accessory, asked)) = self.thunderbolt.iter_mut().find(|(_, asked)| !*asked) else { return };
+        *asked = true;
+        let kind = Kind::Thunderbolt(accessory.clone());
+        self.open_ask(kind);
+    }
+
     fn close_alert(&mut self) {
         if let Some(token) = self.alert_timer.take() {
             self.loop_handle.remove(token);
@@ -347,6 +377,12 @@ impl State {
                 return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
             }
             Kind::ScreenRecording { exe, client, .. } => return self.recording_answer(client, exe, button == Button::Confirm),
+            Kind::Thunderbolt(accessory) => {
+                if button == Button::Confirm {
+                    self.services.send(Command::Thunderbolt(accessory.uid));
+                }
+                return self.ask_thunderbolt();
+            }
             Kind::Polkit { .. } => return,
         };
         self.power_now(power);
@@ -424,5 +460,12 @@ mod tests {
         }
         assert_eq!(alert.body(now), "The password is incorrect. Try again.");
         assert!(alert.shake().is_some());
+    }
+
+    #[test]
+    fn thunderbolt_text() {
+        let alert = Alert { kind: Kind::Thunderbolt(Accessory { uid: "u".into(), name: "Dell WD19TB".into() }), deadline: None };
+        assert_eq!((alert.title().as_str(), alert.cancel(), alert.confirm()), ("Allow “Dell WD19TB” to connect?", "Don't Allow", "Allow"));
+        assert!(alert.cancellable() && alert.field().is_none());
     }
 }
