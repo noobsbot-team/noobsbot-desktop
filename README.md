@@ -337,7 +337,7 @@ doesn't understand is skipped and reported in the journal.
 | `[sound]` | the alert sound (from the system's sound theme) and user interface sound effects on or off |
 | `[privacy]` | which programs may record the screen |
 | `[notifications]` | Do Not Disturb, on a schedule too (`dnd_scheduled`, `dnd_from`, `dnd_until`), banners over full-screen windows (`full_screen`), previews always, when unlocked or never (`previews`) |
-| `[notification_apps]` | per app: banners, alerts, Notification Center only or off; sound, dock badge, kept in Notification Center |
+| `[notification_apps]` | per app: banners, alerts, Notification Center only or off; sound, dock badge, kept in Notification Center, shown on the lock screen (`lock`) |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
 | `[widgets]` | order of other apps' widgets in Notification Center, and which go on the desktop instead |
 | `[calendar]` | which `.ics` files to show |
