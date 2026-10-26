@@ -75,6 +75,7 @@ impl Popup {
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
             Popup::Menu(Menu::Overflow) => BarItem::Overflow,
             Popup::Menu(Menu::Input) => BarItem::Input,
+            Popup::Menu(Menu::Battery(i)) => BarItem::Status(i),
             Popup::Menu(Menu::Dock | Menu::Desktop | Menu::Drawer | Menu::Window) => return None,
             Popup::Control => BarItem::ControlCenter,
         })
@@ -97,7 +98,7 @@ pub fn aims_at(from: Point<f64, Logical>, to: Point<f64, Logical>, sub: Rect) ->
 
 /// What a click on `item` opens.
 // ponytail: the status items' own menus (Wi-Fi list, Bluetooth devices) come with module expansion; until then they
-// open nothing.
+// open nothing. The battery's opens in `open_bar_item`, so sliding along the bar and Left/Right skip it.
 fn popup_for(item: BarItem) -> Option<Popup> {
     match item {
         BarItem::Logo => Some(Popup::Menu(Menu::Logo)),
@@ -126,6 +127,8 @@ pub enum Menu {
     Dock,
     /// Keyboard layouts and input methods (E6.12): `State::input_menu_rows`.
     Input,
+    /// The battery's menu, from `Content::status[i]`: `State::battery_menu_rows`.
+    Battery(usize),
     /// A desktop icon's or the desktop's right-click menu (E7.2): `State::desktop_menu_rows`.
     Desktop,
     /// An app's right-click menu in the app drawer: `State::drawer_menu_rows`.
@@ -236,7 +239,7 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool, 
         ],
         Menu::Tray(_) => tray_rows(tray, 0),
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
-        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow => Vec::new(),
+        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow | Menu::Battery(_) => Vec::new(),
     }
 }
 
@@ -559,6 +562,9 @@ impl State {
             // fcitx5 tells nobody when its method changes: ask now.
             BarItem::Input => self.services.send(crate::services::Command::FcitxRead),
             BarItem::ControlCenter => self.services.send(crate::services::Command::Inhibitors),
+            BarItem::Status(i) if self.menu_bar().is_some_and(|c| c.status.get(i).is_some_and(|s| menubar::is_battery(s.symbol))) => {
+                self.popup = Some(Popup::Menu(Menu::Battery(i)));
+            }
             _ => {}
         }
     }
@@ -635,6 +641,7 @@ impl State {
             Menu::Drawer => self.drawer_menu_rows(),
             Menu::Window => self.window_menu_rows(),
             Menu::Overflow => self.overflow_menu_rows(),
+            Menu::Battery(_) => self.battery_menu_rows(),
             _ => menu_rows(menu, "", tray, self.update_ready(), self.recent_menu.as_deref().unwrap_or_default()),
         }
     }
@@ -666,6 +673,18 @@ impl State {
             .take(5)
             .collect();
         self.recent_menu = Some(recent_rows(&apps, &docs));
+    }
+
+    /// The battery menu: time left and power source, then Battery Settings.
+    pub fn battery_menu_rows(&self) -> Vec<Option<Row>> {
+        let row = |label: String, action| Some(Row { label, shortcut: "", action, sub: Vec::new() });
+        let mut rows = Vec::new();
+        if let Some(b) = &self.battery {
+            let source = if b.on_battery { "Battery" } else { "Power Adapter" };
+            rows.extend([row(crate::services::power::time_left(b), None), row(format!("Power Source: {source}"), None), None]);
+        }
+        rows.push(row("Battery Settings…".into(), Some(Action::Spawn("noobsbot-desktop-settings --page battery".into()))));
+        rows
     }
 
     /// The tray items hidden under "»", by title; a click opens the item's menu or activates it.

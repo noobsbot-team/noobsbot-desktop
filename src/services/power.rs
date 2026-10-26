@@ -105,6 +105,27 @@ fn from_raw(percentage: f64, charging: bool, seconds: i64) -> Battery {
     Battery { percent: percentage.round().clamp(0.0, 100.0) as u8, charging, on_battery: false, minutes_left: (seconds > 0).then_some((seconds / 60) as u32) }
 }
 
+/// The battery menu's first row: time to empty or to full, or why there is none.
+pub fn time_left(b: &Battery) -> String {
+    match (b.charging, b.on_battery, b.minutes_left) {
+        (true, _, Some(m)) => format!("{} until full", minutes(m)),
+        (true, _, None) => "Charging".into(),
+        (_, true, Some(m)) => format!("{} remaining", minutes(m)),
+        (_, true, None) => "Calculating time remaining…".into(),
+        _ if b.percent >= 99 => "Fully charged".into(),
+        _ => "Not charging".into(),
+    }
+}
+
+/// `190` → `3 h 10 min`.
+fn minutes(m: u32) -> String {
+    match (m / 60, m % 60) {
+        (0, m) => format!("{m} min"),
+        (h, 0) => format!("{h} h"),
+        (h, m) => format!("{h} h {m} min"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,6 +138,18 @@ mod tests {
         assert_eq!(kbd_level(160, 255, Some(false)), 145);
         assert_eq!(kbd_level(1, 3, None), 0);
         assert_eq!(kbd_level(0, 3, None), 3);
+    }
+
+    #[test]
+    fn time_left_words() {
+        let b = |charging, on_battery, minutes_left| Battery { percent: 50, charging, on_battery, minutes_left };
+        assert_eq!(time_left(&b(false, true, Some(190))), "3 h 10 min remaining");
+        assert_eq!(time_left(&b(false, true, Some(45))), "45 min remaining");
+        assert_eq!(time_left(&b(true, false, Some(120))), "2 h until full");
+        assert_eq!(time_left(&b(false, true, None)), "Calculating time remaining…");
+        assert_eq!(time_left(&b(true, false, None)), "Charging");
+        assert_eq!(time_left(&b(false, false, None)), "Not charging");
+        assert_eq!(time_left(&Battery { percent: 100, ..b(false, false, None) }), "Fully charged");
     }
 
     #[test]
