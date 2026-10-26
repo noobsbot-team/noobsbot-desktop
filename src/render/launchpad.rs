@@ -43,11 +43,15 @@ pub struct Frame<'a> {
     /// 0 → 1 as it opens.
     pub shown: f64,
     pub field: &'a TextField,
+    /// The tile being dragged and where its icon is.
+    pub lifted: Option<(usize, Rect)>,
 }
 
 /// Size, pages, page, shown, caret x, selection width, dark, opacity, accent, scale.
 type Key = (Size<i32, Logical>, usize, usize, u64, i32, i32, bool, u32, [u8; 3], u64);
 
+/// A picture, the rect it fills or is centred in, whether it is stretched to the rect, its alpha.
+type Piece = (Arc<Rendered>, Rect, bool, f32);
 /// A glass shape: rect, fill, radius, effects.
 type Shape = (Rect, [f32; 4], f64, bool);
 
@@ -82,7 +86,7 @@ impl LaunchpadView {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let Frame { tiles, grid, output, position, page, shown, field } = *frame;
+        let Frame { tiles, grid, output, position, page, shown, field, lifted } = *frame;
         let per_page = grid.per_page();
         let count = pages(tiles.len(), per_page);
         let spec = Material::Panel.spec(dark);
@@ -94,33 +98,28 @@ impl LaunchpadView {
         let s = 1.1 - 0.1 * shown;
 
         // (piece, rect it fills or is centred in, stretch to the rect, alpha)
-        let mut pieces: Vec<(Arc<Rendered>, Rect, bool, f32)> = Vec::new();
+        let mut pieces: Vec<Piece> = Vec::new();
         let px = (f64::from(grid.icon) * scale).ceil() as u32;
         let mini_px = (f64::from(mini_grid(grid.icon_rect(0))[0].size.w) * scale).ceil() as u32;
         let mut moving: Vec<Shape> = Vec::new();
+        // In front: the lifted icon, a little bigger.
+        if let Some((tile, rect)) = lifted.and_then(|(i, r)| Some((tiles.get(i)?, r))) {
+            let big = zoom(rect, rect.loc.to_f64() + rect.size.to_f64().downscale(2.0).to_point(), 1.1);
+            art(icons, tile, big, (px, mini_px), alpha * 0.9, tint(alpha), &mut pieces, &mut moving);
+        }
         let first = position.floor().max(0.0) as usize;
         let last = (position.ceil().max(0.0) as usize).min(count - 1);
         for p in first..=last {
             let dx = ((p as f64 - position) * f64::from(output.w)).round() as i32;
-            for (i, tile) in tiles.iter().skip(p * per_page).take(per_page).enumerate() {
+            for (i, tile) in
+                tiles.iter().enumerate().skip(p * per_page).take(per_page).filter(|(i, _)| lifted.is_none_or(|(l, _)| l != *i)).map(|(i, t)| (i % per_page, t))
+            {
                 let shift = |r: Rect| zoom(Rectangle::new((r.loc.x + dx, r.loc.y).into(), r.size), centre, s);
                 let icon = shift(grid.icon_rect(i));
                 if icon.loc.x + icon.size.w < 0 || icon.loc.x > output.w {
                     continue;
                 }
-                let name = match tile {
-                    Tile::App(app) => {
-                        pieces.push((icon_image(icons, &app.icon, px), icon, true, alpha));
-                        &app.name
-                    }
-                    Tile::Folder(name, apps) => {
-                        moving.push((icon, tint(alpha), f64::from(icon.size.w) * 0.225, true));
-                        for (cell, app) in mini_grid(icon).into_iter().zip(apps.iter()) {
-                            pieces.push((icon_image(icons, &app.icon, mini_px), cell, true, alpha));
-                        }
-                        name
-                    }
-                };
+                let name = art(icons, tile, icon, (px, mini_px), alpha, tint(alpha), &mut pieces, &mut moving);
                 let name_rect = shift(grid.name_rect(i));
                 let name = text.label(name, CALLOUT, grid.name_rect(i).size.w as u32, scale);
                 pieces.push((name, name_rect, false, alpha));
@@ -204,6 +203,33 @@ impl LaunchpadView {
         let moving = self.moving.iter().flat_map(|(_, g)| g);
         out.extend(moving.chain(self.glass.iter().flat_map(|(_, g)| g)).cloned().map(SceneElement::Shader));
         out
+    }
+}
+
+/// A tile's icon in `rect`: the app's, or a folder's glass with its first nine apps; returns its name.
+#[expect(clippy::too_many_arguments, reason = "the frame's drawing context")]
+fn art<'a>(
+    icons: &mut Icons,
+    tile: &'a Tile,
+    rect: Rect,
+    (px, mini_px): (u32, u32),
+    alpha: f32,
+    tint: [f32; 4],
+    pieces: &mut Vec<Piece>,
+    moving: &mut Vec<Shape>,
+) -> &'a str {
+    match tile {
+        Tile::App(app) => {
+            pieces.push((icon_image(icons, &app.icon, px), rect, true, alpha));
+            &app.name
+        }
+        Tile::Folder(name, apps) => {
+            moving.push((rect, tint, f64::from(rect.size.w) * 0.225, true));
+            for (cell, app) in mini_grid(rect).into_iter().zip(apps) {
+                pieces.push((icon_image(icons, &app.icon, mini_px), cell, true, alpha));
+            }
+            name
+        }
     }
 }
 
