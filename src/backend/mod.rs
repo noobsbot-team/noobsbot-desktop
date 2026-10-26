@@ -58,6 +58,8 @@ pub struct Views {
     pub lock: LockView,
     pub screenshot: ScreenshotView,
     pub desktop: DesktopView,
+    /// Other apps' widgets on the desktop (E8.8).
+    pub widgets: NotificationViews,
 }
 
 impl Views {
@@ -90,6 +92,7 @@ impl Views {
             lock: LockView::default(),
             screenshot: ScreenshotView::default(),
             desktop: DesktopView::default(),
+            widgets: NotificationViews::default(),
         })
     }
 }

@@ -264,6 +264,7 @@ impl State {
             .then(|| self.desktop_menu_rows())
             .and_then(|rows| Some((self.desktop_menu_anchor(&rows)?, rows)));
         let desktop_frame = self.desktop_frame();
+        let desktop_widgets = self.desktop_widgets();
         let drawer_frame = self.drawer_frame();
         let drawer_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Drawer)))
             .then(|| self.drawer_menu_rows())
@@ -305,6 +306,7 @@ impl State {
             lock: lock_view,
             screenshot,
             desktop: desktop_view,
+            widgets: widget_view,
         } = self.backend.as_mut()?;
         // Wallpaper, layers, windows with rounded corners and shadows (E1.4, E1.5): see render::scene.
         let scale = output.current_scale().fractional_scale();
@@ -465,6 +467,7 @@ impl State {
                         batteries: &batteries,
                         dnd: self.config.notifications.dnd,
                         weather: self.weather.as_ref(),
+                        widgets: &crate::services::widgets::shown(&self.widgets, &self.config.widgets, false),
                     };
                     bar.extend(notifications.elements(
                         renderer,
@@ -645,6 +648,26 @@ impl State {
             let icons = desktop_view.elements(renderer, shaders, &mut self.text, &mut self.icons, frame, dark, accent, scale);
             let at = elements.len().saturating_sub(wallpaper.drawn);
             elements.splice(at..at, icons);
+        }
+        // Other apps' widgets (E8.8): with the icons, above the wallpaper.
+        if !desktop_widgets.is_empty() {
+            let widgets = crate::services::widgets::shown(&self.widgets, &self.config.widgets, true);
+            let view = View::Widgets { rects: &desktop_widgets, widgets: &widgets };
+            let cards = widget_view.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                view,
+                &self.notifications,
+                hour24,
+                dark,
+                accent,
+                appearance.glass_opacity,
+                scale,
+            );
+            let at = elements.len().saturating_sub(wallpaper.drawn);
+            elements.splice(at..at, cards);
         }
         // Locked (E6.4): only the lock screen, ours or a client's, over the wallpaper.
         // ponytail: the desktop's elements above are still built (cheap, and only on a redraw); skip them if a
