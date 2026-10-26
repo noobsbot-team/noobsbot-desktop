@@ -258,23 +258,27 @@ impl Mime {
         Self { globs, generic }
     }
 
-    fn load() -> Self {
+    pub fn load() -> Self {
         // Every data dir's, the user's first (it usually holds only a few of its own).
         let read =
             |file: &str| crate::apps::data_dirs().iter().filter_map(|d| std::fs::read_to_string(d.join("mime").join(file)).ok()).collect::<Vec<_>>().join("\n");
         Self::parse(&read("globs2"), &read("generic-icons"))
     }
 
-    /// Icon names for file `name`, best first: its type's own, the type's generic one, the media type's.
-    pub fn icons(&self, name: &str) -> Vec<String> {
+    /// File `name`'s type by its extension (`image/jpeg`).
+    pub fn of(&self, name: &str) -> Option<&str> {
         let lower = name.to_lowercase();
         // The longest matching suffix wins (`.tar.gz` over `.gz`); among equals the higher weight, listed first.
-        let mime = self
-            .globs
+        self.globs
             .iter()
             .filter(|(s, _)| lower.len() > s.len() && lower.ends_with(s.as_str()) && lower[..lower.len() - s.len()].ends_with('.'))
-            .fold(None::<&(String, String)>, |best, g| if best.is_none_or(|b| g.0.len() > b.0.len()) { Some(g) } else { best });
-        let Some((_, mime)) = mime else { return vec![FALLBACK_ICON.into()] };
+            .fold(None::<&(String, String)>, |best, g| if best.is_none_or(|b| g.0.len() > b.0.len()) { Some(g) } else { best })
+            .map(|(_, mime)| mime.as_str())
+    }
+
+    /// Icon names for file `name`, best first: its type's own, the type's generic one, the media type's.
+    pub fn icons(&self, name: &str) -> Vec<String> {
+        let Some(mime) = self.of(name) else { return vec![FALLBACK_ICON.into()] };
         let media = mime.split('/').next().unwrap_or_default();
         let mut out = vec![mime.replace('/', "-")];
         out.extend(self.generic.get(mime).cloned());
@@ -820,6 +824,7 @@ mod tests {
         let mime = Mime::parse(globs, "application/x-compressed-tar:package-x-generic\n");
         assert_eq!(mime.icons("a.tar.gz"), ["application-x-compressed-tar", "package-x-generic", "application-x-generic", FALLBACK_ICON]);
         assert_eq!(mime.icons("b.gz")[0], "application-gzip");
+        assert_eq!((mime.of("a.tar.gz"), mime.of("README")), (Some("application/x-compressed-tar"), None));
         assert_eq!(mime.icons("Photo.JPG")[..2], ["image-jpeg", "image-x-generic"]);
         assert_eq!(mime.icons("jpg"), [FALLBACK_ICON], "a bare name is no extension");
         assert_eq!(mime.icons("README"), [FALLBACK_ICON]);
