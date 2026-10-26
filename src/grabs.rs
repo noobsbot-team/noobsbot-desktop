@@ -101,7 +101,9 @@ impl PointerGrab<State> for MoveGrab {
         let rect = Rect::new(self.start.loc + delta.to_i32_round(), self.start.size);
         let others: Vec<Rect> =
             data.space.elements().filter(|w| **w != self.window && data.sheet_parent(w).as_ref() != Some(&self.window)).filter_map(|w| data.frame(w)).collect();
-        let Some(area) = data.work_area() else { return };
+        // The display under the pointer: its edges are magnetic, its sides tile, and the title bar stays on it.
+        // ponytail: near a shared edge the window lags the pointer by up to MIN_VISIBLE px until it crosses over.
+        let Some(area) = data.pointer_output().and_then(|o| data.output_area(&o)) else { return };
         let loc = wm::move_to(rect, area, &others, data.config.windows.magnetic_edges && !data.modifiers().ctrl);
         data.set_visible_loc(&self.window, loc);
         let tiles = data.edge_hold(&self.window, event.location);
