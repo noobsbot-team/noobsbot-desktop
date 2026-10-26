@@ -30,6 +30,7 @@ mod protocols;
 mod render;
 mod rules;
 mod services;
+mod session;
 mod sheets;
 mod shell;
 mod shortcuts;
@@ -540,6 +541,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         if state.config.accessibility.screen_reader {
             state.apply_screen_reader();
         }
+        state.session_restore();
     }
     if !command.is_empty() {
         state.spawn(&command);

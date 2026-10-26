@@ -231,8 +231,11 @@ pub enum Builtin {
     AppDrawer,
     /// The screenshot toolbar. Spectacle's entry runs it too: Spectacle refuses to start outside its own compositor.
     Screenshot,
+    /// The Trash (E8.8): always last, after a separator, never pinned or dragged (`[dock] show_trash`).
+    Trash,
 }
 
+pub const TRASH_KEY: &str = "trash";
 pub const SCREENSHOT_KEY: &str = "screenshot";
 /// Screenshot apps that can't work here, by desktop-file id.
 const SCREENSHOT_APPS: [&str; 2] = ["org.kde.spectacle", "spectacle"];
@@ -243,6 +246,7 @@ impl Builtin {
             launchpad::DOCK_KEY => Some(Self::Launchpad),
             drawer::DOCK_KEY => Some(Self::AppDrawer),
             SCREENSHOT_KEY => Some(Self::Screenshot),
+            TRASH_KEY => Some(Self::Trash),
             _ if SCREENSHOT_APPS.contains(&key) => Some(Self::Screenshot),
             _ => None,
         }
@@ -253,6 +257,7 @@ impl Builtin {
             Self::Launchpad => launchpad::ICON,
             Self::AppDrawer => drawer::ICON,
             Self::Screenshot => "spectacle",
+            Self::Trash => super::trash::icon(),
         }
     }
 
@@ -261,6 +266,7 @@ impl Builtin {
             Self::Launchpad => "Launchpad",
             Self::AppDrawer => "Applications",
             Self::Screenshot => "Screenshot",
+            Self::Trash => "Trash",
         }
     }
 }
@@ -380,6 +386,9 @@ impl State {
         let dock = &self.config.dock;
         let mut items: Vec<Item> = Vec::new();
         for name in &dock.items {
+            if name == TRASH_KEY {
+                continue;
+            }
             if Builtin::of(name).is_some() && !items.iter().any(|i| i.key == *name) {
                 items.push(Item { key: name.clone(), app: self.apps.find(name).cloned(), windows: Vec::new() });
             } else if let Some(app) = self.apps.find(name).filter(|a| !items.iter().any(|i| i.key == a.id)) {
@@ -411,6 +420,9 @@ impl State {
                 }
             }
         }
+        if dock.show_trash {
+            items.push(Item { key: TRASH_KEY.to_owned(), app: None, windows: Vec::new() });
+        }
         self.dock_ui.preview(items)
     }
 
@@ -423,7 +435,7 @@ impl State {
         let eased = if self.dock_pointer.is_some() { 1.0 } else { self.dock_fx.zoom.value(now) * (1.0 - self.dock_fx.hide.value(now)) };
         let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
         let pointer = self.dock_pointer.or(self.dock_fx.zoom_at);
-        let tiles = items.iter().filter(|i| i.is_tile()).count();
+        let tiles = items.iter().filter(|i| i.is_tile() || i.key == TRASH_KEY).count();
         Some(layout(items.len(), tiles, size, i32::from(dock.icon_size), zoom, eased, pointer))
     }
 
@@ -592,6 +604,9 @@ impl State {
                 self.toggle_drawer(at.map_or(drawer::Anchor::Corner, drawer::Anchor::Dock));
             }
             Builtin::Screenshot => self.screenshot(crate::shell::screenshot::Start::Toolbar),
+            Builtin::Trash => {
+                self.spawn(&["xdg-open".to_owned(), "trash:///".to_owned()]);
+            }
         }
     }
 
@@ -847,6 +862,10 @@ pub enum Command {
     Close,
     /// The app's n-th desktop action.
     Action(usize),
+    /// The Trash's Open: what a click does.
+    Open,
+    /// Asks, then erases everything in the Trash.
+    EmptyTrash,
 }
 
 /// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
@@ -1002,7 +1021,11 @@ pub fn uri_list(text: &str) -> Vec<String> {
 impl State {
     /// The item key a `[dock] items` entry pins: a builtin, or the app it names (`None`: not installed).
     fn pin_key(&self, name: &str) -> Option<String> {
-        if Builtin::of(name).is_some() { Some(name.to_owned()) } else { self.apps.find(name).map(|a| a.id.clone()) }
+        match Builtin::of(name) {
+            Some(Builtin::Trash) => None,
+            Some(_) => Some(name.to_owned()),
+            None => self.apps.find(name).map(|a| a.id.clone()),
+        }
     }
 
     /// The pinned icons on the dock: (index in `[dock] items`, item key), left to right.
@@ -1023,6 +1046,12 @@ impl State {
     /// The open dock menu's rows (empty without one).
     pub fn dock_menu_rows(&self) -> Vec<Option<Row>> {
         let Some(item) = self.dock_ui.menu.as_ref().and_then(|(key, _)| self.dock_item(key)) else { return Vec::new() };
+        if item.key == TRASH_KEY {
+            let row =
+                |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Dock) });
+            let full = super::trash::is_full(&super::trash::dir());
+            return vec![row("Open", Some(Command::Open)), None, row("Empty Trash", full.then_some(Command::EmptyTrash))];
+        }
         let name = item.title().to_owned();
         let titles: Vec<String> = item
             .windows
@@ -1123,6 +1152,8 @@ impl State {
                 self.spawn(&["sh", "-c", script, "sh", &uri, &dir].map(String::from));
             }
             Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
+            Command::Open => self.dock_click(item, false),
+            Command::EmptyTrash => self.open_ask(crate::shell::alert::Kind::EmptyTrash),
             Command::Action(i) => {
                 let Some(app) = item.app else { return };
                 let Some((_, exec)) = crate::apps::actions(&app.id).into_iter().nth(i) else { return };
@@ -1170,7 +1201,7 @@ impl State {
     fn dock_drag_motion(&mut self, to: Point<f64, Logical>) {
         let Some(drag) = self.dock_ui.drag.as_ref() else { return };
         let (start, key) = (drag.start, drag.key.clone());
-        if self.config.dock.lock_items || key.starts_with(TILE) || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
+        if self.config.dock.lock_items || key.starts_with(TILE) || key == TRASH_KEY || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
             return;
         }
         let Some(layout) = self.dock_layout(&self.dock_items()) else { return };
@@ -1232,8 +1263,8 @@ impl State {
         });
     }
 
-    /// An app's drag ended over no window: on the dock, `.desktop` files are pinned where they land (not while items
-    /// are locked), other files open with the app they land on.
+    /// An app's drag ended over no window: on the Trash, files are trashed; elsewhere on the dock, `.desktop` files
+    /// are pinned where they land (not while items are locked), other files open with the app they land on.
     // ponytail: only `.desktop` files of installed apps (in an `applications/` dir) pin; others are ignored.
     pub fn dock_drop(&mut self) {
         let Some(location) = self.seat.get_pointer().map(|p| self.to_output(p.current_location())) else { return };
@@ -1244,6 +1275,16 @@ impl State {
         }
         let items = self.dock_items();
         let Some(layout) = self.dock_layout(&items) else { return };
+        if hit(&layout, location).is_some_and(|i| items[i].key == TRASH_KEY) {
+            let paths: Vec<String> = uris.iter().filter_map(|u| crate::apps::file_path(u)).collect();
+            let date = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+            let _ = std::thread::Builder::new().name("trash".into()).spawn(move || {
+                for path in paths {
+                    let _ = super::trash::trash(&super::trash::dir(), path.as_ref(), &date).inspect_err(|err| tracing::warn!("trash: {path}: {err}"));
+                }
+            });
+            return;
+        }
         if uris.iter().all(|u| u.ends_with(".desktop")) {
             if self.config.dock.lock_items {
                 return;
