@@ -69,6 +69,18 @@ impl Config {
 
     /// Sets `key` and saves. The comment and position of an existing line stay.
     pub fn set(&mut self, key: &str, value: impl Into<Value>) -> io::Result<()> {
+        self.set_all([(key, value.into())])
+    }
+
+    /// Sets every key, then saves once (the desktop never reloads half the change).
+    pub fn set_all<'a>(&mut self, changes: impl IntoIterator<Item = (&'a str, Value)>) -> io::Result<()> {
+        for (key, value) in changes {
+            self.put(key, value)?;
+        }
+        save_atomic(&self.path, &self.doc.to_string())
+    }
+
+    fn put(&mut self, key: &str, value: Value) -> io::Result<()> {
         let (table, name) = key.rsplit_once('.').map_or((None, key), |(t, k)| (Some(t), k));
         let parent = match table {
             Some(table) => {
@@ -81,14 +93,14 @@ impl Config {
             // Keeps the old value's comments and spacing.
             Some(old) => {
                 let decor = old.decor().clone();
-                *old = value.into();
+                *old = value;
                 *old.decor_mut() = decor;
             }
             None => {
-                parent.insert(name, Item::Value(value.into()));
+                parent.insert(name, Item::Value(value));
             }
         }
-        save_atomic(&self.path, &self.doc.to_string())
+        Ok(())
     }
 
     /// The `[[display.outputs]]` entry for the display `name`, if the file has one.

@@ -272,8 +272,11 @@ impl App {
             Message::Sources(sources) => {
                 let (layouts, variants) = xkb::lists(&sources);
                 self.picker = None;
-                self.save("keyboard.variant", variants);
-                self.save("keyboard.layout", layouts);
+                self.error = self
+                    .config
+                    .set_all([("keyboard.layout", layouts.into()), ("keyboard.variant", variants.into())])
+                    .err()
+                    .map(|err| format!("Couldn't save the input sources: {err}"));
             }
             Message::Picker(query) => self.picker = query,
             Message::Options(options) => self.save("keyboard.options", options),
