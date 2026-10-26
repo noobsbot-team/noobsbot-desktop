@@ -1618,7 +1618,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 | Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow | `src/gestures.rs` | drive the transitions from the gesture progress |
 | ~~Logo menu "System Settings…" and "About This Computer" rows are disabled~~ | `src/shell/mod.rs` | Done: open Settings at Appearance / About |
 | ~~Do Not Disturb is lost on restart~~ | `src/shell/control.rs` | Done: saved as `[notifications] dnd` |
-| Menu bar clicks, dock, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
+| Dock, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
 | ~~`show-desktop` has no default key~~ | `data/config.toml` | Done: Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
