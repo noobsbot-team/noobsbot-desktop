@@ -8,6 +8,17 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
+## [1.0.0-alpha.8](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.7...v1.0.0-alpha.8) - 2026-10-26
+
+### Added
+
+- *(update)* noobsbot-desktop --update runs Software Update from a terminal (E6.13)
+
+### Other
+
+- Merge pull request #12 from noobsbot-team/chore/noobsbot-team-urls
+- repo URLs point to noobsbot-team after the move from anil0403
+
 ## [1.0.0-alpha.7](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.6...v1.0.0-alpha.7) - 2026-10-26
 
 ### Added

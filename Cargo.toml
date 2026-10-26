@@ -1,6 +1,6 @@
 [package]
 name = "noobsbot-desktop"
-version = "1.0.0-alpha.7"
+version = "1.0.0-alpha.8"
 edition = "2024"
 license = "MIT"
 description = "Noobsbot Desktop: a macOS-style Wayland desktop environment"
