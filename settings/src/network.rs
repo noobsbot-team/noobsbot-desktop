@@ -342,10 +342,11 @@ fn wireguard_settings(wg: &WireGuard) -> Dict<'_> {
             std::net::IpAddr::V4(_) => None,
         })
         .collect();
-    if !v4.is_empty() {
+    // NetworkManager refuses DNS on a family whose method is `disabled`.
+    if !v4.is_empty() && ipv4.contains_key("address-data") {
         ipv4.insert("dns", v4.into());
     }
-    if !v6.is_empty() {
+    if !v6.is_empty() && ipv6.contains_key("address-data") {
         ipv6.insert("dns", v6.into());
     }
     let connection = HashMap::from([
