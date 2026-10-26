@@ -215,6 +215,9 @@ impl State {
         let drawer_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Drawer)))
             .then(|| self.drawer_menu_rows())
             .and_then(|rows| Some((self.drawer_menu_anchor(&rows)?, rows)));
+        let window_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Window)))
+            .then(|| self.window_menu_rows())
+            .and_then(|rows| Some((self.window_menu_anchor()?, rows)));
         let overview = self.mission_frame();
         let slide = if overview.is_none() { self.slide_frame() } else { None };
         let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
@@ -434,6 +437,9 @@ impl State {
                     }
                     (crate::shell::Menu::Drawer, _) => {
                         drawer_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
+                    }
+                    (crate::shell::Menu::Window, _) => {
+                        window_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
                     }
                     _ => (
                         if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray, update_ready) },
