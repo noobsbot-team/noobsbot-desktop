@@ -1,6 +1,7 @@
 //! The rest of the E1.1/E1.7 protocols: layer shell, presentation time, pointer constraints, shortcut inhibiting,
 //! cursor shapes, fractional scale, tearing hints, security contexts, pointer gestures and text input (the input
-//! method behind it is E6.12, see ime.rs).
+//! method behind it is E6.12, see ime.rs). The E6.11 lists and remote controls are in the submodules: toplevel list,
+//! virtual pointer, output management, workspaces.
 
 use std::sync::{
     Arc,
@@ -47,6 +48,11 @@ use smithay::{
 
 use crate::state::{ClientState, State};
 
+mod output_management;
+mod toplevel_list;
+mod virtual_pointer;
+mod workspaces;
+
 pub struct Protocols {
     pub layer_shell: WlrLayerShellState,
     pub shortcuts_inhibit: KeyboardShortcutsInhibitState,
@@ -68,6 +74,10 @@ pub struct Protocols {
     _input_method: InputMethodManagerState,
     _system_bell: smithay::wayland::xdg_system_bell::XdgSystemBellState,
     _virtual_keyboard: VirtualKeyboardManagerState,
+    toplevel_list: toplevel_list::ToplevelList,
+    _virtual_pointer: GlobalId,
+    output_management: output_management::OutputManagement,
+    workspaces: workspaces::Workspaces,
 }
 
 impl Protocols {
@@ -95,6 +105,11 @@ impl Protocols {
             _system_bell: smithay::wayland::xdg_system_bell::XdgSystemBellState::new::<State>(dh),
             // A virtual keyboard types into any app (and the lock screen): trusted clients only.
             _virtual_keyboard: VirtualKeyboardManagerState::new::<State, _>(dh, crate::perms::trusted),
+            toplevel_list: toplevel_list::ToplevelList::new(dh),
+            // Moves and clicks anywhere, like the virtual keyboard types: trusted clients only.
+            _virtual_pointer: virtual_pointer::global(dh),
+            output_management: output_management::OutputManagement::new(dh),
+            workspaces: workspaces::Workspaces::new(dh),
         }
     }
 }

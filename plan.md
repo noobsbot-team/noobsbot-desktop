@@ -1159,7 +1159,7 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   - **Indicator:** on switch, a small `hud` pill at the top centre with dots (current dot = `label`, others @ 30%), fades after 0.8 s.
   - Optional Space number/dots in the menu bar (off by default).
 - **Built with:** `spaces.rs`: per monitor a list of Spaces, each with its own window stack and focus. Hidden Spaces
-  are **not drawn** (zero GPU) but their apps keep running. `ext-workspace-v1` protocol so other tools can list and switch Spaces.
+  are **not drawn** (zero GPU) but their apps keep running. `ext-workspace-v1` (`protocols/workspaces.rs`) so other tools can list Spaces and switch to one.
 - **Why:** dynamic Spaces are the design (R1, R11); not drawing hidden Spaces keeps it free (R3).
 - **Done when:** all behaviours above work by keyboard, gesture and mouse; switching is interruptible midway.
 
@@ -1271,7 +1271,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   The highest refresh rate is chosen by default. **Night Shift** warms colours on a schedule (default 19:00–07:00; sunset/sunrise only if geoclue is enabled, E2.6).
   **Not in v1:** HDR and 10-bit colour (L11). **VRR** (adaptive sync) is a per-display toggle (`vrr`, off by default).
 - **Built with:** DRM/KMS hotplug via udev; `fractional-scale` protocol; Night Shift via the GPU **gamma table**
-  (zero rendering cost); `wlr-output-management` so external tools (and our Settings app) can change layouts.
+  (zero rendering cost); `wlr-output-management` (`protocols/output_management.rs`) so external tools can read and change layouts;
+  their changes are saved to `[[display.outputs]]` and applied like the Settings app's own.
 - **Edge cases handled:** all monitors unplugged (zero outputs: windows and state are kept, drawn again on the next
   output; nothing is destroyed); lid closed with an external monitor = **clamshell mode** (laptop panel off, windows
   move to the external one, no sleep); a dock bringing up two monitors one after the other (layout applied once both
@@ -1459,7 +1460,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   `noobsbot-desktop --trusted <cmd>`). Any other client that binds one gets a one-time **alert** (D8): "Allow ‹app› to
   record the screen / control input?" with Allow / Deny, remembered per app in config (Settings ▸ Privacy later). Screen
   sharing from Helium goes through the portal's own picker, as on every desktop.
-- **Built with:** Smithay's per-client global filter + the client's pid/exe from the socket credentials (`perms.rs`);
+- **Built with:** Smithay's per-client global filter + the client's pid/exe from the socket credentials (`perms.rs`,
+  whose table says who sees each global; all of the above but `ext-image-copy-capture` are served);
   `security-context-v1` so Flatpak apps never see the privileged set at all.
 - **Why:** a desktop that owns the whole screen must not hand that control to every program; this is where Wayland is
   stricter than X11, and we keep that advantage.

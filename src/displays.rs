@@ -237,7 +237,7 @@ fn restore(saved: &Saved, displays: &[Display], outputs: &[OutputSettings]) -> V
 
 /// `text` (the settings file) with its `[[display.outputs]]` tables replaced by `outputs`, where the first one was
 /// (else at the end); the rest of the file and `[display]`'s own keys and comments stay.
-fn set_outputs(text: &str, outputs: &[OutputSettings]) -> String {
+pub(crate) fn set_outputs(text: &str, outputs: &[OutputSettings]) -> String {
     let mut tables = String::new();
     for o in outputs {
         tables += &format!("[[display.outputs]]\nname = {:?}\n", o.name);
@@ -393,7 +393,9 @@ impl State {
         }
         self.refit_filled();
         self.send_scales();
-        write_info(&shown.iter().map(|(d, _)| d.clone()).collect::<Vec<_>>());
+        let shown: Vec<Display> = shown.into_iter().map(|(d, _)| d).collect();
+        write_info(&shown);
+        self.output_heads(shown);
         self.schedule_redraw();
     }
 
