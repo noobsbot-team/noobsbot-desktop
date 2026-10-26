@@ -668,8 +668,8 @@ impl State {
         // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.
         if let (Some(((position, shown, field, page), grid)), Some(l)) = (&pad, self.launchpad.as_ref()) {
             let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &field.text);
-            let lifted = l.lifted(grid, now);
-            let frame = LaunchpadFrame { tiles: &tiles, grid, output: size, position: *position, page: *page, shown: *shown, field, lifted };
+            let (lifted, offsets) = (l.lifted(grid, now), l.offsets(now));
+            let frame = LaunchpadFrame { tiles: &tiles, grid, output: size, position: *position, page: *page, shown: *shown, field, lifted, offsets: &offsets };
             bar.extend(pad_view.elements(
                 renderer,
                 shaders,

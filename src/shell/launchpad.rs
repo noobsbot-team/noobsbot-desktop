@@ -178,6 +178,14 @@ pub fn arrange(order: &[Entry], apps: &[App]) -> Vec<Entry> {
     out
 }
 
+/// What an entry's slide is remembered by: its app, or a folder's first app.
+fn key(entry: &Entry) -> &str {
+    match entry {
+        Entry::App(id) => id,
+        Entry::Folder { apps, .. } => apps.first().map_or("", String::as_str),
+    }
+}
+
 /// A folder with one app is that app; with none, nothing.
 fn tidy(entry: Entry) -> Option<Entry> {
     match entry {
@@ -302,6 +310,8 @@ pub struct Launchpad {
     /// Ends the swipe after `SWIPE_END` without events.
     swipe_end: Option<RegistrationToken>,
     pub press: Option<Press>,
+    /// Icons sliding aside for a dragged one: from this far off their place, springing back to it.
+    moves: HashMap<String, (Point<f64, Logical>, Spring)>,
 }
 
 impl Launchpad {
@@ -315,6 +325,36 @@ impl Launchpad {
             drag: 0.0,
             swipe_end: None,
             press: None,
+            moves: HashMap::new(),
+        }
+    }
+
+    /// Where tile `i`'s icon sits, on a strip of pages laid side by side.
+    fn place(grid: &Grid, i: usize) -> Point<f64, Logical> {
+        let per_page = grid.per_page().max(1);
+        (grid.icon_rect(i % per_page).loc + Point::from(((i / per_page) as i32 * grid.width, 0))).to_f64()
+    }
+
+    /// How far each tile is drawn off its place (indexes as `tiles`).
+    pub fn offsets(&self, now: Instant) -> Vec<Point<i32, Logical>> {
+        if self.moves.is_empty() || self.searching() {
+            return Vec::new();
+        }
+        self.order.iter().map(|e| self.moves.get(key(e)).map_or_else(Point::default, |(off, s)| off.upscale(s.at(now)).to_i32_round())).collect()
+    }
+
+    /// Moves the tile at `from` to `to`; those between slide over from where they are drawn.
+    fn reorder(&mut self, grid: &Grid, from: usize, to: usize, now: Instant) {
+        let (lo, hi) = (from.min(to), from.max(to).min(self.order.len().saturating_sub(1)));
+        let drawn: Vec<Point<f64, Logical>> = (lo..=hi)
+            .map(|i| Self::place(grid, i) + self.moves.get(key(&self.order[i])).map_or_else(Point::default, |(off, s)| off.upscale(s.at(now))))
+            .collect();
+        let keys: Vec<String> = self.order[lo..=hi].iter().map(|e| key(e).to_owned()).collect();
+        move_to(&mut self.order, from, to);
+        for (k, was) in keys.into_iter().zip(drawn) {
+            if let Some(i) = self.order.iter().position(|e| key(e) == k).filter(|&i| i != to) {
+                self.moves.insert(k, (was - Self::place(grid, i), Spring::new(1.0, 0.0, now)));
+            }
         }
     }
 
@@ -338,7 +378,7 @@ impl Launchpad {
     }
 
     pub fn animating(&self, now: Instant) -> bool {
-        !self.shown.done(now) || !self.slide.done(now)
+        !self.shown.done(now) || !self.slide.done(now) || self.moves.values().any(|(_, s)| !s.done(now))
     }
 
     /// Slides to `page`, kept within `pages`.
@@ -396,6 +436,9 @@ impl State {
 
     /// Called once per frame: drops a finished close, and asks for the next frame while something moves.
     pub fn launchpad_frame(&mut self, now: Instant) {
+        if let Some(l) = self.launchpad.as_mut() {
+            l.moves.retain(|_, (_, s)| !s.done(now));
+        }
         let Some(l) = self.launchpad.as_ref() else { return };
         if l.closing() && l.shown.done(now) {
             self.launchpad = None;
@@ -517,8 +560,8 @@ impl State {
         if let Some(i) = grid.cell_at(to) {
             let slot = (l.page * grid.per_page() + i).min(l.order.len().saturating_sub(1));
             if slot != p.index {
-                move_to(&mut l.order, p.index, slot);
-                p.index = slot;
+                let from = std::mem::replace(&mut p.index, slot);
+                l.reorder(&grid, from, slot, Instant::now());
             }
         }
         self.schedule_redraw();
@@ -688,6 +731,26 @@ mod tests {
         assert_eq!(l.page, 2, "clamped to the last page");
         l.turn_to(0, 0, now);
         assert_eq!(l.page, 0);
+    }
+
+    #[test]
+    fn others_slide_aside() {
+        let g = grid((1920, 1080).into(), 101);
+        let now = Instant::now();
+        let mut l = Launchpad::new(now);
+        l.order = ["a", "b", "c", "d"].map(|id| Entry::App(id.into())).to_vec();
+        l.reorder(&g, 0, 2, now);
+        assert_eq!(l.order.iter().map(key).collect::<Vec<_>>(), ["b", "c", "a", "d"]);
+        let off = l.offsets(now);
+        let step = g.icon_rect(1).loc.x - g.icon_rect(0).loc.x;
+        assert_eq!(off, [(step, 0).into(), (step, 0).into(), (0, 0).into(), (0, 0).into()], "b and c start where they were");
+        assert!(l.offsets(now + Duration::from_secs(1)).iter().all(|p| *p == Point::default()), "and settle in place");
+        // Across a page: the first tile of page 2 comes from the far right of page 1's strip.
+        let pp = g.per_page();
+        l.order = (0..pp + 1).map(|i| Entry::App(i.to_string())).collect();
+        l.moves.clear();
+        l.reorder(&g, pp, 0, now);
+        assert_eq!(Launchpad::place(&g, pp).x - Launchpad::place(&g, 0).x, f64::from(g.width));
     }
 
     #[test]

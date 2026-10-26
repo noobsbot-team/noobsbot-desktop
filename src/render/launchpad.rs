@@ -45,6 +45,8 @@ pub struct Frame<'a> {
     pub field: &'a TextField,
     /// The tile being dragged and where its icon is.
     pub lifted: Option<(usize, Rect)>,
+    /// How far each tile is drawn off its cell (sliding aside); may be empty.
+    pub offsets: &'a [Point<i32, Logical>],
 }
 
 /// Size, pages, page, shown, caret x, selection width, dark, opacity, accent, scale.
@@ -86,7 +88,7 @@ impl LaunchpadView {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let Frame { tiles, grid, output, position, page, shown, field, lifted } = *frame;
+        let Frame { tiles, grid, output, position, page, shown, field, lifted, offsets } = *frame;
         let per_page = grid.per_page();
         let count = pages(tiles.len(), per_page);
         let spec = Material::Panel.spec(dark);
@@ -111,10 +113,10 @@ impl LaunchpadView {
         let last = (position.ceil().max(0.0) as usize).min(count - 1);
         for p in first..=last {
             let dx = ((p as f64 - position) * f64::from(output.w)).round() as i32;
-            for (i, tile) in
-                tiles.iter().enumerate().skip(p * per_page).take(per_page).filter(|(i, _)| lifted.is_none_or(|(l, _)| l != *i)).map(|(i, t)| (i % per_page, t))
-            {
-                let shift = |r: Rect| zoom(Rectangle::new((r.loc.x + dx, r.loc.y).into(), r.size), centre, s);
+            for (i, tile) in tiles.iter().enumerate().skip(p * per_page).take(per_page).filter(|(i, _)| lifted.is_none_or(|(l, _)| l != *i)) {
+                let off = offsets.get(i).copied().unwrap_or_default();
+                let i = i % per_page;
+                let shift = |r: Rect| zoom(Rectangle::new((r.loc.x + dx + off.x, r.loc.y + off.y).into(), r.size), centre, s);
                 let icon = shift(grid.icon_rect(i));
                 if icon.loc.x + icon.size.w < 0 || icon.loc.x > output.w {
                     continue;
