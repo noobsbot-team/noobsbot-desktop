@@ -140,6 +140,8 @@ pub struct State {
     pub update: Option<crate::services::update::Release>,
     /// The Weather widget's forecast (E7.2); `None` while it is off.
     pub weather: Option<crate::services::weather::Weather>,
+    /// Widgets other processes set over D-Bus (E8.8).
+    pub widgets: Vec<crate::services::widgets::Widget>,
     /// Every changed `[weather]` goes to the weather thread.
     pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
     pub zones: crate::input::Zones,
@@ -399,6 +401,7 @@ impl State {
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
                     crate::services::Update::Resumed => state.idle_activity(),
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
+                    crate::services::Update::Widgets(widgets) => state.widgets = widgets,
                     crate::services::Update::Record(on) => {
                         let focus = state.focused_window();
                         state.recording.set(on, focus, std::time::Instant::now());
@@ -456,6 +459,7 @@ impl State {
             x_display: None,
             update: None,
             weather: None,
+            widgets: Vec::new(),
             weather_settings,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),

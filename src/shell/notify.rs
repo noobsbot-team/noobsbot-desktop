@@ -41,11 +41,13 @@ pub const LINE: i32 = 16;
 pub const BUTTON_H: i32 = 24;
 pub const CLOSE: i32 = 20;
 pub const CENTER_W: i32 = 360;
-const CENTER_PAD: i32 = 12;
+pub const CENTER_PAD: i32 = 12;
 /// The "N more" plate under a collapsed group shows this much.
 pub const PLATE: i32 = 16;
 /// The Weather widget's height.
 pub const WEATHER_H: i32 = 156;
+/// Widgets from other apps (E8.8): full width (medium) or half, side by side (small).
+pub const WIDGET_H: i32 = WEATHER_H;
 /// Up Next: its title, then rows of a title and a time line.
 const UP_NEXT_TOP: i32 = 36;
 const UP_NEXT_ROW: i32 = 40;
@@ -229,6 +231,8 @@ pub struct Center {
     pub batteries: Option<(Rect, Vec<Rect>)>,
     /// The Weather widget (E7.2), while it has a forecast.
     pub weather: Option<Rect>,
+    /// Other apps' widgets, in `State::shown_widgets` order.
+    pub widgets: Vec<Rect>,
     pub max_scroll: i32,
 }
 
@@ -242,8 +246,9 @@ impl Center {
 }
 
 /// Notification Center for `store` on an `output`-sized screen, with `rows` calendar weeks, `up_next` upcoming
-/// events, `batteries` batteries and maybe the Weather widget.
-pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize, up_next: usize, batteries: usize, weather: bool) -> Center {
+/// events, `batteries` batteries, maybe the Weather widget and other apps' widgets (`true`: medium).
+#[expect(clippy::too_many_arguments, reason = "one count per section")]
+pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize, up_next: usize, batteries: usize, weather: bool, widgets: &[bool]) -> Center {
     let x = output.w - MARGIN - CENTER_W;
     let top = menubar::HEIGHT + DROP;
     let rect = Rectangle::new((x, top).into(), (CENTER_W, (output.h - top - MARGIN).max(100)).into());
@@ -308,8 +313,36 @@ pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize,
         y += 68 + GAP;
         (card, (0..batteries.min(3) as i32).map(|i| row(inner_x + 12 + i * each, card.loc.y + 36, each, 20)).collect())
     });
+    let (widgets, bottom) = tiles(widgets, inner_x, y, inner_w);
+    y = bottom;
     let content = y - start + 8;
-    Center { rect, date, settings, dnd, header, groups, up_next, calendar, batteries, weather, max_scroll: (content - (rect.size.h - 16)).max(0) }
+    Center { rect, date, settings, dnd, header, groups, up_next, calendar, batteries, weather, widgets, max_scroll: (content - (rect.size.h - 16)).max(0) }
+}
+
+/// Widget cards from `y` down in a `w`-wide column: medium ones full width, small ones two to a row; and the y
+/// below them.
+pub fn tiles(medium: &[bool], x: i32, mut y: i32, w: i32) -> (Vec<Rect>, i32) {
+    let half = (w - GAP) / 2;
+    // A small card waiting for a neighbour on its right.
+    let mut open = false;
+    let mut out = Vec::new();
+    for &m in medium {
+        if open && !m {
+            out.push(Rectangle::new((x + w - half, y).into(), (half, WIDGET_H).into()));
+            open = false;
+            y += WIDGET_H + GAP;
+            continue;
+        }
+        if open {
+            y += WIDGET_H + GAP;
+        }
+        out.push(Rectangle::new((x, y).into(), (if m { w } else { half }, WIDGET_H).into()));
+        open = !m;
+        if m {
+            y += WIDGET_H + GAP;
+        }
+    }
+    (out, if open { y + WIDGET_H + GAP } else { y })
 }
 
 /// What a click in Notification Center hits.
@@ -324,6 +357,8 @@ enum Hit {
     Action(u32, String),
     Card(u32),
     Calendar,
+    /// Other apps' widget, by its place in `Center::widgets`.
+    Widget(usize),
 }
 
 fn center_hit(center: &Center, location: Point<f64, Logical>) -> Option<Hit> {
@@ -352,6 +387,9 @@ fn center_hit(center: &Center, location: Point<f64, Logical>) -> Option<Hit> {
                 return Some(if group.plate.is_some() { Hit::Expand(group.app.clone()) } else { Hit::Card(card.id) });
             }
         }
+    }
+    if let Some(i) = center.widgets.iter().position(|r| on(*r)) {
+        return Some(Hit::Widget(i));
     }
     on(center.calendar.0).then_some(Hit::Calendar)
 }
@@ -392,11 +430,25 @@ impl State {
         laptop.into_iter().chain(devices).collect()
     }
 
+    /// Other apps' widgets for Notification Center or (`desktop`) the desktop, in `[widgets]` order.
+    pub fn shown_widgets(&self, desktop: bool) -> Vec<&crate::services::widgets::Widget> {
+        crate::services::widgets::shown(&self.widgets, &self.config.widgets, desktop)
+    }
+
+    /// Tells the owner of a clicked widget.
+    pub fn widget_activated(&self, desktop: bool, i: usize) {
+        if let Some(w) = self.shown_widgets(desktop).get(i) {
+            self.services.send(Command::WidgetActivated { owner: w.owner.clone(), id: w.id.clone() });
+        }
+    }
+
     pub fn center_layout(&self) -> Option<Center> {
         let Some(Popup::Notifications { year, month }) = self.popup else { return None };
         let rows = grid(year, month, self.config.clock.week_start.into()).len();
         let up_next = self.calendar_view(year, month, self.config.clock.week_start.into()).1.len();
-        Some(center(&self.notifications, self.output_size(), self.config.notifications.dnd, rows, up_next, self.batteries().len(), self.weather.is_some()))
+        let widgets: Vec<bool> = self.shown_widgets(false).iter().map(|w| w.medium).collect();
+        let (dnd, batteries, weather) = (self.config.notifications.dnd, self.batteries().len(), self.weather.is_some());
+        Some(center(&self.notifications, self.output_size(), dnd, rows, up_next, batteries, weather, &widgets))
     }
 
     /// A notification from an app: dropped if its app is off (`[notification_apps]`), else stored, and shown as a
@@ -580,6 +632,10 @@ impl State {
                     self.popup = Some(Popup::Notifications { year, month });
                 }
             }
+            Some(Hit::Widget(i)) => {
+                self.widget_activated(false, i);
+                self.popup = None;
+            }
             None => {}
         }
         // Cards grow and go: keep the scroll in range.
@@ -756,13 +812,23 @@ mod tests {
     }
 
     #[test]
+    fn small_widgets_pair_up() {
+        let (rects, bottom) = tiles(&[false, true, false, false, false], 0, 0, 100);
+        let at = |r: Rect| (r.loc.x, r.loc.y, r.size.w);
+        let row = WIDGET_H + GAP;
+        assert_eq!(rects.iter().map(|r| at(*r)).collect::<Vec<_>>(), vec![(0, 0, 46), (0, row, 100), (0, 2 * row, 46), (54, 2 * row, 46), (0, 3 * row, 46)]);
+        assert_eq!(bottom, 4 * row);
+        assert_eq!(tiles(&[], 0, 5, 100), (Vec::new(), 5));
+    }
+
+    #[test]
     fn center_collapses_groups_and_scrolls() {
         let mut store = Store::default();
         for (id, app) in [(1, "A"), (2, "B"), (3, "A"), (4, "A")] {
             store.insert(note(id, app));
         }
         let size = Size::from((1280, 720));
-        let center = center(&store, size, true, 5, 0, 1, true);
+        let center = center(&store, size, true, 5, 0, 1, true, &[true]);
         assert_eq!(center.rect, Rectangle::new((1280 - 8 - 360, 28).into(), (360, 720 - 28 - 8).into()));
         assert_eq!(center.groups.iter().map(|g| (g.app.as_str(), g.count, g.cards.len())).collect::<Vec<_>>(), vec![("A", 3, 1), ("B", 1, 1)]);
         assert!(center.groups[0].plate.is_some() && center.groups[1].plate.is_none());
@@ -771,23 +837,26 @@ mod tests {
         let weather = center.weather.unwrap();
         assert!(weather.loc.y > center.calendar.0.loc.y && center.batteries.as_ref().unwrap().0.loc.y == weather.loc.y + WEATHER_H + GAP);
         let at = |r: Rect| r.to_f64().loc + Point::from((3.0, 3.0));
+        assert_eq!(center.widgets[0].loc.y, center.batteries.as_ref().unwrap().0.loc.y + 68 + GAP);
+        let tall = super::center(&store, Size::from((1280, 2000)), true, 5, 0, 1, true, &[true]);
+        assert_eq!(center_hit(&tall, at(tall.widgets[0])), Some(Hit::Widget(0)));
         assert_eq!(center_hit(&center, at(center.groups[0].cards[0].rect)), Some(Hit::Expand("A".into())));
         assert_eq!(center_hit(&center, at(center.groups[1].cards[0].rect)), Some(Hit::Card(2)));
         assert_eq!(center_hit(&center, at(center.header.unwrap().1)), Some(Hit::ClearAll));
         // Opened out: every card, newest first, and Show Less.
         store.expanded = Some("A".into());
-        let open = super::center(&store, size, false, 5, 0, 0, false);
+        let open = super::center(&store, size, false, 5, 0, 0, false, &[]);
         assert_eq!(open.groups[0].cards.iter().map(|c| c.id).collect::<Vec<_>>(), vec![4, 3, 1]);
         assert_eq!(center_hit(&open, at(open.groups[0].header.unwrap().1)), Some(Hit::Collapse));
         // Too tall for a short screen: it scrolls, and what scrolled out is not hit.
-        let short = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false);
+        let short = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false, &[]);
         assert!(short.max_scroll > 0);
         store.scroll = short.max_scroll;
-        let scrolled = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false);
+        let scrolled = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false, &[]);
         assert!(!scrolled.visible(scrolled.date));
         assert!(scrolled.visible(scrolled.calendar.0));
         // Up Next sits above the calendar, its rows inside its card.
-        let next = super::center(&store, size, false, 5, 2, 0, false);
+        let next = super::center(&store, size, false, 5, 2, 0, false, &[]);
         let (card, rows) = next.up_next.clone().unwrap();
         assert!(rows.len() == 2 && rows.iter().all(|r| card.contains_rect(*r)) && !rows[0].overlaps(rows[1]));
         assert!(card.loc.y + card.size.h < next.calendar.0.loc.y);

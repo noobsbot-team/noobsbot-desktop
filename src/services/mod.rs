@@ -21,6 +21,7 @@ pub mod tray;
 pub mod update;
 pub mod verify;
 pub mod weather;
+pub mod widgets;
 
 use std::{
     fmt::Debug,
@@ -88,6 +89,8 @@ pub enum Update {
     Record(bool),
     /// The keyboard backlight after a key changed it, in percent.
     KbdBacklight(u8),
+    /// Every widget other processes set (`org.noobsbot.Desktop.Widgets`), in the order they came.
+    Widgets(Vec<widgets::Widget>),
 }
 
 /// Requests from the frame loop.
@@ -195,6 +198,11 @@ pub enum Command {
     InputMethod(String),
     /// A screen reader started or stopped: apps expose their accessibility trees while one runs.
     ScreenReader(bool),
+    /// A widget was clicked: tell its owner.
+    WidgetActivated {
+        owner: String,
+        id: String,
+    },
 }
 
 pub struct Services {
@@ -264,7 +272,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     let session_clients = async {
         if let Some(bus) = &session {
             let ours = future::zip(future::zip(notifications::serve(bus, &updates), launcher::watch(bus, &updates)), fcitx::watch(bus, &updates));
-            let ours = future::zip(ours, shortcuts::serve(bus, &updates));
+            let ours = future::zip(ours, future::zip(widgets::serve(bus, &updates), shortcuts::serve(bus, &updates)));
             let ours = future::zip(ours, a11y::serve(bus, monitor, keys));
             future::zip(future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)), ours).await;
         }
@@ -390,6 +398,7 @@ async fn handle(
             }
             (Command::InputMethod(name), _, Some(bus)) => fcitx::set(bus, &name, updates).await,
             (Command::ScreenReader(on), _, Some(bus)) => a11y::set_status(bus, on).await,
+            (Command::WidgetActivated { owner, id }, _, Some(bus)) => widgets::activated(bus, &owner, &id).await,
             // Its bus is down, which `run` has logged.
             _ => {}
         }
