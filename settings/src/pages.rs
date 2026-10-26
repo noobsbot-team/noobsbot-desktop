@@ -332,6 +332,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::XkbOption(crate::xkb::is_compose, crate::xkb::COMPOSE),
     ),
     s(Page::Keyboard, "Modifier keys", "keyboard.options", "Other xkb options", "Like grp:alt_shift_toggle; Caps Lock and Compose above", Kind::Text("None")),
+    s(Page::Trackpad, "", "touchpad.enabled", "Trackpad", "Off: only a mouse moves the pointer", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.tap_to_click", "Tap to click", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.natural_scroll", "Natural scrolling", "Content follows your fingers", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.speed", "Tracking speed", "", Kind::Slider { min: -1.0, max: 1.0, step: 0.1 }),
