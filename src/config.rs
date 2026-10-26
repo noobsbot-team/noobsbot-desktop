@@ -370,7 +370,7 @@ impl Default for Desktop {
     }
 }
 
-/// The app drawer (Cinnamon's application menu).
+/// The app drawer (a classic application menu).
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct AppDrawer {

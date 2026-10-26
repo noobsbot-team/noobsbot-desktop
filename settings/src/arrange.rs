@@ -1,4 +1,4 @@
-//! The Displays page's arrangement (E6.2, like Cinnamon's): the displays as rectangles to drag, which snap edge to
+//! The Displays page's arrangement (E6.2): the displays as rectangles to drag, which snap edge to
 //! edge onto the others; and the "Keep these display settings?" countdown.
 
 use std::time::{Duration, Instant};
