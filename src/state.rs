@@ -1040,14 +1040,19 @@ impl State {
         let kind = PopupKind::Xdg(popup.clone());
         let Ok(root) = find_popup_root_surface(&kind) else { return };
         let Some(window) = self.window_for(&root) else { return };
-        let Some(output_geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
+        // Its toplevel's own display, on the toplevel's Space row.
+        let output = self.window_output(window).or_else(|| self.space.outputs().next().cloned());
+        let Some(mut screen) = output.and_then(|o| self.space.output_geometry(&o)) else { return };
+        screen.loc.y += self.window_row(window) * crate::spaces::STRIDE;
         let Some(window_geo) = self.space.element_geometry(window) else { return };
-
-        let mut target = output_geo;
-        target.loc -= get_popup_toplevel_coords(&kind);
-        target.loc -= window_geo.loc;
+        let target = popup_bounds(screen, window_geo.loc, get_popup_toplevel_coords(&kind));
         popup.with_pending_state(|state| state.geometry = state.positioner.get_unconstrained_geometry(target));
     }
+}
+
+/// Where a popup must fit, relative to its parent: `screen`, for a toplevel at `window` and a parent at `parent` in it.
+fn popup_bounds(screen: Rect, window: Point<i32, Logical>, parent: Point<i32, Logical>) -> Rect {
+    Rect::new(screen.loc - window - parent, screen.size)
 }
 
 #[derive(Default)]
@@ -1514,3 +1519,18 @@ delegate_xdg_activation!(State);
 delegate_xdg_foreign!(State);
 delegate_xdg_dialog!(State);
 delegate_viewporter!(State);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_popup_fits_its_own_display() {
+        let rect = |x, y, w, h| Rect::new((x, y).into(), (w, h).into());
+        let right = rect(1920, 0, 1280, 800);
+        // A toplevel at (2000, 100) on the right display, the popup's parent 10 px into it.
+        assert_eq!(popup_bounds(right, (2000, 100).into(), (10, 0).into()), rect(-90, -100, 1280, 800));
+        let left = rect(-1920, 0, 1920, 1080);
+        assert_eq!(popup_bounds(left, (-1500, 50).into(), (0, 0).into()), rect(-420, -50, 1920, 1080), "a negative origin");
+    }
+}
