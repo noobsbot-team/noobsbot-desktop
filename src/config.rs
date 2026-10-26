@@ -975,7 +975,7 @@ pub struct Privacy {
     pub screen_recording_denied: Vec<String>,
 }
 
-/// Software Update (E6.13); read at start.
+/// Software Update (E6.13); a changed channel checks again at once.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Update {
