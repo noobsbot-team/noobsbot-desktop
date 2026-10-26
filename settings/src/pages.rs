@@ -1308,7 +1308,8 @@ fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<
     parts
 }
 
-/// A saved connection's Details sheet: Auto-Join, IPv4 (DHCP or manual) and DNS, Forget (fields in `App::texts`).
+/// A saved connection's Details sheet: Auto-Join, IPv4 and IPv6 (automatic or manual) with DNS, Forget (fields in
+/// `App::texts`, IPv6's ending in "6").
 fn connection_details<'a>(app: &'a App, k: &'a crate::network::Known) -> Element<'a, Message> {
     let t = app.tokens;
     let push = |label: &'static str, primary: bool, message: Message| button(text(label).size(12)).padding([3, 10]).style(t.push(primary)).on_press(message);
@@ -1318,23 +1319,32 @@ fn connection_details<'a>(app: &'a App, k: &'a crate::network::Known) -> Element
         text_input(placeholder, value(field)).on_input(move |v| Message::Type(key(field), v)).size(13).padding([3, 8]).width(180).style(t.input(false)).into()
     };
     let path = k.path.clone();
-    let manual = value("method") == "manual";
-    let method = segments(
-        t,
-        [("auto", "Automatic (DHCP)"), ("manual", "Manual")]
-            .map(|(v, label)| (label.to_owned(), value("method") == v, Message::Type(key("method"), v.into())))
-            .to_vec(),
-    );
-    let mut rows = vec![line(t, "Auto-Join", "", toggle(t, k.auto_join, move |on| Message::AutoJoin(path.clone(), on))), line(t, "Configure IPv4", "", method)];
-    if manual {
+    let method = |field: &'static str, auto: &'static str| {
+        segments(
+            t,
+            [("auto", auto), ("manual", "Manual")].map(|(v, label)| (label.to_owned(), value(field) == v, Message::Type(key(field), v.into()))).to_vec(),
+        )
+    };
+    let mut rows = vec![
+        line(t, "Auto-Join", "", toggle(t, k.auto_join, move |on| Message::AutoJoin(path.clone(), on))),
+        line(t, "Configure IPv4", "", method("method", "Automatic (DHCP)")),
+    ];
+    if value("method") == "manual" {
         rows.push(line(t, "IP address", "", field("address", "192.168.1.20")));
         rows.push(line(t, "Prefix length", "24 = subnet mask 255.255.255.0", field("prefix", "24")));
         rows.push(line(t, "Router", "", field("gateway", "192.168.1.1")));
     }
     rows.push(line(t, "DNS servers", "Comma separated; empty = from the network", field("dns", "1.1.1.1, 9.9.9.9")));
+    rows.push(line(t, "Configure IPv6", "", method("method6", "Automatic")));
+    if value("method6") == "manual" {
+        rows.push(line(t, "IPv6 address", "", field("address6", "2001:db8::20")));
+        rows.push(line(t, "Prefix length", "1–128, usually 64", field("prefix6", "64")));
+        rows.push(line(t, "Router", "", field("gateway6", "fe80::1")));
+    }
+    rows.push(line(t, "IPv6 DNS servers", "Comma separated; empty = from the network", field("dns6", "2606:4700:4700::1111")));
     let forget = push(if k.wifi { "Forget This Network" } else { "Forget This Connection" }, false, Message::ForgetNetwork(k.path.clone()));
     let buttons =
-        row![forget, space().width(Length::Fill), push("Cancel", false, Message::NetDetails(None)), push("Update", true, Message::UpdateIp4)].spacing(8);
+        row![forget, space().width(Length::Fill), push("Cancel", false, Message::NetDetails(None)), push("Update", true, Message::UpdateIp)].spacing(8);
     rows.push(container(buttons).padding([8, 12]).into());
     group(t, &k.ssid, rows)
 }
@@ -1366,7 +1376,7 @@ fn other_network(app: &App) -> Element<'_, Message> {
     let security = value("security");
     let mut rows = vec![
         line(t, "Network name", "", field("ssid", "Name", false)),
-        line(t, "Security", "", pick("security", &[("none", "None"), ("psk", "WPA2/WPA3 Personal"), ("eap", "WPA2 Enterprise")])),
+        line(t, "Security", "", pick("security", &[("none", "None"), ("psk", "WPA2/WPA3 Personal"), ("sae", "WPA3 Personal"), ("eap", "WPA2 Enterprise")])),
     ];
     if security == "eap" {
         rows.push(line(t, "EAP method", "", pick("eap", &[("peap", "PEAP"), ("ttls", "TTLS")])));

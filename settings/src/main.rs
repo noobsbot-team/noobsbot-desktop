@@ -162,7 +162,7 @@ pub enum Message {
     /// Known Networks ▸ Details…: a saved connection's path opens its sheet; `None` closes it.
     NetDetails(Option<String>),
     /// Details ▸ Update: the typed IPv4 setup is saved.
-    UpdateIp4,
+    UpdateIp,
     /// VPN ▸ a connection's switch.
     Vpn(network::Vpn),
     /// VPN ▸ Import: the typed WireGuard `.conf` path.
@@ -505,25 +505,30 @@ impl App {
                 self.texts.retain(|k, _| !k.starts_with(network::DETAILS));
                 let known = self.status.wifi.as_ref().and_then(|w| w.network.known.iter().find(|k| Some(&k.path) == path.as_ref()));
                 if let Some(k) = known {
-                    let ip4 = &k.ip4;
-                    let method = if ip4.manual { "manual" } else { "auto" };
-                    let fields = [("path", &k.path), ("address", &ip4.address), ("prefix", &ip4.prefix), ("gateway", &ip4.gateway), ("dns", &ip4.dns)];
-                    for (field, value) in fields.into_iter().chain([("method", &method.to_owned())]) {
-                        self.texts.insert(format!("{}{field}", network::DETAILS), value.clone());
+                    self.texts.insert(format!("{}path", network::DETAILS), k.path.clone());
+                    // IPv6's fields end in "6": `address6`, …
+                    for (ip, v) in [(&k.ip4, ""), (&k.ip6, "6")] {
+                        let method = if ip.manual { "manual" } else { "auto" };
+                        let fields =
+                            [("address", &ip.address), ("prefix", &ip.prefix), ("gateway", &ip.gateway), ("dns", &ip.dns), ("method", &method.to_owned())];
+                        for (field, value) in fields {
+                            self.texts.insert(format!("{}{field}{v}", network::DETAILS), value.clone());
+                        }
                     }
                 }
             }
-            Message::UpdateIp4 => {
+            Message::UpdateIp => {
                 let mut take = |field: &str| self.texts.remove(&format!("{}{field}", network::DETAILS)).unwrap_or_default();
                 let path = take("path");
-                let ip4 = network::Ip4 {
-                    manual: take("method") == "manual",
-                    address: take("address"),
-                    prefix: take("prefix"),
-                    gateway: take("gateway"),
-                    dns: take("dns"),
+                let mut ip = |v: &str| network::Ip {
+                    manual: take(&format!("method{v}")) == "manual",
+                    address: take(&format!("address{v}")),
+                    prefix: take(&format!("prefix{v}")),
+                    gateway: take(&format!("gateway{v}")),
+                    dns: take(&format!("dns{v}")),
                 };
-                return Task::perform(network::change(move |bus| network::update_ip4(bus, path, ip4)), Message::Status);
+                let (ip4, ip6) = (ip(""), ip("6"));
+                return Task::perform(network::change(move |bus| network::update_ip(bus, path, ip4, ip6)), Message::Status);
             }
             Message::Vpn(vpn) => return Task::perform(network::change(move |bus| network::vpn_switch(bus, vpn)), Message::Status),
             Message::ImportWireGuard => {

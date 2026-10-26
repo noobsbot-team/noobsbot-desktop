@@ -655,9 +655,9 @@ impl State {
             return None;
         }
         let app = focused.as_ref().and_then(|w| self.app_key(w));
-        let simple = |symbol| Item { symbol, text: None };
+        let simple = |symbol| Item { symbol, text: None, badge: false };
         let status = [
-            self.network.as_ref().map(|n| simple(menubar::wifi(n))),
+            self.network.as_ref().map(menubar::network),
             self.bluetooth.as_ref().map(|b| simple(menubar::bluetooth(b))),
             self.battery.as_ref().map(|b| menubar::battery(b, self.config.battery.show_percentage)),
             self.sound.as_ref().map(|s| simple(menubar::volume(s))),
