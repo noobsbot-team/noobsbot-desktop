@@ -43,6 +43,7 @@ pub struct Config {
     pub hot_corners: HotCorners,
     pub display: Displays,
     pub windows: Windows,
+    pub spaces: Spaces,
     pub clock: Clock,
     pub menu_bar: MenuBar,
     pub dock: Dock,
@@ -520,6 +521,7 @@ impl Default for Config {
             update: Update::default(),
             desktop: Desktop::default(),
             housekeeping: Housekeeping::default(),
+            spaces: Spaces::default(),
             notifications: Notifications::default(),
             notification_apps: BTreeMap::new(),
             app_drawer: AppDrawer::default(),
@@ -702,6 +704,20 @@ pub struct Housekeeping {
 impl Default for Housekeeping {
     fn default() -> Self {
         Self { empty_trash_days: 30, recent_days: 30 }
+    }
+}
+
+/// Spaces across displays (E8.7).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Spaces {
+    /// Each display has its own Spaces; false: one set every display switches together.
+    pub per_display: bool,
+}
+
+impl Default for Spaces {
+    fn default() -> Self {
+        Self { per_display: true }
     }
 }
 
