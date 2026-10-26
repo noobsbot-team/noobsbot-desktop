@@ -269,6 +269,7 @@ settings file.
 | Trackpad key | trackpad off or on |
 | Shift+Alt+volume keys | volume in quarter steps |
 | Web key | the default browser |
+| Mail key | the default mail app |
 | Display key | System Settings › Displays |
 | Power button | asks before shutting down |
 | Sleep key | lock, then sleep |
