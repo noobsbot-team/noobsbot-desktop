@@ -37,6 +37,7 @@ pub struct Config {
     pub appearance: Appearance,
     pub keyboard: Keyboard,
     pub touchpad: Touchpad,
+    pub mouse: Mouse,
     pub hot_corners: HotCorners,
     pub display: Displays,
     pub windows: Windows,
@@ -203,6 +204,46 @@ pub struct Touchpad {
     pub swipe_fingers: u8,
     /// Multiplies gesture travel: higher = a shorter swipe or pinch is enough (0.25 … 4).
     pub gesture_sensitivity: f64,
+    /// Tracking speed, -1 (slow) … 1 (fast).
+    pub speed: f64,
+    pub secondary_click: SecondaryClick,
+    /// Tap, then drag with the finger down; `drag_lock` keeps dragging through a short lift.
+    pub tap_to_drag: bool,
+    pub drag_lock: bool,
+    pub disable_while_typing: bool,
+    /// Off while a mouse is plugged in.
+    pub ignore_with_mouse: bool,
+}
+
+/// How the trackpad right-clicks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SecondaryClick {
+    /// Click with two fingers (macOS).
+    TwoFingers,
+    /// Click in the bottom-right corner.
+    Corner,
+}
+
+/// Mice and trackballs (libinput).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Mouse {
+    /// Tracking speed, -1 (slow) … 1 (fast).
+    pub speed: f64,
+    /// Faster movement goes further (adaptive); off = flat.
+    pub acceleration: bool,
+    /// Primary button on the right; the trackpad follows.
+    pub left_handed: bool,
+    pub natural_scroll: bool,
+    /// Left and right together act as the middle button.
+    pub middle_click_emulation: bool,
+}
+
+impl Default for Mouse {
+    fn default() -> Self {
+        Self { speed: 0.0, acceleration: true, left_handed: false, natural_scroll: false, middle_click_emulation: false }
+    }
 }
 
 /// Hot corners (E5.4): an action name per corner (as in `[bindings]`); "none" = off.
@@ -300,6 +341,7 @@ impl Default for Config {
             appearance: Appearance::default(),
             keyboard: Keyboard::default(),
             touchpad: Touchpad::default(),
+            mouse: Mouse::default(),
             hot_corners: HotCorners::default(),
             display: Displays::default(),
             windows: Windows::default(),
@@ -516,7 +558,18 @@ impl Default for Appearance {
 
 impl Default for Touchpad {
     fn default() -> Self {
-        Self { tap_to_click: true, natural_scroll: true, swipe_fingers: 3, gesture_sensitivity: 1.0 }
+        Self {
+            tap_to_click: true,
+            natural_scroll: true,
+            swipe_fingers: 3,
+            gesture_sensitivity: 1.0,
+            speed: 0.0,
+            secondary_click: SecondaryClick::TwoFingers,
+            tap_to_drag: true,
+            drag_lock: false,
+            disable_while_typing: true,
+            ignore_with_mouse: false,
+        }
     }
 }
 
