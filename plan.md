@@ -1048,14 +1048,18 @@ Goal: everything that informs you and helps you find things.
   - Field 52 px: magnifier symbol 20 px, Title 1 text, placeholder "Spotlight Search" in `label-tertiary`.
   - Results appear under the field as you type (field grows downward, `snappy`): rows 40 px with icon 32 px,
     name in Body and kind in Callout `label-secondary` on the right. Max 8 rows, grouped: Top Hit · Applications ·
-    Calculator · (later) Files, Settings.
-  - ↑/↓ select, Enter opens, Super+Enter = show in Dolphin (files, later), Esc clears, then closes.
+    Calculator · Files · Settings. Apps keep 3 rows free for files, so files arriving later never move a row above.
+  - ↑/↓ select, Enter opens, Super+Enter = show in the file manager (files), Esc clears, then closes.
+  - Settings: every page and every `SETTINGS` row, kind "System Settings", the page's symbol on its colour; Enter
+    opens Settings on that page.
+  - Files (Open-4): recent files, then `plocate` in the home folder (hidden paths dropped), asked 150 ms after
+    typing stops on a worker thread; a stale answer is dropped. Kind = mime type by extension, or "Folder".
   - Calculator: "12*7" → a row "= 84" (Enter copies it).
 - **Built with:** the shared app index (`apps.rs`); `nucleo-matcher` (the fast fuzzy matcher from the Helix
   editor); a tiny expression evaluator crate (e.g. `evalexpr`).
 - **Why:** the index lives in memory, so results appear on every keystroke with zero disk access.
-  Fuzzy matching finds "Helium" from "hlm". Files and settings search come later (they need a file index;
-  decided at Open-4).
+  Fuzzy matching finds "Helium" from "hlm". Files come from `plocate`'s existing database, not an index of our own
+  (Open-4).
 - **Done when:** any installed app is found within 1 frame of typing and launches on Enter.
 
 ### E4.4 Launchpad (app grid)
@@ -2132,5 +2136,7 @@ Rule: **a crate is added only when its feature is built.**
   default modifier model is already decided in E1.6; this only concerns the optional mode.
 - **Open-2 (M7):** Settings app toolkit: iced (front-runner) vs slint.
 - **Open-3 (after M6):** AUR `PKGBUILD` as a second install path (Software Update, E6.13, covers updates already; the updater only notifies on AUR installs).
-- **Open-4 (M4):** file search in Spotlight: build our own index, or skip?
+- **Open-4 (decided):** file search in Spotlight uses no index or daemon of our own: recent files
+  (`recently-used.xbel`) plus `plocate` when installed (home folder only, hidden paths dropped). Without it, only
+  recent files show.
 - **Open-5 (decided):** weather uses Open-Meteo, off by default; it sends only the city or coordinates you set.
