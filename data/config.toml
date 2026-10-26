@@ -28,6 +28,12 @@ wallpaper = ""
 wallpaper_dark = ""
 # "fill" (cover the screen), "fit" (the whole picture), "centre" (its own size) or "stretch".
 wallpaper_fit = "fill"
+# Slideshow: a folder of PNG/JPEG pictures shown in turn, in light and dark mode; empty = off.
+wallpaper_folder = ""
+# Minutes per picture; 0 = a new one only at each login (pair with shuffle).
+wallpaper_interval = 30
+# Random order instead of by file name.
+wallpaper_shuffle = false
 # The Dark Mode toggle also rewrites the Noobsbot Glass theme for Qt apps (Kvantum, colour scheme, kdeglobals),
 # like `noobsbot-desktop theme --write`. Off by default: it edits files in ~/.config and ~/.local/share.
 theme_apps = false

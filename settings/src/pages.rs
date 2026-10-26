@@ -227,6 +227,16 @@ pub const SETTINGS: &[Setting] = &[
         "",
         Kind::Choice(&[("fill", "Fill"), ("fit", "Fit"), ("centre", "Centre"), ("stretch", "Stretch")]),
     ),
+    s(Page::Appearance, "Wallpaper", "appearance.wallpaper_folder", "Slideshow folder", "Shows its pictures in turn; empty = off", Kind::Text("Off")),
+    s(
+        Page::Appearance,
+        "Wallpaper",
+        "appearance.wallpaper_interval",
+        "Change picture",
+        "",
+        Kind::Steps(&[(0, "At login"), (5, "Every 5 min"), (15, "Every 15 min"), (30, "Every 30 min"), (60, "Every hour"), (1440, "Every day")]),
+    ),
+    s(Page::Appearance, "Wallpaper", "appearance.wallpaper_shuffle", "Random order", "", Kind::Toggle),
     s(
         Page::Appearance,
         "Text and pointer",
