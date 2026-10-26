@@ -210,6 +210,7 @@ impl State {
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
         let input_menu = self.input_menu_rows();
         let overflow_menu = self.overflow_menu_rows();
+        let battery_menu = self.battery_menu_rows();
         self.refresh_recent();
         let update_ready = self.update_ready();
         let desktop_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Desktop)))
@@ -307,6 +308,7 @@ impl State {
                         match kind {
                             crate::shell::Menu::Input => input_menu.clone(),
                             crate::shell::Menu::Overflow => overflow_menu.clone(),
+                            crate::shell::Menu::Battery(_) => battery_menu.clone(),
                             _ => crate::shell::menu_rows(kind, &app, tray, update_ready, self.recent_menu.as_deref().unwrap_or_default()),
                         },
                         // A tray item opened from "»" hangs from it.

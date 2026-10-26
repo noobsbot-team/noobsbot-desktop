@@ -27,6 +27,8 @@ pub struct Status {
     pub battery: Option<Battery>,
     /// `None`: power-profiles-daemon isn't running.
     pub power_mode: Option<PowerMode>,
+    /// The keyboard backlight in percent; `None` without one.
+    pub kbd_backlight: Option<u8>,
     /// Every output and input, for the pickers.
     pub outputs: Vec<Choice>,
     pub inputs: Vec<Choice>,
@@ -108,6 +110,10 @@ pub async fn read() -> Status {
         Some(bus) => (wifi(bus).await, bluetooth(bus).await, time(bus).await, battery(bus).await, power_mode(bus).await),
         None => (None, None, None, None, None),
     };
+    let kbd_backlight = match &system {
+        Some(bus) => kbd_backlight(bus, None).await,
+        None => None,
+    };
     let pw = wpctl(&["status"]).unwrap_or_default();
     let pactl = crate::pactl::read();
     Status {
@@ -123,6 +129,7 @@ pub async fn read() -> Status {
         time,
         battery,
         power_mode,
+        kbd_backlight,
         outputs: section(&pw, "Sinks:"),
         inputs: section(&pw, "Sources:"),
     }
@@ -204,6 +211,28 @@ async fn battery(bus: &Connection) -> Option<Battery> {
         _ => 0,
     };
     Some(Battery { percent, state, seconds })
+}
+
+const KBD_PATH: &str = "/org/freedesktop/UPower/KbdBacklight";
+const KBD: &str = "org.freedesktop.UPower.KbdBacklight";
+
+/// UPower's keyboard backlight in percent, after setting it to `set` percent first.
+async fn kbd_backlight(bus: &Connection, set: Option<u8>) -> Option<u8> {
+    let call = |method| async move { bus.call_method(Some(UPOWER), KBD_PATH, Some(KBD), method, &()).await.ok()?.body().deserialize::<i32>().ok() };
+    let max = call("GetMaxBrightness").await.filter(|m| *m > 0)?;
+    if let Some(percent) = set {
+        let level = (i32::from(percent.min(100)) * max + 50) / 100;
+        let _ = bus.call_method(Some(UPOWER), KBD_PATH, Some(KBD), "SetBrightness", &(level,)).await;
+    }
+    Some((call("GetBrightness").await? * 100 / max) as u8)
+}
+
+/// The keyboard backlight in percent, then the new status.
+pub async fn set_kbd_backlight(percent: u8) -> Status {
+    if let Ok(bus) = system(2).await {
+        kbd_backlight(&bus, Some(percent)).await;
+    }
+    read().await
 }
 
 const PROFILES: &str = "org.freedesktop.UPower.PowerProfiles";

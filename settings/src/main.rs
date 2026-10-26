@@ -312,6 +312,7 @@ impl App {
                 match key.as_str() {
                     "sound.output" | "sound.input" => return Task::perform(system::set_volume(key == "sound.output", value.round() as u8), Message::Status),
                     "sound.balance" => return Task::perform(system::set_balance((value / 100.0) as f32), Message::Status),
+                    "keyboard.backlight" => return Task::perform(system::set_kbd_backlight(value.round() as u8), Message::Status),
                     _ => {}
                 }
                 match pages::setting(&key).map(|s| s.kind) {

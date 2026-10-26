@@ -443,11 +443,18 @@ impl State {
         banners(&self.notifications, self.output_size().w, self.osd.is_some(), self.previews())
     }
 
-    /// Laptop battery, then Bluetooth devices that report one: (name, percent).
+    /// Laptop battery, then Bluetooth devices that report one, then UPower's other peripherals: (name, percent).
     pub fn batteries(&self) -> Vec<(String, u8)> {
         let laptop = self.battery.as_ref().map(|b| ("Laptop".to_owned(), b.percent));
         let devices = self.bluetooth.iter().flat_map(|b| &b.devices).filter(|d| d.connected).filter_map(|d| Some((d.name.clone(), d.battery?)));
-        laptop.into_iter().chain(devices).collect()
+        let mut list: Vec<_> = laptop.into_iter().chain(devices).collect();
+        // ponytail: a Bluetooth device in both lists is matched by name; UPower's model is usually BlueZ's alias.
+        for p in &self.peripherals {
+            if !list.iter().any(|(name, _)| name.eq_ignore_ascii_case(&p.name)) {
+                list.push((p.name.clone(), p.percent));
+            }
+        }
+        list
     }
 
     /// Other apps' widgets for Notification Center or (`desktop`) the desktop, in `[widgets]` order.
