@@ -592,13 +592,17 @@ impl State {
             BarItem::Status(i) if self.menu_bar().and_then(|c| c.status.get(i).map(|s| s.kind)) == Some(menubar::Kind::Recording) => {
                 self.toggle_recording();
             }
-            BarItem::Status(_) => {
-                self.control_scroll = 0.0;
-                if matches!(self.popup, Some(Popup::Module(control::Module::Wifi, _))) {
-                    self.services.send(crate::services::Command::WifiScan);
-                }
-            }
+            BarItem::Status(_) => self.module_opened(),
             _ => {}
+        }
+    }
+
+    /// A status item's module just opened, by click or sliding along the bar: its list starts at the top, and Wi-Fi
+    /// scans (NetworkManager refuses scans too close together).
+    fn module_opened(&mut self) {
+        self.control_scroll = 0.0;
+        if matches!(self.popup, Some(Popup::Module(control::Module::Wifi, _))) {
+            self.services.send(crate::services::Command::WifiScan);
         }
     }
 
@@ -643,6 +647,9 @@ impl State {
         let Some(backend) = self.backend.as_ref() else { return };
         if let Some(next) = bar.and_then(|b| b.hit(to)).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(|item| self.bar_popup(item)) {
             self.popup = Some(next);
+            if matches!(next, Popup::Module(..)) {
+                self.module_opened();
+            }
             self.schedule_redraw();
         } else if let Popup::Menu(menu) = open {
             let (row, moved) = (backend.menu.row_at(to), backend.menu.row_at(from) != backend.menu.row_at(to));
