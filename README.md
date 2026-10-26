@@ -268,6 +268,7 @@ settings file.
 | Volume, mute, mic, brightness, keyboard backlight and media keys | as labelled, with an on-screen display |
 | Trackpad key | trackpad off or on |
 | Shift+Alt+volume keys | volume in quarter steps |
+| Display key | System Settings › Displays |
 | Power button | asks before shutting down |
 | Sleep key | lock, then sleep |
 | Eject key | ejects the last mounted USB drive or disc |
