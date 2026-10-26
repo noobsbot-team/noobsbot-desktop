@@ -110,8 +110,18 @@ swipe_fingers = 3
 gesture_sensitivity = 1.0
 # Tracking speed, -1 (slow) … 1 (fast).
 speed = 0.0
-# Right-click: "two-fingers" (click with two fingers) or "corner" (click the bottom-right corner).
+# Right-click: "two-fingers" (click with two fingers), "corner" (click the bottom-right corner) or "off" (every
+# physical click is a left click).
 secondary_click = "two-fingers"
+# Scrolling: "two-fingers", "edge" (one finger along the right or bottom edge) or "none".
+scroll_method = "two-fingers"
+# Each system gesture on or off: swipe between Spaces, swipe up for Mission Control, down for App Exposé, pinch for
+# Launchpad, spread to show the desktop.
+gesture_spaces = true
+gesture_mission_control = true
+gesture_app_expose = true
+gesture_launchpad = true
+gesture_show_desktop = true
 # Tap, then drag with the finger down; drag_lock keeps the drag going through a short lift.
 tap_to_drag = true
 drag_lock = false
@@ -128,10 +138,14 @@ left_handed = false
 natural_scroll = false
 # Pressing left and right together acts as the middle button.
 middle_click_emulation = false
+# Two clicks closer than this many ms are a double-click (150 … 1000), here and in GTK apps.
+double_click_ms = 400
+# Middle click pastes the last selected text; false turns that off, here and in GTK apps.
+middle_click_paste = true
 
 [hot_corners]
 # Rest the pointer in a screen corner for a moment to trigger an action (any action from [bindings] below, like
-# mission-control, app-expose, show-desktop, launchpad, notification-center), or "none".
+# mission-control, app-expose, show-desktop, launchpad, notification-center, lock, display-off), or "none".
 top_left = "none"
 top_right = "none"
 bottom_left = "none"
@@ -349,7 +363,7 @@ super_tap = true
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key. Keys match in any case and
 # modifier order ("Ctrl+Super+x" is "Super+Ctrl+X"): yours replaces the default with the same keys, and of two of
 # yours with the same keys the first in sorted order is kept (a warning is logged).
-# Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "default-app <MIME type or category>", "volume up|down|up-fine|down-fine", mute, mic-mute,
+# Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, display-off, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "default-app <MIME type or category>", "volume up|down|up-fine|down-fine", mute, mic-mute,
 # "brightness up|down", "keyboard-backlight up|down|toggle", "touchpad toggle|on|off", "media play-pause|next|previous|stop|forward|rewind", eject, "space left|right|1…9", "move-to-space left|right|1…16",
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows, "screen-zoom [in|out]",

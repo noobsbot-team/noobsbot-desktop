@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    config::{self, Accent, Appearance},
+    config::{self, Accent, Appearance, Mouse},
     render::{self, Material},
 };
 
@@ -45,6 +45,14 @@ fn sizes(appearance: &Appearance) -> [[String; 2]; 2] {
     [
         ["text-scaling-factor".into(), format!("{:.2}", appearance.text_scale())],
         ["cursor-size".into(), crate::backend::cursor::size(appearance.pointer_size).to_string()],
+    ]
+}
+
+/// The `[mouse]` keys GTK reads: schema, key, value (E8.2).
+fn mouse_keys(mouse: &Mouse) -> [[String; 3]; 2] {
+    [
+        ["org.gnome.desktop.peripherals.mouse".into(), "double-click".into(), mouse.double_click().as_millis().to_string()],
+        ["org.gnome.desktop.interface".into(), "gtk-enable-primary-paste".into(), mouse.middle_click_paste.to_string()],
     ]
 }
 
@@ -370,6 +378,18 @@ pub fn sizes_in_background(appearance: &Appearance) {
     });
 }
 
+/// Sets the GTK mouse keys on a thread (a real session only, never nested), so the frame never waits.
+pub fn mouse_in_background(mouse: &Mouse) {
+    let keys = mouse_keys(mouse);
+    std::thread::spawn(move || {
+        for [schema, key, value] in &keys {
+            if !std::process::Command::new("gsettings").args(["set", schema, key, value]).status().is_ok_and(|s| s.success()) {
+                tracing::warn!("gsettings {key}: failed");
+            }
+        }
+    });
+}
+
 /// `noobsbot-desktop theme …`: the exit code.
 pub fn cli(args: impl Iterator<Item = String>) -> i32 {
     let (mut write_files, mut run_gsettings) = (false, false);
@@ -427,6 +447,13 @@ mod tests {
             let args: Vec<_> = command.get_args().collect();
             assert_eq!(args, ["set", "org.gnome.desktop.interface", "color-scheme", value]);
         }
+    }
+
+    #[test]
+    fn mouse_keys_go_to_gtk() {
+        let mouse = Mouse { double_click_ms: 650, middle_click_paste: false, ..Default::default() };
+        assert_eq!(mouse_keys(&mouse)[0][1..], ["double-click".to_string(), "650".into()]);
+        assert_eq!(mouse_keys(&mouse)[1][1..], ["gtk-enable-primary-paste".to_string(), "false".into()]);
     }
 
     #[test]

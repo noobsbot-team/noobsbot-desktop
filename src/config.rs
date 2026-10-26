@@ -364,12 +364,46 @@ pub struct Touchpad {
     /// Tracking speed, -1 (slow) … 1 (fast).
     pub speed: f64,
     pub secondary_click: SecondaryClick,
+    pub scroll_method: ScrollMethod,
     /// Tap, then drag with the finger down; `drag_lock` keeps dragging through a short lift.
     pub tap_to_drag: bool,
     pub drag_lock: bool,
     pub disable_while_typing: bool,
     /// Off while a mouse is plugged in.
     pub ignore_with_mouse: bool,
+    /// Each system gesture on or off: swipe between Spaces, up for Mission Control, down for App Exposé, pinch for
+    /// Launchpad, spread for the desktop.
+    pub gesture_spaces: bool,
+    pub gesture_mission_control: bool,
+    pub gesture_app_expose: bool,
+    pub gesture_launchpad: bool,
+    pub gesture_show_desktop: bool,
+}
+
+impl Touchpad {
+    /// Whether this system gesture is turned on.
+    pub fn allows(&self, gesture: crate::gestures::Gesture) -> bool {
+        use crate::gestures::Gesture::*;
+        match gesture {
+            Space(_) => self.gesture_spaces,
+            MissionControl => self.gesture_mission_control,
+            AppExpose => self.gesture_app_expose,
+            Launchpad => self.gesture_launchpad,
+            ShowDesktop => self.gesture_show_desktop,
+        }
+    }
+}
+
+/// How the trackpad scrolls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScrollMethod {
+    /// Two fingers anywhere.
+    TwoFingers,
+    /// One finger along the right or bottom edge.
+    Edge,
+    /// The trackpad doesn't scroll.
+    None,
 }
 
 /// How the trackpad right-clicks.
@@ -380,6 +414,8 @@ pub enum SecondaryClick {
     TwoFingers,
     /// Click in the bottom-right corner.
     Corner,
+    /// Every physical click is a primary click (a two-finger tap still right-clicks with tap to click).
+    Off,
 }
 
 /// Mice and trackballs (libinput).
@@ -395,11 +431,30 @@ pub struct Mouse {
     pub natural_scroll: bool,
     /// Left and right together act as the middle button.
     pub middle_click_emulation: bool,
+    /// Two clicks closer than this (ms) are a double-click: our title bars, desktop icons and edges, and GTK apps.
+    pub double_click_ms: u32,
+    /// Middle click pastes the last selected text (the primary selection); off: apps never see it.
+    pub middle_click_paste: bool,
 }
 
 impl Default for Mouse {
     fn default() -> Self {
-        Self { speed: 0.0, acceleration: true, left_handed: false, natural_scroll: false, middle_click_emulation: false }
+        Self {
+            speed: 0.0,
+            acceleration: true,
+            left_handed: false,
+            natural_scroll: false,
+            middle_click_emulation: false,
+            double_click_ms: 400,
+            middle_click_paste: true,
+        }
+    }
+}
+
+impl Mouse {
+    /// The double-click time, kept between 150 ms and 1 s.
+    pub fn double_click(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.double_click_ms.clamp(150, 1000).into())
     }
 }
 
@@ -1025,10 +1080,16 @@ impl Default for Touchpad {
             gesture_sensitivity: 1.0,
             speed: 0.0,
             secondary_click: SecondaryClick::TwoFingers,
+            scroll_method: ScrollMethod::TwoFingers,
             tap_to_drag: true,
             drag_lock: false,
             disable_while_typing: true,
             ignore_with_mouse: false,
+            gesture_spaces: true,
+            gesture_mission_control: true,
+            gesture_app_expose: true,
+            gesture_launchpad: true,
+            gesture_show_desktop: true,
         }
     }
 }
@@ -1621,6 +1682,36 @@ mod tests {
             }
         );
         assert_eq!(hdmi, &OutputSettings { name: "HDMI-A-1".into(), enabled: false, ..Default::default() }, "unset keys: the defaults");
+    }
+
+    #[test]
+    fn double_click_time_is_kept_sane() {
+        let ms = |text: &str| parse(text).unwrap().mouse.double_click().as_millis();
+        assert_eq!(ms(""), 400);
+        assert_eq!(ms("[mouse]\ndouble_click_ms = 650"), 650);
+        assert_eq!(ms("[mouse]\ndouble_click_ms = 0"), 150, "0 would make double-clicks impossible");
+        assert_eq!(ms("[mouse]\ndouble_click_ms = 99999"), 1000);
+    }
+
+    #[test]
+    fn gestures_turn_off_one_by_one() {
+        use crate::gestures::Gesture;
+        let t = parse("[touchpad]\ngesture_spaces = false\ngesture_launchpad = false").unwrap().touchpad;
+        assert!(!t.allows(Gesture::Space(1)) && !t.allows(Gesture::Space(-1)) && !t.allows(Gesture::Launchpad));
+        assert!(t.allows(Gesture::MissionControl) && t.allows(Gesture::AppExpose) && t.allows(Gesture::ShowDesktop));
+    }
+
+    #[test]
+    fn scroll_method_parses() {
+        let method = |v: &str| parse(&format!("[touchpad]\nscroll_method = \"{v}\"")).unwrap().touchpad.scroll_method;
+        assert_eq!(method("edge"), ScrollMethod::Edge);
+        assert_eq!(method("none"), ScrollMethod::None);
+        assert_eq!(parse("").unwrap().touchpad.scroll_method, ScrollMethod::TwoFingers);
+    }
+
+    #[test]
+    fn secondary_click_off_parses() {
+        assert_eq!(parse("[touchpad]\nsecondary_click = \"off\"").unwrap().touchpad.secondary_click, SecondaryClick::Off);
     }
 
     #[test]

@@ -222,7 +222,7 @@ impl State {
     /// A press in a resize zone: a double-click on the same edge grows the window to the work area that way only,
     /// anything else starts a resize.
     pub fn zone_press(&mut self, window: Window, edges: Edges, start_data: GrabStartData<State>, serial: smithay::utils::Serial) {
-        let double = self.zones.last_press.take().is_some_and(|(at, w, e)| at.elapsed() < wm::DOUBLE_CLICK && w == window && e == edges);
+        let double = self.zones.last_press.take().is_some_and(|(at, w, e)| at.elapsed() < self.config.mouse.double_click() && w == window && e == edges);
         if !double {
             self.zones.last_press = Some((std::time::Instant::now(), window.clone(), edges));
             return self.start_resize(window, edges, start_data, serial);
