@@ -3,7 +3,8 @@
 //! Enter launches the app or copies the answer, Esc clears the text and then closes. The app index is in memory, so a
 //! keystroke costs one pass over a few hundred names and no disk access. Every Settings page and setting is matched
 //! too; Enter opens Settings on its page. Files come from the recent files and `plocate` (Open-4: no index of our
-//! own), asked on a worker thread once typing pauses; they arrive under the apps without moving them.
+//! own), asked on a worker thread once typing pauses; they arrive under the apps without moving them. Enter opens a
+//! file, Super+Enter shows it in the file manager.
 
 use smithay::{
     input::keyboard::{Keysym, ModifiersState},
@@ -498,11 +499,21 @@ impl State {
     /// `true` if the key was taken.
     pub fn spotlight_key(&mut self, sym: Keysym, raw: Keysym, mods: &ModifiersState) -> bool {
         let Some(mut open) = self.spotlight.clone() else { return false };
+        let hits = self.spotlight_results();
+        let last = self.spotlight_layout(hits.len()).map_or(0, |l| l.rows.len()).saturating_sub(1);
+        // Super+Enter on a file shows it in the file manager (before the Super+Return binding).
+        if mods.logo
+            && matches!(sym, Keysym::Return | Keysym::KP_Enter)
+            && let Some(Hit::File(file)) = hits.get(open.selected.min(last))
+        {
+            let path = std::path::PathBuf::from(&file.path);
+            self.close_spotlight();
+            self.show_in_files(&path);
+            return true;
+        }
         if crate::shortcuts::lookup(&self.bindings, mods, raw, self.nested).is_some() {
             return false;
         }
-        let hits = self.spotlight_results();
-        let last = self.spotlight_layout(hits.len()).map_or(0, |l| l.rows.len()).saturating_sub(1);
         let typed = sym.key_char().map(String::from);
         match sym {
             Keysym::Up | Keysym::KP_Up => open.selected = open.selected.saturating_sub(1),

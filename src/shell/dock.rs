@@ -1088,6 +1088,17 @@ pub fn recent_items(xbel: &str) -> (Vec<String>, Vec<String>) {
     (names, files.into_iter().map(|(_, href)| href).collect())
 }
 
+impl State {
+    /// Opens the file manager with `path` selected (its ShowItems); without one on the bus, opens its folder.
+    pub fn show_in_files(&mut self, path: &std::path::Path) {
+        let dir = path.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
+        let uri = format!("file://{}", path.display());
+        let script = "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 /org/freedesktop/FileManager1 \
+                      org.freedesktop.FileManager1.ShowItems array:string:\"$1\" string: >/dev/null 2>&1 || xdg-open \"$2\"";
+        self.spawn(&["sh", "-c", script, "sh", &uri, &dir].map(String::from));
+    }
+}
+
 /// `~/.local/share/recently-used.xbel`.
 pub fn recent_path() -> std::path::PathBuf {
     config::xdg_dir("XDG_DATA_HOME", ".local/share").join("recently-used.xbel")
@@ -1292,12 +1303,7 @@ impl State {
             }
             Command::ShowInFiles => {
                 let Some(app) = item.app else { return };
-                let dir = app.path.parent().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
-                let uri = format!("file://{}", app.path.display());
-                // The file manager's ShowItems selects it; without one, its folder opens.
-                let script = "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 /org/freedesktop/FileManager1 \
-                              org.freedesktop.FileManager1.ShowItems array:string:\"$1\" string: >/dev/null 2>&1 || xdg-open \"$2\"";
-                self.spawn(&["sh", "-c", script, "sh", &uri, &dir].map(String::from));
+                self.show_in_files(&app.path);
             }
             Command::Assign(i) => {
                 let here = self.pointer_output().map(|o| (o.name(), self.output_key(&o)));
