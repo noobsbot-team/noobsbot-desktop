@@ -45,19 +45,20 @@ impl Keep {
     }
 }
 
-/// A `()` every half second, for the countdown; subscribed only while it shows (the app has no timer executor, so a
-/// small thread sleeps, and ends once the subscription is dropped).
-pub fn ticks() -> impl iced::futures::Stream<Item = ()> {
-    iced::stream::channel(1, async |tx: iced::futures::channel::mpsc::Sender<()>| {
+/// A `()` every `every`, for the countdown and Bluetooth's rescan; subscribed only while needed (the app has no timer
+/// executor, so a small thread sleeps, and ends once the subscription is dropped).
+pub fn ticks(every: &Duration) -> impl iced::futures::Stream<Item = ()> + use<> {
+    let every = *every;
+    iced::stream::channel(1, async move |tx: iced::futures::channel::mpsc::Sender<()>| {
         let mut sender = tx.clone();
-        let spawned = std::thread::Builder::new().name("keep-countdown".into()).spawn(move || {
+        let spawned = std::thread::Builder::new().name("ticks".into()).spawn(move || {
             while !sender.is_closed() {
-                std::thread::sleep(Duration::from_millis(500));
+                std::thread::sleep(every);
                 let _ = sender.try_send(());
             }
         });
         if let Err(err) = spawned {
-            eprintln!("display countdown: {err}");
+            eprintln!("ticks: {err}");
         }
         std::future::pending::<()>().await;
         drop(tx);
