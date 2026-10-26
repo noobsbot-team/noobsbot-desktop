@@ -111,6 +111,18 @@ impl Grid {
     }
 }
 
+/// Which way a page edge at `p` turns: -1 at the left side margin, 1 at the right.
+fn edge_of(grid: &Grid, p: Point<f64, Logical>) -> Option<isize> {
+    let side = f64::from(layout::SIDE);
+    if p.x < side {
+        Some(-1)
+    } else if p.x >= f64::from(grid.width) - side {
+        Some(1)
+    } else {
+        None
+    }
+}
+
 /// The grid for an `output`-sized screen with `bottom` px kept for the dock.
 pub fn grid(output: Size<i32, Logical>, bottom: i32) -> Grid {
     use layout::*;
@@ -236,6 +248,9 @@ const DRAG_START: f64 = 8.0;
 /// A press held this long lifts the icon too, and clicks nothing.
 const HOLD: Duration = Duration::from_millis(500);
 
+/// A lifted icon held this long at a side edge turns the page (and again while it stays).
+const EDGE_PAUSE: Duration = Duration::from_millis(600);
+
 /// A press on a tile, until the button comes up.
 pub struct Press {
     /// The tile's place in `tiles` (and in the order, which is arranged first while not searching).
@@ -312,6 +327,8 @@ pub struct Launchpad {
     pub press: Option<Press>,
     /// Icons sliding aside for a dragged one: from this far off their place, springing back to it.
     moves: HashMap<String, (Point<f64, Logical>, Spring)>,
+    /// The edge timer is running (`launchpad_edge`).
+    edge: bool,
 }
 
 impl Launchpad {
@@ -326,6 +343,7 @@ impl Launchpad {
             swipe_end: None,
             press: None,
             moves: HashMap::new(),
+            edge: false,
         }
     }
 
@@ -564,7 +582,27 @@ impl State {
                 l.reorder(&grid, from, slot, Instant::now());
             }
         }
+        if edge_of(&grid, to).is_some() && !std::mem::replace(&mut l.edge, true) {
+            let timer = self.loop_handle.insert_source(Timer::from_duration(EDGE_PAUSE), |_, _, state| state.launchpad_edge());
+            timer.inspect_err(|err| tracing::warn!("launchpad edge timer: {err}")).ok();
+        }
         self.schedule_redraw();
+    }
+
+    /// The edge timer: a lifted icon still at a side edge turns the page that way; elsewhere, the timer ends.
+    fn launchpad_edge(&mut self) -> TimeoutAction {
+        let (grid, pages) = (self.launchpad_grid(), self.launchpad_pages());
+        let Some(l) = self.launchpad.as_mut() else { return TimeoutAction::Drop };
+        let searching = l.searching();
+        let way = l.press.as_ref().filter(|p| p.moved && !searching).zip(grid).and_then(|(p, g)| edge_of(&g, p.at));
+        let Some(way) = way else {
+            l.edge = false;
+            return TimeoutAction::Drop;
+        };
+        let page = l.page.saturating_add_signed(way);
+        l.turn_to(page, pages, Instant::now());
+        self.schedule_redraw();
+        TimeoutAction::ToDuration(EDGE_PAUSE)
     }
 
     /// The button came up: a drag keeps its new order; a short press without moving opens what it pressed.
@@ -700,6 +738,9 @@ mod tests {
         assert_eq!(g.hit(g.icon_rect(8).loc.to_f64() + Point::from((1.0, 1.0))), Some(8));
         assert_eq!(g.hit(g.name_rect(3).loc.to_f64() + Point::from((1.0, 1.0))), Some(3));
         assert_eq!(g.hit((5.0, 5.0).into()), None);
+        assert_eq!(edge_of(&g, (10.0, 500.0).into()), Some(-1));
+        assert_eq!(edge_of(&g, (1915.0, 500.0).into()), Some(1));
+        assert_eq!(edge_of(&g, (960.0, 500.0).into()), None);
     }
 
     #[test]
