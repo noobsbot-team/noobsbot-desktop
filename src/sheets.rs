@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// The frame a new window opens at, from the app's last one.
-struct Recalled(Rect);
+pub struct Recalled(pub Rect);
 
 fn frames_path() -> std::path::PathBuf {
     crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").join("noobsbot-desktop/window-frames")
