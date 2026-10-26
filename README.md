@@ -304,7 +304,8 @@ settings file.
 | four-finger pinch in | Launchpad |
 | four-finger spread | Show Desktop |
 
-Gestures follow your fingers and finish with a spring, so a quick flick is enough and letting go halfway cancels.
+Space and Mission Control swipes follow your fingers and finish with a spring: past about a third of the way, or
+with a quick flick, they go on; otherwise they spring back. With Reduce motion they act when you let go.
 Set `swipe_fingers = 4` in `[touchpad]` to use four fingers for Space and Mission Control swipes and leave
 three-finger swipes to apps.
 
