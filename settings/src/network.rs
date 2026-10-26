@@ -18,6 +18,7 @@ const WIRELESS: &str = "org.freedesktop.NetworkManager.Device.Wireless";
 const ACCESS_POINT: &str = "org.freedesktop.NetworkManager.AccessPoint";
 const IP4: &str = "org.freedesktop.NetworkManager.IP4Config";
 const SAVED: &str = "org.freedesktop.NetworkManager.Settings.Connection";
+const ACTIVE: &str = "org.freedesktop.NetworkManager.Connection.Active";
 const EDITOR: &str = "nm-connection-editor";
 /// `App::texts` key prefix of a network's password field, then its name.
 pub const PASSWORD: &str = "wifi.password.";
@@ -36,6 +37,8 @@ pub struct Network {
     pub networks: Vec<Ap>,
     /// Saved Wi-Fi and wired connections, by name.
     pub known: Vec<Known>,
+    /// Saved VPN and WireGuard connections.
+    pub vpns: Vec<Vpn>,
     /// The Wi-Fi and Ethernet devices that are up.
     pub details: Vec<Details>,
     /// The Wi-Fi device ("Other…" joins through it).
@@ -71,6 +74,14 @@ pub struct Known {
     pub ip4: Ip4,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Vpn {
+    pub path: String,
+    pub name: String,
+    /// Its active connection's path while it is up (or coming up).
+    pub active: Option<String>,
+}
+
 /// A saved connection's IPv4 setup, as typed in its Details sheet.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Ip4 {
@@ -95,25 +106,31 @@ pub struct Details {
 
 // ponytail: no RequestScan; the list is NetworkManager's last scan (it rescans on its own every few minutes).
 pub async fn read(bus: &Connection) -> Network {
-    let known = known(bus).await.unwrap_or_default();
+    let (known, mut vpns) = known(bus).await.unwrap_or_default();
     let objects = async { ObjectManagerProxy::builder(bus).destination(NM)?.path("/org/freedesktop")?.build().await?.get_managed_objects().await };
     let objects = objects.await.unwrap_or_default();
+    for vpn in &mut vpns {
+        vpn.active = objects.keys().find(|a| path(get(&objects, a, ACTIVE, "Connection")).is_some_and(|c| c.as_str() == vpn.path)).map(|a| a.to_string());
+    }
     let editor = std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(EDITOR).is_file()));
     let wifi_device = objects.iter().find(|(_, i)| i.keys().any(|i| i.as_str() == WIRELESS)).map(|(p, _)| p.to_string());
-    Network { networks: networks(&objects, &known), details: details(&objects), known, wifi_device, editor, error: None }
+    Network { networks: networks(&objects, &known), details: details(&objects), known, vpns, wifi_device, editor, error: None }
 }
 
-async fn known(bus: &Connection) -> zbus::Result<Vec<Known>> {
+/// Saved Wi-Fi and wired connections, and the VPNs.
+async fn known(bus: &Connection) -> zbus::Result<(Vec<Known>, Vec<Vpn>)> {
     let settings = "/org/freedesktop/NetworkManager/Settings";
     let paths: Vec<OwnedObjectPath> =
         bus.call_method(Some(NM), settings, Some("org.freedesktop.NetworkManager.Settings"), "ListConnections", &()).await?.body().deserialize()?;
-    let mut found = Vec::new();
+    let (mut found, mut vpns) = (Vec::new(), Vec::new());
     for path in paths {
         let settings: Settings = bus.call_method(Some(NM), &path, Some(SAVED), "GetSettings", &()).await?.body().deserialize()?;
         found.extend(saved(path.to_string(), &settings));
+        vpns.extend(vpn(path.to_string(), &settings));
     }
     found.sort_by_key(|k| k.ssid.to_lowercase());
-    Ok(found)
+    vpns.sort_by_key(|v| v.name.to_lowercase());
+    Ok((found, vpns))
 }
 
 /// A saved connection, if it is a Wi-Fi or wired one.
@@ -130,6 +147,26 @@ fn saved(path: String, settings: &Settings) -> Option<Known> {
     };
     let auto_join = connection.get("autoconnect").and_then(|v| bool::try_from(v).ok()).unwrap_or(true);
     Some(Known { path, ssid, wifi, auto_join, ip4: settings.get("ipv4").map(ip4).unwrap_or_default() })
+}
+
+/// A saved connection, if it is a VPN (a NetworkManager VPN plugin's, or WireGuard).
+fn vpn(path: String, settings: &Settings) -> Option<Vpn> {
+    let connection = settings.get("connection")?;
+    matches!(connection.get("type").and_then(text)?.as_str(), "vpn" | "wireguard").then_some(())?;
+    Some(Vpn { path, name: connection.get("id").and_then(text)?, active: None })
+}
+
+/// VPN ▸ the switch: brings the connection up, or its active connection down.
+pub async fn vpn_switch(bus: Connection, vpn: Vpn) -> zbus::Result<()> {
+    let manager = "/org/freedesktop/NetworkManager";
+    match &vpn.active {
+        Some(active) => drop(bus.call_method(Some(NM), manager, Some(NM), "DeactivateConnection", &(ObjectPath::try_from(active.as_str())?,)).await?),
+        None => {
+            let none = ObjectPath::from_static_str_unchecked("/");
+            drop(bus.call_method(Some(NM), manager, Some(NM), "ActivateConnection", &(ObjectPath::try_from(vpn.path.as_str())?, &none, &none)).await?)
+        }
+    }
+    Ok(())
 }
 
 fn text(v: &OwnedValue) -> Option<String> {
@@ -487,6 +524,10 @@ mod tests {
         wired.get_mut("connection").unwrap().insert("id".into(), value(Value::from("Office")));
         assert_eq!(saved("/s/2".into(), &wired).map(|k| (k.ssid, k.wifi)), Some(("Office".into(), false)));
         assert_eq!(saved("/s/3".into(), &settings("vpn", None)), None);
+        let mut wg = settings("wireguard", None);
+        wg.get_mut("connection").unwrap().insert("id".into(), value(Value::from("Home VPN")));
+        assert_eq!(vpn("/s/4".into(), &wg).map(|v| v.name), Some("Home VPN".into()));
+        assert_eq!(vpn("/s/1".into(), &settings("802-11-wireless", None)), None);
     }
 
     #[test]

@@ -1169,6 +1169,14 @@ fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<
             parts.push(group(t, header, rows));
         }
     }
+    let vpns = net.vpns.iter().map(|v| {
+        let vpn = v.clone();
+        line(t, v.name.as_str(), if v.active.is_some() { "Connected" } else { "" }, toggle(t, v.active.is_some(), move |_| Message::Vpn(vpn.clone())))
+    });
+    let vpns: Vec<_> = vpns.collect();
+    if !vpns.is_empty() {
+        parts.push(group(t, "VPN", vpns));
+    }
     if let Some(k) = net.known.iter().find(|k| app.texts.get(&format!("{}path", crate::network::DETAILS)) == Some(&k.path)) {
         parts.push(connection_details(app, k));
     }
