@@ -151,13 +151,13 @@ pub enum Menu {
 
 /// Where a menu opens: under the bar with its left edge at x, centred over (x, bottom) like the dock's, or with its
 /// top-left corner at a point (a right click on the desktop), or as a submenu beside a row: the rect spans the parent
-/// menu's width at the row's height.
+/// menu's width at the row's height, `true` when the parent itself opened to the left (`submenu_x`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Anchor {
     Below(i32),
     Above(Point<i32, Logical>),
     At(Point<i32, Logical>),
-    Beside(Rect),
+    Beside(Rect, bool),
 }
 
 /// A menu row (D8); `None` in a row list is a separator. No action: drawn disabled.
@@ -320,9 +320,8 @@ pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows:
         Anchor::Below(x) => (x, menubar::height() + DROP),
         Anchor::Above(p) => (p.x - width / 2, p.y - DROP - height),
         Anchor::At(p) => (p.x, p.y),
-        // To the right of the parent, its first row level with the parent's row; flipped left at the screen edge.
-        Anchor::Beside(r) if r.loc.x + r.size.w + width > output.w - MARGIN => (r.loc.x - width, r.loc.y - PAD),
-        Anchor::Beside(r) => (r.loc.x + r.size.w, r.loc.y - PAD),
+        // Its first row level with the parent's row; clamped onto the screen below.
+        Anchor::Beside(r, left) => (submenu_x(r, width, output.w, left), r.loc.y - PAD),
     };
     let x = left.min(output.w - MARGIN - width).max(MARGIN);
     let top = top.min(output.h - MARGIN - height).max(menubar::height() + DROP);
@@ -349,6 +348,14 @@ pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows:
         })
         .collect();
     (Rectangle::new((x, top).into(), (width, y + PAD - top).into()), rects)
+}
+
+/// A `width`-wide submenu's left edge beside parent `row` (spanning the parent's width): the way its parent went
+/// (`left`: to the left, else right), or the other way when that runs off a `screen`-wide display.
+pub fn submenu_x(row: Rect, width: i32, screen: i32, left: bool) -> i32 {
+    let (right_x, left_x) = (row.loc.x + row.size.w, row.loc.x - width);
+    let (fits_right, fits_left) = (right_x + width <= screen - MARGIN, left_x >= MARGIN);
+    if (left && fits_left) || (!left && !fits_right && fits_left) { left_x } else { right_x }
 }
 
 /// Popups hang this far below the bar and keep this far from the screen's edge.
@@ -1232,7 +1239,7 @@ mod tests {
         assert!(cells.iter().all(|c| rect.contains_rect(*c)));
         // Its submenu flips left of the menu rather than off the display.
         let row = Rectangle::new((rect.loc.x, 60).into(), (240, 22).into());
-        assert_eq!(menu_layout(Anchor::Beside(row), second, 200, &rows, 0).0.loc.x, rect.loc.x - 200);
+        assert_eq!(menu_layout(Anchor::Beside(row, false), second, 200, &rows, 0).0.loc.x, rect.loc.x - 200);
         let panel = control::layout(second, &control::Status::default()).rect;
         assert_eq!(panel.loc.x + panel.size.w, 1920 - MARGIN);
         assert_eq!(osd_rect(second.w).loc.x + 280, 1920 - MARGIN);
@@ -1281,11 +1288,21 @@ mod tests {
         let output = Size::from((1280, 800));
         // The parent spans x 100..300; its row is at y 60.
         let row = Rectangle::new((100, 60).into(), (200, 22).into());
-        let (rect, cells) = menu_layout(Anchor::Beside(row), output, 200, &rows, 0);
+        let (rect, cells) = menu_layout(Anchor::Beside(row, false), output, 200, &rows, 0);
         assert_eq!((rect.loc.x, cells[0].loc.y), (300, 60), "to the right, first row level with the parent's");
         // No room on the right: to the left of the parent instead of over it.
         let row = Rectangle::new((1000, 60).into(), (200, 22).into());
-        assert_eq!(menu_layout(Anchor::Beside(row), output, 200, &rows, 0).0.loc.x, 800);
+        assert_eq!(menu_layout(Anchor::Beside(row, false), output, 200, &rows, 0).0.loc.x, 800);
+        // A submenu of a submenu that went left goes left too, and right when the left has no room either.
+        assert_eq!(submenu_x(Rectangle::new((800, 60).into(), (200, 22).into()), 200, 1280, true), 600);
+        assert_eq!(submenu_x(Rectangle::new((100, 60).into(), (200, 22).into()), 200, 1280, true), 300);
+        // Neither side fits: the preferred side, which `menu_layout` clamps onto the screen.
+        assert_eq!(submenu_x(Rectangle::new((100, 60).into(), (1000, 22).into()), 400, 1280, false), 1100);
+        assert_eq!(menu_layout(Anchor::Beside(Rectangle::new((100, 60).into(), (1000, 22).into()), false), output, 400, &rows, 0).0.loc.x, 1280 - 8 - 400);
+        // Near the bottom: pushed up so it fits.
+        let low = Rectangle::new((100, 780).into(), (200, 22).into());
+        let (rect, _) = menu_layout(Anchor::Beside(low, false), output, 200, &rows, 0);
+        assert_eq!(rect.loc.y + rect.size.h, 800 - 8);
     }
 
     #[test]

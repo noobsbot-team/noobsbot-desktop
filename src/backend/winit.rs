@@ -351,8 +351,10 @@ impl State {
                 // The submenu beside its row, in front of the menu.
                 let beside = open_sub.and_then(|i| Some((rows.get(i)?.as_ref()?.sub.clone(), menu.cell(i)?, menu.rect()?)));
                 if let Some((sub, row, parent)) = beside {
-                    let anchor =
-                        crate::shell::Anchor::Beside(smithay::utils::Rectangle::new((parent.loc.x, row.loc.y).into(), (parent.size.w, row.size.h).into()));
+                    let anchor = crate::shell::Anchor::Beside(
+                        smithay::utils::Rectangle::new((parent.loc.x, row.loc.y).into(), (parent.size.w, row.size.h).into()),
+                        false,
+                    );
                     popups.extend(submenu.elements(
                         renderer,
                         shaders,
