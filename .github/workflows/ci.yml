@@ -1,10 +1,13 @@
 # fmt, clippy, tests and a release build on every push and pull request (E6.13); `main` requires it to pass.
 name: CI
 
+# Docs, trail notes and agent wiring only: nothing to build or test.
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', '.trail/**', '.claude/**']
   pull_request:
+    paths-ignore: ['**.md', '.trail/**', '.claude/**']
 
 permissions:
   contents: read
