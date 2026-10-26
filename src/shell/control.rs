@@ -17,6 +17,8 @@ const TOP: i32 = 104;
 const SLIDER_CARD: i32 = 62;
 const MEDIA_CARD: i32 = 56;
 const POWER_CARD: i32 = 44;
+/// The Keep Awake tile, closed.
+const AWAKE_CARD: i32 = 48;
 /// D8 list row.
 pub const LIST_ROW: i32 = 28;
 /// Above and below an expanded list.
@@ -50,6 +52,10 @@ pub struct Status {
     pub scroll: usize,
     /// The module showing its list.
     pub expanded: Option<Module>,
+    /// Keep Awake is on.
+    pub awake: bool,
+    /// Apps keeping the machine awake: who, and why (may be empty).
+    pub blockers: Vec<(String, String)>,
 }
 
 /// A module that opens a list in place (one at a time, as on macOS).
@@ -58,6 +64,8 @@ pub enum Module {
     Wifi,
     Bluetooth,
     Sound,
+    /// Keep Awake: the apps blocking sleep.
+    Awake,
 }
 
 /// A network or device in an open list.
@@ -97,6 +105,9 @@ pub enum Control {
     BluetoothMore,
     /// A row of the open list, by its index in `Status::rows`.
     Row(usize),
+    KeepAwake,
+    /// The Keep Awake label: shows or hides the apps blocking sleep.
+    AwakeMore,
 }
 
 /// Every module's place, output-relative.
@@ -117,6 +128,9 @@ pub struct Layout {
     /// bottom of the screen, from `Status::rows[scroll]`.
     pub list: Option<(Rect, Vec<Rect>)>,
     pub scroll: usize,
+    /// The Keep Awake tile, and its rows while open (at least one: "nothing blocks").
+    pub awake: Rect,
+    pub blockers: Vec<Rect>,
     pub media: Rect,
     pub power: Option<Rect>,
 }
@@ -198,6 +212,7 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         let after: i32 = [
             (status.brightness.is_some(), SLIDER_CARD),
             (status.volume.is_some(), SLIDER_CARD),
+            (true, AWAKE_CARD),
             (true, MEDIA_CARD),
             (status.battery.is_some() || status.profile.is_some(), POWER_CARD),
         ]
@@ -218,6 +233,22 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         y += list.size.h + GAP;
         (list, cells)
     });
+    let rows = if status.expanded == Some(Module::Awake) { status.blockers.len().max(1) as i32 } else { 0 };
+    let awake = card(PAD, y, INNER, AWAKE_CARD + if rows > 0 { 2 * LIST_PAD + rows * LIST_ROW } else { 0 });
+    let blockers: Vec<Rect> = (0..rows)
+        .map(|i| {
+            Rectangle::new((awake.loc.x + LIST_PAD, awake.loc.y + AWAKE_CARD + LIST_PAD + i * LIST_ROW).into(), (awake.size.w - 2 * LIST_PAD, LIST_ROW).into())
+        })
+        .collect();
+    let head = Rectangle::new(awake.loc, (awake.size.w, AWAKE_CARD).into());
+    let toggle = tile_toggle(head);
+    let more = toggle.loc.x + TOGGLE + 4;
+    hits.extend([
+        (Control::KeepAwake, toggle),
+        (Control::AwakeMore, Rectangle::new((more, head.loc.y).into(), (head.loc.x + head.size.w - more, AWAKE_CARD).into())),
+    ]);
+    cards.push(awake);
+    y += awake.size.h + GAP;
     let mut slider = |control, present: bool, extra: i32, y: &mut i32| {
         present.then(|| {
             let c = card(PAD, *y, INNER, SLIDER_CARD + extra);
@@ -274,6 +305,8 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         outputs,
         list,
         scroll,
+        awake,
+        blockers,
         media,
         power,
     }
@@ -405,6 +438,13 @@ impl State {
             },
             scroll: (self.control_scroll / f64::from(LIST_ROW)).round() as usize,
             expanded: self.expanded,
+            awake: self.keep_awake,
+            blockers: self
+                .idle_blockers()
+                .into_iter()
+                .map(|who| (who, String::new()))
+                .chain(self.sleep_blockers.iter().map(|i| (i.who.clone(), i.why.clone())))
+                .collect(),
         }
     }
 
@@ -514,6 +554,8 @@ impl State {
                 }
                 _ => {}
             },
+            Control::KeepAwake => self.set_keep_awake(!self.keep_awake),
+            Control::AwakeMore => self.expanded = if self.expanded == Some(Module::Awake) { None } else { Some(Module::Awake) },
             Control::Output(id) => {
                 if let Some(sound) = self.sound.as_mut() {
                     sound.outputs.iter_mut().for_each(|o| o.current = o.id == id);
@@ -581,8 +623,8 @@ mod tests {
     fn modules_stack_inside_the_panel() {
         let l = layout((1280, 800).into(), &full());
         assert_eq!(l.rect.loc, (1280 - 8 - 320, 28).into());
-        // 10 + 104 + 10 + 62 + 10 + 62 + 10 + 56 + 10 + 44 + 10
-        assert_eq!(l.rect.size.h, 388);
+        // 10 + 104 + 10 + 48 + 10 + 62 + 10 + 62 + 10 + 56 + 10 + 44 + 10
+        assert_eq!(l.rect.size.h, 446);
         assert!(l.cards.iter().all(|c| l.rect.contains_rect(*c)));
         assert!(l.hits.iter().all(|(_, r)| l.rect.contains_rect(*r)));
         for (i, a) in l.cards.iter().enumerate() {
@@ -594,8 +636,8 @@ mod tests {
     fn missing_services_drop_their_modules() {
         let l = layout((1280, 800).into(), &Status::default());
         assert_eq!((l.display, l.sound, l.power), (None, None, None));
-        // Top row + Now Playing: 10 + 104 + 10 + 56 + 10.
-        assert_eq!(l.rect.size.h, 190);
+        // Top row, Keep Awake, Now Playing: 10 + 104 + 10 + 48 + 10 + 56 + 10.
+        assert_eq!(l.rect.size.h, 248);
         // Nothing playing: no buttons.
         assert_eq!(l.hit(media_buttons(l.media)[1].to_f64().loc + Point::from((14.0, 14.0))), None);
     }
@@ -666,6 +708,25 @@ mod tests {
         assert_eq!(scrolled.hit(centre(rows[0])), Some(Control::Row(scrolled.scroll)));
         // A tall screen shows them all.
         assert_eq!(layout((1366, 1600).into(), &status).list.unwrap().1.len(), 20);
+    }
+
+    #[test]
+    fn keep_awake_toggles_and_lists_blockers() {
+        let mut status = full();
+        status.blockers = vec![("Videos".into(), String::new()), ("Transmission".into(), "Downloading".into())];
+        let closed = layout((1280, 800).into(), &status);
+        let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
+        assert_eq!(closed.hit(centre(tile_toggle(closed.awake))), Some(Control::KeepAwake));
+        assert_eq!(closed.hit(centre(closed.awake) + Point::from((60.0, 0.0))), Some(Control::AwakeMore));
+        assert!(closed.blockers.is_empty());
+        status.expanded = Some(Module::Awake);
+        let open = layout((1280, 800).into(), &status);
+        assert_eq!(open.rect.size.h - closed.rect.size.h, 2 * LIST_PAD + 2 * LIST_ROW);
+        assert!(open.blockers.iter().all(|r| open.awake.contains_rect(*r)));
+        assert_eq!(open.hit(centre(open.awake)), None, "rows are not buttons");
+        // Nothing blocks: one row says so.
+        status.blockers.clear();
+        assert_eq!(layout((1280, 800).into(), &status).blockers.len(), 1);
     }
 
     #[test]
