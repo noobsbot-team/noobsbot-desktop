@@ -39,6 +39,8 @@ pub struct App {
     pub keywords: Vec<String>,
     /// `Categories` (freedesktop: `Development`, `AudioVideo`, …).
     pub categories: Vec<String>,
+    /// `Terminal=true`: runs inside a terminal.
+    pub terminal: bool,
     /// `Path`: the directory to run in.
     pub working_dir: Option<PathBuf>,
     /// The `.desktop` file it came from (empty when built in code).
@@ -46,9 +48,9 @@ pub struct App {
 }
 
 impl App {
-    /// The argv `Exec` runs, with field codes expanded or dropped.
-    pub fn command(&self) -> Vec<String> {
-        self.command_with(&[])
+    /// The argv `Exec` runs, with field codes expanded or dropped; `terminal` is the configured one, for `Terminal=true`.
+    pub fn command(&self, terminal: &str) -> Vec<String> {
+        self.command_with(&[], terminal)
     }
 
     /// The file name of the program `Exec` runs (`kate`).
@@ -57,7 +59,12 @@ impl App {
     }
 
     /// The argv that opens `uris` (dropped on the dock): `%u`/`%U` get the URIs, `%f`/`%F` their local paths.
-    pub fn command_with(&self, uris: &[String]) -> Vec<String> {
+    pub fn command_with(&self, uris: &[String], terminal: &str) -> Vec<String> {
+        let argv = self.exec_argv(uris);
+        if self.terminal { in_terminal(argv, installed("xdg-terminal-exec"), terminal) } else { argv }
+    }
+
+    fn exec_argv(&self, uris: &[String]) -> Vec<String> {
         let paths: Vec<String> = uris.iter().filter_map(|u| file_path(u)).collect();
         // ponytail: `Path=` through coreutils' env, since the launcher takes an argv; a cwd on `spawn` if env goes away.
         let mut argv: Vec<String> = self.working_dir.iter().flat_map(|d| ["env".to_owned(), format!("--chdir={}", d.display())]).collect();
@@ -92,6 +99,14 @@ impl App {
         }
         argv
     }
+}
+
+/// `argv` run inside a terminal: `xdg-terminal-exec` when installed (it knows each terminal's flag), else `terminal -e`.
+fn in_terminal(argv: Vec<String>, xdg_terminal_exec: bool, terminal: &str) -> Vec<String> {
+    let mut wrapped =
+        if xdg_terminal_exec { vec!["xdg-terminal-exec".to_owned()] } else { split_exec(terminal).into_iter().chain(["-e".to_owned()]).collect() };
+    wrapped.extend(argv);
+    wrapped
 }
 
 /// The local path of a `file://` URI, percent-decoded.
@@ -246,6 +261,7 @@ fn parse(id: &str, text: &str, locale: &str, desktop: &str) -> Option<Entry> {
         generic_name,
         keywords,
         categories: list(fields.get("Categories").map(|c| unescape(c))),
+        terminal: flag("Terminal"),
         working_dir: fields.get("Path").map(|p| unescape(p)).filter(|p| !p.is_empty()).map(PathBuf::from),
         path: PathBuf::new(),
     }))
@@ -707,7 +723,7 @@ mod tests {
 
     fn exec(exec: &str) -> Vec<String> {
         App { id: "kate".into(), name: "Kate".into(), exec: unescape(exec), icon: "kate".into(), wm_class: None, no_display: false, ..Default::default() }
-            .command()
+            .command("")
     }
 
     #[test]
@@ -715,17 +731,28 @@ mod tests {
         let kate = |exec: &str, uris: &[&str]| {
             let uris: Vec<String> = uris.iter().map(|u| u.to_string()).collect();
             App { id: "kate".into(), name: "Kate".into(), exec: exec.into(), icon: String::new(), wm_class: None, no_display: false, ..Default::default() }
-                .command_with(&uris)
+                .command_with(&uris, "")
         };
         let two = ["file:///home/a/My%20File.txt", "file://localhost/tmp/b"];
         let Some(Entry::App(cd)) = app("[Desktop Entry]\nType=Application\nName=A\nExec=a %u\nPath=/opt/a\n") else { panic!() };
-        assert_eq!(cd.command(), ["env", "--chdir=/opt/a", "a"], "Path= runs it there");
+        assert_eq!(cd.command(""), ["env", "--chdir=/opt/a", "a"], "Path= runs it there");
         assert_eq!(cd.program(), "a");
         assert_eq!(kate("kate -b %F", &two), ["kate", "-b", "/home/a/My File.txt", "/tmp/b"]);
         assert_eq!(kate("kate %f", &two), ["kate", "/home/a/My File.txt"]);
         assert_eq!(kate("helium %U", &two), ["helium", two[0], two[1]]);
         assert_eq!(kate("app %u x", &[]), ["app", "x"]);
         assert_eq!(file_path("https://x/y"), None);
+    }
+
+    #[test]
+    fn terminal_apps_run_in_a_terminal() {
+        let Some(Entry::App(htop)) = app("[Desktop Entry]\nType=Application\nName=htop\nExec=htop -t\nTerminal=true\n") else { panic!() };
+        assert!(htop.terminal);
+        let argv = htop.exec_argv(&[]);
+        assert_eq!(in_terminal(argv.clone(), true, "foot"), ["xdg-terminal-exec", "htop", "-t"]);
+        assert_eq!(in_terminal(argv, false, "foot --app-id x"), ["foot", "--app-id", "x", "-e", "htop", "-t"], "no xdg-terminal-exec: the configured one");
+        let Some(Entry::App(kate)) = app("[Desktop Entry]\nType=Application\nName=Kate\nExec=kate\nTerminal=false\n") else { panic!() };
+        assert_eq!(kate.command("foot"), ["kate"]);
     }
 
     #[test]
