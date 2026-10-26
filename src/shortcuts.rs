@@ -114,6 +114,8 @@ pub enum Action {
     Layout(Option<usize>),
     /// An fcitx5 input method, by unique name (the input menu).
     InputMethod(String),
+    /// A row of the window menu (E8.5).
+    WindowMenu(crate::decorations::Command),
     /// Super+Shift+3 / 4 / 5 (E6.8).
     Screenshot(crate::shell::screenshot::Start),
 }
@@ -431,6 +433,7 @@ impl State {
             Action::Dock(command) => self.dock_command(command),
             Action::DockApp { n, new } => self.dock_app(n, new),
             Action::Desktop(command) => self.desktop_command(command),
+            Action::WindowMenu(command) => self.window_menu_command(command),
             Action::Launchpad => {
                 self.close_drawer();
                 self.toggle_launchpad();
