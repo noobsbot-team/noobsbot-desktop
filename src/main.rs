@@ -199,7 +199,8 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             state.rules = rules::compile(&config.rules);
             let displays = config.display != state.config.display;
             let (new, old) = (&config.mouse, &state.config.mouse);
-            if new.double_click_ms != old.double_click_ms && !state.nested {
+            let paste = new.middle_click_paste != old.middle_click_paste;
+            if (new.double_click_ms != old.double_click_ms || paste) && !state.nested {
                 theme::mouse_in_background(new);
             }
             if (config.touchpad != state.config.touchpad || config.mouse != state.config.mouse)
@@ -212,6 +213,10 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             let spaces = config.spaces != state.config.spaces;
             let reader = config.accessibility.screen_reader != state.config.accessibility.screen_reader;
             state.config = config;
+            if paste && let Some(focus) = state.seat.get_keyboard().map(|k| k.current_focus()) {
+                let seat = state.seat.clone();
+                smithay::input::SeatHandler::focus_changed(state, &seat, focus.as_ref());
+            }
             if reader {
                 state.apply_screen_reader();
             }

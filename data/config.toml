@@ -132,6 +132,8 @@ natural_scroll = false
 middle_click_emulation = false
 # Two clicks closer than this many ms are a double-click (150 … 1000), here and in GTK apps.
 double_click_ms = 400
+# Middle click pastes the last selected text; false turns that off, here and in GTK apps.
+middle_click_paste = true
 
 [hot_corners]
 # Rest the pointer in a screen corner for a moment to trigger an action (any action from [bindings] below, like

@@ -49,8 +49,11 @@ fn sizes(appearance: &Appearance) -> [[String; 2]; 2] {
 }
 
 /// The `[mouse]` keys GTK reads: schema, key, value (E8.2).
-fn mouse_keys(mouse: &Mouse) -> [[String; 3]; 1] {
-    [["org.gnome.desktop.peripherals.mouse".into(), "double-click".into(), mouse.double_click().as_millis().to_string()]]
+fn mouse_keys(mouse: &Mouse) -> [[String; 3]; 2] {
+    [
+        ["org.gnome.desktop.peripherals.mouse".into(), "double-click".into(), mouse.double_click().as_millis().to_string()],
+        ["org.gnome.desktop.interface".into(), "gtk-enable-primary-paste".into(), mouse.middle_click_paste.to_string()],
+    ]
 }
 
 /// The Qt font size in points: 10 times the text scale.
@@ -447,9 +450,10 @@ mod tests {
     }
 
     #[test]
-    fn double_click_time_goes_to_gtk() {
-        let mouse = Mouse { double_click_ms: 650, ..Default::default() };
+    fn mouse_keys_go_to_gtk() {
+        let mouse = Mouse { double_click_ms: 650, middle_click_paste: false, ..Default::default() };
         assert_eq!(mouse_keys(&mouse)[0][1..], ["double-click".to_string(), "650".into()]);
+        assert_eq!(mouse_keys(&mouse)[1][1..], ["gtk-enable-primary-paste".to_string(), "false".into()]);
     }
 
     #[test]
