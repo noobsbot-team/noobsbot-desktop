@@ -13,10 +13,10 @@ use super::{
 };
 use crate::{
     shell::control::{
-        self, LIST_ROW, Layout, Module, Status, TOGGLE, media_buttons, night_toggle, profile_name, slider_fill, tile_toggle, toggle_in, track_in,
+        self, Layout, Module, Status, TOGGLE, label_top, media_buttons, night_toggle, profile_name, slider_fill, tile_toggle, toggle_in, track_in,
     },
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     wm::Rect,
 };
 
@@ -122,8 +122,9 @@ impl ControlCenter {
             put(symbols.get(symbol, Weight::Fill, 16, scale, if on { white } else { label }), centred(toggle, 16), false);
             let x = toggle.loc.x + TOGGLE + 10;
             let right = layout.network.loc.x + layout.network.size.w - 10;
-            put(text.label(name, title, (right - x) as u32, scale), row(x, toggle.loc.y - 1, right, 16), true);
-            put(text.label(&sub, small, (right - x) as u32, scale), row(x, toggle.loc.y + 15, right, 14), true);
+            let top = label_top(toggle);
+            put(text.label(name, title, (right - x) as u32, scale), row(x, top, right, ts(16)), true);
+            put(text.label(&sub, small, (right - x) as u32, scale), row(x, top + ts(16), right, ts(14)), true);
         }
         for (card, symbol, on, lines) in
             [(layout.dnd, Symbol::Moon, status.dnd, &["Do Not", "Disturb"][..]), (layout.dark, Symbol::CircleHalf, status.dark, &["Dark Mode"][..])]
@@ -132,16 +133,16 @@ impl ControlCenter {
             put(symbols.get(symbol, Weight::Fill, 16, scale, if on { white } else { label }), centred(toggle, 16), false);
             let x = toggle.loc.x + TOGGLE + 10;
             let right = card.loc.x + card.size.w - 8;
-            let top = card.loc.y + card.size.h / 2 - 8 * lines.len() as i32;
+            let top = card.loc.y + card.size.h / 2 - ts(8) * lines.len() as i32;
             for (j, line) in lines.iter().enumerate() {
-                put(text.label(line, title, (right - x) as u32, scale), row(x, top + 16 * j as i32, right, 16), true);
+                put(text.label(line, title, (right - x) as u32, scale), row(x, top + ts(16) * j as i32, right, ts(16)), true);
             }
         }
         for (card, name, symbol) in
             [(layout.display, "Display", Symbol::Sun), (layout.sound, "Sound", status.volume.map_or(Symbol::SpeakerHigh, volume_symbol))]
         {
             let Some(card) = card else { continue };
-            put(text.label(name, title, 200, scale), row(card.loc.x + 12, card.loc.y + 8, card.loc.x + card.size.w - 12, 16), true);
+            put(text.label(name, title, 200, scale), row(card.loc.x + 12, card.loc.y + ts(8), card.loc.x + card.size.w - 12, ts(16)), true);
             let track = track_in(card);
             put(symbols.get(symbol, Weight::Fill, 16, scale, on_fill), Rectangle::new((track.loc.x + 6, track.loc.y + 6).into(), (16, 16).into()), false);
         }
@@ -153,7 +154,7 @@ impl ControlCenter {
             let caret = if status.expanded == Some(Module::Sound) { Symbol::CaretDown } else { Symbol::CaretRight };
             put(
                 symbols.get(caret, Weight::Regular, 12, scale, secondary),
-                Rectangle::new((card.loc.x + card.size.w - 24, card.loc.y + 10).into(), (12, 12).into()),
+                Rectangle::new((card.loc.x + card.size.w - 24, card.loc.y + ts(8) + (ts(16) - 12) / 2).into(), (12, 12).into()),
                 false,
             );
         }
@@ -163,14 +164,15 @@ impl ControlCenter {
             put(symbols.get(Symbol::Monitor, Weight::Fill, 16, scale, if status.awake { white } else { label }), centred(toggle, 16), false);
             let x = toggle.loc.x + TOGGLE + 10;
             let right = card.loc.x + card.size.w - 32;
-            put(text.label("Keep Awake", title, (right - x) as u32, scale), row(x, toggle.loc.y - 1, right, 16), true);
+            let top = label_top(toggle);
+            put(text.label("Keep Awake", title, (right - x) as u32, scale), row(x, top, right, ts(16)), true);
             let mut sub = (if status.awake { "On" } else { "Off" }).to_owned();
             match status.blockers.len() {
                 0 => {}
                 1 => sub.push_str(" · 1 app blocking sleep"),
                 n => sub.push_str(&format!(" · {n} apps blocking sleep")),
             }
-            put(text.label(&sub, small, (right - x) as u32, scale), row(x, toggle.loc.y + 15, right, 14), true);
+            put(text.label(&sub, small, (right - x) as u32, scale), row(x, top + ts(16), right, ts(14)), true);
             let caret = if status.expanded == Some(Module::Awake) { Symbol::CaretDown } else { Symbol::CaretRight };
             put(
                 symbols.get(caret, Weight::Regular, 12, scale, secondary),
@@ -182,7 +184,7 @@ impl ControlCenter {
             {
                 put(
                     text.label("No Apps Blocking Sleep", Style { color: secondary, ..body }, 240, scale),
-                    row_rect(first.loc.x + 6, first.loc.y, first.loc.x + first.size.w, LIST_ROW),
+                    row_rect(first.loc.x + 6, first.loc.y, first.loc.x + first.size.w, first.size.h),
                     true,
                 );
             }
@@ -190,10 +192,10 @@ impl ControlCenter {
                 let (x, end) = (rect.loc.x + 6, rect.loc.x + rect.size.w - 6);
                 let piece = text.label(who, body, ((end - x) / 2) as u32, scale);
                 let w = (f64::from(piece.width) / scale).round() as i32;
-                put(piece, row_rect(x, rect.loc.y, end, LIST_ROW), true);
+                put(piece, row_rect(x, rect.loc.y, end, rect.size.h), true);
                 if !why.is_empty() {
                     let x = x + w + 8;
-                    put(text.label(why, Style { color: secondary, ..body }, (end - x).max(1) as u32, scale), row_rect(x, rect.loc.y, end, LIST_ROW), true);
+                    put(text.label(why, Style { color: secondary, ..body }, (end - x).max(1) as u32, scale), row_rect(x, rect.loc.y, end, rect.size.h), true);
                 }
             }
         }
@@ -202,41 +204,41 @@ impl ControlCenter {
                 let empty = if status.expanded == Some(Module::Wifi) { "No Networks" } else { "No Devices" };
                 put(
                     text.label(empty, Style { color: secondary, ..body }, 200, scale),
-                    row_rect(rows[0].loc.x + 6, rows[0].loc.y, rows[0].loc.x + rows[0].size.w, LIST_ROW),
+                    row_rect(rows[0].loc.x + 6, rows[0].loc.y, rows[0].loc.x + rows[0].size.w, rows[0].size.h),
                     true,
                 );
             }
             for (row, item) in rows.iter().zip(status.rows.iter().skip(layout.scroll)) {
-                let circle = Rectangle::new((row.loc.x + 3, row.loc.y + (LIST_ROW - DEVICE) / 2).into(), (DEVICE, DEVICE).into());
+                let circle = Rectangle::new((row.loc.x + 3, row.loc.y + (row.size.h - DEVICE) / 2).into(), (DEVICE, DEVICE).into());
                 put(symbols.get(item.symbol, Weight::Fill, 12, scale, if item.on { white } else { label }), centred(circle, 12), false);
                 let x = circle.loc.x + DEVICE + 8;
-                let right = row.loc.x + row.size.w - 44;
-                put(text.label(&item.name, body, (right - x) as u32, scale), row_rect(x, row.loc.y, right, LIST_ROW), true);
+                let right = row.loc.x + row.size.w - ts(44);
+                put(text.label(&item.name, body, (right - x) as u32, scale), row_rect(x, row.loc.y, right, row.size.h), true);
                 let end = row.loc.x + row.size.w - 6;
                 if let Some(detail) = &item.detail {
-                    let piece = text.label(detail, Style { color: secondary, ..body }, 40, scale);
+                    let piece = text.label(detail, Style { color: secondary, ..body }, ts(40) as u32, scale);
                     let w = (f64::from(piece.width) / scale).round() as i32;
-                    put(piece, row_rect(end - w, row.loc.y, end, LIST_ROW), false);
+                    put(piece, row_rect(end - w, row.loc.y, end, row.size.h), false);
                 }
                 if item.lock {
                     put(
                         symbols.get(Symbol::Lock, Weight::Regular, 14, scale, secondary),
-                        Rectangle::new((end - 14, row.loc.y + (LIST_ROW - 14) / 2).into(), (14, 14).into()),
+                        Rectangle::new((end - 14, row.loc.y + (row.size.h - 14) / 2).into(), (14, 14).into()),
                         false,
                     );
                 }
             }
         }
         for (row, (_, name, current)) in layout.outputs.iter().zip(&status.outputs) {
-            let icon = Rectangle::new((row.loc.x + 6, row.loc.y + (LIST_ROW - 16) / 2).into(), (16, 16).into());
+            let icon = Rectangle::new((row.loc.x + 6, row.loc.y + (row.size.h - 16) / 2).into(), (16, 16).into());
             put(symbols.get(output_symbol(name), Weight::Regular, 16, scale, label), icon, false);
             let x = icon.loc.x + 16 + 8;
             let right = row.loc.x + row.size.w - 30;
-            put(text.label(name, body, (right - x) as u32, scale), row_rect(x, row.loc.y, right, LIST_ROW), true);
+            put(text.label(name, body, (right - x) as u32, scale), row_rect(x, row.loc.y, right, row.size.h), true);
             if *current {
                 put(
                     symbols.get(Symbol::Check, Weight::Regular, 14, scale, label),
-                    Rectangle::new((row.loc.x + row.size.w - 22, row.loc.y + (LIST_ROW - 14) / 2).into(), (14, 14).into()),
+                    Rectangle::new((row.loc.x + row.size.w - 22, row.loc.y + (row.size.h - 14) / 2).into(), (14, 14).into()),
                     false,
                 );
             }
@@ -245,7 +247,7 @@ impl ControlCenter {
         let media = layout.media;
         put(
             symbols.get(Symbol::MusicNote, Weight::Fill, 20, scale, secondary),
-            Rectangle::new((media.loc.x + 12, media.loc.y + 18).into(), (20, 20).into()),
+            Rectangle::new((media.loc.x + 12, media.loc.y + (media.size.h - 20) / 2).into(), (20, 20).into()),
             false,
         );
         let x = media.loc.x + 42;
@@ -254,9 +256,9 @@ impl ControlCenter {
                 let buttons = media_buttons(media);
                 let right = buttons[0].loc.x - 8;
                 // No artist (a browser tab): the title alone, centred.
-                let y = if artist.is_empty() { media.loc.y + 20 } else { media.loc.y + 11 };
-                put(text.label(song, title, (right - x) as u32, scale), row(x, y, right, 16), true);
-                put(text.label(artist, small, (right - x) as u32, scale), row(x, media.loc.y + 29, right, 14), true);
+                let y = if artist.is_empty() { media.loc.y + ts(20) } else { media.loc.y + ts(11) };
+                put(text.label(song, title, (right - x) as u32, scale), row(x, y, right, ts(16)), true);
+                put(text.label(artist, small, (right - x) as u32, scale), row(x, media.loc.y + ts(29), right, ts(14)), true);
                 let middle = if *playing { Symbol::Pause } else { Symbol::Play };
                 for (button, symbol) in buttons.into_iter().zip([Symbol::SkipBack, middle, Symbol::SkipForward]) {
                     put(symbols.get(symbol, Weight::Fill, 18, scale, label), centred(button, 18), false);
@@ -264,7 +266,7 @@ impl ControlCenter {
             }
             None => put(
                 text.label("Not Playing", Style { color: secondary, ..title }, 200, scale),
-                row(x, media.loc.y + 20, media.loc.x + media.size.w - 12, 16),
+                row(x, media.loc.y + ts(20), media.loc.x + media.size.w - 12, ts(16)),
                 true,
             ),
         }
@@ -274,10 +276,10 @@ impl ControlCenter {
             if let Some(battery) = status.battery {
                 put(
                     symbols.get(battery_symbol(battery), Weight::Regular, 20, scale, label),
-                    Rectangle::new((x, card.loc.y + 12).into(), (20, 20).into()),
+                    Rectangle::new((x, card.loc.y + (card.size.h - 20) / 2).into(), (20, 20).into()),
                     false,
                 );
-                put(text.label(&format!("{}%", battery.0), body, 60, scale), row(x + 28, card.loc.y + 14, x + 88, 16), true);
+                put(text.label(&format!("{}%", battery.0), body, 60, scale), row(x + 28, card.loc.y + ts(14), x + 88, ts(16)), true);
                 x += 88;
             }
             if let Some(profile) = &status.profile {
@@ -285,7 +287,7 @@ impl ControlCenter {
                 let right = card.loc.x + card.size.w - 12;
                 let piece = text.label(&words, Style { color: secondary, ..body }, (right - x) as u32, scale);
                 let w = (f64::from(piece.width) / scale).round() as i32;
-                put(piece, row(right - w, card.loc.y + 14, right, 16), false);
+                put(piece, row(right - w, card.loc.y + ts(14), right, ts(16)), false);
             }
         }
 
@@ -332,7 +334,7 @@ fn glass(shaders: &Shaders, layout: &Layout, status: &Status, dark: bool, accent
     }
     if let Some((_, rows)) = &layout.list {
         for (row, item) in rows.iter().zip(status.rows.iter().skip(layout.scroll)) {
-            let circle = Rectangle::new((row.loc.x + 3, row.loc.y + (LIST_ROW - DEVICE) / 2).into(), (DEVICE, DEVICE).into());
+            let circle = Rectangle::new((row.loc.x + 3, row.loc.y + (row.size.h - DEVICE) / 2).into(), (DEVICE, DEVICE).into());
             out.push(shaders.light(circle, if item.on { on } else { off }, false, scale));
         }
     }
