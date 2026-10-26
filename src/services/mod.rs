@@ -88,6 +88,8 @@ pub enum Update {
     Record(bool),
     /// The keyboard backlight after a key changed it, in percent.
     KbdBacklight(u8),
+    /// logind's sleep blockers, after `Command::Inhibitors`.
+    Inhibitors(Vec<login::Inhibitor>),
 }
 
 /// Requests from the frame loop.
@@ -193,6 +195,8 @@ pub enum Command {
     FcitxRead,
     /// Switch fcitx5 to this method (unique name).
     InputMethod(String),
+    /// Control Center opened: ask logind who blocks sleep.
+    Inhibitors,
     /// A screen reader started or stopped: apps expose their accessibility trees while one runs.
     ScreenReader(bool),
 }
@@ -389,6 +393,9 @@ async fn handle(
                 let _ = updates.send(Update::Fcitx(fcitx::read(bus).await));
             }
             (Command::InputMethod(name), _, Some(bus)) => fcitx::set(bus, &name, updates).await,
+            (Command::Inhibitors, Some(bus), _) => {
+                let _ = updates.send(Update::Inhibitors(login::inhibitors(bus).await));
+            }
             (Command::ScreenReader(on), _, Some(bus)) => a11y::set_status(bus, on).await,
             // Its bus is down, which `run` has logged.
             _ => {}
