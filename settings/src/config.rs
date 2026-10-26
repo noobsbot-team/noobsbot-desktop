@@ -265,7 +265,7 @@ fn lookup<'a>(doc: &'a DocumentMut, key: &str) -> Option<&'a Value> {
 
 /// Temp file next to `path`, synced, renamed over it: the desktop only ever reads the old file or the new one.
 /// The same steps as the desktop's `config::save_atomic`.
-fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
+pub fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
     let dir = path.parent().unwrap_or(Path::new("."));
     fs::create_dir_all(dir)?;
     let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
