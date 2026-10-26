@@ -1651,7 +1651,7 @@ The dock stays per app, as on macOS. Every per-window job a taskbar does gets a 
   click to focus, × or middle-click to close, hovering a thumbnail fades the other windows. Reuses Mission Control's
   thumbnails and `close_button`.
 - **Minimised windows** as thumbnail tiles after a separator at the dock's right end (E3); the minimise animation
-  lands on the tile.
+  lands on the tile. Built; `[dock] minimise_into_icon` turns them off.
 - **One dock per display** with its own filtering (D13, E3).
 - **Super+1…9** focuses, cycles or opens the n-th dock app, Super+Shift+n opens a new window, and holding Super shows
   number pills over the icons. Space keys move to Ctrl+1…9 (macOS). Decided in the E8.3 mini-plan with E1.6.

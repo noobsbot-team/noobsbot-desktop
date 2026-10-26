@@ -448,6 +448,8 @@ pub struct Dock {
     pub middle: DockMiddle,
     /// Scrolling on an icon cycles its app's windows.
     pub scroll: DockScroll,
+    /// Minimised windows go into their app's icon instead of tiles after the separator.
+    pub minimise_into_icon: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -594,6 +596,7 @@ impl Default for Dock {
             click: DockClick::Toggle,
             middle: DockMiddle::New,
             scroll: DockScroll::On,
+            minimise_into_icon: false,
         }
     }
 }

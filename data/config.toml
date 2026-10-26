@@ -158,6 +158,8 @@ click = "toggle"
 middle = "new"
 # Scrolling on an icon cycles its app's windows: "on", "reverse" or "off".
 scroll = "on"
+# Minimised windows go into their app's icon; false: thumbnail tiles at the dock's right end, after a separator.
+minimise_into_icon = false
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.

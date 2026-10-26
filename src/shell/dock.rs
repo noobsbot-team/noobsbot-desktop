@@ -60,6 +60,8 @@ pub struct Layout {
     pub zone: Rect,
     /// The unzoomed icon size after fitting.
     pub icon: f64,
+    /// The x of the line between the apps and the minimised-window tiles, if both are there.
+    pub separator: Option<f64>,
 }
 
 /// The icon size for `n` items on a `width`-wide screen: `icon`, shrunk until they fit (D13), never below MIN_ICON.
@@ -74,22 +76,24 @@ pub fn reserve(dock: &Dock) -> i32 {
     (icon + bottom_pad(icon)) as i32
 }
 
-/// The dock of `n` items on an `output`-sized screen, with Plank's zoom: icons within the zoomed icon size of the
-/// `pointer` grow up to `zoom` (1.5 = 150%) along a parabola and the others move aside, all scaled by `progress`
-/// (0..1, the zoom easing in and out).
-pub fn layout(n: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, progress: f64, pointer: Option<Point<f64, Logical>>) -> Layout {
+/// The dock of `n` items on an `output`-sized screen, the last `tiles` of them minimised windows after a separator gap,
+/// with Plank's zoom: icons within the zoomed icon size of the `pointer` grow up to `zoom` (1.5 = 150%) along a
+/// parabola and the others move aside, all scaled by `progress` (0..1, the zoom easing in and out).
+pub fn layout(n: usize, tiles: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, progress: f64, pointer: Option<Point<f64, Logical>>) -> Layout {
     let s = fit(n, output.w, icon);
     let (pad, bottom) = (item_pad(s), bottom_pad(s));
     let step = s + pad;
+    let split = n - tiles.min(n);
+    let gap = if split > 0 && split < n { (step / 3.0).floor() } else { 0.0 };
     let (w, h) = (f64::from(output.w), f64::from(output.h));
-    let left = ((w - step * n as f64) / 2.0).floor();
-    let zone = Rectangle::new((left as i32, (h - s - bottom) as i32).into(), ((step * n as f64) as i32, (s + bottom) as i32).into());
+    let left = ((w - step * n as f64 - gap) / 2.0).floor();
+    let zone = Rectangle::new((left as i32, (h - s - bottom) as i32).into(), ((step * n as f64 + gap) as i32, (s + bottom) as i32).into());
     // Plank's ZoomIconSize: how far the zoom reaches, and the zoom at this point of the easing.
     let reach = (s * zoom).round();
     let now = 1.0 + (zoom - 1.0) * progress;
     let (mut icons, mut columns) = (Vec::with_capacity(n), Vec::with_capacity(n));
     for i in 0..n {
-        let rest = (left + step / 2.0).floor() + step * i as f64;
+        let rest = (left + step / 2.0).floor() + step * i as f64 + if i >= split { gap } else { 0.0 };
         let (mut centre, mut scale) = (rest, 1.0);
         if let Some(p) = pointer.filter(|_| now > 1.0) {
             let distance = (p.x - rest).abs().min(reach);
@@ -109,7 +113,8 @@ pub fn layout(n: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, progre
     let (start, end) = (columns.first().map_or(left, |c| c.0), columns.last().map_or(left, |c| c.1));
     let bar_top = (h - bottom - s * BAR_COVER).round() as i32;
     let bar = Rectangle::new((start.round() as i32, bar_top).into(), ((end - start).round() as i32, output.h - bar_top).into());
-    Layout { icons, columns, bar, zone, icon: s }
+    let separator = (gap > 0.0).then(|| (columns[split - 1].1 + columns[split].0) / 2.0);
+    Layout { icons, columns, bar, zone, icon: s, separator }
 }
 
 /// The item whose hover region (its column, from its icon's top to the screen edge) holds `p`; the first wins.
@@ -271,6 +276,11 @@ pub struct Item {
 }
 
 impl Item {
+    /// A minimised window's tile, after the separator.
+    pub fn is_tile(&self) -> bool {
+        self.key.starts_with(TILE)
+    }
+
     pub fn icon(&self) -> &str {
         match (&self.app, Builtin::of(&self.key)) {
             (Some(app), _) => &app.icon,
@@ -287,6 +297,31 @@ impl Item {
             (None, None) => &self.key,
         }
     }
+}
+
+/// Item keys of minimised-window tiles start with this.
+const TILE: &str = "minimised:";
+
+/// On a window minimised (not hidden with its app): it gets a tile.
+struct Minimised(std::cell::Cell<bool>);
+
+pub fn set_minimised(window: &Window, on: bool) {
+    window.user_data().get_or_insert(|| Minimised(false.into())).0.set(on);
+}
+
+pub fn is_minimised(window: &Window) -> bool {
+    window.user_data().get::<Minimised>().is_some_and(|m| m.0.get())
+}
+
+/// A tile's thumbnail (a `frame`-shaped window fitted into the `tile` square) and its app badge in the corner.
+pub fn tile_rects(tile: Rectangle<f64, Logical>, frame: Size<f64, Logical>) -> (Rectangle<f64, Logical>, Rectangle<f64, Logical>) {
+    let inner = tile.size.w * 0.9;
+    let k = (inner / frame.w.max(1.0)).min(inner / frame.h.max(1.0));
+    let (w, h) = ((frame.w * k).round(), (frame.h * k).round());
+    let thumb = Rectangle::new((tile.loc.x + ((tile.size.w - w) / 2.0).round(), tile.loc.y + ((tile.size.h - h) / 2.0).round()).into(), (w, h).into());
+    let b = (tile.size.w * 0.4).round();
+    let badge = Rectangle::new((tile.loc.x + tile.size.w - b, tile.loc.y + tile.size.h - b).into(), (b, b).into());
+    (thumb, badge)
 }
 
 /// The order windows first showed up in the dock, so running apps keep their place when focus restacks windows.
@@ -367,11 +402,20 @@ impl State {
         for item in &mut items {
             item.windows.sort_by_key(|w| stack.iter().position(|s| *s == w).unwrap_or(usize::MAX));
         }
+        // Minimised windows' tiles at the right end, in the order they were minimised.
+        if !dock.minimise_into_icon {
+            for (window, _) in &self.hidden {
+                if is_minimised(window) && !self.is_quake(window) && (!dock.current_workspace_only || self.on_current_space(window)) {
+                    let app = self.dock_key(window).and_then(|(_, app)| app);
+                    items.push(Item { key: format!("{TILE}{}", seen(window)), app, windows: vec![window.clone()] });
+                }
+            }
+        }
         self.dock_ui.preview(items)
     }
 
-    /// The dock's layout for `n` items, zoomed around the pointer (or `--show dock-zoom`'s fake one).
-    pub fn dock_layout(&self, n: usize) -> Option<Layout> {
+    /// The dock's layout for `items`, zoomed around the pointer (or `--show dock-zoom`'s fake one).
+    pub fn dock_layout(&self, items: &[Item]) -> Option<Layout> {
         let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
         let dock = &self.config.dock;
         let now = Instant::now();
@@ -379,7 +423,8 @@ impl State {
         let eased = if self.dock_pointer.is_some() { 1.0 } else { self.dock_fx.zoom.value(now) * (1.0 - self.dock_fx.hide.value(now)) };
         let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
         let pointer = self.dock_pointer.or(self.dock_fx.zoom_at);
-        Some(layout(n, size, i32::from(dock.icon_size), zoom, eased, pointer))
+        let tiles = items.iter().filter(|i| i.is_tile()).count();
+        Some(layout(items.len(), tiles, size, i32::from(dock.icon_size), zoom, eased, pointer))
     }
 
     /// Shown (or showing): the hide modes' state as of the last update.
@@ -463,7 +508,7 @@ impl State {
             return false;
         }
         let items = self.dock_items();
-        self.dock_layout(items.len()).is_some_and(|l| !items.is_empty() && self.dock_on(&l, location))
+        self.dock_layout(&items).is_some_and(|l| !items.is_empty() && self.dock_on(&l, location))
     }
 
     /// A press at `location`; `true` if the dock took it. With a popup open the shell closes it first.
@@ -495,7 +540,7 @@ impl State {
             p.off = true;
         }
         let items = self.dock_items();
-        let Some(layout) = self.dock_layout(items.len()).filter(|l| !items.is_empty() && self.dock_on(l, location)) else { return false };
+        let Some(layout) = self.dock_layout(&items).filter(|l| !items.is_empty() && self.dock_on(l, location)) else { return false };
         let ctrl = self.modifiers().ctrl;
         let Some((i, item)) = hit(&layout, location).and_then(|i| Some((i, items.into_iter().nth(i)?))) else {
             // Plank: a right click on the dock but not an icon opens its preferences.
@@ -526,7 +571,7 @@ impl State {
             self.dock_fx.clicked(item.key.clone());
             return self.dock_builtin(builtin, &item.key);
         }
-        if new || item.windows.is_empty() {
+        if (new && !item.is_tile()) || item.windows.is_empty() {
             self.launch(item.app.as_ref());
             return;
         }
@@ -540,7 +585,7 @@ impl State {
             Builtin::AppDrawer => {
                 // The drawer opens above its icon.
                 let items = self.dock_items();
-                let at = items.iter().position(|i| i.key == key).zip(self.dock_layout(items.len())).map(|(i, l)| {
+                let at = items.iter().position(|i| i.key == key).zip(self.dock_layout(&items)).map(|(i, l)| {
                     let (left, right) = l.columns[i];
                     (((left + right) / 2.0).round() as i32, l.icons[i].loc.y.round() as i32).into()
                 });
@@ -622,8 +667,8 @@ impl State {
             DockScroll::Reverse => dir < 0.0,
         };
         let items = self.dock_items();
-        let Some(item) = self.dock_layout(items.len()).and_then(|l| hit(&l, location)).and_then(|i| items.into_iter().nth(i)) else { return true };
-        if item.windows.is_empty() {
+        let Some(item) = self.dock_layout(&items).and_then(|l| hit(&l, location)).and_then(|i| items.into_iter().nth(i)) else { return true };
+        if item.windows.is_empty() || item.is_tile() {
             return true;
         }
         self.dock_fx.clicked(item.key.clone());
@@ -687,8 +732,7 @@ impl State {
             return;
         }
         let items = self.dock_items();
-        let (Some(layout), Some(size)) =
-            (self.dock_layout(items.len()), self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size))
+        let (Some(layout), Some(size)) = (self.dock_layout(&items), self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size))
         else {
             return;
         };
@@ -898,7 +942,7 @@ impl State {
             .collect();
         let focused = self.focused_window();
         let active = item.windows.iter().position(|w| Some(w) == focused.as_ref());
-        let pinnable = !self.config.dock.lock_items && (item.app.is_some() || Builtin::of(&item.key).is_some());
+        let pinnable = !self.config.dock.lock_items && !item.is_tile() && (item.app.is_some() || Builtin::of(&item.key).is_some());
         let pinned = pinnable.then(|| self.dock_pinned().iter().any(|(_, id)| *id == item.key));
         let actions: Vec<String> = item.app.as_ref().map(|a| crate::apps::actions(&a.id).into_iter().map(|(n, _)| n).collect()).unwrap_or_default();
         menu_rows(&titles, active, pinned, &actions)
@@ -917,7 +961,7 @@ impl State {
     /// `--show dock-menu`: the first running app's menu, else the first icon's.
     pub fn dock_show_menu(&mut self) {
         let items = self.dock_items();
-        let Some(layout) = self.dock_layout(items.len()) else { return };
+        let Some(layout) = self.dock_layout(&items) else { return };
         if let Some(i) = items.iter().position(|i| !i.windows.is_empty()).or((!items.is_empty()).then_some(0)) {
             self.dock_open_menu(items[i].key.clone(), &layout, i);
         }
@@ -997,11 +1041,10 @@ impl State {
     fn dock_drag_motion(&mut self, to: Point<f64, Logical>) {
         let Some(drag) = self.dock_ui.drag.as_ref() else { return };
         let (start, key) = (drag.start, drag.key.clone());
-        if self.config.dock.lock_items || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
+        if self.config.dock.lock_items || key.starts_with(TILE) || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
             return;
         }
-        let n = self.dock_items().len();
-        let Some(layout) = self.dock_layout(n) else { return };
+        let Some(layout) = self.dock_layout(&self.dock_items()) else { return };
         let pinned = self.dock_pinned();
         let is_pinned = pinned.iter().any(|(_, id)| *id == key);
         // Slightly above the icons still counts as on the dock.
@@ -1023,7 +1066,7 @@ impl State {
         let Some(item) = self.dock_item(&drag.key) else { return };
         if !drag.moved {
             let items = self.dock_items();
-            let same = self.dock_layout(items.len()).and_then(|l| hit(&l, location)).is_some_and(|i| items[i].key == item.key);
+            let same = self.dock_layout(&items).and_then(|l| hit(&l, location)).is_some_and(|i| items[i].key == item.key);
             if same && drag.since.elapsed() < LONG_PRESS {
                 let mods = self.modifiers();
                 self.dock_click(item, mods.ctrl || mods.shift);
@@ -1071,7 +1114,7 @@ impl State {
             return;
         }
         let items = self.dock_items();
-        let Some(layout) = self.dock_layout(items.len()) else { return };
+        let Some(layout) = self.dock_layout(&items) else { return };
         if uris.iter().all(|u| u.ends_with(".desktop")) {
             if self.config.dock.lock_items {
                 return;
@@ -1110,7 +1153,7 @@ mod tests {
 
     #[test]
     fn unzoomed_dock_has_planks_numbers() {
-        let l = layout(8, SCREEN.into(), 84, 1.5, 0.0, None);
+        let l = layout(8, 0, SCREEN.into(), 84, 1.5, 0.0, None);
         // Transparent-Tight at 84 px: ItemPadding 4 px, BottomPadding 16 px; 8 × 88 = 704 px, centred.
         assert_eq!(l.zone, Rectangle::new((608, 1100).into(), (704, 100).into()));
         assert_eq!(l.icons[0], Rectangle::new((610.0, 1100.0).into(), (84.0, 84.0).into()));
@@ -1123,10 +1166,10 @@ mod tests {
 
     #[test]
     fn zoom_is_planks() {
-        let flat = layout(8, SCREEN.into(), 84, 1.5, 0.0, None);
+        let flat = layout(8, 0, SCREEN.into(), 84, 1.5, 0.0, None);
         let centre: Point<f64, Logical> = (916.0, 1142.0).into();
         assert_eq!(flat.icons[3].loc.x + 42.0, centre.x);
-        let l = layout(8, SCREEN.into(), 84, 1.5, 1.0, Some(centre));
+        let l = layout(8, 0, SCREEN.into(), 84, 1.5, 1.0, Some(centre));
         assert_eq!(l.icons[3], Rectangle::new((853.0, 1058.0).into(), (126.0, 126.0).into()), "150% under the pointer, same baseline");
         // A neighbour 88 px away: zoom 1 + (1 − (88/126)²) × 0.5, moved out by 88 × 0.5 × (1 − 88/378).
         let f: f64 = 88.0 / 126.0;
@@ -1142,15 +1185,44 @@ mod tests {
         assert_eq!(hit(&l, centre), Some(3));
         assert_eq!(hit(&l, (916.0, 1060.0).into()), Some(3), "the zoomed top of the icon counts");
         // Half-way through the easing: 125%.
-        assert_eq!(layout(8, SCREEN.into(), 84, 1.5, 0.5, Some(centre)).icons[3].size.w, 105.0);
+        assert_eq!(layout(8, 0, SCREEN.into(), 84, 1.5, 0.5, Some(centre)).icons[3].size.w, 105.0);
         // No easing or zoom off: flat, wherever the pointer is.
-        assert_eq!(layout(8, SCREEN.into(), 84, 1.5, 0.0, Some(centre)), flat);
-        assert_eq!(layout(8, SCREEN.into(), 84, 1.0, 1.0, Some(centre)), flat);
+        assert_eq!(layout(8, 0, SCREEN.into(), 84, 1.5, 0.0, Some(centre)), flat);
+        assert_eq!(layout(8, 0, SCREEN.into(), 84, 1.0, 1.0, Some(centre)), flat);
+    }
+
+    #[test]
+    fn tiles_sit_after_a_separator() {
+        let flat = layout(5, 0, SCREEN.into(), 84, 1.0, 0.0, None);
+        let l = layout(5, 2, SCREEN.into(), 84, 1.0, 0.0, None);
+        // A third of a step (88 / 3 = 29 px) between the third icon and the first tile, the dock still centred.
+        assert_eq!(l.zone.size.w, flat.zone.size.w + 29);
+        assert_eq!(l.icons[3].loc.x - l.icons[2].loc.x, 88.0 + 29.0);
+        let sep = l.separator.unwrap();
+        assert!(l.columns[2].1 <= sep && sep <= l.columns[3].0);
+        assert_eq!(hit(&l, (sep, 1150.0).into()), None, "the gap is no icon");
+        assert_eq!(flat.separator, None);
+        assert_eq!(layout(2, 2, SCREEN.into(), 84, 1.0, 0.0, None).separator, None, "only tiles: no line");
+        // Tiles zoom like icons.
+        let p = (l.icons[4].loc.x + 42.0, 1150.0).into();
+        let z = layout(5, 2, SCREEN.into(), 84, 1.5, 1.0, Some(p));
+        assert_eq!((z.icons[4].size.w, hit(&z, p)), (126.0, Some(4)));
+    }
+
+    #[test]
+    fn tile_thumbnail_fits_with_a_corner_badge() {
+        let tile = Rectangle::new((100.0, 1000.0).into(), (84.0, 84.0).into());
+        let (thumb, badge) = tile_rects(tile, (1600.0, 1000.0).into());
+        // 90% wide, its shape kept, centred.
+        assert_eq!(thumb, Rectangle::new((104.0, 1019.0).into(), (76.0, 47.0).into()));
+        assert_eq!(badge, Rectangle::new((150.0, 1050.0).into(), (34.0, 34.0).into()));
+        let (tall, _) = tile_rects(tile, (500.0, 1000.0).into());
+        assert_eq!(tall.size, (38.0, 76.0).into());
     }
 
     #[test]
     fn hits_follow_columns_inside_the_zone() {
-        let l = layout(3, SCREEN.into(), 84, 1.0, 0.0, None);
+        let l = layout(3, 0, SCREEN.into(), 84, 1.0, 0.0, None);
         let x = |i: usize| (l.columns[i].0 + l.columns[i].1) / 2.0;
         assert_eq!(hit(&l, (x(0), 1150.0).into()), Some(0));
         assert_eq!(hit(&l, (x(2), 1199.0).into()), Some(2));
@@ -1159,7 +1231,7 @@ mod tests {
         // The pointer over an icon's centre hits it, zoomed.
         for i in 0..3 {
             let p = (x(i), 1150.0).into();
-            let z = layout(3, SCREEN.into(), 84, 1.5, 1.0, Some(p));
+            let z = layout(3, 0, SCREEN.into(), 84, 1.5, 1.0, Some(p));
             assert_eq!(hit(&z, p), Some(i));
             assert!(z.icons.iter().all(|r| r.size.w <= z.icons[i].size.w));
         }
@@ -1243,7 +1315,7 @@ mod tests {
 
     #[test]
     fn drag_slots_follow_columns() {
-        let l = layout(4, SCREEN.into(), 84, 1.0, 0.0, None);
+        let l = layout(4, 0, SCREEN.into(), 84, 1.0, 0.0, None);
         let mid = |i: usize| (l.columns[i].0 + l.columns[i].1) / 2.0;
         assert_eq!(slot(&l, mid(0), 3), 0);
         assert_eq!(slot(&l, mid(2), 3), 2);
@@ -1324,6 +1396,6 @@ mod tests {
 
     #[test]
     fn reserve_matches_the_zone() {
-        assert_eq!(reserve(&Dock::default()), layout(8, SCREEN.into(), 84, 1.0, 0.0, None).zone.size.h);
+        assert_eq!(reserve(&Dock::default()), layout(8, 0, SCREEN.into(), 84, 1.0, 0.0, None).zone.size.h);
     }
 }
