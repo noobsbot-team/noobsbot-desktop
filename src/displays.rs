@@ -102,8 +102,8 @@ pub fn pick_mode(modes: &[Mode]) -> Option<usize> {
 }
 
 /// The auto scale (E6.2, D13), in 25% steps from 100 to 200%: the one nearest to drawing about 110 logical px per
-/// inch on a monitor and 128 on a laptop's own panel, which sits closer to the eyes (macOS's densities: a 27-inch
-/// 1440p or 5K monitor, a MacBook's default "looks like"). Never less than 1280 × 720 logical px; without a believable
+/// inch on a monitor and 128 on a laptop's own panel, which sits closer to the eyes (the densities of a 27-inch
+/// 1440p or 5K monitor and a laptop's default "looks like"). Never less than 1280 × 720 logical px; without a believable
 /// physical size (projectors, TVs): 100%.
 pub fn pick_scale((w, h): (i32, i32), (mm_w, _): (u32, u32), built_in: bool) -> f64 {
     if mm_w < 100 || w <= 0 {
@@ -367,7 +367,7 @@ mod tests {
         assert_eq!(pick_scale((1920, 1200), (300, 190), true), 1.25, "14-inch 1920 × 1200 (the owner's): 1536 × 960 logical");
         assert_eq!(pick_scale((1920, 1080), (344, 194), true), 1.0, "15.6-inch 1080p laptop");
         assert_eq!(pick_scale((1920, 1080), (294, 165), true), 1.25, "13.3-inch 1080p");
-        assert_eq!(pick_scale((2560, 1600), (286, 179), true), 1.75, "13.3-inch 2560 × 1600: macOS's looks-like 1440 × 900");
+        assert_eq!(pick_scale((2560, 1600), (286, 179), true), 1.75, "13.3-inch 2560 × 1600: looks like 1440 × 900");
         assert_eq!(pick_scale((2880, 1800), (301, 188), true), 2.0, "14-inch 2880 × 1800");
         assert_eq!(pick_scale((3840, 2160), (344, 194), true), 2.0, "15.6-inch 4K, capped at 200%");
         assert_eq!(pick_scale((1366, 768), (160, 90), true), 1.0, "never under 1280 × 720 logical");

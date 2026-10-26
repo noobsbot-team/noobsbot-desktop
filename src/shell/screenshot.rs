@@ -371,7 +371,7 @@ impl State {
     pub fn shot_press(&mut self, at: Point<f64, Logical>, left: bool) -> bool {
         let Some(shot) = self.screenshots.shot.clone() else { return self.thumbnail_press(at) };
         if !left {
-            // A right click cancels, as on macOS.
+            // A right click cancels.
             self.close_shot();
             return true;
         }

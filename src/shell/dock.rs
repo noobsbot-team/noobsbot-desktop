@@ -849,7 +849,7 @@ pub enum Command {
     Action(usize),
 }
 
-/// The menu in macOS's order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
+/// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
 /// actions, the Options section (Keep in Dock, `pinned` `None` when it can't be pinned; Open at Login, `login` `None`
 /// without a desktop file, which also hides Show in Files), then Close (Close All with several windows).
 // ponytail: Options is an inline section, since dock menu rows have no submenus yet.
