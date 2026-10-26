@@ -271,6 +271,8 @@ pub enum Message {
     DeleteUser(Option<String>),
     /// The alert's choice: `true` deletes the home folder too.
     DeleteUserNow(bool),
+    /// A list key's new entries.
+    List(&'static str, Vec<String>),
     /// The file chooser opens for the path field with this `texts` key.
     OpenFile(&'static str),
     /// It answered: the path goes where that field's would; no portal shows the field.
@@ -375,6 +377,7 @@ impl App {
                 self.save(&key, value);
             }
             Message::Number(key, value) => self.save(key, value),
+            Message::List(key, items) => self.save(key, items.into_iter().collect::<toml_edit::Array>()),
             Message::NotifyApp(app) => self.notify_app = app,
             Message::AppRule(app, rule) => self.save(&format!("notification_apps.{app}"), rule.value()),
             Message::ClearRecent => self.error = config::clear_recent_files().err().map(|err| format!("Couldn't clear recent files: {err}")),
@@ -429,6 +432,13 @@ impl App {
                     };
                     self.save(gallery::FOLDERS, folders.as_str());
                     return Task::perform(gallery::load(folders), Message::Thumbs);
+                } else if key == pages::CALENDAR_ADD {
+                    let value = value.trim();
+                    let mut files: Vec<String> = self.config.list("calendar.files").into_iter().map(str::to_owned).collect();
+                    if !value.is_empty() && !files.iter().any(|f| f == value) {
+                        files.push(value.to_owned());
+                        self.save("calendar.files", files.into_iter().collect::<toml_edit::Array>());
+                    }
                 } else if let Some(path) = key.strip_prefix(system::RENAME) {
                     return Task::perform(system::rename_device(path.to_owned(), value.trim().to_owned()), Message::Acted);
                 } else if let Some(name) = key.strip_prefix("display.custom_scale.") {
@@ -585,6 +595,7 @@ impl App {
                 let (title, directory, filter) = match key {
                     users::PICTURE_FILE => ("Choose a Picture", false, Some(chooser::IMAGES)),
                     gallery::ADD => ("Add a Wallpaper Folder", true, None),
+                    pages::CALENDAR_ADD => ("Add a Calendar", false, Some(chooser::CALENDARS)),
                     _ => ("Import WireGuard", false, Some(chooser::WIREGUARD)),
                 };
                 return Task::perform(chooser::open(title, directory, filter), move |chosen| Message::Chosen(key, chosen));
