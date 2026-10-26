@@ -90,6 +90,8 @@ pub enum Update {
     Fcitx(Option<fcitx::Fcitx>),
     /// Settings starts or stops recording a shortcut (`org.noobsbot.Desktop.Shortcuts.Record`).
     Record(bool),
+    /// Settings' Displays page moved the brightness slider (`org.noobsbot.Desktop.Displays.SetBrightness`), in percent.
+    SetBrightness(u8),
     /// The keyboard backlight after a key changed it, in percent.
     KbdBacklight(u8),
     /// Thunderbolt devices waiting to be allowed; `None`: boltd isn't running.

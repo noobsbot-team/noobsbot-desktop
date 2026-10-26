@@ -111,6 +111,8 @@ pub struct App {
     selected: Option<String>,
     /// A display change waiting for "Keep Changes" before it reverts.
     keep: Option<arrange::Keep>,
+    /// The built-in panel's brightness in percent; `None` without a backlight.
+    brightness: Option<u8>,
     /// Appearance's wallpaper gallery, loaded on start.
     thumbs: Vec<(std::path::PathBuf, iced::widget::image::Handle)>,
     /// General ▸ Login Items, and the apps "+" offers; read when General opens.
@@ -190,6 +192,8 @@ pub enum Message {
     Revert,
     /// Half a second of "Keep these display settings?" went by.
     Tick,
+    /// A call to the desktop came back: what went wrong, if anything.
+    Called(Option<String>),
     Thumbs(Vec<(std::path::PathBuf, iced::widget::image::Handle)>),
     /// A gallery picture (empty: the built-in opal), for light and dark mode alike.
     Wallpaper(String),
@@ -235,6 +239,7 @@ impl App {
             displays: read_displays(),
             selected: None,
             keep: None,
+            brightness: display_info::brightness(),
             thumbs: Vec::new(),
             login_items: Vec::new(),
             installed: Vec::new(),
@@ -313,6 +318,11 @@ impl App {
                     "sound.output" | "sound.input" => return Task::perform(system::set_volume(key == "sound.output", value.round() as u8), Message::Status),
                     "sound.balance" => return Task::perform(system::set_balance((value / 100.0) as f32), Message::Status),
                     "keyboard.backlight" => return Task::perform(system::set_kbd_backlight(value.round() as u8), Message::Status),
+                    "display.brightness" => {
+                        let percent = value.round() as u8;
+                        self.brightness = Some(percent);
+                        return Task::perform(system::displays_call("SetBrightness", percent), Message::Called);
+                    }
                     _ => {}
                 }
                 match pages::setting(&key).map(|s| s.kind) {
@@ -445,6 +455,7 @@ impl App {
                     self.save("terminal", command.clone());
                 }
             }
+            Message::Called(error) => self.error = error,
             Message::Keep => self.keep(),
             Message::Revert => self.revert(),
             // Ran out: the desktop is putting the settings back; the sheet just goes.

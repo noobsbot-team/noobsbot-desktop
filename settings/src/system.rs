@@ -227,6 +227,16 @@ async fn kbd_backlight(bus: &Connection, set: Option<u8>) -> Option<u8> {
     Some((call("GetBrightness").await? * 100 / max) as u8)
 }
 
+/// Calls `method` on the desktop's `org.noobsbot.Desktop.Displays`; what went wrong, if anything.
+pub async fn displays_call<B: serde::Serialize + zbus::zvariant::DynamicType>(method: &'static str, body: B) -> Option<String> {
+    let call = async {
+        let bus = zbus::connection::Builder::session()?.method_timeout(Duration::from_secs(2)).build().await?;
+        bus.call_method(Some("org.noobsbot.Desktop"), "/org/noobsbot/Desktop", Some("org.noobsbot.Desktop.Displays"), method, &body).await?;
+        zbus::Result::Ok(())
+    };
+    call.await.err().map(|err| format!("The desktop didn't answer: {err}"))
+}
+
 /// The keyboard backlight in percent, then the new status.
 pub async fn set_kbd_backlight(percent: u8) -> Status {
     if let Ok(bus) = system(2).await {
