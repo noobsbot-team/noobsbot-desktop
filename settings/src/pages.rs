@@ -699,6 +699,13 @@ fn notifying_apps(app: &App) -> Vec<Element<'_, Message>> {
     vec![group(t, "Applications", rows), note(t, "Alerts stay until dismissed; None keeps them in Notification Center only; Off drops them.")]
 }
 
+/// Sound ▸ Input's live level: 16 bars, lit up to `level` (0 … 1).
+fn meter<'a>(t: Tokens, level: f32) -> Element<'a, Message> {
+    let lit = (level * 16.0).round() as usize;
+    let bars = (0..16).map(|i| container(space()).width(6).height(12).style(Tokens::squircle(if i < lit { t.accent } else { t.fill() }, 2.0)).into());
+    iced::widget::Row::with_children(bars).spacing(3).width(206).into()
+}
+
 fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>, step: f64, value: f64) -> Element<'a, Message> {
     let bar = slider(range, value, move |v| Message::Slide(key.into(), v)).step(step).on_release(Message::Release(key.into())).width(150).style(t.slider());
     row![bar, text(shown(key, value)).size(12).color(t.secondary()).width(48).align_x(iced::alignment::Horizontal::Right)]
@@ -833,6 +840,9 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                 if let Some(balance) = status.balance.filter(|_| output) {
                     let value = app.drafts.get("sound.balance").copied().unwrap_or(f64::from(balance) * 100.0);
                     rows.push(line(t, "Balance", "Left … right", slider_row(t, "sound.balance", -100.0..=100.0, 5.0, value)));
+                }
+                if !output {
+                    rows.push(line(t, "Level", "", meter(t, app.level)));
                 }
                 rows.push(line(t, "Mute", "", toggle(t, device.muted, move |m| Message::Mute(output, m))));
                 parts.push(group(t, header, rows));
