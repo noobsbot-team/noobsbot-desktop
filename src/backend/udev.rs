@@ -23,13 +23,15 @@ use smithay::{
         input::{AbsolutePositionEvent, Event, InputEvent, PointerMotionEvent, Switch, SwitchState, SwitchToggleEvent},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
-            ImportDma, RendererSuper,
+            Bind, ImportDma, Offscreen, Renderer, RendererSuper, Texture,
+            damage::OutputDamageTracker,
             element::{
                 Element, Id, Kind, RenderElement, UnderlyingStorage,
                 memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
                 surface::render_elements_from_surface_tree,
+                texture::TextureRenderElement,
             },
-            gles::GlesRenderer,
+            gles::{GlesRenderer, GlesTexture},
             multigpu::{ApiDevice, GpuManager, MultiRenderer, gbm::GbmGlesBackend},
             utils::{CommitCounter, DamageSet, OpaqueRegions},
         },
@@ -111,6 +113,17 @@ struct Screen {
     /// Asked to redraw while a frame was on its way: draw again after the vblank.
     again: bool,
     render_time: Duration,
+    /// The connector whose picture it shows (mirroring), and that picture as last drawn.
+    mirror_of: Option<String>,
+    mirrored: Option<Mirrored>,
+}
+
+/// A mirror's copy of its source's frame: drawn offscreen at the source's size, redrawn where the source changed.
+struct Mirrored {
+    texture: GlesTexture,
+    damage: OutputDamageTracker,
+    /// New whenever the picture changed, so the mirror's own frame redraws it.
+    id: Id,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -341,6 +354,12 @@ impl State {
                 }),
                 _ => None,
             };
+            if let Some(screen) = card.screens.values_mut().find(|s| s.connector == info.handle()) {
+                let of = Some(d.mirror.clone()).filter(|m| !m.is_empty());
+                if screen.mirror_of != of {
+                    (screen.mirror_of, screen.mirrored) = (of, None);
+                }
+            }
             shown.push((d, output));
         }
         shown
@@ -357,6 +376,9 @@ impl State {
 
     fn draw_screen(&mut self, udev: &mut Udev, node: DrmNode, crtc: crtc::Handle) {
         let primary = udev.primary;
+        // A mirror draws its source's picture: that display, on whichever GPU it is lit.
+        let of = udev.cards.get(&node).and_then(|c| c.screens.get(&crtc)).and_then(|s| s.mirror_of.clone());
+        let source = of.and_then(|name| udev.cards.values().flat_map(|c| c.screens.values()).map(|s| &s.output).find(|o| o.name() == name).cloned());
         let Some(card) = udev.cards.get_mut(&node) else { return };
         let Some(screen) = card.screens.get_mut(&crtc) else { return };
         screen.phase = Phase::Idle;
@@ -383,7 +405,15 @@ impl State {
             Ok(renderer) => renderer,
             Err(err) => return tracing::warn!("{}: no renderer: {err}", screen.output.name()),
         };
-        let Some((elements, animating)) = self.frame_elements(renderer.as_mut(), &screen.output) else { return };
+        let drawn = match &source {
+            Some(source) => self.frame_elements(renderer.as_mut(), source).and_then(|(elements, animating)| {
+                let mut scene = self.cursor_elements(renderer.as_mut(), &mut udev.cursors, source);
+                scene.extend(elements);
+                Some((vec![mirror(renderer.as_mut(), &mut screen.mirrored, source, &screen.output, &scene)?], animating))
+            }),
+            None => self.frame_elements(renderer.as_mut(), &screen.output),
+        };
+        let Some((elements, animating)) = drawn else { return };
         let mut all: Vec<OnGpu> = self.cursor_elements(renderer.as_mut(), &mut udev.cursors, &screen.output).into_iter().map(OnGpu).collect();
         let cursors = all.len();
         all.extend(elements.into_iter().map(OnGpu));
@@ -404,8 +434,12 @@ impl State {
         let (output, damaged) = (screen.output.clone(), frame.as_ref().ok().map(|empty| !empty));
         screen.render_time = started.elapsed();
         match frame {
+            // A mirror's apps are its source's: they get their frame callbacks from there.
             Ok(false) => {
-                let feedback = self.frame_callbacks(&screen.output);
+                let feedback = match source {
+                    Some(_) => smithay::desktop::utils::OutputPresentationFeedback::new(&screen.output),
+                    None => self.frame_callbacks(&screen.output),
+                };
                 match screen.compositor.queue_frame(Some(feedback)) {
                     Ok(()) => {
                         screen.phase = Phase::Flipping;
@@ -419,7 +453,9 @@ impl State {
             // Nothing changed on screen: apps still get their frame callbacks, one refresh later, so one drawing in a
             // loop (hidden behind another window) runs at the refresh rate, not as fast as it can.
             Ok(true) => {
-                let _ = self.frame_callbacks(&screen.output);
+                if source.is_none() {
+                    let _ = self.frame_callbacks(&screen.output);
+                }
                 screen.phase = Phase::Flipping;
                 let timer = Timer::from_duration(refresh(&screen.output));
                 if self
@@ -687,7 +723,58 @@ fn light(
     let compositor = DrmCompositor::new(&output, surface, None, allocator, exporter, FORMATS, formats, card.drm.cursor_size(), Some(card.gbm.clone()))
         .map_err(|e| format!("{e}"))?;
     let clock = FrameClock::new(refresh(&output));
-    Ok((crtc, Screen { output, global, connector: info.handle(), compositor, clock, phase: Phase::Idle, again: false, render_time: Duration::ZERO }))
+    Ok((
+        crtc,
+        Screen {
+            output,
+            global,
+            connector: info.handle(),
+            compositor,
+            clock,
+            phase: Phase::Idle,
+            again: false,
+            render_time: Duration::ZERO,
+            mirror_of: None,
+            mirrored: None,
+        },
+    ))
+}
+
+/// `scene` (the `source` display's frame, front to back) drawn offscreen at the source's size into `cache`, then
+/// shown letterboxed in the `mirror` display's own pixels (its scale is 1). Only the source's changes are redrawn.
+// ponytail: the whole mirror is redrawn whenever the source changed; pass the offscreen damage on if a mirror ever
+// shows up in the frame budget.
+fn mirror(renderer: &mut GlesRenderer, cache: &mut Option<Mirrored>, source: &Output, mirror: &Output, scene: &[SceneElement]) -> Option<SceneElement> {
+    let size = source.current_transform().transform_size(source.current_mode()?.size);
+    let buffer = Size::from((size.w, size.h));
+    let fresh = cache.as_ref().is_none_or(|m| m.texture.size() != buffer);
+    if fresh {
+        let texture = renderer.create_buffer(Fourcc::Abgr8888, buffer).inspect_err(|err| tracing::warn!("mirror: {err}")).ok()?;
+        let damage = OutputDamageTracker::new(size, source.current_scale().fractional_scale(), Transform::Normal);
+        *cache = Some(Mirrored { texture, damage, id: Id::new() });
+    }
+    let m = cache.as_mut()?;
+    let mut target = renderer.bind(&mut m.texture).ok()?;
+    let drawn = m.damage.render_output(renderer, &mut target, if fresh { 0 } else { 1 }, scene, CLEAR);
+    let changed = drawn.inspect_err(|err| tracing::warn!("mirror: {err}")).ok()?.damage.is_some();
+    drop(target);
+    if changed {
+        m.id = Id::new();
+    }
+    let rect = displays::letterbox(size, mirror.current_transform().transform_size(mirror.current_mode()?.size));
+    Some(SceneElement::Texture(TextureRenderElement::from_static_texture(
+        m.id.clone(),
+        renderer.context_id(),
+        rect.loc.to_f64(),
+        m.texture.clone(),
+        1,
+        Transform::Normal,
+        None,
+        None,
+        Some((rect.size.w, rect.size.h).into()),
+        None,
+        Kind::Unspecified,
+    )))
 }
 
 /// The output's refresh period.

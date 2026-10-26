@@ -10,7 +10,7 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::protocol::wl_surface::WlSurface,
     },
-    utils::{Logical, Rectangle, Transform},
+    utils::{Logical, Physical, Rectangle, Size, Transform},
     wayland::{
         compositor::{SurfaceData, send_surface_state},
         fractional_scale::with_fractional_scale,
@@ -109,6 +109,17 @@ fn mirrors(displays: &mut [Display], wanted: impl Fn(&str) -> String) {
     for d in displays.iter_mut().filter(|d| mirroring.contains(&d.mirror)) {
         d.mirror.clear();
     }
+}
+
+/// Where a mirror shows a picture of `src` px inside its own `dst` px: as large as fits, aspect kept, centred
+/// (bars on the long sides).
+pub fn letterbox(src: Size<i32, Physical>, dst: Size<i32, Physical>) -> Rectangle<i32, Physical> {
+    if src.w <= 0 || src.h <= 0 {
+        return Rectangle::from_size(dst);
+    }
+    let k = (f64::from(dst.w) / f64::from(src.w)).min(f64::from(dst.h) / f64::from(src.h));
+    let size = Size::from(((f64::from(src.w) * k).round() as i32, (f64::from(src.h) * k).round() as i32));
+    Rectangle::new(((dst.w - size.w) / 2, (dst.h - size.h) / 2).into(), size)
 }
 
 /// The entry's `mode = "WxH"` at the refresh nearest its `refresh` (0: the highest); `None` when it names no mode the
@@ -679,6 +690,19 @@ mod tests {
         let chain = Displays { outputs: vec![mirror("DP-1", "HDMI-A-1"), mirror("HDMI-A-1", "eDP-1")], ..Default::default() };
         let p = plan(three, &chain, false);
         assert_eq!((p[1].mirror.as_str(), p[2].mirror.as_str()), ("eDP-1", ""), "a chain's far end goes back to extended");
+    }
+
+    #[test]
+    fn a_mirror_letterboxes_its_source() {
+        let fit = |src: (i32, i32), dst: (i32, i32)| {
+            let r = letterbox(src.into(), dst.into());
+            (r.loc.x, r.loc.y, r.size.w, r.size.h)
+        };
+        assert_eq!(fit((1920, 1080), (3840, 2160)), (0, 0, 3840, 2160), "same shape: filled");
+        assert_eq!(fit((1920, 1200), (1920, 1080)), (96, 0, 1728, 1080), "16:10 on 16:9: bars left and right");
+        assert_eq!(fit((2560, 1080), (1920, 1080)), (0, 135, 1920, 810), "ultrawide on 16:9: bars above and below");
+        assert_eq!(fit((1920, 1080), (1080, 1920)), (0, 656, 1080, 608), "onto a portrait display");
+        assert_eq!(fit((0, 0), (1920, 1080)), (0, 0, 1920, 1080));
     }
 
     #[test]
