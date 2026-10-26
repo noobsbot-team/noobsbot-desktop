@@ -1,4 +1,4 @@
-//! Desktop icons (E7.2): 64 px file icons on the wallpaper with white two-line names over a soft shadow, as on macOS.
+//! Desktop icons (E7.2): 64 px file icons on the wallpaper with white two-line names over a soft shadow.
 //! Selected: a translucent grey square behind the icon and an accent pill behind the name. Renaming: a text box.
 
 use std::sync::Arc;

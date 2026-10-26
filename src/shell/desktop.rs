@@ -1,4 +1,4 @@
-//! Desktop icons (E7.2, L12): the files in the Desktop folder on the wallpaper, like macOS. A grid from the top right
+//! Desktop icons (E7.2, L12): the files in the Desktop folder on the wallpaper. A grid from the top right
 //! down each column, then leftwards; click selects, double-click opens (xdg-open), drag rearranges (saved), right-click
 //! menu: Open, Rename, Move to Trash (`gio trash`), New Folder. The folder is watched with inotify, so idle costs nothing.
 
@@ -26,7 +26,7 @@ use crate::{
     wm::Rect,
 };
 
-/// Icon size and grid cell, in logical px (macOS: 64 px icons on a ~100 px grid).
+/// Icon size and grid cell, in logical px (64 px icons on a ~100 px grid).
 pub const ICON: i32 = 64;
 pub const CELL_W: i32 = 100;
 pub const CELL_H: i32 = 110;
@@ -358,7 +358,7 @@ impl State {
     }
 
     fn desktop_update(&mut self, entries: Vec<Entry>) {
-        // Icons on screen keep their cells; new files take free ones instead of reflowing the rest (as on macOS).
+        // Icons on screen keep their cells; new files take free ones instead of reflowing the rest.
         if let Some((_, cells)) = self.desktop_cells() {
             for (e, cell) in self.desktop.entries.iter().zip(cells) {
                 self.desktop.saved.entry(e.name.clone()).or_insert(cell);
@@ -435,9 +435,21 @@ impl State {
         }
     }
 
-    /// A press on the bare desktop (no window or layer there): selects, opens on a double click, starts a drag, or
-    /// opens the right-click menu.
+    /// Other apps' desktop widgets (E8.8): a column down the left, clear of the icons on the right.
+    pub fn desktop_widgets(&self) -> Vec<Rect> {
+        let medium: Vec<bool> = self.shown_widgets(true).iter().map(|w| w.medium).collect();
+        let pad = crate::shell::notify::CENTER_PAD;
+        crate::shell::notify::tiles(&medium, MARGIN + pad, menubar::HEIGHT + 8 + pad, crate::shell::notify::CENTER_W - 2 * pad).0
+    }
+
+    /// A press on the bare desktop (no window or layer there): a widget tells its app; otherwise selects, opens on a
+    /// double click, starts a drag, or opens the right-click menu.
     pub fn desktop_press(&mut self, location: Point<f64, Logical>, button: u32) {
+        if button == crate::input::BTN_LEFT
+            && let Some(i) = self.desktop_widgets().iter().position(|r| r.to_f64().contains(location))
+        {
+            return self.widget_activated(true, i);
+        }
         if !self.desktop_shown() {
             return;
         }
@@ -566,7 +578,8 @@ impl State {
     /// The right-click menu's rows: an icon's, or the desktop's.
     // ponytail: Change Wallpaper… stays disabled until System Settings (E7.1) has a wallpaper pane to open.
     pub fn desktop_menu_rows(&self) -> Vec<Option<Row>> {
-        let row = |label: &str, command: Option<Command>| Some(Row { label: label.to_owned(), shortcut: "", action: command.map(Action::Desktop) });
+        let row =
+            |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Desktop) });
         match &self.desktop.menu {
             Some((Some(_), _)) => {
                 vec![row("Open", Some(Command::Open)), None, row("Rename", Some(Command::Rename)), row("Move to Trash", Some(Command::Trash))]
