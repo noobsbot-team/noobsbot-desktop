@@ -655,7 +655,7 @@ impl State {
         match item {
             BarItem::Tray(i) => self.tray_press(i, location, secondary),
             // fcitx5 tells nobody when its method changes: ask now.
-            BarItem::Input => self.services.send(crate::services::Command::FcitxRead),
+            BarItem::Input => self.services.send(crate::services::Command::ImeRead { ibus: self.config.keyboard.engine() == "ibus" }),
             BarItem::ControlCenter => self.services.send(crate::services::Command::Inhibitors),
             BarItem::Status(i) if self.menu_bar().and_then(|c| c.status.get(i).map(|s| s.kind)) == Some(menubar::Kind::Recording) => {
                 self.toggle_recording();

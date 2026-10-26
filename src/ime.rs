@@ -1,4 +1,4 @@
-//! Input methods (E6.12): input-method-v2 for fcitx5 behind the text-input-v3 that Qt 6, GTK 4 and Chromium speak,
+//! Input methods (E6.12): input-method-v2 for fcitx5 (or ibus) behind the text-input-v3 that Qt 6, GTK 4 and Chromium speak,
 //! the candidate popup placed under the text cursor, and the keyboard layouts the menu bar's input item lists.
 
 use smithay::{
@@ -35,9 +35,9 @@ pub struct Layouts {
     /// Index into `list`.
     // ponytail: only our own switches update it; an xkb `grp:` toggle option changes the layout behind its back.
     pub active: usize,
-    /// fcitx5 is installed: the menu offers its settings.
-    pub fcitx: bool,
-    /// fcitx5's input methods while it is on the bus.
+    /// The engine's settings app when it is installed (`fcitx5-configtool`, `ibus-setup`): the menu offers it.
+    pub ime_settings: Option<&'static str>,
+    /// fcitx5's or ibus's input methods while it runs.
     pub methods: Option<crate::services::fcitx::Fcitx>,
     /// `[keyboard] per_window_source`: each surface's layout when it lost focus.
     pub remembered: Remembered<WlSurface>,
@@ -141,7 +141,7 @@ pub(crate) fn place(cursor: Rectangle<i32, Logical>, size: Size<i32, Logical>, s
     (x, y).into()
 }
 
-/// The input menu's rows: layouts, fcitx5's methods (a click switches), its settings.
+/// The input menu's rows: layouts, the engine's methods (a click switches), its settings.
 fn menu_rows(layouts: &Layouts) -> Vec<Option<Row>> {
     let tick = |on: bool| if on { "✓" } else { "" };
     let mut rows: Vec<Option<Row>> = layouts
@@ -156,22 +156,25 @@ fn menu_rows(layouts: &Layouts) -> Vec<Option<Row>> {
             Some(Row { sub: Vec::new(), label: name.clone(), shortcut: tick(*id == fcitx.current), action: Some(Action::InputMethod(id.clone())) })
         }));
     }
-    if layouts.fcitx || layouts.methods.is_some() {
+    if let Some(program) = layouts.ime_settings {
         rows.push(None);
-        rows.push(Some(Row {
-            sub: Vec::new(), label: "Input Method Settings…".into(), shortcut: "", action: Some(Action::Spawn("fcitx5-configtool".into()))
-        }));
+        rows.push(Some(Row { sub: Vec::new(), label: "Input Method Settings…".into(), shortcut: "", action: Some(Action::Spawn(program.into())) }));
     }
     rows
+}
+
+/// The engine's settings app, when the engine is installed.
+fn ime_settings(engine: &str) -> Option<&'static str> {
+    match engine {
+        "fcitx5" if crate::ibus::on_path("fcitx5") => Some("fcitx5-configtool"),
+        "ibus" if crate::ibus::on_path("ibus") => Some("ibus-setup"),
+        _ => None,
+    }
 }
 
 /// The layout `by` steps from `active` among `count`, wrapping round.
 pub(crate) fn step(active: usize, count: usize, by: isize) -> usize {
     (active as isize + by).rem_euclid(count.max(1) as isize) as usize
-}
-
-fn on_path(program: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
 }
 
 impl State {
@@ -183,7 +186,7 @@ impl State {
             xkb.layouts().map(|l| xkb.layout_name(l).to_owned()).collect()
         });
         let methods = self.layouts.methods.take();
-        self.layouts = Layouts { list: pair(codes, names), fcitx: on_path("fcitx5"), methods, ..Default::default() };
+        self.layouts = Layouts { list: pair(codes, names), ime_settings: ime_settings(self.config.keyboard.engine()), methods, ..Default::default() };
     }
 
     /// Keyboard focus moved to `focused`: with `[keyboard] per_window_source`, it gets its own layout back.
@@ -212,11 +215,11 @@ impl State {
         self.show_osd(Osd { symbol: Symbol::Keyboard, level: None, text });
     }
 
-    /// The menu bar's input item: the active layout's code, shown with more than one layout or with fcitx5.
+    /// The menu bar's input item: the active layout's code, shown with more than one layout or with an input-method engine.
     pub fn input_item(&self) -> Option<String> {
         let layouts = &self.layouts;
         let code = layouts.list.get(layouts.active).map_or_else(|| "EN".into(), |(code, _)| code.to_uppercase());
-        (layouts.list.len() > 1 || layouts.fcitx || layouts.methods.is_some()).then_some(code)
+        (layouts.list.len() > 1 || layouts.ime_settings.is_some() || layouts.methods.is_some()).then_some(code)
     }
 
     /// The input menu: `menu_rows`, the Keyboard Viewer and the on-screen keyboard.
@@ -402,6 +405,7 @@ mod tests {
         assert_eq!(menu_rows(&layouts).len(), 1);
         let methods = vec![("keyboard-us".into(), "English (US)".into()), ("m17n_ne_rom".into(), "Nepali (Romanized)".into())];
         layouts.methods = Some(crate::services::fcitx::Fcitx { methods, current: "m17n_ne_rom".into() });
+        layouts.ime_settings = Some("fcitx5-configtool");
         let rows = menu_rows(&layouts);
         // Layout, gap, two methods, gap, settings.
         assert_eq!(rows.len(), 6);

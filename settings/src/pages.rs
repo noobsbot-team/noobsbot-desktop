@@ -507,6 +507,14 @@ pub const SETTINGS: &[Setting] = &[
         "Each window switches back to the layout it was typed in",
         Kind::Toggle,
     ),
+    s(
+        Page::Keyboard,
+        "Input method",
+        "keyboard.input_method",
+        "Input method engine",
+        "For Pinyin, Nepali and other scripts; from the next login",
+        Kind::Menu(&[("fcitx5", "fcitx5"), ("ibus", "ibus"), ("auto", "Automatic"), ("none", "None")]),
+    ),
     s(Page::Keyboard, "Modifier keys", "keyboard.options", "Caps Lock key", "", Kind::XkbOption(crate::xkb::is_caps, crate::xkb::CAPS)),
     s(
         Page::Keyboard,
@@ -1979,7 +1987,7 @@ fn input_sources(app: &App) -> Vec<Element<'_, Message>> {
     if rows.is_empty() {
         rows.push(fact(t, "The system's layout", String::new()));
     }
-    // fcitx5's methods, switched with its own key.
+    // The engine's methods, switched with its own key.
     for (id, name) in app.methods.iter().flat_map(|m| &m.chosen) {
         let remove = container(small("−", Some(Message::Method(id.clone(), false)))).padding(2).style(t.field());
         let kind = text("Input method").size(12).color(t.secondary());
@@ -2016,16 +2024,16 @@ fn input_sources(app: &App) -> Vec<Element<'_, Message>> {
                 }
             }
             // ponytail: fcitx5's own files aren't edited; its controller is the only way in.
-            None if fcitx_installed() => picks.push(fact(t, "Start fcitx5 to add its input methods (Pinyin, Mozc…) here", String::new())),
-            None => {}
+            None => match crate::ibus::engine(app.config.str("keyboard.input_method")) {
+                "fcitx5" if crate::ibus::on_path("fcitx5") => picks.push(fact(t, "Start fcitx5 to add its input methods (Pinyin, Mozc…) here", String::new())),
+                "ibus" if crate::ibus::on_path("ibus") => picks.push(fact(t, "Start ibus to add its input methods (Pinyin, Anthy…) here", String::new())),
+                "ibus" => picks.push(fact(t, "Install the ibus package to use its input methods", String::new())),
+                _ => {}
+            },
         }
         parts.push(group(t, "", picks));
     }
     parts
-}
-
-fn fcitx_installed() -> bool {
-    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join("fcitx5").is_file()))
 }
 
 /// `eDP-1` → `Built-in display`, `winit` → `Nested window`, `HDMI-A-1` → `HDMI-A-1`.

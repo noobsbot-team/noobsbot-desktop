@@ -103,6 +103,9 @@ repeat_delay = 500
 repeat_rate = 30
 # Each window remembers the layout it was typed in and switches back to it when focused.
 per_window_source = false
+# Input-method engine for other scripts (Pinyin, Nepali…): "fcitx5", "ibus", "auto" (fcitx5 if installed, else ibus)
+# or "none". From the next login; ibus needs the `ibus` package.
+input_method = "fcitx5"
 
 [touchpad]
 # Off: the trackpad does nothing. The touchpad-toggle key flips this until the file is next saved.

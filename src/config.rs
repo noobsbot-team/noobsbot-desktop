@@ -304,11 +304,21 @@ pub struct Keyboard {
     pub repeat_rate: u32,
     /// Each window keeps the layout it had when it lost focus, and gets it back on focus.
     pub per_window_source: bool,
+    /// The input-method engine: "fcitx5", "ibus", "auto" (fcitx5 if installed, else ibus) or "none".
+    pub input_method: String,
 }
 
 impl Default for Keyboard {
     fn default() -> Self {
-        Self { layout: String::new(), variant: String::new(), options: String::new(), repeat_delay: 500, repeat_rate: 30, per_window_source: false }
+        Self {
+            layout: String::new(),
+            variant: String::new(),
+            options: String::new(),
+            repeat_delay: 500,
+            repeat_rate: 30,
+            per_window_source: false,
+            input_method: "fcitx5".into(),
+        }
     }
 }
 
@@ -316,6 +326,11 @@ impl Keyboard {
     /// The repeat delay and rate apps are told (smithay's order: rate, delay).
     pub fn repeat(&self) -> (i32, i32) {
         (self.repeat_rate.min(100) as i32, self.repeat_delay.clamp(100, 3000) as i32)
+    }
+
+    /// `input_method` resolved: "fcitx5", "ibus" or "none".
+    pub fn engine(&self) -> &'static str {
+        crate::ibus::engine(&self.input_method)
     }
 
     /// The xkb part changed (not just repeat), so the keymap is rebuilt.
