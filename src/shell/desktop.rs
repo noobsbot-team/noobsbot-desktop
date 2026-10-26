@@ -1,4 +1,4 @@
-//! Desktop icons (E7.2, L12): the files in the Desktop folder on the wallpaper, like macOS. A grid from the top right
+//! Desktop icons (E7.2, L12): the files in the Desktop folder on the wallpaper. A grid from the top right
 //! down each column, then leftwards; click selects, double-click opens (xdg-open), drag rearranges (saved), right-click
 //! menu: Open, Rename, Move to Trash (`gio trash`), New Folder. The folder is watched with inotify, so idle costs nothing.
 
@@ -26,7 +26,7 @@ use crate::{
     wm::Rect,
 };
 
-/// Icon size and grid cell, in logical px (macOS: 64 px icons on a ~100 px grid).
+/// Icon size and grid cell, in logical px (64 px icons on a ~100 px grid).
 pub const ICON: i32 = 64;
 pub const CELL_W: i32 = 100;
 pub const CELL_H: i32 = 110;
@@ -132,7 +132,7 @@ pub fn label_rect(cell: Rect) -> Rect {
 
 /// Cells for `names`: a saved one where it is on the grid and free, the rest in the first free cells, down each
 /// column, then leftwards; more icons than cells pile up in the last one rather than run off the screen.
-// ponytail: macOS shrinks the grid instead. Add when a desktop gets that full.
+// ponytail: shrinking the grid would fit more. Add when a desktop gets that full.
 pub fn place(names: &[&str], saved: &HashMap<String, Cell>, grid: &Grid) -> Vec<Cell> {
     let fits = |&(c, r): &Cell| (0..grid.cols).contains(&c) && (0..grid.rows).contains(&r);
     let mut taken = std::collections::HashSet::new();
@@ -352,7 +352,7 @@ impl State {
     }
 
     fn desktop_update(&mut self, entries: Vec<Entry>) {
-        // Icons on screen keep their cells; new files take free ones instead of reflowing the rest (as on macOS).
+        // Icons on screen keep their cells; new files take free ones instead of reflowing the rest.
         if let Some((_, cells)) = self.desktop_cells() {
             for (e, cell) in self.desktop.entries.iter().zip(cells) {
                 self.desktop.saved.entry(e.name.clone()).or_insert(cell);

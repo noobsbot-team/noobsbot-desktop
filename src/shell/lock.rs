@@ -154,7 +154,7 @@ pub fn wipe(field: &mut TextField) {
     *field = TextField::secure();
 }
 
-/// Three swings that fade out over `SHAKE`, 10 px at most (macOS's "no" shake).
+/// Three swings that fade out over `SHAKE`, 10 px at most (a "no" shake).
 pub fn shake_offset(t: Duration) -> i32 {
     let k = t.as_secs_f64() / SHAKE.as_secs_f64();
     if k >= 1.0 {
