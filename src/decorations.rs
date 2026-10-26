@@ -163,7 +163,9 @@ impl State {
         match part {
             Part::Close => self.close_window(&window),
             Part::Minimise => self.minimise(vec![window]),
-            Part::Zoom => self.toggle_zoom(&window),
+            // macOS: the green light is full screen, Alt+green zoom.
+            Part::Zoom if self.modifiers().alt => self.toggle_zoom(&window),
+            Part::Zoom => self.toggle_fullscreen(&window),
             Part::Title => {}
         }
     }
@@ -181,7 +183,14 @@ impl State {
         self.schedule_redraw();
     }
 
-    fn toggle_zoom(&mut self, window: &Window) {
+    pub fn toggle_fullscreen(&mut self, window: &Window) {
+        let Some(toplevel) = window.toplevel().cloned() else { return };
+        if self.unfill(&toplevel, xdg_toplevel::State::Fullscreen).is_none() {
+            self.fill(&toplevel, xdg_toplevel::State::Fullscreen);
+        }
+    }
+
+    pub fn toggle_zoom(&mut self, window: &Window) {
         let Some(toplevel) = window.toplevel().cloned() else { return };
         if self.unfill(&toplevel, xdg_toplevel::State::Maximized).is_none() {
             self.fill(&toplevel, xdg_toplevel::State::Maximized);

@@ -24,6 +24,10 @@ pub enum Action {
     QuitApp,
     CloseWindow,
     Minimise,
+    /// Fill the work area, or back (Window ▸ Zoom; Alt+green).
+    Zoom,
+    /// Full screen in its own Space, or back (green light; Super+Ctrl+F).
+    Fullscreen,
     /// Hide every window of the focused app (Super+H).
     Hide,
     /// Hide every other app's windows (Super+Alt+H).
@@ -142,6 +146,8 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("quit", "") => Some(Action::QuitApp),
         ("close", "") => Some(Action::CloseWindow),
         ("minimise" | "minimize", "") => Some(Action::Minimise),
+        ("zoom", "") => Some(Action::Zoom),
+        ("fullscreen", "") => Some(Action::Fullscreen),
         ("hide", "") => Some(Action::Hide),
         ("hide-others", "") => Some(Action::HideOthers),
         ("show-all", "") => Some(Action::ShowAll),
@@ -231,6 +237,16 @@ impl State {
             // ponytail: closes the app's windows and lets the app decide to exit; a real quit comes with app tracking (M3).
             Action::QuitApp => self.app_windows(focused.as_ref()).iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             Action::Minimise => self.minimise(focused.into_iter().collect()),
+            Action::Zoom => {
+                if let Some(window) = focused {
+                    self.toggle_zoom(&window);
+                }
+            }
+            Action::Fullscreen => {
+                if let Some(window) = focused {
+                    self.toggle_fullscreen(&window);
+                }
+            }
             Action::Hide => {
                 let windows = self.app_windows(focused.as_ref());
                 self.hide_windows(windows);
