@@ -365,17 +365,7 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
     let key = setting.key;
     match setting.kind {
         Kind::Toggle => toggle(t, app.config.bool(key), move |on| Message::Toggle(key, on)),
-        Kind::Choice(options) => {
-            let current = app.config.str(key);
-            let mut segments = row![].spacing(2);
-            for &(value, label) in options {
-                let selected = current == value;
-                let segment =
-                    button(text(label).size(12).center()).padding([2, 10]).height(22).style(t.segment(selected)).on_press(Message::Choose(key, value));
-                segments = segments.push(segment);
-            }
-            container(segments).padding(2).style(t.field()).into()
-        }
+        Kind::Choice(options) => choice(t, app.config.str(key), options, key),
         Kind::Slider { min, max, step } => {
             let value = app.drafts.get(key).copied().unwrap_or_else(|| app.config.num(key));
             slider_row(t, key, min..=max, step, value)
@@ -400,12 +390,46 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
                 let mark: Element<'_, Message> =
                     if selected { container(space()).width(6).height(6).style(Tokens::squircle(Color::WHITE, 3.0)).into() } else { space().into() };
                 swatches = swatches.push(
-                    button(container(mark).center(18)).padding(0).width(18).height(18).style(t.swatch(color, selected)).on_press(Message::Choose(key, name)),
+                    button(container(mark).center(18))
+                        .padding(0)
+                        .width(18)
+                        .height(18)
+                        .style(t.swatch(color, selected))
+                        .on_press(Message::Choose(key.into(), name)),
                 );
             }
             swatches.into()
         }
     }
+}
+
+/// A segmented control writing `key`.
+fn choice<'a>(t: Tokens, current: &str, options: &'static [(&'static str, &'static str)], key: &str) -> Element<'a, Message> {
+    segments(t, options.iter().map(|&(value, label)| (label.to_owned(), current == value, Message::Choose(key.into(), value))).collect())
+}
+
+/// The `[notification_apps]` styles, as the desktop reads them.
+const APP_STYLES: &[(&str, &str)] = &[("banner", "Banners"), ("alert", "Alerts"), ("none", "None"), ("off", "Off")];
+
+/// Notifications ▸ Applications: each app that has notified (or has a style set), with its style.
+fn notifying_apps(app: &App) -> Vec<Element<'_, Message>> {
+    let t = app.tokens;
+    let mut apps = app.config.keys("notification_apps");
+    apps.extend(app.notifiers.iter().cloned());
+    apps.sort();
+    apps.dedup();
+    if apps.is_empty() {
+        return vec![note(t, "Apps show here once they send a notification.")];
+    }
+    let rows = apps
+        .into_iter()
+        .map(|name| {
+            let key = format!("notification_apps.{name}");
+            let current = app.config.get(&key).and_then(toml_edit::Value::as_str).unwrap_or("banner");
+            line(t, name, "", choice(t, current, APP_STYLES, &key))
+        })
+        .collect();
+    vec![group(t, "Applications", rows), note(t, "Alerts stay until dismissed; None keeps them in Notification Center only; Off drops them.")]
 }
 
 fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>, step: f64, value: f64) -> Element<'a, Message> {
@@ -530,7 +554,6 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             let rows = crate::system::about().into_iter().map(|(label, value)| fact(t, label, value)).collect();
             vec![container(head).center_x(Length::Fill).into(), group(t, "", rows)]
         }
-        Page::Notifications => vec![note(t, "Per-app banners and the Do Not Disturb schedule come here.")],
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
         Page::Appearance => vec![gallery(app)],
         _ => Vec::new(),
@@ -590,6 +613,7 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                 .collect();
             vec![group(t, "Shortcuts", rows), note(t, "Type an action and press Return; “none” frees the key.")]
         }
+        Page::Notifications => notifying_apps(app),
         Page::General => vec![group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))])],
         _ => Vec::new(),
     }
