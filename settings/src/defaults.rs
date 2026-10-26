@@ -35,12 +35,15 @@ pub fn id(app: &Installed) -> String {
     app.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
 }
 
-/// Each kind's current default (a desktop-file id) and the apps that can be it; then the terminal emulators.
-pub fn load() -> (Vec<(Option<String>, Vec<Installed>)>, Vec<Installed>) {
+/// Each kind's current default (a desktop-file id) and the apps that can be it.
+pub type Kinds = Vec<(Option<String>, Vec<Installed>)>;
+
+/// The kinds, then the terminal emulators with the command each runs.
+pub fn load() -> (Kinds, Vec<(Installed, String)>) {
     let (dirs, desktop) = (autostart::app_dirs(), autostart::desktop());
     let kinds = KINDS.iter().map(|(_, mimes)| (current(mimes[0]), handlers(&dirs, &desktop, mimes))).collect();
     let terminals = autostart::installed_in(&dirs, &desktop, |f| f.get("Categories").is_some_and(|c| c.split(';').any(|c| c == "TerminalEmulator")));
-    (kinds, terminals)
+    (kinds, terminals.into_iter().filter_map(|t| command(&t.path).map(|c| (t, c))).collect())
 }
 
 /// The command an app's `Exec` runs, its field codes (`%U`, …) dropped: what the `terminal` key holds.
