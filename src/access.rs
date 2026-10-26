@@ -22,6 +22,18 @@ pub struct Shell {
     pub mission: Option<String>,
     /// Open Spotlight.
     pub spotlight: Option<Search>,
+    /// Open Launchpad.
+    pub launchpad: Option<Apps>,
+}
+
+/// Launchpad: its field, the shown page's tiles (name; a folder's app count), "Page 2 of 3" when there are several,
+/// and the open folder's name (`tiles` are then its apps).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Apps {
+    pub field: Field,
+    pub tiles: Vec<(String, Option<usize>)>,
+    pub page: Option<String>,
+    pub folder: Option<String>,
 }
 
 /// A text field: its label, text, and whether it is a password (read as bullets).
@@ -61,11 +73,16 @@ const MISSION: NodeId = NodeId(5);
 const SPOTLIGHT: NodeId = NodeId(6);
 const SPOTLIGHT_FIELD: NodeId = NodeId(7);
 const SPOTLIGHT_LIST: NodeId = NodeId(8);
+const LAUNCHPAD: NodeId = NodeId(9);
+const LAUNCHPAD_FIELD: NodeId = NodeId(10);
+const LAUNCHPAD_PAGE: NodeId = NodeId(11);
+const LAUNCHPAD_GRID: NodeId = NodeId(12);
 const MISSION_ITEM: NodeId = NodeId(3000);
 const BAR_ITEM: u64 = 100;
 const DOCK_ITEM: u64 = 1000;
 const CONTROL_ITEM: u64 = 2000;
 const SPOTLIGHT_ITEM: u64 = 4000;
+const LAUNCHPAD_ITEM: u64 = 5000;
 
 /// The whole tree; every update replaces it.
 pub fn tree(shell: &Shell) -> TreeUpdate {
@@ -135,6 +152,33 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
         nodes.extend(rows);
         children.push(SPOTLIGHT);
     }
+    if let Some(apps) = &shell.launchpad {
+        let tiles = apps.tiles.iter().enumerate().map(|(i, (name, folder))| {
+            let mut node = Node::new(Role::Button);
+            node.set_label(match folder {
+                Some(n) => format!("{name}, folder, {n} apps"),
+                None => name.clone(),
+            });
+            node.add_action(Action::Click);
+            (NodeId(LAUNCHPAD_ITEM + i as u64), node)
+        });
+        let mut grid = Vec::new();
+        group(LAUNCHPAD_GRID, Role::Group, apps.folder.as_deref().unwrap_or("Applications"), tiles.collect(), &mut grid);
+        let mut parts = vec![(LAUNCHPAD_FIELD, apps.field.node(Role::SearchInput))];
+        if let Some(page) = &apps.page {
+            let mut label = Node::new(Role::Label);
+            label.set_value(page.as_str());
+            parts.push((LAUNCHPAD_PAGE, label));
+        }
+        let ids: Vec<NodeId> = parts.iter().map(|(id, _)| *id).chain([LAUNCHPAD_GRID]).collect();
+        let mut node = Node::new(Role::Dialog);
+        node.set_label("Launchpad");
+        node.set_children(ids);
+        nodes.push((LAUNCHPAD, node));
+        nodes.extend(parts);
+        nodes.extend(grid);
+        children.push(LAUNCHPAD);
+    }
     let mut root = Node::new(Role::Window);
     root.set_label("Desktop");
     root.set_children(children);
@@ -146,6 +190,9 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
 fn focus(shell: &Shell) -> NodeId {
     if shell.spotlight.is_some() {
         SPOTLIGHT_FIELD
+    } else if let Some(apps) = &shell.launchpad {
+        // An open folder takes typing as its new name.
+        if apps.folder.is_some() { LAUNCHPAD_GRID } else { LAUNCHPAD_FIELD }
     } else if shell.mission.is_some() {
         MISSION_ITEM
     } else if shell.controls.is_some() {
@@ -252,7 +299,33 @@ impl State {
             let rows = hits.iter().take(shown).map(|h| (h.title(), h.kind().to_owned())).collect();
             Search { field: Field::new("Spotlight Search", &s.field), rows, selected: s.selected }
         });
-        Shell { bar, dock, controls, mission, spotlight }
+        let launchpad = self.access_launchpad();
+        Shell { bar, dock, controls, mission, spotlight, launchpad }
+    }
+
+    fn access_launchpad(&self) -> Option<Apps> {
+        use crate::shell::launchpad::Tile;
+        let l = self.launchpad.as_ref().filter(|_| self.launchpad_open())?;
+        let per_page = self.launchpad_grid()?.per_page();
+        let tiles = self.launchpad_tiles();
+        let pages = crate::shell::launchpad::pages(tiles.len(), per_page);
+        let page = (pages > 1).then(|| format!("Page {} of {pages}", l.page + 1));
+        let folder = l.folder.as_ref().and_then(|(i, _)| match tiles.get(*i) {
+            Some(Tile::Folder(name, apps)) => Some((name.clone(), apps.iter().map(|a| (a.name.clone(), None)).collect())),
+            _ => None,
+        });
+        let (folder, tiles) = match folder {
+            Some((name, apps)) => (Some(name), apps),
+            None => {
+                let shown = tiles.iter().skip(l.page * per_page).take(per_page);
+                let tiles = shown.map(|t| match t {
+                    Tile::App(a) => (a.name.clone(), None),
+                    Tile::Folder(name, apps) => (name.clone(), Some(apps.len())),
+                });
+                (None, tiles.collect())
+            }
+        };
+        Some(Apps { field: Field::new("Search", &l.field), tiles, page, folder })
     }
 
     /// Once per loop turn: a changed shell reaches the screen reader.
@@ -279,6 +352,14 @@ impl State {
         if (DOCK_ITEM..CONTROL_ITEM).contains(&id) {
             if let Some(item) = self.dock_items().into_iter().nth((id - DOCK_ITEM) as usize) {
                 self.dock_click(item, false);
+            }
+        } else if (LAUNCHPAD_ITEM..LAUNCHPAD_ITEM + 1000).contains(&id) {
+            let i = (id - LAUNCHPAD_ITEM) as usize;
+            let Some(l) = self.launchpad.as_ref() else { return };
+            match (&l.folder, self.launchpad_grid()) {
+                (Some((folder, _)), _) => self.launchpad_activate(*folder, Some(i)),
+                (None, Some(grid)) => self.launchpad_activate(l.page * grid.per_page() + i, None),
+                (None, None) => {}
             }
         } else if let Some(i) = id.checked_sub(CONTROL_ITEM).filter(|i| *i < MISSION_ITEM.0 - CONTROL_ITEM) {
             // The shown toggles skip a missing service: count only those.
@@ -336,6 +417,25 @@ mod tests {
         assert_eq!((row.label(), row.is_selected()), (Some("Firefox, Application"), Some(true)));
         assert_eq!(node(&update, NodeId(SPOTLIGHT_ITEM)).is_selected(), Some(false));
         assert_eq!(node(&update, SPOTLIGHT_LIST).children().len(), 2);
+    }
+
+    #[test]
+    fn launchpad_reads_apps_folders_and_the_page() {
+        let tiles = vec![("Files".into(), None), ("Games".into(), Some(4))];
+        let apps = Apps { field: Field { label: "Search".into(), ..Default::default() }, tiles, page: Some("Page 2 of 3".into()), folder: None };
+        let update = tree(&Shell { launchpad: Some(apps.clone()), ..Default::default() });
+        assert_eq!(update.focus, LAUNCHPAD_FIELD);
+        let files = node(&update, NodeId(LAUNCHPAD_ITEM));
+        assert_eq!((files.role(), files.label()), (Role::Button, Some("Files")));
+        assert!(files.supports_action(Action::Click));
+        assert_eq!(node(&update, NodeId(LAUNCHPAD_ITEM + 1)).label(), Some("Games, folder, 4 apps"));
+        assert_eq!(node(&update, LAUNCHPAD_PAGE).value(), Some("Page 2 of 3"));
+        assert_eq!(node(&update, LAUNCHPAD).children(), [LAUNCHPAD_FIELD, LAUNCHPAD_PAGE, LAUNCHPAD_GRID]);
+
+        let open = tree(&Shell { launchpad: Some(Apps { folder: Some("Games".into()), page: None, ..apps }), ..Default::default() });
+        assert_eq!(open.focus, LAUNCHPAD_GRID);
+        assert_eq!(node(&open, LAUNCHPAD_GRID).label(), Some("Games"));
+        assert!(open.nodes.iter().all(|(id, _)| *id != LAUNCHPAD_PAGE));
     }
 
     #[test]
