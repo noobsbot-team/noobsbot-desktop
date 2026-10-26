@@ -142,6 +142,7 @@ impl State {
                 let serial = SERIAL_COUNTER.next_serial();
                 let key_state = event.state();
                 let inhibited = self.shortcuts_inhibited();
+                let super_down = self.super_tap.down();
                 let action = keyboard.input::<Option<Action>, _>(self, event.key_code(), key_state, serial, event.time_msec(), |state, mods, key| {
                     let code = key.raw_code();
                     let logo = matches!(key.modified_sym(), Keysym::Super_L | Keysym::Super_R);
@@ -188,6 +189,10 @@ impl State {
                     }
                 });
                 self.switcher_settle();
+                // Super pressed or let go alone: the dock's number pills come or go (E8.3).
+                if self.super_tap.down() != super_down {
+                    self.schedule_redraw();
+                }
                 // A lone Super tap (its release goes on to the app, which saw the press).
                 if std::mem::take(&mut self.super_tap.fired) && self.config.app_drawer.super_tap && !inhibited && !self.locked() && self.alert.is_none() {
                     self.run_action(Action::AppDrawer);

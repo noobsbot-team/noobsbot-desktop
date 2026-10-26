@@ -228,7 +228,7 @@ impl State {
         self.show_space(to);
     }
 
-    /// Super+1…9, or a Space clicked in Mission Control.
+    /// Ctrl+1…9, or a Space clicked in Mission Control.
     pub fn show_space(&mut self, to: usize) {
         if self.go_to(to, None) {
             let top = self.top_window();

@@ -23,7 +23,7 @@ use smithay::{
 
 use crate::{
     apps::App,
-    config::{self, Dock},
+    config::{self, Dock, DockClick, DockMiddle, DockScroll},
     shell::{Row, dock_fx::CLICK_TIME, drawer, launchpad},
     shortcuts::Action,
     state::State,
@@ -367,6 +367,7 @@ impl State {
         match button {
             // A click acts on release, unless it became a drag or a long press (`dock_release`).
             BTN_LEFT => self.dock_ui.drag = Some(Drag { key: item.key, start: location, since: Instant::now(), moved: false, slot: None }),
+            BTN_MIDDLE if self.config.dock.middle == DockMiddle::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             BTN_MIDDLE => self.dock_click(item, true),
             BTN_RIGHT if ctrl => self.dock_settings(),
             BTN_RIGHT => self.dock_open_menu(item.key, &layout, i),
@@ -375,7 +376,7 @@ impl State {
         true
     }
 
-    /// A click on `item`: a builtin's action, else (Plank) a new instance with Ctrl, the middle button or no
+    /// A click on `item`: a builtin's action, else (Plank) a new instance with Ctrl or Shift, the middle button or no
     /// windows, else its windows come forward (`dock_activate`).
     fn dock_click(&mut self, item: Item, new: bool) {
         if let Some(builtin) = Builtin::of(&item.key) {
@@ -428,7 +429,10 @@ impl State {
         }
         let shown = item.windows;
         if self.focused_window().is_some_and(|f| shown.contains(&f)) {
-            return self.minimise(shown);
+            return match self.config.dock.click {
+                DockClick::Toggle => self.minimise(shown),
+                DockClick::Cycle => self.dock_cycle(shown, true),
+            };
         }
         // Bottom first, so their order is kept and the topmost ends on top with focus.
         for window in shown.iter().rev().skip(1) {
@@ -469,6 +473,11 @@ impl State {
             self.schedule_redraw();
             return true;
         }
+        let forward = match self.config.dock.scroll {
+            DockScroll::Off => return true,
+            DockScroll::On => dir > 0.0,
+            DockScroll::Reverse => dir < 0.0,
+        };
         let items = self.dock_items();
         let Some(item) = self.dock_layout(items.len()).and_then(|l| hit(&l, location)).and_then(|i| items.into_iter().nth(i)) else { return true };
         if item.windows.is_empty() {
@@ -481,16 +490,37 @@ impl State {
             return true;
         }
         self.dock_fx.scrolled.insert(item.key.clone(), now);
-        let mut windows = item.windows;
+        self.dock_cycle(item.windows, forward);
+        true
+    }
+
+    /// Focuses the window after (or before) the focused one of `windows`, in the order they opened.
+    fn dock_cycle(&mut self, mut windows: Vec<Window>, forward: bool) {
+        if windows.is_empty() {
+            return;
+        }
         windows.sort_by_key(seen);
         let focused = self.focused_window();
-        let next = windows[cycle(windows.len(), windows.iter().position(|w| Some(w) == focused.as_ref()), dir > 0.0)].clone();
+        let next = windows[cycle(windows.len(), windows.iter().position(|w| Some(w) == focused.as_ref()), forward)].clone();
         if let Some(at) = self.hidden.iter().position(|(w, _)| *w == next) {
             let (_, loc) = self.hidden.remove(at);
             self.set_visible_loc(&next, loc);
         }
         self.focus_window(Some(next), SERIAL_COUNTER.next_serial());
-        true
+    }
+
+    /// Super+n (E8.3): the n-th icon's app comes forward, or its next window if it has focus, or it opens; `new`:
+    /// a new window. A builtin does its action.
+    pub fn dock_app(&mut self, n: usize, new: bool) {
+        let Some(item) = self.dock_items().into_iter().nth(n) else { return };
+        if !new && Builtin::of(&item.key).is_none() && self.focused_window().is_some_and(|f| item.windows.contains(&f)) {
+            self.dock_fx.clicked(item.key.clone());
+            self.dock_cycle(item.windows, true);
+            return self.schedule_redraw();
+        }
+        // Not focused, so `dock_activate` brings it forward rather than minimising it.
+        self.dock_click(item, new);
+        self.schedule_redraw();
     }
 
     /// The pointer moved. Plank's cursor region: the dock's resting area, shrinking to a 1 px strip at the screen
@@ -819,8 +849,8 @@ impl State {
             let items = self.dock_items();
             let same = self.dock_layout(items.len()).and_then(|l| hit(&l, location)).is_some_and(|i| items[i].key == item.key);
             if same && drag.since.elapsed() < LONG_PRESS {
-                let ctrl = self.modifiers().ctrl;
-                self.dock_click(item, ctrl);
+                let mods = self.modifiers();
+                self.dock_click(item, mods.ctrl || mods.shift);
             }
             return self.schedule_redraw();
         }
