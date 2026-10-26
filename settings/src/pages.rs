@@ -211,6 +211,8 @@ pub enum Kind {
     Steps(&'static [(i64, &'static str)]),
     /// A sound from the system's sound theme, with a button that plays it.
     Sound,
+    /// A list of paths, a row each with Remove; with an Add… button that opens the file chooser for this `texts` key.
+    List(Option<&'static str>),
 }
 
 pub struct Setting {
@@ -614,6 +616,15 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Battery, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
+    s(
+        Page::Privacy,
+        "Screen Recording",
+        "privacy.screen_recording",
+        "Allowed to record the screen",
+        "Programs ask the first time; Remove asks again",
+        Kind::List(None),
+    ),
+    s(Page::Privacy, "Screen Recording", "privacy.screen_recording_denied", "Denied", "", Kind::List(None)),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
     s(
         Page::General,
@@ -789,6 +800,8 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
             .align_y(Alignment::Center)
             .into()
         }
+        Kind::List(None) => space().into(),
+        Kind::List(Some(add)) => button(text("Add…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::OpenFile(add)).into(),
         Kind::XkbOption(family, choices) => {
             let options = app.config.str(key);
             let current = crate::xkb::current(options, family);
@@ -968,13 +981,44 @@ fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>,
 fn settings_of<'a>(app: &'a App, filter: impl Fn(&Setting) -> bool) -> Vec<(&'static str, Vec<Element<'a, Message>>)> {
     let mut groups: Vec<(&'static str, Vec<Element<'a, Message>>)> = Vec::new();
     for setting in SETTINGS.iter().filter(|s| filter(s)) {
-        let row = line(app.tokens, setting.label, setting.help, control(app, setting));
+        let mut rows = vec![line(app.tokens, setting.label, setting.help, control(app, setting))];
+        if let Kind::List(add) = setting.kind {
+            rows.extend(list_rows(app, setting.key, add));
+        }
         match groups.last_mut() {
-            Some((group, rows)) if *group == setting.group => rows.push(row),
-            _ => groups.push((setting.group, vec![row])),
+            Some((group, old)) if *group == setting.group => old.extend(rows),
+            _ => groups.push((setting.group, rows)),
         }
     }
     groups
+}
+
+/// A `Kind::List`'s entries under its row, each with Remove; then the path field when Add… found no chooser.
+fn list_rows<'a>(app: &'a App, key: &'static str, add: Option<&'static str>) -> Vec<Element<'a, Message>> {
+    let t = app.tokens;
+    let items = app.config.list(key);
+    let mut rows: Vec<Element<'a, Message>> = items
+        .iter()
+        .map(|&item| {
+            let rest = items.iter().filter(|&&i| i != item).map(|&i| i.to_owned()).collect();
+            let remove = button(text("Remove").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::List(key, rest));
+            line(t, item, "", remove.into())
+        })
+        .collect();
+    if items.is_empty() {
+        rows.push(container(text("None").size(12).color(t.secondary())).padding([8, 12]).into());
+    }
+    if let Some((add, typed)) = add.and_then(|add| Some((add, app.texts.get(add)?))) {
+        let field = text_input("Path", typed)
+            .on_input(move |v| Message::Type(add.into(), v))
+            .on_submit(Message::Submit(add.into()))
+            .size(13)
+            .padding([3, 8])
+            .width(240)
+            .style(t.input(false));
+        rows.push(line(t, "Path", "", field.into()));
+    }
+    rows
 }
 
 pub fn page<'a>(app: &'a App, page: Page) -> Element<'a, Message> {

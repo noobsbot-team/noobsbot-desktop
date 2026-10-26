@@ -61,6 +61,11 @@ impl Config {
         self.get(key).and_then(|v| v.as_float().or(v.as_integer().map(|i| i as f64))).unwrap_or(0.0)
     }
 
+    /// A list of strings, like `privacy.screen_recording`; empty when missing.
+    pub fn list(&self, key: &str) -> Vec<&str> {
+        self.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).collect()).unwrap_or_default()
+    }
+
     /// Every shortcut: the defaults with the user's `[bindings]` merged over them, as the desktop reads them.
     pub fn bindings(&self) -> Vec<(String, String)> {
         let mut all = std::collections::BTreeMap::new();
@@ -407,6 +412,16 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), whole.replace("mode = \"light\"", "mode = \"dark\""));
         assert!(config.output("eDP-1").is_none());
         assert!(config.display_text().trim_start().starts_with("[display]\n#"), "{}", config.display_text());
+    }
+
+    #[test]
+    fn lists_read_and_write() {
+        let path = temp("lists", Some("[privacy]\nscreen_recording = [\"/usr/bin/grim\", 3]\n"));
+        let (mut config, _) = Config::load(path.clone());
+        assert_eq!(config.list("privacy.screen_recording"), ["/usr/bin/grim"]);
+        assert!(config.list("privacy.screen_recording_denied").is_empty());
+        config.set("privacy.screen_recording", ["/usr/bin/grim", "/usr/bin/wf-recorder"].into_iter().collect::<toml_edit::Array>()).unwrap();
+        assert_eq!(Config::load(path).0.list("privacy.screen_recording"), ["/usr/bin/grim", "/usr/bin/wf-recorder"]);
     }
 
     #[test]
