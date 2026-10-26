@@ -58,8 +58,8 @@ pub struct Tween {
     settle: Option<Duration>,
 }
 
-/// The reduce-motion crossfade: critically damped, settled in about 200 ms.
-const FADE: Spring = Spring { response: 0.14, damping: 1.0 };
+/// The reduce-motion crossfade: critically damped, settled in about 150 ms (`anim::CROSSFADE`).
+const FADE: Spring = Spring { response: 0.10, damping: 1.0 };
 
 /// The fastest a fling starts (per second): bounds its overshoot to under 8%.
 const MAX_SPEED: f64 = 3.0;
@@ -964,10 +964,10 @@ mod tests {
     }
 
     #[test]
-    fn reduce_motion_fades_in_about_200_ms_without_overshoot() {
+    fn reduce_motion_fades_in_about_150_ms_without_overshoot() {
         let t0 = Instant::now();
         let fade = Tween { start: t0, ..Tween::eased(0.0, 1.0, true) };
-        assert!(fade.done(t0 + Duration::from_millis(250)) && !fade.done(t0 + Duration::from_millis(150)));
+        assert!(fade.done(t0 + Duration::from_millis(180)) && !fade.done(t0 + Duration::from_millis(120)));
         assert!((0..300).map(|ms| fade.value(t0 + Duration::from_millis(ms))).all(|v| (0.0..=1.0).contains(&v)));
     }
 
