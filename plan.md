@@ -1719,7 +1719,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
-  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space. Done: each display has its own Spaces (`[spaces] per_display`), keys and swipes act on the display under the pointer, Mission Control on every display. Left: dragging a window onto another display's Spaces bar.
+  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space. Done: each display has its own Spaces (`[spaces] per_display`), keys and swipes act on the display under the pointer, Mission Control on every display.
 - ~~Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
   ⚠ on conflicts (today the first match wins silently).~~ Done: Settings ▸ Keyboard ▸ Keyboard Shortcuts…
   (`settings/src/shortcuts.rs`); recording asks the desktop to pass every key through; conflicts are also logged.
