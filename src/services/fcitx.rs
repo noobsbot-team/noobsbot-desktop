@@ -45,6 +45,11 @@ pub async fn read(bus: &Connection) -> Option<Fcitx> {
     Some(Fcitx { methods: label(items, &names), current: proxy.current_input_method().await.ok()? })
 }
 
+/// ibus's engines in the same shape (`[keyboard] input_method = "ibus"`).
+pub fn read_ibus() -> Option<Fcitx> {
+    crate::ibus::read().map(|(methods, current)| Fcitx { methods, current })
+}
+
 /// Each group item with its display name (the unique name if fcitx5 doesn't list it).
 fn label(items: Vec<(String, String)>, available: &[Method]) -> Vec<(String, String)> {
     items
