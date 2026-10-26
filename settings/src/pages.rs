@@ -216,7 +216,6 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Keyboard, "Input", "keyboard.layout", "Layouts", "Like us,np; empty = the system's", Kind::Text("System")),
     s(Page::Keyboard, "Input", "keyboard.variant", "Variants", "", Kind::Text("None")),
     s(Page::Keyboard, "Input", "keyboard.options", "Options", "Like caps:escape", Kind::Text("None")),
-    s(Page::Keyboard, "Input", "keyboard.mac_keys", "Super acts as Cmd", "Super+C, V, X, Z … reach apps as Ctrl+…", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.tap_to_click", "Tap to click", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.natural_scroll", "Natural scrolling", "Content follows your fingers", Kind::Toggle),
     s(Page::DateTime, "", "clock.timezone", "Time zone", "Like Asia/Kathmandu; empty = the system's", Kind::Text("System")),

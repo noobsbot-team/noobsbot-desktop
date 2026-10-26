@@ -34,7 +34,7 @@ reduce_motion = false
 layout = ""
 variant = ""
 options = ""
-# Super acts as Cmd, like macOS: Super+C/V/X/Z/A/S/F/T/R/L/W/N/1…9 reach apps as Ctrl+…
+# Super acts as Cmd, like macOS: Super+C/V/X/Z/A/S/F/T/R/L/W/N/1…9 reach apps as Ctrl+… (plan E1.6, not applied yet).
 mac_keys = false
 
 [touchpad]
