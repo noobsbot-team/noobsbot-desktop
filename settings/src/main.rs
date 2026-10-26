@@ -441,6 +441,15 @@ impl App {
                     }
                 } else if let Some(path) = key.strip_prefix(system::RENAME) {
                     return Task::perform(system::rename_device(path.to_owned(), value.trim().to_owned()), Message::Acted);
+                } else if let Some(pages::Kind::Degrees(limit)) = pages::setting(&key).map(|s| s.kind) {
+                    // A city wins over coordinates, so typed coordinates clear it.
+                    match pages::parse_degrees(&value, limit) {
+                        Some(degrees) => {
+                            let changes = [(key.as_str(), degrees.into()), ("weather.city", "".into())];
+                            self.error = self.config.set_all(changes).err().map(|err| format!("Couldn't save {key}: {err}"));
+                        }
+                        None => self.error = Some(format!("“{}” isn't a number from −{limit} to {limit}", value.trim())),
+                    }
                 } else if let Some(name) = key.strip_prefix("display.custom_scale.") {
                     match pages::parse_scale(&value) {
                         Some(scale) => self.change_outputs(vec![(name.to_owned(), "scale", scale.into())], false),
