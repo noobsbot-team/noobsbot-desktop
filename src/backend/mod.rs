@@ -41,8 +41,8 @@ pub struct Views {
     /// The banner sliding in, drawn apart from the stack under it.
     pub entering: NotificationViews,
     pub menu: MenuPopover,
-    /// The open menu's submenu.
-    pub submenu: MenuPopover,
+    /// The open menu's submenus, outermost first.
+    pub submenu: Vec<MenuPopover>,
     pub osd: OsdPopover,
     /// Displays ▸ Identify's names, one per display.
     pub identify: IdentifyLabels,
@@ -85,7 +85,7 @@ impl Views {
             notifications: NotificationViews::default(),
             entering: NotificationViews::default(),
             menu: MenuPopover::default(),
-            submenu: MenuPopover::default(),
+            submenu: Vec::new(),
             osd: OsdPopover::default(),
             identify: IdentifyLabels::default(),
             control: ControlCenter::default(),
