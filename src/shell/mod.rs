@@ -63,6 +63,8 @@ pub enum Popup {
     },
     Menu(Menu),
     Control,
+    /// One Control Center module under menu bar status item i: Wi-Fi, Bluetooth or Sound.
+    Module(control::Module, usize),
 }
 
 impl Popup {
@@ -75,7 +77,7 @@ impl Popup {
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
             Popup::Menu(Menu::Overflow) => BarItem::Overflow,
             Popup::Menu(Menu::Input) => BarItem::Input,
-            Popup::Menu(Menu::Battery(i) | Menu::Network(i)) => BarItem::Status(i),
+            Popup::Menu(Menu::Battery(i)) | Popup::Module(_, i) => BarItem::Status(i),
             Popup::Menu(Menu::Dock | Menu::Desktop | Menu::Drawer | Menu::Window) => return None,
             Popup::Control => BarItem::ControlCenter,
         })
@@ -96,9 +98,17 @@ pub fn aims_at(from: Point<f64, Logical>, to: Point<f64, Logical>, sub: Rect) ->
     to != from && !((d1 < 0.0 || d2 < 0.0 || d3 < 0.0) && (d1 > 0.0 || d2 > 0.0 || d3 > 0.0))
 }
 
-/// What a click on `item` opens.
-// ponytail: the status items' own menus (Wi-Fi list, Bluetooth devices) come with module expansion; until then they
-// open nothing. The battery's opens in `open_bar_item`, so sliding along the bar and Left/Right skip it.
+/// What a click on status item `i` of `kind` opens: its Control Center module, or the battery menu.
+pub fn status_popup(kind: menubar::Kind, i: usize) -> Popup {
+    match kind {
+        menubar::Kind::Network => Popup::Module(control::Module::Wifi, i),
+        menubar::Kind::Bluetooth => Popup::Module(control::Module::Bluetooth, i),
+        menubar::Kind::Volume => Popup::Module(control::Module::Sound, i),
+        menubar::Kind::Battery => Popup::Menu(Menu::Battery(i)),
+    }
+}
+
+/// What a click on `item` opens; a status item's needs its kind (`State::bar_popup`).
 fn popup_for(item: BarItem) -> Option<Popup> {
     match item {
         BarItem::Logo => Some(Popup::Menu(Menu::Logo)),
@@ -129,8 +139,6 @@ pub enum Menu {
     Input,
     /// The battery's menu, from `Content::status[i]`: `State::battery_menu_rows`.
     Battery(usize),
-    /// The network item's menu behind a captive portal, from `Content::status[i]`: `network_rows`.
-    Network(usize),
     /// A desktop icon's or the desktop's right-click menu (E7.2): `State::desktop_menu_rows`.
     Desktop,
     /// An app's right-click menu in the app drawer: `State::drawer_menu_rows`.
@@ -241,18 +249,8 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool, 
         ],
         Menu::Tray(_) => tray_rows(tray, 0),
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
-        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow | Menu::Battery(_) | Menu::Network(_) => Vec::new(),
+        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow | Menu::Battery(_) => Vec::new(),
     }
-}
-
-/// The network item's menu behind a captive portal at `portal` (the check URL, which leads to the sign-in page).
-pub fn network_rows(portal: Option<&str>) -> Vec<Option<Row>> {
-    let row = |label: &str, action| Some(Row { label: label.to_owned(), shortcut: "", action, sub: Vec::new() });
-    vec![
-        row("Sign in to network…", portal.map(|url| Action::Spawn(format!("xdg-open {url}")))),
-        None,
-        row("Wi-Fi Settings…", Some(Action::Spawn("noobsbot-desktop-settings --page wi-fi".into()))),
-    ]
 }
 
 /// The logo menu's Recent Items: recent `apps` (name, desktop-file id) and `docs` (name, URI), then Clear Menu.
@@ -489,7 +487,7 @@ impl State {
             Popup::Notifications { .. } => self.center_layout().map(|c| c.rect),
             // A menu's width follows its text, so the last frame's layout is the one to hit.
             Popup::Menu(_) => self.backend.as_ref()?.menu.rect(),
-            Popup::Control => Some(self.control_layout().rect),
+            Popup::Control | Popup::Module(..) => Some(self.control_layout().rect),
         }
     }
 
@@ -573,20 +571,27 @@ impl State {
         taken
     }
 
+    /// What a click on bar `item` opens.
+    fn bar_popup(&self, item: BarItem) -> Option<Popup> {
+        match item {
+            BarItem::Status(i) => Some(status_popup(self.menu_bar()?.status.get(i)?.kind, i)),
+            _ => popup_for(item),
+        }
+    }
+
     /// Opens bar `item`'s popup; a tray item's menu is asked for first (`tray_press`).
     fn open_bar_item(&mut self, item: BarItem, location: Point<f64, Logical>, secondary: bool) {
-        self.popup = popup_for(item);
+        self.popup = self.bar_popup(item);
         match item {
             BarItem::Tray(i) => self.tray_press(i, location, secondary),
             // fcitx5 tells nobody when its method changes: ask now.
             BarItem::Input => self.services.send(crate::services::Command::FcitxRead),
             BarItem::ControlCenter => self.services.send(crate::services::Command::Inhibitors),
-            BarItem::Status(i) if self.menu_bar().is_some_and(|c| c.status.get(i).is_some_and(|s| menubar::is_battery(s.symbol))) => {
-                self.popup = Some(Popup::Menu(Menu::Battery(i)));
-            }
-            // Only the network's item has a badge, and only behind a captive portal; otherwise it opens nothing.
-            BarItem::Status(i) if self.menu_bar().is_some_and(|c| c.status.get(i).is_some_and(|s| s.badge)) => {
-                self.popup = Some(Popup::Menu(Menu::Network(i)));
+            BarItem::Status(_) => {
+                self.control_scroll = 0.0;
+                if matches!(self.popup, Some(Popup::Module(control::Module::Wifi, _))) {
+                    self.services.send(crate::services::Command::WifiScan);
+                }
             }
             _ => {}
         }
@@ -614,7 +619,7 @@ impl State {
                     self.menu_hover(menu, i);
                 }
             }
-            Popup::Control => self.control_press(location),
+            Popup::Control | Popup::Module(..) => self.control_press(location),
         }
     }
 
@@ -631,7 +636,7 @@ impl State {
         let (from, to) = (self.to_popup(from), self.to_popup(to));
         let bar = self.popup_output().and_then(|o| self.bar_view(&o));
         let Some(backend) = self.backend.as_ref() else { return };
-        if let Some(next) = bar.and_then(|b| b.hit(to)).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(popup_for) {
+        if let Some(next) = bar.and_then(|b| b.hit(to)).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(|item| self.bar_popup(item)) {
             self.popup = Some(next);
             self.schedule_redraw();
         } else if let Popup::Menu(menu) = open {
@@ -665,7 +670,6 @@ impl State {
             Menu::Window => self.window_menu_rows(),
             Menu::Overflow => self.overflow_menu_rows(),
             Menu::Battery(_) => self.battery_menu_rows(),
-            Menu::Network(_) => network_rows(self.network.as_ref().and_then(|n| n.portal.as_deref())),
             _ => menu_rows(menu, "", tray, self.update_ready(), self.recent_menu.as_deref().unwrap_or_default()),
         }
     }
@@ -1016,10 +1020,13 @@ mod tests {
     }
 
     #[test]
-    fn portal_menu_opens_the_check_url() {
-        let rows = network_rows(Some("http://check.example/"));
-        assert_eq!(rows[0].as_ref().unwrap().action, Some(Action::Spawn("xdg-open http://check.example/".into())));
-        assert_eq!(network_rows(None)[0].as_ref().unwrap().action, None);
+    fn status_items_open_their_module() {
+        use menubar::Kind;
+        assert_eq!(status_popup(Kind::Network, 0), Popup::Module(control::Module::Wifi, 0));
+        assert_eq!(status_popup(Kind::Bluetooth, 1), Popup::Module(control::Module::Bluetooth, 1));
+        assert_eq!(status_popup(Kind::Volume, 3), Popup::Module(control::Module::Sound, 3));
+        assert_eq!(status_popup(Kind::Battery, 2), Popup::Menu(Menu::Battery(2)));
+        assert_eq!(Popup::Module(control::Module::Sound, 3).item(), Some(BarItem::Status(3)));
     }
 
     #[test]

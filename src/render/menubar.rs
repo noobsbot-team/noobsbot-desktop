@@ -91,8 +91,18 @@ pub enum BarItem {
     Clock,
 }
 
+/// Which status item it is: what a click on it opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    Network,
+    Bluetooth,
+    Battery,
+    Volume,
+}
+
 #[derive(Debug, PartialEq)]
 pub struct Item {
+    pub kind: Kind,
     pub symbol: Symbol,
     /// Shown left of the symbol (the battery percentage).
     pub text: Option<String>,
@@ -102,7 +112,7 @@ pub struct Item {
 
 /// The network's item: its symbol, with "!" behind a captive portal.
 pub fn network(network: &Network) -> Item {
-    Item { symbol: wifi(network), text: None, badge: network.portal.is_some() }
+    Item { kind: Kind::Network, symbol: wifi(network), text: None, badge: network.portal.is_some() }
 }
 
 pub fn wifi(network: &Network) -> Symbol {
@@ -133,12 +143,7 @@ pub fn battery(battery: &Battery, percent: bool) -> Item {
         13.. => Symbol::BatteryLow,
         _ => Symbol::BatteryEmpty,
     };
-    Item { symbol, text: percent.then(|| format!("{}%", battery.percent)), badge: false }
-}
-
-/// `symbol` is the battery's: its item opens the battery menu.
-pub fn is_battery(symbol: Symbol) -> bool {
-    matches!(symbol, Symbol::BatteryFull | Symbol::BatteryHigh | Symbol::BatteryMedium | Symbol::BatteryLow | Symbol::BatteryEmpty | Symbol::BatteryCharging)
+    Item { kind: Kind::Battery, symbol, text: percent.then(|| format!("{}%", battery.percent)), badge: false }
 }
 
 pub fn volume(sound: &Sound) -> Symbol {
@@ -379,10 +384,10 @@ mod tests {
         let mut cafe = Network { wifi_enabled: true, link: Link::Wifi { ssid: "Cafe".into(), bars: 2 }, networks: Vec::new(), vpns: Vec::new(), portal: None };
         assert!(!network(&cafe).badge);
         cafe.portal = Some("http://check.example/".into());
-        assert_eq!(network(&cafe), Item { symbol: Symbol::WifiMedium, text: None, badge: true });
+        assert_eq!(network(&cafe), Item { kind: Kind::Network, symbol: Symbol::WifiMedium, text: None, badge: true });
 
         let battery_of = |percent, charging| battery(&Battery { percent, charging, on_battery: !charging, minutes_left: None }, true);
-        assert_eq!(battery_of(85, false), Item { symbol: Symbol::BatteryHigh, text: Some("85%".into()), badge: false });
+        assert_eq!(battery_of(85, false), Item { kind: Kind::Battery, symbol: Symbol::BatteryHigh, text: Some("85%".into()), badge: false });
         assert_eq!(battery_of(100, false).symbol, Symbol::BatteryFull);
         assert_eq!(battery_of(5, false).symbol, Symbol::BatteryEmpty);
         assert_eq!(battery_of(40, true).symbol, Symbol::BatteryCharging);
