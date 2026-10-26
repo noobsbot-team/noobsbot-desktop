@@ -231,8 +231,11 @@ pub enum Builtin {
     AppDrawer,
     /// The screenshot toolbar. Spectacle's entry runs it too: Spectacle refuses to start outside its own compositor.
     Screenshot,
+    /// The Trash (E8.8): always last, after a separator, never pinned or dragged (`[dock] show_trash`).
+    Trash,
 }
 
+pub const TRASH_KEY: &str = "trash";
 pub const SCREENSHOT_KEY: &str = "screenshot";
 /// Screenshot apps that can't work here, by desktop-file id.
 const SCREENSHOT_APPS: [&str; 2] = ["org.kde.spectacle", "spectacle"];
@@ -243,6 +246,7 @@ impl Builtin {
             launchpad::DOCK_KEY => Some(Self::Launchpad),
             drawer::DOCK_KEY => Some(Self::AppDrawer),
             SCREENSHOT_KEY => Some(Self::Screenshot),
+            TRASH_KEY => Some(Self::Trash),
             _ if SCREENSHOT_APPS.contains(&key) => Some(Self::Screenshot),
             _ => None,
         }
@@ -253,6 +257,7 @@ impl Builtin {
             Self::Launchpad => launchpad::ICON,
             Self::AppDrawer => drawer::ICON,
             Self::Screenshot => "spectacle",
+            Self::Trash => super::trash::icon(),
         }
     }
 
@@ -261,6 +266,7 @@ impl Builtin {
             Self::Launchpad => "Launchpad",
             Self::AppDrawer => "Applications",
             Self::Screenshot => "Screenshot",
+            Self::Trash => "Trash",
         }
     }
 }
@@ -380,6 +386,9 @@ impl State {
         let dock = &self.config.dock;
         let mut items: Vec<Item> = Vec::new();
         for name in &dock.items {
+            if name == TRASH_KEY {
+                continue;
+            }
             if Builtin::of(name).is_some() && !items.iter().any(|i| i.key == *name) {
                 items.push(Item { key: name.clone(), app: self.apps.find(name).cloned(), windows: Vec::new() });
             } else if let Some(app) = self.apps.find(name).filter(|a| !items.iter().any(|i| i.key == a.id)) {
@@ -411,6 +420,9 @@ impl State {
                 }
             }
         }
+        if dock.show_trash {
+            items.push(Item { key: TRASH_KEY.to_owned(), app: None, windows: Vec::new() });
+        }
         self.dock_ui.preview(items)
     }
 
@@ -423,7 +435,7 @@ impl State {
         let eased = if self.dock_pointer.is_some() { 1.0 } else { self.dock_fx.zoom.value(now) * (1.0 - self.dock_fx.hide.value(now)) };
         let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
         let pointer = self.dock_pointer.or(self.dock_fx.zoom_at);
-        let tiles = items.iter().filter(|i| i.is_tile()).count();
+        let tiles = items.iter().filter(|i| i.is_tile() || i.key == TRASH_KEY).count();
         Some(layout(items.len(), tiles, size, i32::from(dock.icon_size), zoom, eased, pointer))
     }
 
@@ -592,6 +604,9 @@ impl State {
                 self.toggle_drawer(at.map_or(drawer::Anchor::Corner, drawer::Anchor::Dock));
             }
             Builtin::Screenshot => self.screenshot(crate::shell::screenshot::Start::Toolbar),
+            Builtin::Trash => {
+                self.spawn(&["xdg-open".to_owned(), "trash:///".to_owned()]);
+            }
         }
     }
 
@@ -847,9 +862,13 @@ pub enum Command {
     Close,
     /// The app's n-th desktop action.
     Action(usize),
+    /// The Trash's Open: what a click does.
+    Open,
+    /// Asks, then erases everything in the Trash.
+    EmptyTrash,
 }
 
-/// The menu in macOS's order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
+/// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
 /// actions, the Options section (Keep in Dock, `pinned` `None` when it can't be pinned; Open at Login, `login` `None`
 /// without a desktop file, which also hides Show in Files), then Close (Close All with several windows).
 // ponytail: Options is an inline section, since dock menu rows have no submenus yet.
@@ -861,7 +880,8 @@ pub fn menu_rows(
     pinned: Option<bool>,
     login: Option<bool>,
 ) -> Vec<Option<Row>> {
-    let row = |label: &str, shortcut, command: Option<Command>| Some(Row { label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
+    let row =
+        |label: &str, shortcut, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
     let tick = |on: bool| if on { "✓" } else { "" };
     let windows = titles.iter().enumerate().map(|(i, t)| row(t, "", (active != Some(i)).then_some(Command::Window(i)))).collect();
     let recent = recent.iter().enumerate().map(|(i, r)| row(r, "", Some(Command::Recent(i)))).collect();
@@ -888,9 +908,9 @@ pub fn menu_rows(
     rows
 }
 
-/// The `href`s in a `recently-used.xbel` whose bookmark names one of `apps` (any case), most recently used first.
+/// Each bookmark in a `recently-used.xbel`: its `href` and the apps that used it, with when (ISO 8601, UTC).
 // ponytail: a string scan, not an XML parser; enough for the files GLib and KDE write.
-pub fn recent_files(xbel: &str, apps: &[&str]) -> Vec<String> {
+fn bookmarks(xbel: &str) -> Vec<(String, Vec<(String, String)>)> {
     let attr = |tag: &str, key: &str| -> Option<String> {
         let start = tag.find(&format!(" {key}=\""))? + key.len() + 3;
         let value = &tag[start..start + tag[start..].find('"')?];
@@ -898,21 +918,61 @@ pub fn recent_files(xbel: &str, apps: &[&str]) -> Vec<String> {
     };
     // The tag up to `>`, with a space before its first attribute, which the split ate.
     let head = |s: &str| format!(" {}", &s[..s.find('>').unwrap_or(s.len())]);
-    let mut found: Vec<(String, String)> = Vec::new();
+    let mut found = Vec::new();
     for bookmark in xbel.split("<bookmark ").skip(1) {
         let Some(href) = attr(&head(bookmark), "href") else { continue };
-        let used = bookmark
+        let apps = bookmark
             .split("<bookmark:application ")
             .skip(1)
             .map(head)
-            .filter(|a| attr(a, "name").is_some_and(|n| apps.iter().any(|app| app.eq_ignore_ascii_case(&n))));
-        if let Some(at) = used.map(|a| attr(&a, "modified").unwrap_or_default()).max() {
-            found.push((at, href));
-        }
+            .filter_map(|a| Some((attr(&a, "name")?, attr(&a, "modified").unwrap_or_default())))
+            .collect();
+        found.push((href, apps));
     }
+    found
+}
+
+/// The `href`s in a `recently-used.xbel` whose bookmark names one of `apps` (any case), most recently used first.
+pub fn recent_files(xbel: &str, apps: &[&str]) -> Vec<String> {
+    let mut found: Vec<(String, String)> = bookmarks(xbel)
+        .into_iter()
+        .filter_map(|(href, used)| {
+            let at = used.into_iter().filter(|(n, _)| apps.iter().any(|app| app.eq_ignore_ascii_case(n))).map(|(_, at)| at).max()?;
+            Some((at, href))
+        })
+        .collect();
     // ISO 8601 times in UTC sort as text.
     found.sort_by(|a, b| b.0.cmp(&a.0));
     found.into_iter().map(|(_, href)| href).collect()
+}
+
+/// Every app named in a `recently-used.xbel` and every file in it, each most recently used first.
+pub fn recent_items(xbel: &str) -> (Vec<String>, Vec<String>) {
+    let marks = bookmarks(xbel);
+    let mut files: Vec<(String, String)> =
+        marks.iter().map(|(href, used)| (used.iter().map(|(_, at)| at.clone()).max().unwrap_or_default(), href.clone())).collect();
+    files.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut apps: Vec<(String, String)> = marks.into_iter().flat_map(|(_, used)| used).map(|(name, at)| (at, name)).collect();
+    apps.sort_by(|a, b| b.cmp(a));
+    let mut names: Vec<String> = Vec::new();
+    for (_, name) in apps {
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    (names, files.into_iter().map(|(_, href)| href).collect())
+}
+
+/// `~/.local/share/recently-used.xbel`.
+pub fn recent_path() -> std::path::PathBuf {
+    config::xdg_dir("XDG_DATA_HOME", ".local/share").join("recently-used.xbel")
+}
+
+/// A `recently-used.xbel` with every bookmark gone (Clear Menu); `None` if it has no `<xbel>` to keep.
+pub fn cleared(xbel: &str) -> Option<String> {
+    let start = xbel.find("<xbel")?;
+    let end = start + xbel[start..].find('>')? + 1;
+    Some(format!("{}\n</xbel>\n", &xbel[..end]))
 }
 
 /// `~/.config/autostart/<id>.desktop`.
@@ -961,7 +1021,11 @@ pub fn uri_list(text: &str) -> Vec<String> {
 impl State {
     /// The item key a `[dock] items` entry pins: a builtin, or the app it names (`None`: not installed).
     fn pin_key(&self, name: &str) -> Option<String> {
-        if Builtin::of(name).is_some() { Some(name.to_owned()) } else { self.apps.find(name).map(|a| a.id.clone()) }
+        match Builtin::of(name) {
+            Some(Builtin::Trash) => None,
+            Some(_) => Some(name.to_owned()),
+            None => self.apps.find(name).map(|a| a.id.clone()),
+        }
     }
 
     /// The pinned icons on the dock: (index in `[dock] items`, item key), left to right.
@@ -982,6 +1046,12 @@ impl State {
     /// The open dock menu's rows (empty without one).
     pub fn dock_menu_rows(&self) -> Vec<Option<Row>> {
         let Some(item) = self.dock_ui.menu.as_ref().and_then(|(key, _)| self.dock_item(key)) else { return Vec::new() };
+        if item.key == TRASH_KEY {
+            let row =
+                |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Dock) });
+            let full = super::trash::is_full(&super::trash::dir());
+            return vec![row("Open", Some(Command::Open)), None, row("Empty Trash", full.then_some(Command::EmptyTrash))];
+        }
         let name = item.title().to_owned();
         let titles: Vec<String> = item
             .windows
@@ -1012,7 +1082,7 @@ impl State {
         let app = self.apps.find(&key).filter(|a| Builtin::of(&key).is_none() && !a.path.as_os_str().is_empty());
         self.dock_ui.login = app.map(|a| std::fs::read_to_string(autostart_path(&a.id)).is_ok_and(|t| !t.contains("Hidden=true")));
         self.dock_ui.recent = app.map_or_else(Vec::new, |a| {
-            let xbel = std::fs::read_to_string(config::xdg_dir("XDG_DATA_HOME", ".local/share").join("recently-used.xbel")).unwrap_or_default();
+            let xbel = std::fs::read_to_string(recent_path()).unwrap_or_default();
             let program = a.program();
             let files = recent_files(&xbel, &[&a.id, &a.name, &program]);
             files.into_iter().filter(|u| crate::apps::file_path(u).is_none_or(|p| std::path::Path::new(&p).exists())).take(5).collect()
@@ -1082,6 +1152,8 @@ impl State {
                 self.spawn(&["sh", "-c", script, "sh", &uri, &dir].map(String::from));
             }
             Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
+            Command::Open => self.dock_click(item, false),
+            Command::EmptyTrash => self.open_ask(crate::shell::alert::Kind::EmptyTrash),
             Command::Action(i) => {
                 let Some(app) = item.app else { return };
                 let Some((_, exec)) = crate::apps::actions(&app.id).into_iter().nth(i) else { return };
@@ -1129,7 +1201,7 @@ impl State {
     fn dock_drag_motion(&mut self, to: Point<f64, Logical>) {
         let Some(drag) = self.dock_ui.drag.as_ref() else { return };
         let (start, key) = (drag.start, drag.key.clone());
-        if self.config.dock.lock_items || key.starts_with(TILE) || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
+        if self.config.dock.lock_items || key.starts_with(TILE) || key == TRASH_KEY || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
             return;
         }
         let Some(layout) = self.dock_layout(&self.dock_items()) else { return };
@@ -1191,8 +1263,8 @@ impl State {
         });
     }
 
-    /// An app's drag ended over no window: on the dock, `.desktop` files are pinned where they land (not while items
-    /// are locked), other files open with the app they land on.
+    /// An app's drag ended over no window: on the Trash, files are trashed; elsewhere on the dock, `.desktop` files
+    /// are pinned where they land (not while items are locked), other files open with the app they land on.
     // ponytail: only `.desktop` files of installed apps (in an `applications/` dir) pin; others are ignored.
     pub fn dock_drop(&mut self) {
         let Some(location) = self.seat.get_pointer().map(|p| self.to_output(p.current_location())) else { return };
@@ -1203,6 +1275,16 @@ impl State {
         }
         let items = self.dock_items();
         let Some(layout) = self.dock_layout(&items) else { return };
+        if hit(&layout, location).is_some_and(|i| items[i].key == TRASH_KEY) {
+            let paths: Vec<String> = uris.iter().filter_map(|u| crate::apps::file_path(u)).collect();
+            let date = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+            let _ = std::thread::Builder::new().name("trash".into()).spawn(move || {
+                for path in paths {
+                    let _ = super::trash::trash(&super::trash::dir(), path.as_ref(), &date).inspect_err(|err| tracing::warn!("trash: {path}: {err}"));
+                }
+            });
+            return;
+        }
         if uris.iter().all(|u| u.ends_with(".desktop")) {
             if self.config.dock.lock_items {
                 return;
@@ -1430,6 +1512,15 @@ mod tests {
         assert_eq!(recent_files(xbel, &["GEDIT"]), ["file:///home/u/a%20b&c.txt"]);
         assert!(recent_files(xbel, &["dolphin"]).is_empty());
         assert!(recent_files("", &["kate"]).is_empty());
+
+        let (apps, files) = recent_items(xbel);
+        assert_eq!(apps, ["gwenview", "gedit", "org.kde.kate", "Kate"]);
+        assert_eq!(files, ["file:///home/u/pic.png", "file:///home/u/a%20b&c.txt", "file:///home/u/old.txt"]);
+
+        let empty = cleared(xbel).unwrap();
+        assert!(empty.starts_with("<?xml") && empty.ends_with("</xbel>\n") && !empty.contains("<bookmark "));
+        assert_eq!(recent_items(&empty), (Vec::new(), Vec::new()));
+        assert_eq!(cleared("garbage"), None);
     }
 
     #[test]

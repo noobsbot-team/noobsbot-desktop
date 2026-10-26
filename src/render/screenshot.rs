@@ -138,7 +138,7 @@ fn draw_selection(ui: &mut Ui, shot: &Shot, output: Size<i32, Logical>) {
             ui.glass.push(ui.shaders.ring(sel, 0.0, 1, [1.0, 1.0, 1.0, 0.9], ui.scale));
             size_label(ui, sel, output);
         }
-        // The toolbar's region mode before a drag: the whole screen dimmed, as on macOS.
+        // The toolbar's region mode before a drag: the whole screen dimmed.
         (Mode::Region, None) if shot.toolbar => ui.shape(Rectangle::from_size(output), dim, 0.0),
         (Mode::Window, _) => {
             if let Some(window) = shot.window {

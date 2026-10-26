@@ -55,7 +55,7 @@ pub fn move_to(rect: Rect, area: Rect, others: &[Rect], magnetic: bool) -> Point
     (x, y).into()
 }
 
-/// Where a window dragged against a screen edge tiles (macOS 15): its half at a side, its quarter at a side's top or
+/// Where a window dragged against a screen edge tiles: its half at a side, its quarter at a side's top or
 /// bottom quarter, the whole work area (zoom) at the top edge or on the menu bar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tile {

@@ -212,7 +212,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   events), the month calendar, the weather (if you turn it on) and battery levels.
 - **Dock:** pinned apps and running apps, with dots for open apps, badges, magnification under the pointer and
   right-click menus. Minimised windows sit as thumbnail tiles after a separator at the right end (or go into their
-  app's icon with `[dock] minimise_into_icon`); `[dock] minimise_effect = "genie"` swaps the shrink for a genie. By default it hides when a window of the app you're using overlaps it (Plank's "intelligent"
+  app's icon with `[dock] minimise_into_icon`); `[dock] minimise_effect = "genie"` swaps the shrink for a genie. The Trash sits at the far right (`[dock] show_trash`):
+  click to open it, drop files on it to trash them, right-click to empty it. By default it hides when a window of the app you're using overlaps it (Plank's "intelligent"
   mode); touch the bottom edge to bring it back, or pick another mode with `[dock] hide`. On first start your Plank
   dock is imported; `noobsbot-desktop dock --import-plank` does it again later.
 - **Spotlight (Super+Space):** apps and a calculator. Arrow keys select, Return opens, Esc closes.
@@ -319,12 +320,14 @@ doesn't understand is skipped and reported in the journal.
 | `[hot_corners]` | an action for each screen corner (off by default) |
 | `[display]` | which GPU draws the desktop, scale for every screen |
 | `[[display.outputs]]` | one screen by connector name: on or off, resolution, refresh rate, scale, rotation, position, which shows the menu bar and Dock (System Settings › Displays asks to keep or revert) |
-| `[windows]` | move key, magnetic edges, snapping, double-click title bar, number of Spaces |
+| `[windows]` | move key, magnetic edges, snapping, double-click title bar, number of Spaces, reopen windows at login |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week |
+| `[menu_bar]` | hide the menu bar until the pointer reaches the top edge |
 | `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions |
 | `[idle]` | when to dim, turn the screen off and sleep (battery and AC), locking |
 | `[privacy]` | which programs may record the screen |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
+| `[widgets]` | order of other apps' widgets in Notification Center, and which go on the desktop instead |
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
 | `[desktop]` | desktop icons on or off, mounted drives among them (`show_drives`) |
@@ -433,6 +436,29 @@ cargo fmt --all --check
 - Commits follow [Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, …), which
   [release-plz](https://release-plz.dev) uses to pick the next version and write the changelog. Merging its release
   pull request tags the version and builds the signed release.
+
+### Widgets from your own apps
+Any process can show a widget in Notification Center or on the desktop over the session bus; nothing is loaded into
+the desktop itself. Call `Set(id, content)` on `org.noobsbot.Desktop` `/org/noobsbot/Desktop`, interface
+`org.noobsbot.Desktop.Widgets`, again with the same id to update it, and `Remove(id)` to take it away. `content` is an
+`a{sv}`; every key is optional:
+
+| Key | Type | |
+|---|---|---|
+| `title` | `s` | the bold first line |
+| `lines` | `as` | up to four lines of text |
+| `icon` | `s` | any symbol by its file name in `assets/phosphor/regular/`, e.g. `cloud-sun`, `cpu`, `music-note` |
+| `progress` | `d` | 0–1, a bar along the bottom |
+| `size` | `s` | `small` (half width, the default) or `medium` (full width) |
+
+```sh
+busctl --user call org.noobsbot.Desktop /org/noobsbot/Desktop org.noobsbot.Desktop.Widgets Set 'sa{sv}' build 4 \
+  title s "Nightly build" lines as 2 "main · 3 of 5 steps" "about 2 min left" icon s gear progress d 0.6
+```
+A widget belongs to the connection that set it and goes when that connection leaves the bus, so the one above shows
+only for a moment (`busctl` exits); a real app keeps its connection open. A click sends the `Activated(id)` signal
+to the owner alone. `[widgets]` in `config.toml` sets the order in Notification Center and puts chosen ids on the
+desktop instead. Each app may have up to eight widgets.
 
 ## Known limits
 - Most Linux apps don't publish their menus, so the menu bar's app menu has only About, Hide and Quit.
