@@ -146,6 +146,66 @@ impl Look {
     }
 }
 
+fn smoothstep(a: f64, b: f64, x: f64) -> f64 {
+    if b - a < 1e-6 {
+        return if x >= b { 1.0 } else { 0.0 };
+    }
+    let t = ((x - a) / (b - a)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The genie minimise (E5.5) at `q` (0: `area` as it is, 1: gone into `target`): the bottom narrows towards the
+/// target first, then the rest follows it down. Each screen row shows one source row, squeezed. `genie.frag` does
+/// the same maths per pixel.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Genie {
+    pub area: Rectangle<f64, Logical>,
+    pub target: Rectangle<f64, Logical>,
+    pub q: f64,
+}
+
+impl Genie {
+    /// How far the narrowing has got (0..1), and the screen heights of the top and bottom rows.
+    pub fn span(self) -> (f64, f64, f64) {
+        let (a, t, q) = (self.area, self.target, self.q);
+        let lerp = |x: f64, y: f64, k: f64| x + (y - x) * k;
+        let top = lerp(a.loc.y, t.loc.y, smoothstep(0.3, 1.0, q));
+        // Leads the top all the way, so the rows never fold over.
+        let bottom = lerp(a.loc.y + a.size.h, t.loc.y + t.size.h, smoothstep(0.2, 0.85, q));
+        (smoothstep(0.0, 0.45, q), top, bottom)
+    }
+
+    /// Left and right edges at screen height `y`: the narrower the closer to the target's top.
+    pub fn edges(self, y: f64) -> (f64, f64) {
+        let (a, t) = (self.area, self.target);
+        let m = self.span().0 * smoothstep(a.loc.y, t.loc.y, y);
+        (a.loc.x + (t.loc.x - a.loc.x) * m, a.loc.x + a.size.w + (t.loc.x + t.size.w - a.loc.x - a.size.w) * m)
+    }
+
+    /// Everything it covers: the edges move monotonically down the rows, so the top and bottom rows bound it.
+    pub fn bounds(self) -> Rectangle<f64, Logical> {
+        let (_, top, bottom) = self.span();
+        let ((l0, r0), (l1, r1)) = (self.edges(top), self.edges(bottom));
+        let (left, right) = (l0.min(l1), r0.max(r1));
+        Rectangle::new((left, top).into(), (right - left, bottom - top).into())
+    }
+}
+
+/// A genie playing from `q` = `from` to `to`, into `target` (where the window frame ends up).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GenieRun {
+    pub target: Rectangle<f64, Logical>,
+    pub from: f64,
+    pub to: f64,
+}
+
+impl GenieRun {
+    /// Its `q` at progress `p`.
+    pub fn at(self, p: f64) -> f64 {
+        self.from + (self.to - self.from) * p
+    }
+}
+
 /// How a shell piece appears (D10): popovers fade in over 120 ms while growing 0.98 → 1 (`snappy`); banners
 /// (`slide`) come in from past the right edge (`smooth`). Reduce motion: a 150 ms fade only.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -195,6 +255,8 @@ pub fn extend(until: &mut Option<Instant>, end: Instant) {
 pub struct Motion {
     pub from: Look,
     pub anim: Anim,
+    /// Un-minimising with the genie: drawn warped instead of at `look`.
+    pub genie: Option<GenieRun>,
 }
 
 impl Motion {
@@ -207,6 +269,11 @@ impl Motion {
         };
         let alpha = self.from.alpha + (1.0 - self.from.alpha) * fade;
         Look { alpha, ..self.from.lerp(Look::at(frame), p) }
+    }
+
+    /// The genie's target and `q` at `now`, if it is one.
+    pub fn genie(&self, now: Instant) -> Option<(Rectangle<f64, Logical>, f64)> {
+        self.genie.map(|g| (g.target, g.at(self.anim.progress(now))))
     }
 }
 
@@ -248,7 +315,7 @@ impl State {
     /// `window` springs from `from` to its frame (E5.5).
     fn move_from(&mut self, window: &Window, from: Look, curve: Curve) {
         let anim = Anim::new(self.curve(curve));
-        motion::start(window, Motion { from, anim });
+        motion::start(window, Motion { from, anim, genie: None });
         self.animate(&anim);
     }
 
@@ -292,19 +359,32 @@ impl State {
         })
     }
 
+    /// Minimising and restoring use the genie (E5.5); reduce motion wins.
+    fn genie_on(&self) -> bool {
+        self.config.dock.minimise_effect == crate::config::MinimiseEffect::Genie && !self.config.appearance.reduce_motion
+    }
+
     /// A shown window came back (un-minimised): it grows out of its dock icon, or out of its minimise ghost mid-way.
     pub fn window_restored(&mut self, window: &Window) {
+        let now = Instant::now();
         let ghost = self.backend.as_mut().and_then(|b| {
             let i = b.ghosts.iter().position(|g| g.window == *window)?;
-            Some(b.ghosts.remove(i).look(Instant::now()))
+            let ghost = b.ghosts.remove(i);
+            Some((ghost.look(now), ghost.genie.map(|g| (g.target, g.at(ghost.anim.progress(now))))))
         });
         let Some(frame) = self.window_frame(window) else { return };
         let from = match ghost {
-            Some(look) => look,
+            Some((look, _)) => look,
             None if self.config.appearance.reduce_motion => Look { rect: frame, alpha: 0.0 },
             None => Look { rect: self.dock_target(window), alpha: 0.0 },
         };
-        self.move_from(window, from, Curve::Spring(SMOOTH));
+        let genie = self.genie_on().then(|| {
+            let (target, q) = ghost.and_then(|(_, g)| g).unwrap_or_else(|| (self.dock_target(window), 1.0));
+            GenieRun { target, from: q, to: 0.0 }
+        });
+        let anim = Anim::new(self.curve(Curve::Spring(SMOOTH)));
+        motion::start(window, Motion { from, anim, genie });
+        self.animate(&anim);
     }
 
     /// `window` is about to go: its last frame goes on as a ghost into `to` (`None`: shrink to 0.95 and fade out).
@@ -333,9 +413,16 @@ impl State {
     }
 
     /// Minimise: it shrinks and slides into its dock tile or icon; its last frame stays on as the tile's thumbnail.
+    /// Genie: it narrows into it instead, picking up where a restore that is still playing got to.
     pub fn window_minimising(&mut self, window: &Window) {
         let to = self.dock_target(window);
+        let now = Instant::now();
+        let q = motion::current(window, now).and_then(|m| m.genie(now)).map_or(0.0, |(_, q)| q);
         self.leave(window, Some(to), Curve::Spring(SMOOTH));
+        let genie = self.genie_on().then_some(GenieRun { target: to, from: q, to: 1.0 });
+        if let Some(ghost) = self.backend.as_mut().and_then(|b| b.ghosts.iter_mut().find(|g| g.window == *window)) {
+            ghost.genie = genie;
+        }
         let Some(backend) = self.backend.as_mut().filter(|_| crate::shell::dock::is_minimised(window)) else { return };
         backend.tiles.retain(|g| g.window != *window);
         if let Some(ghost) = backend.ghosts.iter().find(|g| g.window == *window) {
@@ -449,6 +536,30 @@ mod tests {
         let area = Rectangle::new((90.0, 90.0).into(), (220.0, 120.0).into());
         assert_eq!(small.map(frame, area), Rectangle::new((145.0, 120.0).into(), (110.0, 60.0).into()));
         assert_eq!(Look::at(frame).map(frame, area), area);
+    }
+
+    #[test]
+    fn genie_narrows_bottom_first_into_its_target() {
+        let area = Rectangle::new((100.0, 100.0).into(), (600.0, 400.0).into());
+        let target = Rectangle::new((380.0, 740.0).into(), (40.0, 40.0).into());
+        let at = |q| Genie { area, target, q };
+        assert_eq!(at(0.0).bounds(), area);
+        assert_eq!(at(0.0).edges(450.0), (100.0, 700.0));
+        assert_eq!(at(1.0).bounds(), target);
+        assert_eq!(at(1.0).edges(760.0), (380.0, 420.0));
+        for q in (0..=100).map(|i| f64::from(i) / 100.0) {
+            let (squeeze, top, bottom) = at(q).span();
+            assert!(top < bottom && (0.0..=1.0).contains(&squeeze), "rows never fold over at {q}");
+            let b = at(q).bounds();
+            let (l, r) = at(q).edges(bottom);
+            assert!(l >= b.loc.x && r <= b.loc.x + b.size.w && l < r);
+        }
+        // Mid-way the top row is still wider than the bottom one, which is heading for the target.
+        let (_, top, bottom) = at(0.4).span();
+        let (wide, narrow) = (at(0.4).edges(top), at(0.4).edges(bottom));
+        assert!(wide.1 - wide.0 > narrow.1 - narrow.0 + 100.0, "{wide:?} vs {narrow:?}");
+        let run = GenieRun { target, from: 0.3, to: 0.0 };
+        assert_eq!((run.at(0.0), run.at(1.0)), (0.3, 0.0));
     }
 
     #[test]

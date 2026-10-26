@@ -164,6 +164,9 @@ middle = "new"
 scroll = "on"
 # Minimised windows go into their app's icon; false: thumbnail tiles at the dock's right end, after a separator.
 minimise_into_icon = false
+# How windows minimise: "scale" (shrink and slide) or "genie" (narrow into the dock, bottom first).
+# Reduce motion makes either a crossfade.
+minimise_effect = "scale"
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.

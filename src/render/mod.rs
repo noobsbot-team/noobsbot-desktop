@@ -90,6 +90,7 @@ render_elements! {
     Texture=TextureRenderElement<GlesTexture>,
     Memory=MemoryRenderBufferRenderElement<GlesRenderer>,
     Moved=RelocateRenderElement<RescaleRenderElement<WindowElement>>,
+    Genie=motion::GenieElement,
 }
 
 render_elements! {
@@ -160,10 +161,11 @@ pub fn accent(accent: Accent, dark: bool) -> [u8; 3] {
     [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]
 }
 
-/// The four compiled shaders.
+/// The compiled shaders.
 pub struct Shaders {
     glass: GlesPixelProgram,
     rounded: GlesTexProgram,
+    genie: GlesTexProgram,
     shadow: GlesPixelProgram,
     opal: GlesPixelProgram,
 }
@@ -183,6 +185,16 @@ impl Shaders {
         Ok(Self {
             glass: renderer.compile_custom_pixel_shader(include_str!("glass.frag"), &glass)?,
             rounded: renderer.compile_custom_texture_shader(include_str!("rounded.frag"), &rounded)?,
+            genie: renderer.compile_custom_texture_shader(
+                include_str!("genie.frag"),
+                &[
+                    UniformName::new("area", UniformType::_4f),
+                    UniformName::new("target", UniformType::_4f),
+                    UniformName::new("span", UniformType::_3f),
+                    UniformName::new("to_px", UniformType::_4f),
+                    UniformName::new("box", UniformType::_2f),
+                ],
+            )?,
             shadow: renderer.compile_custom_pixel_shader(
                 include_str!("shadow.frag"),
                 &floats(&["scale", "margin", "offset_y", "sigma", "radius", "opacity", "hairline"]),
@@ -571,7 +583,8 @@ pub fn scene(
                 }
                 let elements = window_elements(renderer, shaders, text, space, window, output_geo.loc, scale, dark);
                 // Animating (E5.5): drawn as one moved, scaled, faded snapshot.
-                let moved = motion.and_then(|(frame, look)| motion::moved(renderer, &elements, frame, look, scale));
+                let genie = motion::current(window, now).and_then(|m| m.genie(now));
+                let moved = motion.and_then(|(frame, look)| motion::moved(renderer, shaders, &elements, frame, look, genie, scale));
                 match moved {
                     Some(element) => out.push(element),
                     None => out.extend(elements),
