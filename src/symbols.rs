@@ -18,7 +18,6 @@ macro_rules! symbols {
     ($($variant:ident = $file:literal,)*) => {
         /// One per file in `assets/phosphor/{regular,fill}/`.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-        #[cfg_attr(not(test), expect(dead_code, reason = "most are for the Control Center and OSD (E2.3, E2.7)"))]
         pub enum Symbol {
             /// The Noobsbot mark (`assets/logo.svg`), same weight in both styles.
             Logo,
@@ -28,6 +27,14 @@ macro_rules! symbols {
         impl Symbol {
             #[cfg(test)]
             const ALL: &[Symbol] = &[Symbol::Logo, $(Symbol::$variant,)*];
+
+            /// By its file name in `assets/phosphor/` (`"cloud-sun"`), for names that come from outside (D-Bus widgets).
+            pub fn named(name: &str) -> Option<Symbol> {
+                match name {
+                    $($file => Some(Symbol::$variant),)*
+                    _ => None,
+                }
+            }
 
             fn svg(self, weight: Weight) -> &'static str {
                 match (self, weight) {
