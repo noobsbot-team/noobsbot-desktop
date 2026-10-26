@@ -51,7 +51,8 @@ pub const HEADLINE: Style = Style { weight: 600, ..BODY };
 pub const CALLOUT: Style = Style { size: 12, line_height: 15, ..BODY };
 pub const CAPTION: Style = Style { size: 10, line_height: 13, weight: 500, ..BODY };
 const TITLE1: Style = Style { size: 22, line_height: 26, ..BODY };
-const TITLE2: Style = Style { size: 17, line_height: 22, weight: 600, ..BODY };
+pub const TITLE2: Style = Style { size: 17, line_height: 22, weight: 600, ..BODY };
+pub const TITLE3: Style = Style { size: 15, line_height: 20, weight: 600, ..BODY };
 
 const WHITE: [u8; 4] = [255; 4];
 /// D8 badge red.
@@ -71,7 +72,37 @@ pub struct Ui<'a> {
     pub pieces: Vec<(Arc<Rendered>, Rect)>,
 }
 
-fn fade([r, g, b, a]: [u8; 4], k: f32) -> [u8; 4] {
+/// D2 text at `alpha`: black in light mode, white in dark.
+pub fn ink(dark: bool, alpha: f32) -> [u8; 4] {
+    let a = (alpha * 255.0).round() as u8;
+    if dark { [255, 255, 255, a] } else { [0, 0, 0, a] }
+}
+
+/// D2 `label`, `label-secondary`, for drawing code without a `Ui`.
+pub fn label(dark: bool) -> [u8; 4] {
+    ink(dark, 0.85)
+}
+pub fn secondary(dark: bool) -> [u8; 4] {
+    ink(dark, if dark { 0.55 } else { 0.50 })
+}
+
+/// D2 `separator`.
+pub fn separator(dark: bool) -> [f32; 4] {
+    if dark { [1.0, 1.0, 1.0, 0.10] } else { [0.0, 0.0, 0.0, 0.10] }
+}
+
+/// D7 hover / pressed overlay over a control.
+pub fn overlay(state: State, dark: bool) -> Option<[f32; 4]> {
+    match (state, dark) {
+        (State::Hover, false) => Some([0.0, 0.0, 0.0, 0.06]),
+        (State::Hover, true) => Some([1.0, 1.0, 1.0, 0.08]),
+        (State::Pressed, false) => Some([0.0, 0.0, 0.0, 0.12]),
+        (State::Pressed, true) => Some([1.0, 1.0, 1.0, 0.14]),
+        _ => None,
+    }
+}
+
+pub(super) fn fade([r, g, b, a]: [u8; 4], k: f32) -> [u8; 4] {
     [r, g, b, (f32::from(a) * k).round() as u8]
 }
 
@@ -82,16 +113,15 @@ fn inset(rect: Rect, by: i32) -> Rect {
 impl Ui<'_> {
     /// Text at `alpha`: black in light mode, white in dark.
     pub fn ink(&self, alpha: f32) -> [u8; 4] {
-        let a = (alpha * 255.0).round() as u8;
-        if self.dark { [255, 255, 255, a] } else { [0, 0, 0, a] }
+        ink(self.dark, alpha)
     }
 
     /// D2 `label`, `label-secondary`, `label-tertiary`.
     pub fn label(&self) -> [u8; 4] {
-        self.ink(0.85)
+        label(self.dark)
     }
     pub fn secondary(&self) -> [u8; 4] {
-        self.ink(if self.dark { 0.55 } else { 0.50 })
+        secondary(self.dark)
     }
     pub fn tertiary(&self) -> [u8; 4] {
         self.ink(if self.dark { 0.25 } else { 0.26 })
@@ -126,14 +156,7 @@ impl Ui<'_> {
 
     /// D7 hover / pressed overlay and focus ring over a control drawn at `rect`.
     pub(super) fn states(&mut self, rect: Rect, radius: f64, state: State) {
-        let overlay = match (state, self.dark) {
-            (State::Hover, false) => Some([0.0, 0.0, 0.0, 0.06]),
-            (State::Hover, true) => Some([1.0, 1.0, 1.0, 0.08]),
-            (State::Pressed, false) => Some([0.0, 0.0, 0.0, 0.12]),
-            (State::Pressed, true) => Some([1.0, 1.0, 1.0, 0.14]),
-            _ => None,
-        };
-        if let Some(overlay) = overlay {
+        if let Some(overlay) = overlay(state, self.dark) {
             self.shape(rect, overlay, radius);
         }
         if state == State::Focused {
@@ -303,7 +326,7 @@ impl Ui<'_> {
             let cell = Rectangle::new((at.x + PAD, y).into(), (width - 2 * PAD, if row.is_some() { row_h } else { SEPARATOR }).into());
             y += cell.size.h;
             let Some((label, shortcut, enabled, submenu)) = *row else {
-                let line = if self.dark { [1.0, 1.0, 1.0, 0.10] } else { [0.0, 0.0, 0.0, 0.10] };
+                let line = separator(self.dark);
                 self.shape(
                     Rectangle::new((cell.loc.x + side_pad - PAD, cell.loc.y + SEPARATOR / 2).into(), (cell.size.w - 2 * (side_pad - PAD), 1).into()),
                     line,
@@ -399,5 +422,25 @@ impl Ui<'_> {
         self.button(Rectangle::new((at.x + PAD, y).into(), (w, 28).into()), buttons[0], false, State::Normal);
         self.button(Rectangle::new((at.x + PAD + w + 8, y).into(), (w, 28).into()), buttons[1], true, State::Normal);
         rect
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn type_scale_is_ordered() {
+        let scale = [TITLE1, TITLE2, TITLE3, BODY, CALLOUT, CAPTION];
+        assert!(scale.windows(2).all(|w| w[0].size >= w[1].size && w[0].line_height >= w[1].line_height));
+        assert_eq!((HEADLINE.size, HEADLINE.weight), (BODY.size, 600));
+    }
+
+    #[test]
+    fn colours_match_d2() {
+        assert_eq!(label(true), [255, 255, 255, 217]);
+        assert_eq!(secondary(false), [0, 0, 0, 128]);
+        assert_eq!(secondary(true), [255, 255, 255, 140]);
+        assert_eq!(fade(label(false), 0.4), [0, 0, 0, 87]);
     }
 }
