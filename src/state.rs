@@ -832,18 +832,28 @@ impl State {
     }
 
     /// Move to ▸ Display: the next (`delta` 1) or previous (-1) display, at the same place on it.
-    /// ponytail: the size is kept, so a zoomed or tiled window doesn't refit a display of another size.
     pub fn move_to_display(&mut self, window: &Window, delta: i32) {
         let outputs: Vec<_> = self.space.outputs().cloned().collect();
         let Some(from) = self.window_output(window).and_then(|o| outputs.iter().position(|x| *x == o)) else { return };
         let to = (from as i32 + delta).rem_euclid(outputs.len() as i32) as usize;
-        let area = |i: usize| self.output_area(&outputs[i]);
-        let (Some(a), Some(b), Some(frame)) = (area(from), area(to), self.frame(window)) else { return };
-        if to == from {
-            return;
+        self.move_to_output(window, &outputs[to]);
+    }
+
+    /// `window` to `output`'s shown Space, at the same place on it, shrunk only if it doesn't fit (`wm::fit_in`).
+    /// ponytail: a zoomed or tiled window keeps its state; callers that care leave it first.
+    pub fn move_to_output(&mut self, window: &Window, output: &smithay::output::Output) {
+        let Some(from) = self.window_output(window).filter(|o| o != output) else { return };
+        let (Some(a), Some(b), Some(mut frame)) = (self.output_area(&from), self.output_area(output), self.frame(window)) else { return };
+        frame.loc.y -= self.window_row(window) * crate::spaces::STRIDE;
+        let rect = wm::fit_in(frame, a, b);
+        if rect.size != frame.size
+            && let Some(toplevel) = window.toplevel()
+        {
+            let size = self.content_size(window, rect.size);
+            toplevel.with_pending_state(|s| s.size = Some(size));
+            toplevel.send_pending_configure();
         }
-        let rect = Rect::new(b.loc + (frame.loc - a.loc), frame.size);
-        self.set_visible_loc(window, wm::move_to(rect, b, &[], false));
+        self.set_visible_loc(window, rect.loc);
     }
 
     /// Zoom (fill the work area) or fullscreen (fill the output), remembering where the window was.
