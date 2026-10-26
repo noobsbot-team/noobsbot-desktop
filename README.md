@@ -321,7 +321,7 @@ doesn't understand is skipped and reported in the journal.
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
 | `[accessibility]` | Zoom style (whole screen or a lens), colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown, the Orca screen reader |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
-| `[touchpad]` | on or off, tap to click, natural scrolling, secondary click (two fingers, corner or off), scroll method (two fingers, edge or none), three or four-finger swipes, gesture sensitivity |
+| `[touchpad]` | on or off, tap to click, natural scrolling, secondary click (two fingers, corner or off), scroll method (two fingers, edge or none), three or four-finger swipes, gesture sensitivity, each gesture on or off |
 | `[mouse]` | tracking speed, acceleration, primary button, natural scrolling, middle-click emulation, double-click speed and middle-click paste (also given to GTK apps) |
 | `[hot_corners]` | an action for each screen corner (off by default) |
 | `[display]` | which GPU draws the desktop, scale for every screen |

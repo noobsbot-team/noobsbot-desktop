@@ -367,6 +367,27 @@ pub struct Touchpad {
     pub disable_while_typing: bool,
     /// Off while a mouse is plugged in.
     pub ignore_with_mouse: bool,
+    /// Each system gesture on or off: swipe between Spaces, up for Mission Control, down for App Exposé, pinch for
+    /// Launchpad, spread for the desktop.
+    pub gesture_spaces: bool,
+    pub gesture_mission_control: bool,
+    pub gesture_app_expose: bool,
+    pub gesture_launchpad: bool,
+    pub gesture_show_desktop: bool,
+}
+
+impl Touchpad {
+    /// Whether this system gesture is turned on.
+    pub fn allows(&self, gesture: crate::gestures::Gesture) -> bool {
+        use crate::gestures::Gesture::*;
+        match gesture {
+            Space(_) => self.gesture_spaces,
+            MissionControl => self.gesture_mission_control,
+            AppExpose => self.gesture_app_expose,
+            Launchpad => self.gesture_launchpad,
+            ShowDesktop => self.gesture_show_desktop,
+        }
+    }
 }
 
 /// How the trackpad scrolls.
@@ -1029,6 +1050,11 @@ impl Default for Touchpad {
             drag_lock: false,
             disable_while_typing: true,
             ignore_with_mouse: false,
+            gesture_spaces: true,
+            gesture_mission_control: true,
+            gesture_app_expose: true,
+            gesture_launchpad: true,
+            gesture_show_desktop: true,
         }
     }
 }
@@ -1630,6 +1656,14 @@ mod tests {
         assert_eq!(ms("[mouse]\ndouble_click_ms = 650"), 650);
         assert_eq!(ms("[mouse]\ndouble_click_ms = 0"), 150, "0 would make double-clicks impossible");
         assert_eq!(ms("[mouse]\ndouble_click_ms = 99999"), 1000);
+    }
+
+    #[test]
+    fn gestures_turn_off_one_by_one() {
+        use crate::gestures::Gesture;
+        let t = parse("[touchpad]\ngesture_spaces = false\ngesture_launchpad = false").unwrap().touchpad;
+        assert!(!t.allows(Gesture::Space(1)) && !t.allows(Gesture::Space(-1)) && !t.allows(Gesture::Launchpad));
+        assert!(t.allows(Gesture::MissionControl) && t.allows(Gesture::AppExpose) && t.allows(Gesture::ShowDesktop));
     }
 
     #[test]
