@@ -23,11 +23,13 @@ use crate::{
     render::menubar,
     shortcuts::Action,
     state::State,
+    text::ts,
     ui::field::{Edit, TextField},
     wm::Rect,
 };
 
-/// Icon size and grid cell, in logical px (64 px icons on a ~100 px grid).
+/// Icon size and grid cell, in logical px (64 px icons on a ~100 px grid); the name and so the cell grow with the
+/// text size (`cell_size`, `label_w`, `text::ts(LABEL_LINE)`), the icon doesn't.
 pub const ICON: i32 = 64;
 pub const CELL_W: i32 = 100;
 pub const CELL_H: i32 = 110;
@@ -35,6 +37,16 @@ pub const CELL_H: i32 = 110;
 pub const LABEL_W: i32 = 92;
 pub const LABEL_LINE: i32 = 15;
 const MARGIN: i32 = 12;
+
+/// A grid cell, grown with the text size: wider with the name, taller with its two lines.
+pub fn cell_size() -> (i32, i32) {
+    (ts(CELL_W), CELL_H + 2 * (ts(LABEL_LINE) - LABEL_LINE))
+}
+
+/// The width names wrap at, grown with the text size.
+pub fn label_w() -> i32 {
+    ts(LABEL_W)
+}
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// The pointer moves this far with the button down before an icon drags.
 const DRAG_START: f64 = 4.0;
@@ -119,32 +131,35 @@ pub struct Grid {
 impl Grid {
     /// The grid on a `size` output, keeping `bottom` px clear for the dock.
     pub fn new(size: Size<i32, Logical>, bottom: i32) -> Self {
-        let top = menubar::HEIGHT + 8;
-        let rows = ((size.h - top - bottom) / CELL_H).max(1);
-        let cols = ((size.w - 2 * MARGIN) / CELL_W).max(1);
+        let top = menubar::height() + 8;
+        let (cell_w, cell_h) = cell_size();
+        let rows = ((size.h - top - bottom) / cell_h).max(1);
+        let cols = ((size.w - 2 * MARGIN) / cell_w).max(1);
         Self { width: size.w, top, rows, cols }
     }
 
     pub fn rect(&self, (col, row): Cell) -> Rect {
-        Rectangle::new((self.width - MARGIN - (col + 1) * CELL_W, self.top + row * CELL_H).into(), (CELL_W, CELL_H).into())
+        let (w, h) = cell_size();
+        Rectangle::new((self.width - MARGIN - (col + 1) * w, self.top + row * h).into(), (w, h).into())
     }
 
     /// The cell under `p`, kept on the grid.
     pub fn at(&self, p: Point<f64, Logical>) -> Cell {
-        let col = ((f64::from(self.width - MARGIN) - p.x) / f64::from(CELL_W)).floor() as i32;
-        let row = ((p.y - f64::from(self.top)) / f64::from(CELL_H)).floor() as i32;
+        let (w, h) = cell_size();
+        let col = ((f64::from(self.width - MARGIN) - p.x) / f64::from(w)).floor() as i32;
+        let row = ((p.y - f64::from(self.top)) / f64::from(h)).floor() as i32;
         (col.clamp(0, self.cols - 1), row.clamp(0, self.rows - 1))
     }
 }
 
 /// The icon's square in its cell.
 pub fn icon_rect(cell: Rect) -> Rect {
-    Rectangle::new((cell.loc.x + (CELL_W - ICON) / 2, cell.loc.y + 6).into(), (ICON, ICON).into())
+    Rectangle::new((cell.loc.x + (cell.size.w - ICON) / 2, cell.loc.y + 6).into(), (ICON, ICON).into())
 }
 
 /// The name's two lines under the icon.
 pub fn label_rect(cell: Rect) -> Rect {
-    Rectangle::new((cell.loc.x + (CELL_W - LABEL_W) / 2, cell.loc.y + 6 + ICON + 6).into(), (LABEL_W, 2 * LABEL_LINE).into())
+    Rectangle::new((cell.loc.x + (cell.size.w - label_w()) / 2, cell.loc.y + 6 + ICON + 6).into(), (label_w(), 2 * ts(LABEL_LINE)).into())
 }
 
 /// Cells for `names`: the first `drives` take the first cells in order; then a saved one where it is on the grid and
@@ -468,7 +483,7 @@ impl State {
     pub fn desktop_widgets(&self) -> Vec<Rect> {
         let medium: Vec<bool> = self.shown_widgets(true).iter().map(|w| w.medium).collect();
         let pad = crate::shell::notify::CENTER_PAD;
-        crate::shell::notify::tiles(&medium, MARGIN + pad, menubar::HEIGHT + 8 + pad, crate::shell::notify::CENTER_W - 2 * pad).0
+        crate::shell::notify::tiles(&medium, MARGIN + pad, menubar::height() + 8 + pad, crate::shell::notify::CENTER_W - 2 * pad).0
     }
 
     /// A press on the bare desktop (no window or layer there): a widget tells its app; otherwise selects, opens on a
@@ -631,7 +646,7 @@ impl State {
         let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(i32::MAX, |g| g.size.h);
         let tall = super::menu_height(rows);
         let y = if at.y + tall > height - MARGIN { at.y - tall } else { at.y };
-        Some(Anchor::At((at.x, y.max(menubar::HEIGHT)).into()))
+        Some(Anchor::At((at.x, y.max(menubar::height())).into()))
     }
 
     pub fn desktop_command(&mut self, command: Command) {
@@ -732,6 +747,21 @@ mod tests {
         let cell = g.rect((0, 0));
         assert!(cell.contains_rect(icon_rect(cell)) && cell.contains_rect(label_rect(cell)));
         assert!(!icon_rect(cell).overlaps(label_rect(cell)));
+    }
+
+    #[test]
+    fn names_grow_with_text_size() {
+        crate::text::with_scale(1.5, || {
+            let g = grid();
+            let cell = g.rect((0, 0));
+            assert_eq!(cell.size, (150, 126).into());
+            // Two 15 px lines at 1.5, under the unscaled icon, inside the cell.
+            let (icon, label) = (icon_rect(cell), label_rect(cell));
+            assert_eq!((icon.size.w, label.size.h, label.size.w), (ICON, 2 * 23, 138));
+            assert!(cell.contains_rect(icon) && cell.contains_rect(label) && !icon.overlaps(label));
+            assert_eq!(g.at((f64::from(cell.loc.x) + 1.0, f64::from(cell.loc.y) + 1.0).into()), (0, 0));
+            assert!(g.rows < 6 && g.cols < 12, "fewer, bigger cells");
+        });
     }
 
     #[test]

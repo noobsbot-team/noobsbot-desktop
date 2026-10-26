@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     mission::{NAME_H, Overview, close_button},
-    text::{Style, Text},
+    text::{Style, Text, ts},
     wm::Rect,
 };
 
@@ -66,7 +66,7 @@ pub(super) fn material(material: Material, dark: bool, glass_opacity: f32) -> [f
 
 impl MissionView {
     /// Mission Control's part of the frame, front to back: the Spaces bar's labels and buttons, the other Spaces'
-    /// windows in their thumbnails, the bar's cells, the hover outline and title, the windows, the dimmed wallpaper.
+    /// windows in their thumbnails, the hover outline and title, the windows, the bar's cells, the dimmed wallpaper.
     #[expect(clippy::too_many_arguments, reason = "the frame's drawing context")]
     pub fn windows(
         &mut self,
@@ -92,15 +92,15 @@ impl MissionView {
         let mut pieces = Vec::new();
         let mut rects = Vec::new();
         for (cell, name) in bar.cells.iter().zip(&overview.names) {
-            let rect = if bar.expanded { Rectangle::new((cell.loc.x, cell.loc.y + cell.size.h + 4).into(), (cell.size.w, NAME_H).into()) } else { *cell };
+            let rect = if bar.expanded { Rectangle::new((cell.loc.x, cell.loc.y + cell.size.h + 4).into(), (cell.size.w, ts(NAME_H)).into()) } else { *cell };
             pieces.push(text.label(name, callout, (rect.size.w - 8).max(0) as u32, scale));
             rects.push(rect);
         }
         let title = overview.hover.as_ref().map(|(i, title)| {
             let thumb = overview.thumbs[*i].to;
             let label = text.label(title, Style { size: 13, line_height: 16, ..callout }, (thumb.size.w.max(120) - 24) as u32, scale);
-            let w = (f64::from(label.width) / scale).round() as i32 + 24;
-            let pill = Rectangle::new((thumb.loc.x + (thumb.size.w - w) / 2, thumb.loc.y + thumb.size.h + 8).into(), (w, 24).into());
+            let w = (f64::from(label.width) / scale).round() as i32 + ts(24);
+            let pill = Rectangle::new((thumb.loc.x + (thumb.size.w - w) / 2, thumb.loc.y + thumb.size.h + 8).into(), (w, ts(24)).into());
             pieces.push(label);
             rects.push(pill);
             (thumb, pill)
@@ -122,9 +122,19 @@ impl MissionView {
         if let Some(rect) = bar.plus {
             front.push((rect, hud, f64::from(rect.size.w.min(rect.size.h)) / 2.0, true, 0));
         }
+        // The every-Space button: four small squares in a circle.
+        let a = bar.all;
+        let (sq, gap) = (a.size.w / 6, a.size.w / 12);
+        let start = a.loc + Point::from(((a.size.w - 2 * sq - gap) / 2, (a.size.h - 2 * sq - gap) / 2));
+        for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            let [r, g, b, al] = label_rgb;
+            let fill = [f32::from(r) / 255.0, f32::from(g) / 255.0, f32::from(b) / 255.0, f32::from(al) / 255.0];
+            front.push((Rectangle::new(start + Point::from((dx * (sq + gap), dy * (sq + gap))), (sq, sq).into()), fill, 1.5, false, 0));
+        }
+        front.push((a, hud, f64::from(a.size.w) / 2.0, true, 0));
         if let Some((thumb, pill)) = title {
             front.push((thumb, rgba(accent, 1.0), WINDOW_RADIUS, false, 3));
-            front.push((pill, hud, 12.0, true, 0));
+            front.push((pill, hud, f64::from(pill.size.h) / 2.0, true, 0));
         }
         out.extend(shapes(&mut self.front, shaders, front, dark, scale).iter().cloned().map(SceneElement::Shader));
 
@@ -134,6 +144,18 @@ impl MissionView {
             let factor = f64::from(cell.size.w) / f64::from(output.size.w.max(1));
             let elements = window_elements(renderer, shaders, text, space, window, *origin, scale, dark);
             out.extend(elements.into_iter().filter_map(|e| transformed(e, (0, 0).into(), factor, phys(cell.loc))));
+        }
+
+        // The windows, from where they are to their place in the grid (over the bar, so a dragged one and the
+        // every-Space view's stay in sight).
+        for thumb in &overview.thumbs {
+            if thumb.from.size.w <= 0 {
+                continue;
+            }
+            let factor = f64::from(thumb.to.size.w) / f64::from(thumb.from.size.w);
+            let origin = phys(thumb.from.loc);
+            let elements = window_elements(renderer, shaders, text, space, &thumb.window, output.loc, scale, dark);
+            out.extend(elements.into_iter().filter_map(|e| transformed(e, origin, factor, phys(thumb.to.loc) - origin)));
         }
 
         let mut back: Vec<Shape> = Vec::new();
@@ -147,17 +169,6 @@ impl MissionView {
             back.push((*cell, fill, radius, true, 0));
         }
         out.extend(shapes(&mut self.back, shaders, back, dark, scale).iter().cloned().map(SceneElement::Shader));
-
-        // The windows, from where they are to their place in the grid.
-        for thumb in &overview.thumbs {
-            if thumb.from.size.w <= 0 {
-                continue;
-            }
-            let factor = f64::from(thumb.to.size.w) / f64::from(thumb.from.size.w);
-            let origin = phys(thumb.from.loc);
-            let elements = window_elements(renderer, shaders, text, space, &thumb.window, output.loc, scale, dark);
-            out.extend(elements.into_iter().filter_map(|e| transformed(e, origin, factor, phys(thumb.to.loc) - origin)));
-        }
 
         // The wallpaper, dimmed 30%.
         let alpha = 0.3 * p;
@@ -176,7 +187,7 @@ impl MissionView {
         const STEP: i32 = 16;
         let n = count as i32;
         let size = Size::from((n * STEP + 12, 24));
-        let pill = Rectangle::new(((width - size.w) / 2, super::menubar::HEIGHT + 8).into(), size);
+        let pill = Rectangle::new(((width - size.w) / 2, super::menubar::height() + 8).into(), size);
         let label = if dark { [1.0, 1.0, 1.0, 0.85] } else { [0.0, 0.0, 0.0, 0.85] };
         let mut list: Vec<Shape> = (0..n)
             .map(|i| {

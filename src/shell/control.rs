@@ -5,7 +5,7 @@ use crate::{services::network::Link, symbols::Symbol};
 use smithay::utils::{Logical, Point, Rectangle, Size};
 
 use super::{DROP, MARGIN, Popup};
-use crate::{config::Mode, render::menubar, services::Command, shortcuts::Action, state::State, wm::Rect};
+use crate::{config::Mode, render::menubar, services::Command, shortcuts::Action, state::State, text::ts, wm::Rect};
 
 pub const WIDTH: i32 = 320;
 const PAD: i32 = 10;
@@ -14,7 +14,6 @@ const INNER: i32 = WIDTH - 2 * PAD;
 const HALF: i32 = (INNER - GAP) / 2;
 pub const TOGGLE: i32 = 28;
 const TOP: i32 = 104;
-const SLIDER_CARD: i32 = 62;
 const MEDIA_CARD: i32 = 56;
 const POWER_CARD: i32 = 44;
 /// The Keep Awake tile, closed.
@@ -145,9 +144,20 @@ impl Layout {
     }
 }
 
-/// The Wi-Fi or Bluetooth toggle in the network card: row 0 or 1.
+/// The Wi-Fi or Bluetooth toggle in the network card: row 0 or 1. Rows of text grow with the text size (E8.4);
+/// toggles, icons and widths stay.
 pub fn toggle_in(card: Rect, row: i32) -> Rect {
-    Rectangle::new((card.loc.x + 10, card.loc.y + 12 + row * 50).into(), (TOGGLE, TOGGLE).into())
+    Rectangle::new((card.loc.x + 10, card.loc.y + ts(12) + row * ts(50)).into(), (TOGGLE, TOGGLE).into())
+}
+
+/// The top of a toggle's title and subtitle (16 + 14 px of text), centred on the toggle.
+pub fn label_top(toggle: Rect) -> i32 {
+    toggle.loc.y + (TOGGLE - ts(30)) / 2
+}
+
+/// A slider card's height (62 at 1.0): title, track, padding; without an open list.
+fn slider_h() -> i32 {
+    ts(28) + TOGGLE + 6
 }
 
 /// The round toggle of the Do Not Disturb or Dark Mode tile: at its left, centred.
@@ -157,12 +167,12 @@ pub fn tile_toggle(card: Rect) -> Rect {
 
 /// Night Light's small round toggle in the Display card: right of its title.
 pub fn night_toggle(card: Rect) -> Rect {
-    Rectangle::new((card.loc.x + card.size.w - 34, card.loc.y + 4).into(), (22, 22).into())
+    Rectangle::new((card.loc.x + card.size.w - 34, card.loc.y + ts(4)).into(), (22, 22).into())
 }
 
 /// A slider card's track: under its title.
 pub fn track_in(card: Rect) -> Rect {
-    Rectangle::new((card.loc.x + 12, card.loc.y + 28).into(), (card.size.w - 24, TOGGLE).into())
+    Rectangle::new((card.loc.x + 12, card.loc.y + ts(28)).into(), (card.size.w - 24, TOGGLE).into())
 }
 
 /// The Now Playing buttons, right to left from the card's edge: previous, play/pause, next.
@@ -178,16 +188,18 @@ pub fn media_buttons(card: Rect) -> [Rect; 3] {
 
 pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     let x = (output.w - MARGIN - WIDTH).max(MARGIN);
-    let top = menubar::HEIGHT + DROP;
+    let top = menubar::height() + DROP;
     let card = |dx: i32, y: i32, w: i32, h: i32| Rectangle::new((x + dx, y).into(), (w, h).into());
     let mut y = top + PAD;
-    let network = card(PAD, y, HALF, TOP);
-    let small = (TOP - GAP) / 2;
+    let (top_h, list_row, awake_h, media_h, power_h) = (ts(TOP), ts(LIST_ROW), ts(AWAKE_CARD), ts(MEDIA_CARD), ts(POWER_CARD));
+    let network = card(PAD, y, HALF, top_h);
+    let small = (top_h - GAP) / 2;
     let dnd = card(PAD + HALF + GAP, y, HALF, small);
     let dark = card(PAD + HALF + GAP, y + small + GAP, HALF, small);
     // Right of a toggle: its title and subtitle.
-    let label_of =
-        |t: Rect| Rectangle::new((t.loc.x + TOGGLE + 4, t.loc.y - 4).into(), (network.loc.x + network.size.w - t.loc.x - TOGGLE - 8, TOGGLE + 8).into());
+    let label_of = |t: Rect| {
+        Rectangle::new((t.loc.x + TOGGLE + 4, t.loc.y + (TOGGLE - ts(36)) / 2).into(), (network.loc.x + network.size.w - t.loc.x - TOGGLE - 8, ts(36)).into())
+    };
     let mut hits = vec![
         (Control::Wifi, toggle_in(network, 0)),
         (Control::WifiMore, label_of(toggle_in(network, 0))),
@@ -197,7 +209,7 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         (Control::Dark, dark),
     ];
     let mut cards = vec![network, dnd, dark];
-    y += TOP + GAP;
+    y += top_h + GAP;
     // An open Wi-Fi or Bluetooth module lists its networks or devices full width under the top row; with none, one
     // empty row says so.
     let on = |module: &Option<(bool, String)>| module.as_ref().is_some_and(|m| m.0);
@@ -210,23 +222,23 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     let list = open.then(|| {
         // The cards under it must stay on screen: the list shows the rows that fit and scrolls the rest.
         let after: i32 = [
-            (status.brightness.is_some(), SLIDER_CARD),
-            (status.volume.is_some(), SLIDER_CARD),
-            (true, AWAKE_CARD),
-            (true, MEDIA_CARD),
-            (status.battery.is_some() || status.profile.is_some(), POWER_CARD),
+            (status.brightness.is_some(), slider_h()),
+            (status.volume.is_some(), slider_h()),
+            (true, awake_h),
+            (true, media_h),
+            (status.battery.is_some() || status.profile.is_some(), power_h),
         ]
         .into_iter()
         .filter(|(shown, _)| *shown)
         .map(|(_, h)| h + GAP)
         .sum();
-        let fit = ((output.h - MARGIN - PAD - after - y - 2 * LIST_PAD) / LIST_ROW).max(1) as usize;
+        let fit = ((output.h - MARGIN - PAD - after - y - 2 * LIST_PAD) / list_row).max(1) as usize;
         let shown = status.rows.len().clamp(1, fit);
         scroll = status.scroll.min(status.rows.len().saturating_sub(shown));
         let rows = shown as i32;
-        let list = card(PAD, y, INNER, 2 * LIST_PAD + rows * LIST_ROW);
+        let list = card(PAD, y, INNER, 2 * LIST_PAD + rows * list_row);
         let cells: Vec<Rect> = (0..rows)
-            .map(|i| Rectangle::new((list.loc.x + LIST_PAD, list.loc.y + LIST_PAD + i * LIST_ROW).into(), (list.size.w - 2 * LIST_PAD, LIST_ROW).into()))
+            .map(|i| Rectangle::new((list.loc.x + LIST_PAD, list.loc.y + LIST_PAD + i * list_row).into(), (list.size.w - 2 * LIST_PAD, list_row).into()))
             .collect();
         hits.extend(cells.iter().take(status.rows.len()).enumerate().map(|(i, r)| (Control::Row(scroll + i), *r)));
         cards.push(list);
@@ -234,62 +246,62 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         (list, cells)
     });
     let rows = if status.expanded == Some(Module::Awake) { status.blockers.len().max(1) as i32 } else { 0 };
-    let awake = card(PAD, y, INNER, AWAKE_CARD + if rows > 0 { 2 * LIST_PAD + rows * LIST_ROW } else { 0 });
+    let awake = card(PAD, y, INNER, awake_h + if rows > 0 { 2 * LIST_PAD + rows * list_row } else { 0 });
     let blockers: Vec<Rect> = (0..rows)
         .map(|i| {
-            Rectangle::new((awake.loc.x + LIST_PAD, awake.loc.y + AWAKE_CARD + LIST_PAD + i * LIST_ROW).into(), (awake.size.w - 2 * LIST_PAD, LIST_ROW).into())
+            Rectangle::new((awake.loc.x + LIST_PAD, awake.loc.y + awake_h + LIST_PAD + i * list_row).into(), (awake.size.w - 2 * LIST_PAD, list_row).into())
         })
         .collect();
-    let head = Rectangle::new(awake.loc, (awake.size.w, AWAKE_CARD).into());
+    let head = Rectangle::new(awake.loc, (awake.size.w, awake_h).into());
     let toggle = tile_toggle(head);
     let more = toggle.loc.x + TOGGLE + 4;
     hits.extend([
         (Control::KeepAwake, toggle),
-        (Control::AwakeMore, Rectangle::new((more, head.loc.y).into(), (head.loc.x + head.size.w - more, AWAKE_CARD).into())),
+        (Control::AwakeMore, Rectangle::new((more, head.loc.y).into(), (head.loc.x + head.size.w - more, awake_h).into())),
     ]);
     cards.push(awake);
     y += awake.size.h + GAP;
     let mut slider = |control, present: bool, extra: i32, y: &mut i32| {
         present.then(|| {
-            let c = card(PAD, *y, INNER, SLIDER_CARD + extra);
+            let c = card(PAD, *y, INNER, slider_h() + extra);
             hits.push((control, track_in(c)));
             cards.push(c);
-            *y += SLIDER_CARD + extra + GAP;
+            *y += c.size.h + GAP;
             c
         })
     };
     let display = slider(Control::Brightness, status.brightness.is_some(), 0, &mut y);
     let open = status.expanded == Some(Module::Sound) && !status.outputs.is_empty();
-    let extra = if open { 2 * LIST_PAD + status.outputs.len() as i32 * LIST_ROW } else { 0 };
+    let extra = if open { 2 * LIST_PAD + status.outputs.len() as i32 * list_row } else { 0 };
     let sound = slider(Control::Volume, status.volume.is_some(), extra, &mut y);
     hits.extend(display.map(|c| (Control::NightLight, night_toggle(c))));
     let mut outputs = Vec::new();
     if let Some(c) = sound {
-        hits.push((Control::SoundMore, Rectangle::new(c.loc, (c.size.w, 28).into())));
+        hits.push((Control::SoundMore, Rectangle::new(c.loc, (c.size.w, ts(28)).into())));
         if open {
             for (i, (id, _, _)) in status.outputs.iter().enumerate() {
                 let row = Rectangle::new(
-                    (c.loc.x + LIST_PAD, c.loc.y + SLIDER_CARD + LIST_PAD + i as i32 * LIST_ROW).into(),
-                    (c.size.w - 2 * LIST_PAD, LIST_ROW).into(),
+                    (c.loc.x + LIST_PAD, c.loc.y + slider_h() + LIST_PAD + i as i32 * list_row).into(),
+                    (c.size.w - 2 * LIST_PAD, list_row).into(),
                 );
                 hits.push((Control::Output(*id), row));
                 outputs.push(row);
             }
         }
     }
-    let media = card(PAD, y, INNER, MEDIA_CARD);
+    let media = card(PAD, y, INNER, media_h);
     cards.push(media);
     if status.media.is_some() {
         hits.extend([Control::Previous, Control::PlayPause, Control::Next].into_iter().zip(media_buttons(media)));
     }
-    y += MEDIA_CARD + GAP;
+    y += media_h + GAP;
     let power = (status.battery.is_some() || status.profile.is_some()).then(|| {
-        let c = card(PAD, y, INNER, POWER_CARD);
+        let c = card(PAD, y, INNER, power_h);
         if status.profile.is_some() {
             hits.push((Control::Power, c));
         }
         cards.push(c);
-        y += POWER_CARD + GAP;
+        y += power_h + GAP;
         c
     });
     // The last gap becomes the bottom padding.
@@ -436,7 +448,7 @@ impl State {
                 }),
                 _ => Vec::new(),
             },
-            scroll: (self.control_scroll / f64::from(LIST_ROW)).round() as usize,
+            scroll: (self.control_scroll / f64::from(ts(LIST_ROW))).round() as usize,
             expanded: self.expanded,
             awake: self.keep_awake,
             blockers: self
@@ -463,7 +475,7 @@ impl State {
             return false;
         }
         let Some((_, cells)) = &layout.list else { return true };
-        let max = f64::from(LIST_ROW) * status.rows.len().saturating_sub(cells.len()) as f64;
+        let max = f64::from(ts(LIST_ROW)) * status.rows.len().saturating_sub(cells.len()) as f64;
         let scroll = (self.control_scroll + dy).clamp(0.0, max);
         if scroll != self.control_scroll {
             self.control_scroll = scroll;
@@ -630,6 +642,30 @@ mod tests {
         for (i, a) in l.cards.iter().enumerate() {
             assert!(l.cards[i + 1..].iter().all(|b| !a.overlaps(*b)), "card {i} overlaps");
         }
+    }
+
+    #[test]
+    fn text_rows_grow_with_the_text_size() {
+        let status = Status { expanded: Some(Module::Sound), outputs: vec![(1, "Speaker".into(), true)], ..full() };
+        let small = layout((1280, 1400).into(), &status);
+        let l = crate::text::with_scale(1.5, || layout((1280, 1400).into(), &status));
+        assert!(l.rect.size.h > small.rect.size.h && l.rect.size.w == small.rect.size.w);
+        assert!(l.cards.iter().chain(l.hits.iter().map(|(_, r)| r)).all(|c| l.rect.contains_rect(*c)));
+        for (i, a) in l.cards.iter().enumerate() {
+            assert!(l.cards[i + 1..].iter().all(|b| !a.overlaps(*b)), "card {i} overlaps");
+        }
+        // Title (24) and subtitle (21) beside each toggle stay in the card; toggles keep their size.
+        for t in [toggle_in(l.network, 0), toggle_in(l.network, 1)] {
+            let top = crate::text::with_scale(1.5, || label_top(t));
+            assert!(top >= l.network.loc.y && top + 45 <= l.network.loc.y + l.network.size.h && t.size.h == TOGGLE);
+        }
+        // "Do Not / Disturb": two body lines in the small tile.
+        assert!(l.dnd.size.h >= 48 && l.awake.size.h >= 45 && l.media.size.h >= 24 + 21 && l.power.unwrap().size.h >= 24);
+        let sound = l.sound.unwrap();
+        assert!(
+            crate::text::with_scale(1.5, || track_in(sound)).loc.y >= sound.loc.y + 12 + 24
+                && l.outputs.iter().all(|r| r.size.h >= 24 && sound.contains_rect(*r))
+        );
     }
 
     #[test]

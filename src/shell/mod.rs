@@ -32,6 +32,7 @@ use crate::{
     shortcuts::Action,
     state::State,
     symbols::Symbol,
+    text::ts,
     wm::Rect,
 };
 
@@ -50,7 +51,7 @@ const OSD_TIME: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// E2.7: 280 × 48 at the top right, under the bar.
 pub fn osd_rect(output_width: i32) -> Rect {
-    Rectangle::new(((output_width - MARGIN - 280).max(MARGIN), menubar::HEIGHT + DROP).into(), (280, 48).into())
+    Rectangle::new(((output_width - MARGIN - 280).max(MARGIN), menubar::height() + DROP).into(), (280, 48).into())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -224,10 +225,10 @@ fn tray_rows(tray: &[Option<MenuRow>], depth: usize) -> Vec<Option<Row>> {
 
 /// A menu's height with `rows`.
 pub fn menu_height(rows: &[Option<Row>]) -> i32 {
-    2 * menu::PAD + rows.iter().map(|r| if r.is_some() { menu::ROW } else { menu::SEPARATOR }).sum::<i32>()
+    2 * menu::PAD + rows.iter().map(|r| if r.is_some() { ts(menu::ROW) } else { menu::SEPARATOR }).sum::<i32>()
 }
 
-/// Menus (D8), in logical px.
+/// Menus (D8), in logical px; `ROW`, `SIDE` and `MIN_WIDTH` grow with the text size (`text::ts`).
 pub mod menu {
     pub const PAD: i32 = 5;
     pub const ROW: i32 = 22;
@@ -242,10 +243,10 @@ pub mod menu {
 /// which are neither drawn nor hit.
 pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows: &[Option<Row>], scroll: usize) -> (Rect, Vec<Rect>) {
     use menu::*;
-    let row_h = |row: &Option<Row>| if row.is_some() { ROW } else { SEPARATOR };
+    let row_h = |row: &Option<Row>| if row.is_some() { ts(ROW) } else { SEPARATOR };
     let height = menu_height(rows);
     let (left, top) = match anchor {
-        Anchor::Below(x) => (x, menubar::HEIGHT + DROP),
+        Anchor::Below(x) => (x, menubar::height() + DROP),
         Anchor::Above(p) => (p.x - width / 2, p.y - DROP - height),
         Anchor::At(p) => (p.x, p.y),
         // To the right of the parent, its first row level with the parent's row; flipped left at the screen edge.
@@ -253,7 +254,7 @@ pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows:
         Anchor::Beside(r) => (r.loc.x + r.size.w, r.loc.y - PAD),
     };
     let x = left.min(output.w - MARGIN - width).max(MARGIN);
-    let top = top.min(output.h - MARGIN - height).max(menubar::HEIGHT + DROP);
+    let top = top.min(output.h - MARGIN - height).max(menubar::height() + DROP);
     let room = output.h - MARGIN - top - 2 * PAD;
     // The first row that still lets the last one show.
     let mut tail = 0;
@@ -298,6 +299,12 @@ pub mod calendar {
     pub const BOTTOM: i32 = 8;
     /// The grid is centred: 7 cells of 36 px in 280.
     pub const GRID_X: i32 = (WIDTH - 7 * CELL_W) / 2;
+
+    /// The card's height with `rows` weeks; rows grow with the text size, the width stays.
+    pub fn height(rows: usize) -> i32 {
+        use crate::text::ts;
+        ts(GRID_Y) + rows as i32 * ts(CELL_H) + BOTTOM
+    }
 }
 
 /// Where each part of the calendar is, output-relative.
@@ -314,18 +321,21 @@ pub struct CalendarLayout {
 
 /// The calendar with its top-left corner at (`x`, `y`), output-relative.
 pub fn calendar_layout(x: i32, y: i32, rows: usize) -> CalendarLayout {
+    use crate::text::ts;
     use calendar::*;
-    let height = GRID_Y + rows as i32 * CELL_H + BOTTOM;
     let at = |dx: i32, dy: i32, w: i32, h: i32| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
-    let next = at(WIDTH - PAD + 4 - ARROW, TITLE_Y - 2, ARROW, ARROW);
-    let prev = at(WIDTH - PAD + 4 - 2 * ARROW, TITLE_Y - 2, ARROW, ARROW);
+    // The arrows are icons: their size stays, they centre on the taller title row.
+    let arrow_y = ts(TITLE_Y) + (ts(TITLE_H) - ARROW) / 2;
+    let next = at(WIDTH - PAD + 4 - ARROW, arrow_y, ARROW, ARROW);
+    let prev = at(WIDTH - PAD + 4 - 2 * ARROW, arrow_y, ARROW, ARROW);
+    let (grid_y, cell_h) = (ts(GRID_Y), ts(CELL_H));
     CalendarLayout {
-        rect: at(0, 0, WIDTH, height),
-        title: at(PAD, TITLE_Y, WIDTH - 2 * PAD - 2 * ARROW, TITLE_H),
+        rect: at(0, 0, WIDTH, height(rows)),
+        title: at(PAD, ts(TITLE_Y), WIDTH - 2 * PAD - 2 * ARROW, ts(TITLE_H)),
         prev,
         next,
-        header: std::array::from_fn(|i| at(GRID_X + i as i32 * CELL_W, HEADER_Y, CELL_W, HEADER_H)),
-        cells: (0..rows * 7).map(|i| at(GRID_X + (i % 7) as i32 * CELL_W, GRID_Y + (i / 7) as i32 * CELL_H, CELL_W, CELL_H)).collect(),
+        header: std::array::from_fn(|i| at(GRID_X + i as i32 * CELL_W, ts(HEADER_Y), CELL_W, ts(HEADER_H))),
+        cells: (0..rows * 7).map(|i| at(GRID_X + (i % 7) as i32 * CELL_W, grid_y + (i / 7) as i32 * cell_h, CELL_W, cell_h)).collect(),
     }
 }
 
@@ -397,7 +407,7 @@ impl State {
         if self.launchpad_open() || self.drawer_layout().is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
-        let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
+        let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::height());
         on_bar || self.in_popup(location) || self.dock_covers(location)
     }
 
@@ -728,6 +738,16 @@ mod tests {
     }
 
     #[test]
+    fn calendar_rows_grow_with_text() {
+        let big = crate::text::with_scale(1.5, || calendar_layout(992, 28, 5));
+        let small = calendar_layout(992, 28, 5);
+        assert_eq!(big.rect.size.w, small.rect.size.w);
+        assert!(big.rect.size.h > small.rect.size.h && big.cells[0].size.h == 48 && big.title.size.h == 30 && big.header[0].size.h == 21);
+        assert!(big.cells.iter().chain([&big.prev, &big.next, &big.title]).chain(&big.header).all(|c| big.rect.contains_rect(*c)));
+        assert!(big.header[0].loc.y >= big.title.loc.y + big.title.size.h && big.cells[0].loc.y >= big.header[0].loc.y + big.header[0].size.h);
+    }
+
+    #[test]
     fn recent_items_list_apps_and_documents() {
         let label = |r: &Option<Row>| r.as_ref().map(|r| r.label.clone());
         let rows = recent_rows(&[("Kate".into(), "org.kde.kate".into())], &[("a.txt".into(), "file:///a.txt".into())]);
@@ -760,6 +780,19 @@ mod tests {
         let (above, _) = menu_layout(Anchor::Above((640, 1100).into()), output, 200, &rows, 0);
         assert_eq!(above, Rectangle::new((540, 1100 - 4 - 142).into(), (200, 142).into()));
         assert_eq!(rows[2].as_ref().map(|r| (r.label.as_str(), r.action.clone())), Some(("Hide Kate", Some(Action::Hide))));
+    }
+
+    #[test]
+    fn menu_rows_grow_with_the_text_size() {
+        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
+        let output = Size::from((1280, 1200));
+        let big = crate::text::with_scale(1.5, || menu_layout(Anchor::Below(6), output, 200, &rows, 0));
+        let small = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
+        // 5 rows of 33 (a 13 px font at 1.5 shapes into 24 px lines) + the same separators and padding.
+        assert_eq!(big.0.size.h, 5 * 33 + 2 * 11 + 2 * 5);
+        assert!(big.1.iter().zip(&rows).all(|(c, r)| r.is_none() || c.size.h >= 24));
+        assert_eq!(small.0.size.h, 142, "unchanged at 1.0");
+        assert!(big.1.iter().all(|c| big.0.contains_rect(*c)));
     }
 
     #[test]
