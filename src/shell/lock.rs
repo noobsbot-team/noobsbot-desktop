@@ -178,6 +178,8 @@ pub struct Layout {
     pub buttons: [Rect; 3],
     /// Keyboard layout and battery, right-aligned in it.
     pub status: Rect,
+    /// The keyboard layout pill right of the field, with more than one layout (E8.7).
+    pub layouts: Rect,
 }
 
 pub const AVATAR: i32 = 64;
@@ -186,6 +188,7 @@ pub const FIELD_H: i32 = 30;
 const BUTTON_W: i32 = 84;
 const BUTTON_H: i32 = 28;
 const EDGE: i32 = 24;
+const PILL_W: i32 = 40;
 
 pub fn layout(size: Size<i32, Logical>) -> Layout {
     let (w, h) = (size.w, size.h);
@@ -205,7 +208,13 @@ pub fn layout(size: Size<i32, Logical>) -> Layout {
     let row = 3 * BUTTON_W + 2 * 8;
     let buttons = [0, 1, 2].map(|i| Rectangle::new(((w - row) / 2 + i * (BUTTON_W + 8), y).into(), (BUTTON_W, BUTTON_H).into()));
     let status = Rectangle::new((w - EDGE - 200, y).into(), (200, BUTTON_H).into());
-    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status }
+    let layouts = Rectangle::new((field.loc.x + FIELD_W + 8, field.loc.y).into(), (PILL_W, FIELD_H).into());
+    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status, layouts }
+}
+
+/// The layout pill's label ("EN"), shown with more than one layout.
+pub fn layout_pill(layouts: &crate::ime::Layouts) -> Option<String> {
+    layouts.list.get(layouts.active).filter(|_| layouts.list.len() > 1).map(|(code, _)| code.to_uppercase())
 }
 
 impl State {
@@ -363,6 +372,9 @@ impl State {
         let Some(layout) = self.lock_layout() else { return };
         if self.greeter_press(&layout, location) {
             return;
+        }
+        if layout_pill(&self.layouts).is_some() && layout.layouts.to_f64().contains(location) {
+            return self.switch_layout(None);
         }
         let hit = Button::ALL.into_iter().zip(layout.buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(b, _)| b);
         match hit {
@@ -528,6 +540,21 @@ mod tests {
             assert!(l.buttons[0].loc.x + l.buttons[0].size.w < l.buttons[1].loc.x);
             assert!(l.buttons.iter().all(|b| b.loc.y + b.size.h <= size.h - EDGE));
             assert_eq!(l.field.size, (FIELD_W, FIELD_H).into());
+            assert!(l.layouts.loc.x > l.field.loc.x + FIELD_W && l.layouts.loc.x + PILL_W <= size.w && l.layouts.loc.y == l.field.loc.y);
         }
+    }
+
+    #[test]
+    fn layout_pill_label_and_hit() {
+        let mut layouts = crate::ime::Layouts { list: vec![("us".into(), "English (US)".into())], ..Default::default() };
+        assert_eq!(layout_pill(&layouts), None, "one layout: no pill");
+        layouts.list.push(("np".into(), "Nepali".into()));
+        assert_eq!(layout_pill(&layouts).as_deref(), Some("US"));
+        layouts.active = 1;
+        assert_eq!(layout_pill(&layouts).as_deref(), Some("NP"));
+        let l = layout(Size::from((1280, 800)));
+        let inside = l.layouts.to_f64().loc + Point::from((PILL_W as f64 / 2.0, FIELD_H as f64 / 2.0));
+        assert!(l.layouts.to_f64().contains(inside) && !l.field.to_f64().contains(inside));
+        assert!(!l.layouts.to_f64().contains(l.field.to_f64().loc), "the field isn't the pill");
     }
 }
