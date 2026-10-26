@@ -56,7 +56,7 @@ pub struct Config {
     pub housekeeping: Housekeeping,
     pub notifications: Notifications,
     /// App name (as it sends notifications) → how they show.
-    pub notification_apps: BTreeMap<String, AppStyle>,
+    pub notification_apps: BTreeMap<String, AppRule>,
     pub app_drawer: AppDrawer,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
@@ -652,19 +652,58 @@ pub enum DockScroll {
     Reverse,
 }
 
-/// Notifications (E4.1).
-#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+/// Notifications (E4.1, E8.2).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Notifications {
     /// Do Not Disturb: banners stay quiet, Notification Center still collects them.
     pub dnd: bool,
+    /// Do Not Disturb turns on at `dnd_from` and off at `dnd_until` (whole hours, local; across midnight when
+    /// `dnd_from` is the later one).
+    pub dnd_scheduled: bool,
+    pub dnd_from: u32,
+    pub dnd_until: u32,
+    /// Banners while a full-screen window has focus.
+    pub full_screen: bool,
+    /// When banners and Notification Center show a notification's body.
+    pub previews: Previews,
+}
+
+impl Default for Notifications {
+    fn default() -> Self {
+        Self { dnd: false, dnd_scheduled: false, dnd_from: 22, dnd_until: 7, full_screen: false, previews: Previews::Always }
+    }
+}
+
+impl Notifications {
+    /// Does the schedule want Do Not Disturb on at `hour` o'clock?
+    pub fn dnd_at(&self, hour: u32) -> bool {
+        self.dnd_scheduled && crate::sun::within(self.dnd_from, self.dnd_until, hour)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Previews {
+    #[default]
+    Always,
+    Unlocked,
+    Never,
+}
+
+impl Previews {
+    /// Is a notification's body shown, `locked` or not?
+    pub fn show(self, locked: bool) -> bool {
+        self == Previews::Always || (self == Previews::Unlocked && !locked)
+    }
 }
 
 /// One app's notification style.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AppStyle {
     /// Goes after a few seconds.
+    #[default]
     Banner,
     /// Stays until dismissed.
     Alert,
@@ -672,6 +711,55 @@ pub enum AppStyle {
     None,
     /// Dropped.
     Off,
+}
+
+/// One app's `[notification_apps]` rule: a style alone (`"alert"`), or a table with the switches as well
+/// (`{ style = "alert", sound = false, badge = false, center = false }`); missing switches are on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(from = "RuleToml")]
+pub struct AppRule {
+    pub style: AppStyle,
+    /// A sound as it arrives.
+    pub sound: bool,
+    /// The count badge on its dock icon.
+    pub badge: bool,
+    /// Kept in Notification Center; off, it goes with its banner.
+    pub center: bool,
+}
+
+impl Default for AppRule {
+    fn default() -> Self {
+        Self { style: AppStyle::Banner, sound: true, badge: true, center: true }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum RuleToml {
+    Style(AppStyle),
+    Table {
+        #[serde(default)]
+        style: AppStyle,
+        #[serde(default = "yes")]
+        sound: bool,
+        #[serde(default = "yes")]
+        badge: bool,
+        #[serde(default = "yes")]
+        center: bool,
+    },
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl From<RuleToml> for AppRule {
+    fn from(rule: RuleToml) -> Self {
+        match rule {
+            RuleToml::Style(style) => AppRule { style, ..Default::default() },
+            RuleToml::Table { style, sound, badge, center } => AppRule { style, sound, badge, center },
+        }
+    }
 }
 
 /// Desktop icons (E7.2): the files in `~/Desktop` on the wallpaper.
@@ -1340,6 +1428,36 @@ pub fn watch(path: &Path, mut send: impl FnMut(Config) -> bool + Send + 'static)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notification_app_rules() {
+        let config: Config = toml::from_str(
+            "[notification_apps]\nMail = \"alert\"\nChat = { style = \"none\", sound = false }\n\"org.x.Y\" = { center = false, badge = false }\n",
+        )
+        .unwrap();
+        let rule = |app: &str| config.notification_apps[app];
+        assert_eq!(rule("Mail"), AppRule { style: AppStyle::Alert, ..Default::default() });
+        assert_eq!(rule("Chat"), AppRule { style: AppStyle::None, sound: false, badge: true, center: true });
+        assert_eq!(rule("org.x.Y"), AppRule { style: AppStyle::Banner, sound: true, badge: false, center: false });
+        assert!(toml::from_str::<Config>("[notification_apps]\nX = \"loud\"\n").is_err());
+    }
+
+    #[test]
+    fn dnd_schedule_crosses_midnight() {
+        let at = |dnd_scheduled, dnd_from, dnd_until, hour| Notifications { dnd_scheduled, dnd_from, dnd_until, ..Default::default() }.dnd_at(hour);
+        assert!(at(true, 22, 7, 22) && at(true, 22, 7, 23) && at(true, 22, 7, 0) && at(true, 22, 7, 6));
+        assert!(!at(true, 22, 7, 7) && !at(true, 22, 7, 12) && !at(true, 22, 7, 21));
+        assert!(at(true, 9, 17, 9) && at(true, 9, 17, 16) && !at(true, 9, 17, 17) && !at(true, 9, 17, 8));
+        assert!(!at(false, 22, 7, 23), "off without the schedule");
+        assert!(!at(true, 8, 8, 8), "an empty window");
+    }
+
+    #[test]
+    fn previews_show_the_body() {
+        assert!(Previews::Always.show(true) && Previews::Always.show(false));
+        assert!(Previews::Unlocked.show(false) && !Previews::Unlocked.show(true));
+        assert!(!Previews::Never.show(false) && !Previews::Never.show(true));
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("noobsbot-desktop-test-{name}-{}", std::process::id()));
