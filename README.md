@@ -231,7 +231,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
 - **App switcher:** hold Super and press Tab.
 - **Screenshots:** Super+Shift+3 (whole screen), Super+Shift+4 (drag a region), Super+Shift+5 (toolbar with options).
   They are saved to `~/Pictures/Screenshots` and copied to the clipboard.
-- **Lock screen:** Super+Ctrl+Q, or automatically when the screen turns off and always before sleep.
+- **Lock screen:** Super+Ctrl+Q, or automatically when the screen turns off and always before sleep. While music
+  plays, a Now Playing card (title, artist, cached album art) with previous / play-pause / next sits above your picture.
 - **Emoji:** Super+Ctrl+E or Super+period opens the picker; the emoji is typed into the focused text field, or copied.
 - **On-screen keyboard:** the `on-screen-keyboard` action (or the input menu) shows a keyboard to click, on the lock
   screen too; `[accessibility] on_screen_keyboard = true` keeps it up.
