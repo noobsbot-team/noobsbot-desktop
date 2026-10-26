@@ -531,12 +531,9 @@ impl State {
         let at = location + first.loc.to_f64();
         let docks = self.dock_outputs();
         let Some(output) = docks.into_iter().find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(at))) else { return };
-        let Some(left) = self.dock_output().filter(|o| *o != output) else {
-            self.dock_ui.output = Some(output);
-            return;
-        };
+        // The last one moved onto, even when it has no dock any more (`pointer`: the dock follows), gets redrawn.
+        let Some(left) = self.dock_ui.output.replace(output.clone()).filter(|o| *o != output) else { return };
         self.dock_fx.side_mut(&left.name()).zoom.set(false, Instant::now());
-        self.dock_ui.output = Some(output);
         self.dock_reveal = false;
         self.dock_fx.hovered(None);
         self.dock_ui.peek = None;
