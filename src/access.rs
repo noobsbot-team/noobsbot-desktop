@@ -34,6 +34,18 @@ pub struct Shell {
     pub dialog: Option<Dialog>,
     /// The shown app switcher: its apps and the selected one.
     pub switcher: Option<(Vec<String>, usize)>,
+    /// The lock screen; while it is up the rest of the shell is hidden from the reader, banners aside.
+    pub lock: Option<Locked>,
+}
+
+/// The lock screen: the user, the password field, a wrong-password hint, and what plays (`None`: no Now Playing card).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Locked {
+    pub user: String,
+    pub field: Field,
+    pub hint: Option<String>,
+    /// "Title, Artist" and whether it plays.
+    pub playing: Option<(String, bool)>,
 }
 
 /// An alert or Force Quit: title, message, a field, a list (Force Quit's apps) with its selected row, the buttons
@@ -152,6 +164,15 @@ const DIALOG_FIELD: NodeId = NodeId(17);
 const DIALOG_LIST: NodeId = NodeId(18);
 const SWITCHER: NodeId = NodeId(19);
 const SWITCHER_ITEM: u64 = 8000;
+const LOCK: NodeId = NodeId(20);
+const LOCK_USER: NodeId = NodeId(21);
+const LOCK_FIELD: NodeId = NodeId(22);
+const LOCK_HINT: NodeId = NodeId(23);
+const LOCK_MEDIA: NodeId = NodeId(24);
+/// Now Playing's Previous, Play/Pause and Next.
+const MEDIA_BUTTON: u64 = 9000;
+/// Sleep, Restart and Shut Down.
+const LOCK_BUTTON: u64 = 9100;
 const DIALOG_ROW: u64 = 6000;
 const DIALOG_BUTTON: u64 = 7000;
 const MISSION_ITEM: NodeId = NodeId(3000);
@@ -174,20 +195,24 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
         nodes.push((id, node));
         nodes.extend(items);
     };
-    let bar = shell.bar.iter().enumerate().map(|(i, name)| {
-        let mut node = Node::new(Role::MenuItem);
-        node.set_label(name.as_str());
-        (NodeId(BAR_ITEM + i as u64), node)
-    });
-    group(BAR, Role::MenuBar, "Menu Bar", bar.collect(), &mut nodes);
-    let dock = shell.dock.iter().enumerate().map(|(i, (name, running))| {
-        let mut node = Node::new(Role::Button);
-        node.set_label(if *running { format!("{name}, running") } else { name.clone() });
-        node.add_action(Action::Click);
-        (NodeId(DOCK_ITEM + i as u64), node)
-    });
-    group(DOCK, Role::Toolbar, "Dock", dock.collect(), &mut nodes);
-    let mut children = vec![BAR, DOCK];
+    let mut children = Vec::new();
+    // Locked, they are out of sight.
+    if shell.lock.is_none() {
+        let bar = shell.bar.iter().enumerate().map(|(i, name)| {
+            let mut node = Node::new(Role::MenuItem);
+            node.set_label(name.as_str());
+            (NodeId(BAR_ITEM + i as u64), node)
+        });
+        group(BAR, Role::MenuBar, "Menu Bar", bar.collect(), &mut nodes);
+        let dock = shell.dock.iter().enumerate().map(|(i, (name, running))| {
+            let mut node = Node::new(Role::Button);
+            node.set_label(if *running { format!("{name}, running") } else { name.clone() });
+            node.add_action(Action::Click);
+            (NodeId(DOCK_ITEM + i as u64), node)
+        });
+        group(DOCK, Role::Toolbar, "Dock", dock.collect(), &mut nodes);
+        children.extend([BAR, DOCK]);
+    }
     if let Some(controls) = &shell.controls {
         let toggles = controls.iter().enumerate().map(|(i, (name, on))| {
             let mut node = Node::new(Role::Switch);
@@ -357,6 +382,39 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
         group(SWITCHER, Role::ListBox, "App Switcher", items.collect(), &mut nodes);
         children.push(SWITCHER);
     }
+    if let Some(lock) = &shell.lock {
+        let button = |id: u64, label: &str| {
+            let mut node = Node::new(Role::Button);
+            node.set_label(label);
+            node.add_action(Action::Click);
+            (NodeId(id), node)
+        };
+        let mut user = Node::new(Role::Label);
+        user.set_value(lock.user.as_str());
+        let mut parts = vec![(LOCK_USER, user), (LOCK_FIELD, lock.field.node(Role::TextInput))];
+        if let Some(hint) = &lock.hint {
+            let mut node = Node::new(Role::Label);
+            node.set_value(hint.as_str());
+            node.set_live(Live::Assertive);
+            parts.push((LOCK_HINT, node));
+        }
+        let mut media = Vec::new();
+        if let Some((what, playing)) = &lock.playing {
+            let play = button(MEDIA_BUTTON + 1, if *playing { "Pause" } else { "Play" });
+            let buttons = vec![button(MEDIA_BUTTON, "Previous"), play, button(MEDIA_BUTTON + 2, "Next")];
+            group(LOCK_MEDIA, Role::Group, &format!("Now Playing, {what}"), buttons, &mut media);
+            parts.push(media.remove(0));
+        }
+        let power = crate::shell::lock::Button::ALL.iter().enumerate().map(|(i, b)| button(LOCK_BUTTON + i as u64, b.label()));
+        parts.extend(power);
+        let mut node = Node::new(Role::Dialog);
+        node.set_label("Lock Screen");
+        node.set_children(parts.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+        nodes.push((LOCK, node));
+        nodes.extend(parts);
+        nodes.extend(media);
+        children.push(LOCK);
+    }
     let mut root = Node::new(Role::Window);
     root.set_label("Desktop");
     root.set_children(children);
@@ -366,7 +424,9 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
 
 /// What has the keyboard: the topmost open surface, else the desktop.
 fn focus(shell: &Shell) -> NodeId {
-    if let Some(d) = &shell.dialog {
+    if shell.lock.is_some() {
+        LOCK_FIELD
+    } else if let Some(d) = &shell.dialog {
         if d.field.is_some() {
             DIALOG_FIELD
         } else if d.selected.is_some() {
@@ -459,6 +519,11 @@ impl State {
     }
 
     fn access_shell(&mut self) -> Shell {
+        if let Some(lock) = &self.lock {
+            // A lock client's surface speaks for itself.
+            let lock = lock.client_surface().is_none().then(|| self.access_lock(lock));
+            return Shell { lock, banners: self.access_notes().0, ..Default::default() };
+        }
         let status = self.control_status();
         let mut bar = vec!["Noobsbot menu".to_owned()];
         if let Some(content) = self.menu_bar() {
@@ -494,7 +559,19 @@ impl State {
         let (banners, center) = self.access_notes();
         let dialog = self.access_dialog();
         let switcher = self.switcher.open.as_ref().filter(|o| o.visible).map(|o| (o.apps.iter().map(|a| a.name.clone()).collect(), o.selected));
-        Shell { bar, dock, controls, mission, spotlight, launchpad, banners, center, dialog, switcher }
+        Shell { bar, dock, controls, mission, spotlight, launchpad, banners, center, dialog, switcher, lock: None }
+    }
+
+    fn access_lock(&self, lock: &crate::shell::lock::Lock) -> Locked {
+        let user = match &lock.greeter {
+            Some(g) => g.users.get(g.user).map(|u| u.name.clone()).unwrap_or_default(),
+            None => crate::pam::user().1,
+        };
+        let error = lock.greeter.as_ref().and_then(|g| g.error.clone());
+        let hint = error.or(lock.wrong.map(|_| "Incorrect password".into()));
+        let playing = self.media.as_ref().filter(|_| lock.greeter.is_none() && self.lock_layout().is_some_and(|l| l.media.is_some()));
+        let playing = playing.map(|m| (if m.artist.is_empty() { m.title.clone() } else { format!("{}, {}", m.title, m.artist) }, m.playing));
+        Locked { user, field: Field::new("Password", &lock.field), hint, playing }
     }
 
     /// The alert, else Force Quit.
@@ -590,7 +667,20 @@ impl State {
 
     /// The screen reader pressed a dock icon or a Control Center toggle.
     fn access_press(&mut self, id: u64) {
-        if (DOCK_ITEM..CONTROL_ITEM).contains(&id) {
+        if (MEDIA_BUTTON..MEDIA_BUTTON + 3).contains(&id) {
+            use crate::services::media::Action;
+            let action = [Action::Previous, Action::PlayPause, Action::Next][(id - MEDIA_BUTTON) as usize];
+            if let Some(media) = self.media.as_ref().filter(|_| self.locked()) {
+                self.services.send(crate::services::Command::Media { player: media.player.clone(), action });
+            }
+        } else if (LOCK_BUTTON..LOCK_BUTTON + 3).contains(&id) && self.locked() {
+            use crate::shell::{alert::Power, lock::Button};
+            match Button::ALL[(id - LOCK_BUTTON) as usize] {
+                Button::Sleep => self.sleep(),
+                Button::Restart => self.power_now(Power::Restart),
+                Button::ShutDown => self.power_now(Power::ShutDown),
+            }
+        } else if (DOCK_ITEM..CONTROL_ITEM).contains(&id) {
             if let Some(item) = self.dock_items().into_iter().nth((id - DOCK_ITEM) as usize) {
                 self.dock_click(item, false);
             }
@@ -775,6 +865,24 @@ mod tests {
         let notes = node(&update, NodeId(SWITCHER_ITEM + 1));
         assert_eq!((notes.label(), notes.is_selected()), (Some("Notes"), Some(true)));
         assert_eq!(node(&update, SWITCHER).label(), Some("App Switcher"));
+    }
+
+    #[test]
+    fn the_lock_screen_reads_the_user_field_and_now_playing() {
+        let field = Field { label: "Password".into(), text: "x".into(), secure: true };
+        let lock = Locked { user: "Anil".into(), field, hint: Some("Incorrect password".into()), playing: Some(("Song, Band".into(), true)) };
+        let update = tree(&Shell { lock: Some(lock), banners: vec![Note::default()], ..Default::default() });
+        assert_eq!(update.focus, LOCK_FIELD);
+        assert_eq!(node(&update, LOCK_FIELD).role(), Role::PasswordInput);
+        assert_eq!(node(&update, LOCK_USER).value(), Some("Anil"));
+        assert_eq!(node(&update, LOCK_HINT).live(), Some(Live::Assertive));
+        assert_eq!(node(&update, LOCK_MEDIA).label(), Some("Now Playing, Song, Band"));
+        let labels: Vec<_> = (0..3).map(|i| node(&update, NodeId(MEDIA_BUTTON + i)).label().map(str::to_owned)).collect();
+        assert_eq!(labels, [Some("Previous".into()), Some("Pause".into()), Some("Next".into())]);
+        assert_eq!(node(&update, NodeId(LOCK_BUTTON + 2)).label(), Some("Shut Down"));
+        assert_eq!(node(&update, ROOT).children(), [BANNERS, LOCK]);
+        let children: Vec<NodeId> = update.nodes.iter().flat_map(|(_, n)| n.children().to_vec()).collect();
+        assert!(update.nodes.iter().all(|(id, _)| *id == ROOT || children.contains(id)), "every node is reachable");
     }
 
     #[test]
