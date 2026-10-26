@@ -8,6 +8,8 @@ mod config;
 mod display_info;
 mod gallery;
 mod network;
+#[path = "../../src/pactl.rs"]
+mod pactl;
 mod pages;
 mod shortcuts;
 mod style;
@@ -269,8 +271,10 @@ impl App {
             }
             Message::Release(key) => {
                 let Some(value) = self.drafts.remove(&key) else { return Task::none() };
-                if let Some(output) = key.strip_prefix("sound.").map(|k| k == "output") {
-                    return Task::perform(system::set_volume(output, value.round() as u8), Message::Status);
+                match key.as_str() {
+                    "sound.output" | "sound.input" => return Task::perform(system::set_volume(key == "sound.output", value.round() as u8), Message::Status),
+                    "sound.balance" => return Task::perform(system::set_balance((value / 100.0) as f32), Message::Status),
+                    _ => {}
                 }
                 match pages::setting(&key).map(|s| s.kind) {
                     Some(pages::Kind::Slider { step, .. }) if step >= 1.0 => self.save(&key, pages::whole(&key, value)),
