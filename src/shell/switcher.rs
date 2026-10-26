@@ -16,7 +16,7 @@ use smithay::{
     utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
 };
 
-use crate::{state::State, wm::Rect};
+use crate::{state::State, text::ts, wm::Rect};
 
 /// How long the keys must be held before the panel shows.
 const HOLD: Duration = Duration::from_millis(150);
@@ -121,7 +121,7 @@ pub mod layout {
     pub const NAME_GAP: i32 = 6;
     pub const NAME_H: i32 = 16;
     pub const MARGIN: i32 = 16;
-    /// Wide enough for a long app name under a single icon.
+    /// Wide enough for a long app name under a single icon. It and `NAME_H` grow with the text size (`text::ts`).
     pub const MIN_WIDTH: i32 = 240;
 }
 
@@ -131,11 +131,12 @@ pub fn layout(output: Size<i32, smithay::utils::Logical>, count: usize) -> (Rect
     use layout::*;
     let n = count.max(1) as i32;
     let cell = CELL.min((output.w - 2 * MARGIN - 2 * PAD) / n).max(8);
-    let (w, h) = ((2 * PAD + n * cell).max(MIN_WIDTH.min(output.w)), PAD + cell + NAME_GAP + NAME_H + PAD);
+    let name_h = ts(NAME_H);
+    let (w, h) = ((2 * PAD + n * cell).max(ts(MIN_WIDTH).min(output.w)), PAD + cell + NAME_GAP + name_h + PAD);
     let first = (w - n * cell) / 2;
     let (x, y) = ((output.w - w) / 2, ((output.h - h) / 2).max(0));
     let cells = (0..count as i32).map(|i| Rectangle::new((x + first + i * cell, y + PAD).into(), (cell, cell).into())).collect();
-    let name = Rectangle::new((x + PAD, y + PAD + cell + NAME_GAP).into(), (w - 2 * PAD, NAME_H).into());
+    let name = Rectangle::new((x + PAD, y + PAD + cell + NAME_GAP).into(), (w - 2 * PAD, name_h).into());
     (Rectangle::new((x, y).into(), (w, h).into()), cells, name)
 }
 
@@ -397,5 +398,16 @@ mod tests {
         let (panel, cells, _) = layout((800, 600).into(), 20);
         assert!(panel.size.w <= 800 - 2 * layout::MARGIN && panel.loc.x >= 0);
         assert!(cells.iter().all(|c| panel.contains_rect(*c)));
+    }
+
+    #[test]
+    fn name_line_grows_with_text_size() {
+        let at = |k, n| crate::text::with_scale(k, || layout((1280, 800).into(), n));
+        assert_eq!(at(1.0, 3), layout((1280, 800).into(), 3));
+        let (one, big) = (at(1.0, 1), at(1.5, 1));
+        // Body (16 px lines) at 1.5 fits the name line, which stays in the panel under the icons.
+        assert_eq!((big.2.size.h, big.0.size.w), (24, 360));
+        assert!(big.0.contains_rect(big.2) && big.2.loc.y >= big.1[0].loc.y + big.1[0].size.h);
+        assert!(big.0.size.h > one.0.size.h && big.1[0].size == one.1[0].size, "icons keep their size");
     }
 }
