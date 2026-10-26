@@ -635,16 +635,13 @@ impl State {
         })
     }
 
-    /// The bar on `output`: the focused app's name only on its window's display, tray icons only on the first one.
+    /// The bar on `output`: the focused app's name only on its window's display.
     pub fn bar_content(&self, output: &smithay::output::Output) -> Option<crate::render::menubar::Content> {
         let mut content = self.menu_bar()?;
         let first = self.space.outputs().next() == Some(output);
         let on = self.focused_window().and_then(|w| self.window_output(&w));
         if on.as_ref().map_or(!first, |o| o != output) {
             content.app = None;
-        }
-        if !first {
-            content.tray.clear();
         }
         Some(content)
     }
