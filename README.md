@@ -266,6 +266,7 @@ settings file.
 | Super+Ctrl+E, Super+period | emoji picker |
 | F12 | quake terminal |
 | Volume, mute, mic, brightness, keyboard backlight and media keys | as labelled, with an on-screen display |
+| Trackpad key | trackpad off or on |
 | Shift+Alt+volume keys | volume in quarter steps |
 | Power button | asks before shutting down |
 | Sleep key | lock, then sleep |

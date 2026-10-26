@@ -255,7 +255,7 @@ super_tap = true
 
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key.
 # Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down|up-fine|down-fine", mute, mic-mute,
-# "brightness up|down", "keyboard-backlight up|down|toggle", "media play-pause|next|previous|stop|forward|rewind", eject, "space left|right|1…9", "move-to-space left|right|1…16",
+# "brightness up|down", "keyboard-backlight up|down|toggle", "touchpad toggle|on|off", "media play-pause|next|previous|stop|forward|rewind", eject, "space left|right|1…9", "move-to-space left|right|1…16",
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows,
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
@@ -346,6 +346,10 @@ super_tap = true
 "XF86KbdBrightnessUp" = "keyboard-backlight up"
 "XF86KbdBrightnessDown" = "keyboard-backlight down"
 "XF86KbdLightOnOff" = "keyboard-backlight toggle"
+# The trackpad on or off until this file is next saved ([touchpad] enabled keeps it).
+"XF86TouchpadToggle" = "touchpad toggle"
+"XF86TouchpadOn" = "touchpad on"
+"XF86TouchpadOff" = "touchpad off"
 "XF86AudioPlay" = "media play-pause"
 "XF86AudioPause" = "media play-pause"
 "XF86AudioNext" = "media next"
