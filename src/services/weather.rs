@@ -57,7 +57,7 @@ impl Weather {
     }
 }
 
-/// WMO weather code → the words and symbol macOS would use.
+/// WMO weather code → the words and symbol we show.
 pub fn condition(code: u8, day: bool) -> (&'static str, Symbol) {
     match code {
         0 if day => ("Sunny", Symbol::Sun),

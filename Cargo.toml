@@ -3,7 +3,7 @@ name = "noobsbot-desktop"
 version = "1.0.0-alpha.8"
 edition = "2024"
 license = "MIT"
-description = "Noobsbot Desktop: a macOS-style Wayland desktop environment"
+description = "Noobsbot Desktop: a glassy Wayland desktop environment"
 repository = "https://github.com/noobsbot-team/noobsbot-desktop"
 
 [workspace]

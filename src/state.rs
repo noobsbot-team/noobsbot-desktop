@@ -575,7 +575,7 @@ impl State {
         }
     }
 
-    /// What the menu bar shows; `None` while a fullscreen window has focus (it covers the bar, as on macOS).
+    /// What the menu bar shows; `None` while a fullscreen window has focus (it covers the bar).
     pub fn menu_bar(&self) -> Option<crate::render::menubar::Content> {
         use crate::render::menubar::{self, Item};
         let focused = self.focused_window();
@@ -1130,7 +1130,7 @@ impl XdgShellHandler for State {
             return;
         }
         let (Some(start_data), Some(window)) = (pointer.grab_start_data(), self.window_for(surface.wl_surface()).cloned()) else { return };
-        // Dragging a zoomed window un-zooms it first, centred under the pointer (macOS).
+        // Dragging a zoomed window un-zooms it first, centred under the pointer.
         if let Some(restore) = self.unfill(&surface, xdg_toplevel::State::Maximized) {
             let at = start_data.location.to_i32_round::<i32>();
             self.set_visible_loc(&window, (at.x - restore.size.w / 2, at.y - crate::decorations::BAR / 2).into());

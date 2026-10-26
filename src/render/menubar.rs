@@ -179,7 +179,7 @@ impl MenuBar {
         self.hits.iter().find(|(_, rect)| rect.to_f64().contains(location)).map(|(item, _)| *item)
     }
 
-    /// The pressed pill behind `item`: rounded, a little inside the bar's height (macOS). Menus line up with it.
+    /// The pressed pill behind `item`: rounded, a little inside the bar's height. Menus line up with it.
     pub fn pill(&self, item: BarItem) -> Option<Rect> {
         let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
         Some(Rectangle::new((area.loc.x + GAP / 2 - 6, 2).into(), (area.size.w - GAP + 12, HEIGHT - 4).into()))

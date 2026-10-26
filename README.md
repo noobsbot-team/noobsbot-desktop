@@ -1,9 +1,13 @@
 # Noobsbot Desktop
 
-A complete macOS-style desktop for Linux, with a glassy theme, written in Rust on Wayland.
-It turns a fresh Arch Linux or Debian 13 install into a full desktop: windows with traffic lights, a menu bar, a dock, Spotlight,
-Launchpad, Notification Center, Control Center, Spaces, Mission Control, touchpad gestures, a lock screen, a login
-screen and System Settings.
+A calm, glassy desktop for Linux, designed as one piece and written in Rust on Wayland.
+
+Noobsbot Desktop gives you a global menu bar, a magnifying dock and windows with traffic-light buttons, all drawn in
+soft, mostly solid glass that stays sharp because nothing is blurred. Spotlight finds apps and files as you type,
+Launchpad shows everything installed, and Spaces, Mission Control and touchpad gestures keep a busy screen in order.
+Notification Center, Control Center, a lock screen, a login screen and System Settings complete it, so a fresh
+Arch Linux or Debian 13 install becomes a whole desktop with one script. It is a single fast program that stays idle
+when nothing changes, and every part follows the same design.
 
 Version 1 codename: **Opal**, a gem that looks like glass with soft light inside but isn't see-through, like the
 design: glassy, yet mostly solid.
@@ -42,22 +46,22 @@ Noobsbot Desktop is everything you see after you log in. One program, `noobsbot-
 compositor, the window manager and the whole shell: it draws the windows, the menu bar, the dock and every popover
 itself. Apps (the terminal, browser, file manager, editor) are ordinary separate programs.
 
-- **Looks and behaves like macOS:** traffic-light title bars, a global menu bar with the clock, a magnifying dock,
+- **One consistent design:** traffic-light title bars, a global menu bar with the clock, a magnifying dock,
   Spotlight (Super+Space), Launchpad, Mission Control, Spaces, three- and four-finger gestures, Notification Center
   with a calendar, Control Center with sound, Wi-Fi, Bluetooth, brightness and Dark Mode.
 - **Glassy, without blur:** surfaces are mostly solid glass with soft light and edges, in light and dark mode, with
-  the eight macOS accent colours. No blur keeps it sharp and fast.
+  eight accent colours. No blur keeps it sharp and fast.
 - **Fast and light:** it aims for 0% CPU when nothing changes, under 100 MB of memory for the whole desktop and
   under half a second to start. Measurements are in [`PERF.md`](PERF.md).
 - **Self-contained:** it installs on a fresh Arch or Debian 13 system and needs no other desktop. Nothing from any other desktop
   is installed (Dolphin and Kate bring some Qt libraries, which load only when they're open).
 
 ## How it is different
-| | Noobsbot Desktop | Traditional desktops | Tiling compositors | macOS themes on another desktop |
+| | Noobsbot Desktop | Traditional desktops | Tiling compositors | Themes on another desktop |
 |---|---|---|---|---|
-| Look | macOS, designed as one system (Part D of `plan.md`) | their own | minimal, you build the bar and launcher yourself | a skin over a different layout and behaviour |
+| Look | glassy, designed as one system (Part D of `plan.md`) | their own | minimal, you build the bar and launcher yourself | a skin over a different layout and behaviour |
 | Shell | built into the compositor: one process | many processes (shell, panels, daemons) | compositor plus separate bars and launchers | the host desktop's |
-| Behaviour | macOS: menu bar, dock, Spotlight, Spaces, Mission Control, gestures, hot corners | their own | tiling, keyboard first | the host desktop's |
+| Behaviour | menu bar, dock, Spotlight, Spaces, Mission Control, gestures, hot corners | their own | tiling, keyboard first | the host desktop's |
 | Setup | one script on a fresh Arch or Debian install | distro packages | hand-written configs | theme packs and extensions |
 | Config | one commented TOML file, applied as you save, plus a Settings app | GUI settings and dconf/KConfig | text files | several places |
 | Updates | signed releases, installed with "Restart to Update", automatic rollback | distro packages | distro packages | — |

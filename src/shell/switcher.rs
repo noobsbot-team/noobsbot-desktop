@@ -293,13 +293,13 @@ impl State {
         let Some(open) = self.switcher.open.as_mut() else { return };
         let app = open.apps.get(open.selected).cloned();
         if outcome == Outcome::Hide {
-            // Stays open, the app still listed (switching to it shows it again), as on macOS.
+            // Stays open, the app still listed (switching to it shows it again).
             let windows = app.map(|a| a.windows.into_iter().filter(|w| self.space.elements().any(|e| e == w)).collect()).unwrap_or_default();
             self.hide_windows(windows);
             return;
         }
         if outcome == Outcome::Quit {
-            // Stays open on the next app, as on macOS.
+            // Stays open on the next app.
             if let Some(app) = &app {
                 app.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close());
                 open.apps.remove(open.selected);

@@ -1,5 +1,5 @@
-//! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s, as on
-//! macOS. Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. A frozen app asks
+//! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s.
+//! Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. A frozen app asks
 //! Wait / Force Quit (E4.7).
 //! Drawn by render/alert.rs, which keeps the button rects of the last frame.
 
@@ -364,7 +364,7 @@ impl State {
     }
 
     /// A press at `location` (output-relative): `true` if the alert took it. Outside, the click goes on (the alert
-    /// isn't modal, as on macOS).
+    /// isn't modal).
     pub(super) fn alert_press(&mut self, location: Point<f64, Logical>) -> bool {
         let Some(backend) = self.backend.as_ref() else { return false };
         if !backend.alert.rect().is_some_and(|r| r.to_f64().contains(location)) {
