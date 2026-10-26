@@ -219,13 +219,16 @@ impl State {
         (layouts.list.len() > 1 || layouts.fcitx || layouts.methods.is_some()).then_some(code)
     }
 
-    /// The input menu: every layout (the active one ticked), fcitx5's input methods while it runs, then its settings
-    /// when it's installed.
-    /// The input menu: `menu_rows` and the on-screen keyboard.
+    /// The input menu: `menu_rows`, the Keyboard Viewer and the on-screen keyboard.
     pub fn input_menu_rows(&self) -> Vec<Option<Row>> {
         let label = if self.osk_shown() { "Hide On-Screen Keyboard" } else { "Show On-Screen Keyboard" };
+        let viewer = if self.osk.viewer { "Hide Keyboard Viewer" } else { "Show Keyboard Viewer" };
         let mut rows = menu_rows(&self.layouts);
-        rows.extend([None, Some(Row { sub: Vec::new(), label: label.into(), shortcut: "", action: Some(Action::OnScreenKeyboard) })]);
+        rows.extend([
+            None,
+            Some(Row { sub: Vec::new(), label: viewer.into(), shortcut: "", action: Some(Action::KeyboardViewer) }),
+            Some(Row { sub: Vec::new(), label: label.into(), shortcut: "", action: Some(Action::OnScreenKeyboard) }),
+        ]);
         rows
     }
 

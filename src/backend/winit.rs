@@ -169,24 +169,12 @@ impl State {
             return Vec::new();
         };
         let labels = self.osk_labels();
+        let lit = self.osk_lit();
         let appearance = &self.config.appearance;
         let (dark, scale) = (render::is_dark(appearance), output.current_scale().fractional_scale());
         let accent = render::accent(appearance.accent, dark);
         let Some(views) = self.backend.as_mut() else { return Vec::new() };
-        let latched = &self.osk.latched;
-        views.osk.elements(
-            renderer,
-            &views.shaders,
-            &mut self.text,
-            &mut self.symbols,
-            geo.size,
-            labels,
-            latched,
-            dark,
-            accent,
-            appearance.glass_opacity,
-            scale,
-        )
+        views.osk.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, geo.size, labels, &lit, dark, accent, appearance.glass_opacity, scale)
     }
 
     /// The app switcher on `output`, when it shows there (the display it opened on).
