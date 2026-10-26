@@ -327,7 +327,7 @@ impl State {
         if tracker.kind == Kind::Swipe && self.launchpad_scroll(0.0, 0.0, 0.0, true) {
             return true;
         }
-        let gesture = tracker.end(time, cancelled);
+        let gesture = tracker.end(time, cancelled).filter(|g| self.config.touchpad.allows(*g));
         tracing::debug!(?gesture, delta = ?tracker.delta(), "gesture");
         let mission = self.mission.as_ref().filter(|m| m.progress.target() == 1.0).map(|m| m.app.is_some());
         match gesture {

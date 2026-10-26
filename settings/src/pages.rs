@@ -169,11 +169,25 @@ pub fn squircle<'a>(page: Page, size: f32) -> Element<'a, Message> {
 /// Off or a wait, for dwell and hold clicks.
 const DWELL: &[(i64, &str)] = &[(0, "Off"), (500, "0.5 s"), (1000, "1 s"), (1500, "1.5 s"), (2000, "2 s")];
 
+/// What a hot corner can do: an action name from `[bindings]`, and its label.
+const CORNER_ACTIONS: &[(&str, &str)] = &[
+    ("none", "Nothing"),
+    ("mission-control", "Mission Control"),
+    ("app-expose", "App Exposé"),
+    ("show-desktop", "Desktop"),
+    ("launchpad", "Launchpad"),
+    ("notification-center", "Notification Center"),
+    ("lock", "Lock Screen"),
+    ("display-off", "Turn Display Off"),
+];
+
 #[derive(Clone, Copy, Debug)]
 pub enum Kind {
     Toggle,
     /// Value written, label shown.
     Choice(&'static [(&'static str, &'static str)]),
+    /// As `Choice`, in a dropdown (too many for segments); a value not listed shows as written.
+    Menu(&'static [(&'static str, &'static str)]),
     Slider {
         min: f64,
         max: f64,
@@ -400,6 +414,10 @@ pub const SETTINGS: &[Setting] = &[
         "",
         Kind::Choice(&[("zoom", "Zoom"), ("minimise", "Minimise"), ("nothing", "Nothing")]),
     ),
+    s(Page::Dock, "Hot Corners", "hot_corners.top_left", "Top left", "", Kind::Menu(CORNER_ACTIONS)),
+    s(Page::Dock, "Hot Corners", "hot_corners.top_right", "Top right", "", Kind::Menu(CORNER_ACTIONS)),
+    s(Page::Dock, "Hot Corners", "hot_corners.bottom_left", "Bottom left", "", Kind::Menu(CORNER_ACTIONS)),
+    s(Page::Dock, "Hot Corners", "hot_corners.bottom_right", "Bottom right", "", Kind::Menu(CORNER_ACTIONS)),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_rate", "Key repeat rate", "", Kind::Slider { min: 0.0, max: 60.0, step: 1.0 }),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_delay", "Delay until repeat", "", Kind::Slider { min: 150.0, max: 1500.0, step: 50.0 }),
     s(Page::Keyboard, "Modifier keys", "keyboard.options", "Caps Lock key", "", Kind::XkbOption(crate::xkb::is_caps, crate::xkb::CAPS)),
@@ -422,17 +440,32 @@ pub const SETTINGS: &[Setting] = &[
         "touchpad.secondary_click",
         "Secondary click",
         "",
-        Kind::Choice(&[("two-fingers", "Two fingers"), ("corner", "Bottom-right corner")]),
+        Kind::Choice(&[("two-fingers", "Two fingers"), ("corner", "Bottom-right corner"), ("off", "Off")]),
+    ),
+    s(
+        Page::Trackpad,
+        "",
+        "touchpad.scroll_method",
+        "Scroll with",
+        "",
+        Kind::Choice(&[("two-fingers", "Two fingers"), ("edge", "One finger on the edge"), ("none", "Off")]),
     ),
     s(Page::Trackpad, "", "touchpad.tap_to_drag", "Tap to drag", "Tap, then drag with the finger down", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.drag_lock", "Drag lock", "Keep dragging through a short lift", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.disable_while_typing", "Ignore while typing", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.ignore_with_mouse", "Ignore when a mouse is plugged in", "", Kind::Toggle),
+    s(Page::Trackpad, "Gestures", "touchpad.gesture_spaces", "Swipe between Spaces", "Swipe left or right", Kind::Toggle),
+    s(Page::Trackpad, "Gestures", "touchpad.gesture_mission_control", "Mission Control", "Swipe up", Kind::Toggle),
+    s(Page::Trackpad, "Gestures", "touchpad.gesture_app_expose", "App Exposé", "Swipe down", Kind::Toggle),
+    s(Page::Trackpad, "Gestures", "touchpad.gesture_launchpad", "Launchpad", "Pinch with four fingers", Kind::Toggle),
+    s(Page::Trackpad, "Gestures", "touchpad.gesture_show_desktop", "Show Desktop", "Spread four fingers", Kind::Toggle),
     s(Page::Mouse, "", "mouse.speed", "Tracking speed", "", Kind::Slider { min: -1.0, max: 1.0, step: 0.1 }),
     s(Page::Mouse, "", "mouse.acceleration", "Pointer acceleration", "Faster movement goes further", Kind::Toggle),
     s(Page::Mouse, "", "mouse.natural_scroll", "Natural scrolling", "Content follows the wheel", Kind::Toggle),
     s(Page::Mouse, "", "mouse.left_handed", "Primary button on the right", "The trackpad follows", Kind::Toggle),
     s(Page::Mouse, "", "mouse.middle_click_emulation", "Left + right = middle click", "", Kind::Toggle),
+    s(Page::Mouse, "", "mouse.double_click_ms", "Double-click speed", "Longest gap between two clicks", Kind::Slider { min: 150.0, max: 1000.0, step: 50.0 }),
+    s(Page::Mouse, "", "mouse.middle_click_paste", "Middle click pastes", "The last selected text", Kind::Toggle),
     s(Page::DateTime, "", "clock.timezone", "Time zone", "Type a city; picking one also sets the system's", Kind::Zone),
     s(Page::DateTime, "", "clock.hour24", "24-hour time", "", Kind::Toggle),
     s(Page::DateTime, "Menu bar clock", "clock.weekday", "Show the day of the week", "", Kind::Toggle),
@@ -549,7 +582,7 @@ fn shown(key: &str, value: f64) -> String {
         "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
         "keyboard.repeat_rate" => format!("{value:.0}/s"),
-        "keyboard.repeat_delay" => format!("{value:.0} ms"),
+        "keyboard.repeat_delay" | "mouse.double_click_ms" => format!("{value:.0} ms"),
         "appearance.dark_from" | "appearance.dark_until" | "night_light.from" | "night_light.until" | "notifications.dnd_from" | "notifications.dnd_until" => {
             format!("{value:02.0}:00")
         }
@@ -610,6 +643,13 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
     match setting.kind {
         Kind::Toggle => toggle(t, app.config.bool(key), move |on| Message::Toggle(key, on)),
         Kind::Choice(options) => choice(t, app.config.str(key), options, key),
+        Kind::Menu(options) => {
+            let current = app.config.str(key);
+            let selected = options.iter().find(|o| o.0 == current).map(|&(v, l)| Labelled(v, l));
+            let pick =
+                pick_list(options.iter().map(|&(v, l)| Labelled(v, l)).collect::<Vec<_>>(), selected, move |c: Labelled| Message::Choose(key.into(), c.0));
+            pick.placeholder(current).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()
+        }
         Kind::Steps(steps) => {
             let current = app.config.num(key) as i64;
             segments(t, steps.iter().map(|&(n, label)| (label.to_owned(), current == n, Message::Number(key, n))).collect())

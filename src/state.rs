@@ -1313,7 +1313,8 @@ impl SeatHandler for State {
         self.clipboard.adopt_if_orphaned(dh, seat);
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
         set_data_device_focus(dh, seat, client.clone());
-        set_primary_focus(dh, seat, client);
+        // Middle-click paste off: no app is offered the primary selection.
+        set_primary_focus(dh, seat, client.filter(|_| self.config.mouse.middle_click_paste));
         self.text_input_focus(focused);
     }
 }

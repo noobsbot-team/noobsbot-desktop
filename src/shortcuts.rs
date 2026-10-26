@@ -44,6 +44,8 @@ pub enum Action {
     Lock,
     /// Lock, then suspend the computer (logo menu ▸ Sleep).
     Sleep,
+    /// Turn the displays off until the next input (a hot corner).
+    DisplayOff,
     /// Ask, then restart, shut down or log out (logo menu).
     Power(crate::shell::alert::Power),
     /// The app switcher (E4.5); `back`: Shift was held. `held` is the binding, whose modifiers keep it open.
@@ -220,6 +222,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("show-all", "") => Some(Action::ShowAll),
         ("lock", "") => Some(Action::Lock),
         ("sleep", "") => Some(Action::Sleep),
+        ("display-off", "") => Some(Action::DisplayOff),
         ("restart", "") => Some(Action::Power(Power::Restart)),
         ("shut-down", "") => Some(Action::Power(Power::ShutDown)),
         ("log-out", "") => Some(Action::Power(Power::LogOut)),
@@ -444,6 +447,7 @@ impl State {
                 self.schedule_redraw();
             }
             Action::Sleep => self.sleep(),
+            Action::DisplayOff => self.display_off(),
             Action::TrayMenu(id) => {
                 if let Some((service, menu, _)) = &self.tray_menu {
                     self.services.send(Command::TrayClicked { service: service.clone(), menu: menu.clone(), id });
