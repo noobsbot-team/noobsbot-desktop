@@ -1705,7 +1705,7 @@ Rows live on the Appearance page (E8.2). Behind them:
   (Settings › Displays until mirroring exists), calculator / mail / web / explorer / search keys (default-app,
   Spotlight), media stop / seek / eject, Shift+Alt+volume quarter steps, Alt+Print window screenshot, Super+Alt+5
   screen recording. Done.
-- Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout.
+- Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout. Done.
 
 ### E8.8 Menu bar, tray, widgets and session
 - ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row (flipped left at the edge), one level deep; deeper ones list inline.

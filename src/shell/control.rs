@@ -188,7 +188,7 @@ pub fn media_buttons(card: Rect) -> [Rect; 3] {
 
 pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     let x = (output.w - MARGIN - WIDTH).max(MARGIN);
-    let top = menubar::HEIGHT + DROP;
+    let top = menubar::height() + DROP;
     let card = |dx: i32, y: i32, w: i32, h: i32| Rectangle::new((x + dx, y).into(), (w, h).into());
     let mut y = top + PAD;
     let (top_h, list_row, awake_h, media_h, power_h) = (ts(TOP), ts(LIST_ROW), ts(AWAKE_CARD), ts(MEDIA_CARD), ts(POWER_CARD));
