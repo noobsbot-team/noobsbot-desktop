@@ -1675,7 +1675,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - ~~Night Light as an output colour-temperature shader with schedule, as designed in E6.2.~~ Done: `[night_light]`
   (custom hours or sunset, temperature), a final multiply pass fading over a minute (`src/render/night.rs`); Settings
   rows on Displays.
-- Text size and pointer size applied to the shell and exported to apps and XWayland (`XCURSOR_SIZE` today).
+- Text size and pointer size applied to the shell and exported to apps and XWayland (`XCURSOR_SIZE` today). Done: the whole shell layout grows with `text_scale` (`text::ts`), apps get GTK `text-scaling-factor`, the Qt font size and `XCURSOR_SIZE`.
 - ~~Genie minimise as the alternative to Scale (E5.5).~~ Done: `[dock] minimise_effect = "genie"` (`src/render/genie.frag`).
 - Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow. Built: `noobsbot-desktop theme
   --write` (Kvantum, Qt colour scheme with accent, kdeglobals font; gsettings colour scheme, theme, Inter, text and
