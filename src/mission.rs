@@ -8,6 +8,7 @@ use smithay::{
     desktop::Window,
     input::keyboard::{Keysym, ModifiersState},
     output::Output,
+    reexports::wayland_protocols::xdg::shell::server::xdg_toplevel,
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
 };
 
@@ -56,8 +57,9 @@ pub struct Mission {
     pub all: bool,
 }
 
-/// The pressed window, where the press was, and the pointer once it dragged past the threshold.
-pub type Press = (Window, Point<f64, Logical>, Option<Point<f64, Logical>>);
+/// The pressed window, where the press was, the pointer once it dragged past the threshold, and its thumb then; all
+/// global, so a drag carries on across displays.
+pub type Press = (Window, Point<f64, Logical>, Option<Point<f64, Logical>>, Rect);
 
 /// The Spaces bar: one cell per Space (a pill or a thumbnail), and `+` (dynamic Spaces only).
 #[derive(Debug, Clone, PartialEq)]
@@ -378,23 +380,25 @@ impl State {
         let here = mission.output == output.name();
         let all = mission.all;
         let reduce = self.config.appearance.reduce_motion;
-        let dragged = mission.press.as_ref().and_then(|(w, at, to)| to.map(|to| (w.clone(), to - *at)));
+        let dragged =
+            mission.press.as_ref().and_then(|(w, at, to, thumb)| to.map(|to| (w.clone(), Rect::new(thumb.loc + (to - *at).to_i32_round(), thumb.size))));
         let mut thumbs: Vec<Thumb> = layout
             .windows
             .iter()
             .zip(layout.frames.iter().zip(&layout.targets))
             .map(|(window, (from, target))| {
-                let (mut to, alpha) = thumb_place(*from, *target, progress, reduce);
-                if let Some((_, by)) = dragged.as_ref().filter(|(w, _)| w == window) {
-                    to.loc += by.to_i32_round();
-                }
+                let (to, alpha) = thumb_place(*from, *target, progress, reduce);
                 Thumb { window: window.clone(), from: *from, to, alpha }
             })
             .collect();
-        // The dragged window over the others.
-        if let Some(i) = dragged.and_then(|(w, _)| thumbs.iter().position(|t| t.window == w)) {
-            let thumb = thumbs.remove(i);
-            thumbs.insert(0, thumb);
+        // The dragged window over the others, on every display it is over.
+        if let Some((window, rect)) = dragged {
+            thumbs.retain(|t| t.window != window);
+            let screen = self.space.output_geometry(output)?;
+            if let Some(frame) = self.frame(&window).filter(|_| rect.overlaps(screen)) {
+                let (from, to) = (Rectangle::new(frame.loc - screen.loc, frame.size), Rectangle::new(rect.loc - screen.loc, rect.size));
+                thumbs.insert(0, Thumb { window, from, to, alpha: 1.0 });
+            }
         }
         let hover = mission.hover.as_ref().filter(|_| done).and_then(|h| thumbs.iter().position(|t| t.window == *h));
         let bar_hover = mission.bar_hover.filter(|_| here);
@@ -449,15 +453,16 @@ impl State {
         if button != 0x110 {
             return true;
         }
-        let window = layout.windows.iter().zip(&layout.targets).find(|(_, t)| t.to_f64().contains(location)).map(|(w, _)| w.clone());
+        let origin = (at - location).to_i32_round();
+        let window = layout.windows.iter().zip(&layout.targets).find(|(_, t)| t.to_f64().contains(location)).map(|(w, t)| (w.clone(), *t));
         match (self.bar_hit(&layout.bar, location), window) {
             (Some(BarHit::Plus), _) => self.add_space(),
             (Some(BarHit::Close(i)), _) => self.remove_space(i),
             (Some(BarHit::All), _) => self.mission_all(),
             // Windows sit inside the every-Space view's tiles: they come first.
-            (_, Some(window)) => {
+            (_, Some((window, thumb))) => {
                 if let Some(m) = self.mission.as_mut() {
-                    m.press = Some((window, location, None));
+                    m.press = Some((window, at, None, Rectangle::new(thumb.loc + origin, thumb.size)));
                 }
             }
             // Shown on release; dragged, it moves along the bar.
@@ -481,7 +486,7 @@ impl State {
         if let Some(m) = self.mission.as_mut().filter(|m| m.output != output.name()) {
             m.output = output.name();
             m.expanded = false;
-            (m.press, m.space_press) = (None, None);
+            m.space_press = None;
         }
         let Some(layout) = self.mission_layout(&output) else { return };
         let hover = layout.windows.iter().zip(&layout.targets).find(|(_, t)| t.to_f64().contains(to)).map(|(w, _)| w.clone());
@@ -491,10 +496,10 @@ impl State {
         let expanded = if m.expanded { to.y < f64::from(area_top()) } else { to.y < f64::from(BAR_TOP + pill().h + 8) };
         let mut changed = m.hover != hover || m.bar_hover != bar_hover || m.expanded != expanded;
         (m.hover, m.bar_hover, m.expanded) = (hover, bar_hover, expanded);
-        if let Some((_, at, dragging)) = m.press.as_mut()
-            && (dragging.is_some() || (to - *at).x.hypot((to - *at).y) > crate::wm::DRAG_THRESHOLD)
+        if let Some((_, from, dragging, _)) = m.press.as_mut()
+            && (dragging.is_some() || (at - *from).x.hypot((at - *from).y) > crate::wm::DRAG_THRESHOLD)
         {
-            *dragging = Some(to);
+            *dragging = Some(at);
             changed = true;
         }
         if let Some((from, at, dragging)) = m.space_press.as_mut()
@@ -513,8 +518,8 @@ impl State {
         }
     }
 
-    /// The left button went up at `location`: a click focuses the window and closes; a drag onto a Space moves the
-    /// window there.
+    /// The left button went up at global `at`: a click focuses the window and closes; a drag onto a Space, of this
+    /// display or another, moves the window there, and onto `+` to a new Space.
     pub fn mission_release(&mut self, at: Point<f64, Logical>) {
         if let Some((i, _, dragged)) = self.mission.as_mut().and_then(|m| m.space_press.take()) {
             if !dragged {
@@ -523,22 +528,30 @@ impl State {
             }
             return;
         }
-        let Some((window, _, dragged)) = self.mission.as_mut().and_then(|m| m.press.take()) else { return };
-        let Some((output, location)) = self.mission_local(at) else { return };
-        match dragged {
-            None => {
-                self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
-                self.close_mission();
-            }
-            Some(_) => {
-                // ponytail: a drag stays on its display (the press is dropped when the pointer leaves it).
-                let target = self.mission_layout(&output).and_then(|l| l.bar.cells.iter().position(|c| c.to_f64().contains(location)));
-                if let Some(desk) = target {
-                    self.send_to_space(&window, desk);
-                }
-                self.schedule_redraw();
-            }
+        let Some((window, _, dragged, _)) = self.mission.as_mut().and_then(|m| m.press.take()) else { return };
+        let Some((output, _)) = self.mission_local(at) else { return };
+        if dragged.is_none() {
+            self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
+            return self.close_mission();
         }
+        let hit = |s: &mut Self| drop_at(&s.mission_layout(&output)?.bar, s.space.output_geometry(&output)?, at);
+        let Some(first) = hit(self) else { return self.schedule_redraw() };
+        if self.window_output(&window).as_ref() != Some(&output) {
+            // Out of full screen, zoom or its tile first, like a title-bar drag, then fitted into this display.
+            if let Some(toplevel) = window.toplevel().cloned() {
+                self.unfill(&toplevel, xdg_toplevel::State::Fullscreen);
+                self.unfill(&toplevel, xdg_toplevel::State::Maximized);
+            }
+            self.untile(&window, at);
+            self.move_to_output(&window, &output);
+        }
+        // Leaving full screen may have removed a Space: the bar is hit again.
+        match hit(self).unwrap_or(first) {
+            BarHit::Plus => self.move_to_new_space(&window),
+            BarHit::Space(desk) => self.move_window_to_space(&window, desk),
+            BarHit::Close(_) | BarHit::All => {}
+        }
+        self.schedule_redraw();
     }
 
     /// Esc closes Mission Control; arrows and Tab move the highlight (the hover ring), Return or Space opens it,
@@ -621,6 +634,19 @@ impl State {
     }
 }
 
+/// What a window dropped at global `at` lands on in the bar of the display at `screen`: a Space, or `+`.
+fn drop_at(bar: &Bar, screen: Rect, at: Point<f64, Logical>) -> Option<BarHit> {
+    if !screen.to_f64().contains(at) {
+        return None;
+    }
+    let at = at - screen.loc.to_f64();
+    if bar.plus.is_some_and(|p| p.to_f64().contains(at)) {
+        return Some(BarHit::Plus);
+    }
+    bar.cells.iter().position(|c| c.to_f64().contains(at)).map(BarHit::Space)
+}
+
+#[derive(Debug, PartialEq)]
 enum BarHit {
     Space(usize),
     Close(usize),
@@ -732,6 +758,19 @@ mod tests {
         assert_eq!(slot(&cells, (centre(1) + centre(2)) / 2.0 + 1.0), 2, "past half way: the next place");
         assert_eq!(slot(&cells, 5000.0), 2);
         assert_eq!(slot(&[], 10.0), 0);
+    }
+
+    #[test]
+    fn a_drop_hits_the_bar_of_the_display_under_it() {
+        let size = Size::from((1280, 800));
+        let screen = Rectangle::new((1920, 0).into(), size);
+        let bar = bar(size, 3, true, true);
+        let centre = |r: Rect| Point::from((f64::from(r.loc.x + r.size.w / 2), f64::from(r.loc.y + r.size.h / 2)));
+        let global = |r: Rect| centre(Rectangle::new(r.loc + screen.loc, r.size));
+        assert_eq!(drop_at(&bar, screen, global(bar.cells[1])), Some(BarHit::Space(1)));
+        assert_eq!(drop_at(&bar, screen, global(bar.plus.unwrap())), Some(BarHit::Plus));
+        assert_eq!(drop_at(&bar, screen, centre(bar.cells[1])), None, "the same spot on the first display is not this bar");
+        assert_eq!(drop_at(&bar, screen, (2500.0, 600.0).into()), None, "among the windows");
     }
 
     #[test]
