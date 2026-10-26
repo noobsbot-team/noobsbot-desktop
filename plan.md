@@ -664,7 +664,7 @@ glass windows with traffic lights.
 ---
 
 ## M2 — Menu bar, Control Center, clock & calendar, system status — size L
-Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brightness and battery are all controllable.
+Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bluetooth, sound, brightness and battery are all controllable.
 
 ### E2.1 Text & widget set
 - **What it is:** the foundation for all shell UI: text rendering + the D8 components.
@@ -689,11 +689,11 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   - Right (12 px gaps, symbols 16 px): tray icons · keyboard layout (only if more than one) · Wi-Fi · Bluetooth ·
     battery (% optional) · volume · **Control Center** ⊞ · **date & time**.
   - Click an item → its menu/popover drops 4 px below the bar; the item gets a pressed pill highlight (radius 4).
-  - Restart / Shut Down / Log Out show an **alert** (D8) with a 60 s countdown, like macOS.
+  - Restart / Shut Down / Log Out show an **alert** (D8) with a 60 s countdown.
 - **Built with:** our widgets; tray through **StatusNotifierItem** + **dbusmenu** (zbus; **we host the `StatusNotifierWatcher`** service, because
   without a watcher apps never register their icons); power actions via
   **logind**.
-- **Why:** this is the macOS layout (R1). StatusNotifierItem is the tray standard modern apps use.
+- **Why:** this is the menu-bar layout of the design (R1). StatusNotifierItem is the tray standard modern apps use.
 - **Done when:** every item opens its menu; tray icons from apps appear and their menus work; Sleep/Restart/
   Shut Down/Log Out work.
 
@@ -723,7 +723,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   │ ╰──────────────────────────────────╯ │
   ╰──────────────────────────────────────╯
   ```
-  (The AirDrop row isn't included; it's only drawn above to show macOS's layout. Our network module has
+  (The AirDrop row isn't included; it's only drawn above to show the full layout. Our network module has
   Wi-Fi + Bluetooth only.)
   - Round toggles 28 px (D8). Clicking a module's title expands it in place (spring `smooth`): Wi-Fi shows a
     network list with signal bars and a lock icon; Bluetooth shows devices with battery %; Sound shows outputs
@@ -789,8 +789,8 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 
 ### E2.7 On-screen display (OSD) for media keys
 - **What it is:** the small indicator when you press volume / brightness / mute keys.
-- **Design:** `hud` material pill, **280 × 48 px**, radius 24, top-right under the menu bar (macOS Sonoma
-  position). Symbol 24 px + a progress bar (D8) + the value. Appears with `snappy`, hides after 1.5 s.
+- **Design:** `hud` material pill, **280 × 48 px**, radius 24, top-right under the menu bar.
+  Symbol 24 px + a progress bar (D8) + the value. Appears with `snappy`, hides after 1.5 s.
   The mute key shows a crossed-out speaker. It shares the top-right corner with notification banners (E4.1): while
   the OSD is visible, banners move down by 56 px (spring `snappy`), so the two never overlap.
 - **Built with:** key events from libinput; PipeWire (`wpctl`) / logind brightness.
@@ -807,7 +807,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 
 ### E2.9 Universal glass theme for apps (Dolphin, Kate & every other app)
 - **What it is:** apps that aren't drawn by Noobsbot Desktop (Dolphin, Kate, Partition Manager, System Monitor,
-  Filelight, file-picker dialogs) get **the same glassy macOS look** as the desktop, from the same Part D tokens,
+  Filelight, file-picker dialogs) get **the same glassy look** as the desktop, from the same Part D tokens,
   and switch light/dark together with it. **Scope:** the generator plus Dolphin and Kate are verified in M2 (nested, on
   the dev machine); Partition Manager, System Monitor and Filelight in M6, once `install.sh` installs them.
 - **Design: Dolphin as the reference (Finder-like):**
@@ -832,14 +832,14 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   | File area | solid `card` colour (white / `#323232`) so file names stay perfectly readable, like Finder |
   | Selection | accent fill + white text (D7) |
   | Menus, context menus, tooltips | `popover` glass, radius 8, D8 menu spec |
-  | Buttons, fields, scrollbars | D8 sizes and radii; thin overlay scrollbars like macOS |
+  | Buttons, fields, scrollbars | D8 sizes and radii; thin overlay scrollbars |
   | Fonts | Inter (UI), JetBrains Mono (fixed width) |
   | Icons | WhiteSur (light/dark matching the mode) |
   - Kate, Partition Manager, System Monitor, Filelight: the same rules (glass sidebars/toolbars, solid content area).
 - **Built with:**
   | Piece | What we ship | Why |
   |---|---|---|
-  | **Kvantum theme "Noobsbot Glass"** (light + dark) | our own Kvantum theme, derived from WhiteSur's Kvantum theme, recoloured and resized to Part D. Kvantum's translucency is on (`translucent_windows`, window/menu opacity set to match D3), with **no blur** | Kvantum is the standard way to fully restyle Qt apps on any desktop, and it supports translucent windows. Starting from WhiteSur gives macOS shapes; our tokens give our exact colours |
+  | **Kvantum theme "Noobsbot Glass"** (light + dark) | our own Kvantum theme, derived from WhiteSur's Kvantum theme, recoloured and resized to Part D. Kvantum's translucency is on (`translucent_windows`, window/menu opacity set to match D3), with **no blur** | Kvantum is the standard way to fully restyle Qt apps on any desktop, and it supports translucent windows. Starting from WhiteSur gives the right shapes; our tokens give our exact colours |
   | **Qt colour scheme "Noobsbot Glass"** (light + dark) in `~/.local/share/color-schemes/`, selected in `~/.config/kdeglobals` | Dolphin and Kate take some colours (views, selection, links) from the colour scheme, not from the style; both must match |
   | `kdeglobals` fonts + icons | `font=Inter,10`, `fixed=JetBrains Mono,10`, `[Icons] Theme=WhiteSur` / `WhiteSur-dark` | Dolphin and Kate read these on any desktop |
   | Session env | `QT_QPA_PLATFORMTHEME=qt6ct`, `QT_STYLE_OVERRIDE=kvantum` (E6.7) | forces every Qt app to use the theme |
