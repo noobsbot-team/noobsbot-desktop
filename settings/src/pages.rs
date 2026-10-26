@@ -144,6 +144,7 @@ symbols![
     "info",
     "magnifying-glass",
     "user-circle",
+    "check",
 ];
 
 /// A Phosphor fill symbol, loaded once.
@@ -543,9 +544,26 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         Page::Bluetooth => match &status.bluetooth {
             Some(bt) => {
                 let mut parts = vec![group(t, "", vec![line(t, "Bluetooth", "", toggle(t, bt.powered, Message::Bluetooth))])];
-                if bt.powered && !bt.devices.is_empty() {
-                    let rows = bt.devices.iter().map(|(name, on)| fact(t, name, if *on { "Connected" } else { "Not connected" }.into())).collect();
-                    parts.push(group(t, "My devices", rows));
+                if bt.powered {
+                    let push = |label: &'static str, message: Message| -> Element<'a, Message> {
+                        button(text(label).size(12)).padding([3, 10]).style(t.push(false)).on_press(message).into()
+                    };
+                    let (mine, nearby): (Vec<_>, Vec<_>) = bt.devices.iter().partition(|d| d.paired);
+                    if !mine.is_empty() {
+                        let rows = mine
+                            .into_iter()
+                            .map(|d| {
+                                let (state, action) = if d.connected { ("Connected", "Disconnect") } else { ("Not connected", "Connect") };
+                                let buttons =
+                                    row![push(action, Message::Device(d.path.clone(), !d.connected)), push("Forget", Message::Forget(d.path.clone()))];
+                                line(t, &d.name, state, buttons.spacing(8).into())
+                            })
+                            .collect();
+                        parts.push(group(t, "My Devices", rows));
+                    }
+                    let rows: Vec<_> = nearby.into_iter().map(|d| line(t, &d.name, "", push("Connect", Message::Device(d.path.clone(), true)))).collect();
+                    let rows = if rows.is_empty() { vec![fact(t, "Searching…", String::new())] } else { rows };
+                    parts.push(group(t, "Nearby Devices", rows));
                 }
                 parts
             }
@@ -553,7 +571,20 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         },
         Page::Sound => {
             let mut parts = Vec::new();
-            for (output, header, device) in [(true, "Output", &status.output), (false, "Input", &status.input)] {
+            for (output, header, device, choices) in [(true, "Output", &status.output, &status.outputs), (false, "Input", &status.input, &status.inputs)] {
+                // More than one: pick the default, a check by the current one (macOS's device table).
+                if choices.len() > 1 {
+                    let rows = choices
+                        .iter()
+                        .map(|c| {
+                            let mark: Element<'_, Message> =
+                                if c.current { svg(icon("check")).width(14).height(14).style(Tokens::tint(t.accent)).into() } else { space().width(14).into() };
+                            let item = row![text(&c.name).size(13).width(Length::Fill), mark].spacing(12).align_y(Alignment::Center);
+                            button(item).padding([8, 12]).width(Length::Fill).style(t.sidebar_row(false)).on_press(Message::DefaultDevice(c.id)).into()
+                        })
+                        .collect();
+                    parts.push(group(t, if output { "Output device" } else { "Input device" }, rows));
+                }
                 let Some(device) = device else {
                     parts.push(group(t, header, vec![fact(t, if output { "No output device" } else { "No microphone" }, String::new())]));
                     continue;

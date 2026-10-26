@@ -39,7 +39,12 @@ fn main() -> iced::Result {
             }
             // Only while "Keep these display settings?" counts down: no timer otherwise.
             if app.keep.is_some() {
-                all.push(iced::Subscription::run(arrange::ticks).map(|()| Message::Tick));
+                all.push(iced::Subscription::run_with(std::time::Duration::from_millis(500), arrange::ticks).map(|()| Message::Tick));
+            }
+            // Nearby devices: discovery, and a re-read every 3 s, only while the Bluetooth page shows.
+            if app.page == Page::Bluetooth {
+                all.push(iced::Subscription::run(system::discover).map(|()| Message::Rescan));
+                all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::Rescan));
             }
             iced::Subscription::batch(all)
         })
@@ -119,6 +124,16 @@ pub enum Message {
     Mute(bool, bool),
     /// Date & Time ▸ Set time and date automatically.
     Ntp(bool),
+    /// A device (BlueZ path): pair if need be and connect (`true`), or disconnect.
+    Device(String, bool),
+    /// A paired device is removed.
+    Forget(String),
+    /// A Bluetooth action finished: the new status and what went wrong.
+    Acted((system::Status, Option<String>)),
+    /// Re-read while looking for nearby devices.
+    Rescan,
+    /// A PipeWire sink or source becomes the default.
+    DefaultDevice(u32),
     /// `config.toml` was written (here or elsewhere, e.g. the Control Center's Dark toggle).
     Reload,
     /// Typed with no field focused: goes to the search field.
@@ -249,6 +264,14 @@ impl App {
             Message::PowerMode(profile) => return Task::perform(system::set_power_mode(profile), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
             Message::Ntp(on) => return Task::perform(system::set_ntp(on), Message::Status),
+            Message::Device(path, on) => return Task::perform(system::connect_device(path, on), Message::Acted),
+            Message::Forget(path) => return Task::perform(system::forget(path), Message::Acted),
+            Message::Acted((status, error)) => {
+                self.status = status;
+                self.error = error;
+            }
+            Message::Rescan => return Task::perform(system::read(), Message::Status),
+            Message::DefaultDevice(id) => return Task::perform(system::set_default(id), Message::Status),
             Message::Reload => {
                 // A half-written or broken file keeps what is shown, with the error under it.
                 let (config, error) = config::Config::load(config::path());

@@ -25,6 +25,9 @@ pub struct Status {
     pub battery: Option<Battery>,
     /// `None`: power-profiles-daemon isn't running.
     pub power_mode: Option<PowerMode>,
+    /// Every output and input, for the pickers.
+    pub outputs: Vec<Choice>,
+    pub inputs: Vec<Choice>,
 }
 
 #[derive(Clone, Debug)]
@@ -55,6 +58,15 @@ pub struct PowerMode {
     pub available: Vec<String>,
 }
 
+/// A PipeWire sink or source from `wpctl status`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice {
+    pub id: u32,
+    pub name: String,
+    /// The default one.
+    pub current: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct Wifi {
     pub enabled: bool,
@@ -65,8 +77,17 @@ pub struct Wifi {
 #[derive(Clone, Debug)]
 pub struct Bluetooth {
     pub powered: bool,
-    /// Paired devices: name, connected.
-    pub devices: Vec<(String, bool)>,
+    /// Paired devices, and named unpaired ones seen nearby, by name.
+    pub devices: Vec<BtDevice>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct BtDevice {
+    /// BlueZ's object path.
+    pub path: String,
+    pub name: String,
+    pub paired: bool,
+    pub connected: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -79,25 +100,32 @@ pub struct Device {
 const NM: &str = "org.freedesktop.NetworkManager";
 
 pub async fn read() -> Status {
-    let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await.ok();
+    let system = system(2).await.ok();
     let (wifi, bluetooth, time, battery, power_mode) = match &system {
         Some(bus) => (wifi(bus).await, bluetooth(bus).await, time(bus).await, battery(bus).await, power_mode(bus).await),
         None => (None, None, None, None, None),
     };
-    Status { wifi, bluetooth, output: device(OUTPUT), input: device(INPUT), time, battery, power_mode }
+    let pw = wpctl(&["status"]).unwrap_or_default();
+    Status {
+        wifi,
+        bluetooth,
+        output: device(OUTPUT),
+        input: device(INPUT),
+        time,
+        battery,
+        power_mode,
+        outputs: section(&pw, "Sinks:"),
+        inputs: section(&pw, "Sources:"),
+    }
 }
 
-/// The desktop's connect (`src/services/mod.rs`): on this thread, not zbus's pool, whose idle thread wakes every
-/// 500 ms.
-async fn connect(variable: &str, fallback: String) -> zbus::Result<Connection> {
-    connect_waiting(variable, fallback, Duration::from_secs(2)).await
-}
-
-async fn connect_waiting(variable: &str, fallback: String, timeout: Duration) -> zbus::Result<Connection> {
-    let address = std::env::var(variable).unwrap_or_default();
-    let path = address.strip_prefix("unix:path=").map_or(fallback.as_str(), |rest| rest.split(',').next().unwrap_or(rest));
+/// The system bus, as the desktop connects (`src/services/mod.rs`): on this thread, not zbus's pool, whose idle
+/// thread wakes every 500 ms. `timeout`: seconds a call may take.
+async fn system(timeout: u64) -> zbus::Result<Connection> {
+    let address = std::env::var("DBUS_SYSTEM_BUS_ADDRESS").unwrap_or_default();
+    let path = address.strip_prefix("unix:path=").map_or("/run/dbus/system_bus_socket", |rest| rest.split(',').next().unwrap_or(rest));
     let socket = UnixStream::connect(path)?;
-    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(timeout).build().await
+    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(Duration::from_secs(timeout)).build().await
 }
 
 async fn property(bus: &Connection, service: &str, path: &str, interface: &str, name: &str) -> zbus::Result<OwnedValue> {
@@ -135,18 +163,19 @@ async fn bluetooth(bus: &Connection) -> Option<Bluetooth> {
     };
     let mut powered = None;
     let mut devices = Vec::new();
-    for interfaces in objects.values() {
+    for (path, interfaces) in &objects {
         if let Some(on) = field(interfaces, "org.bluez.Adapter1", "Powered") {
             powered = Some(powered.unwrap_or(false) | bool::try_from(on).unwrap_or(false));
         }
         let paired = field(interfaces, "org.bluez.Device1", "Paired").and_then(|v| bool::try_from(v).ok()).unwrap_or(false);
-        if paired {
+        // Unnamed ones nearby (an address only) are left out.
+        if paired || field(interfaces, "org.bluez.Device1", "Name").is_some() {
             let name = field(interfaces, "org.bluez.Device1", "Alias").and_then(|v| String::try_from(v).ok()).unwrap_or_default();
             let connected = field(interfaces, "org.bluez.Device1", "Connected").and_then(|v| bool::try_from(v).ok()).unwrap_or(false);
-            devices.push((name, connected));
+            devices.push(BtDevice { path: path.to_string(), name, paired, connected });
         }
     }
-    devices.sort();
+    devices.sort_by(|a, b| a.name.cmp(&b.name));
     Some(Bluetooth { powered: powered?, devices })
 }
 
@@ -181,7 +210,7 @@ async fn power_mode(bus: &Connection) -> Option<PowerMode> {
 
 /// `power-saver`, `balanced` or `performance`, then the new status.
 pub async fn set_power_mode(profile: String) -> Status {
-    if let Ok(bus) = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await {
+    if let Ok(bus) = system(2).await {
         let _ = set_property(&bus, PROFILES, PROFILES_PATH, PROFILES, "ActiveProfile", profile.as_str().into()).await;
     }
     read().await
@@ -189,7 +218,7 @@ pub async fn set_power_mode(profile: String) -> Status {
 
 /// Wi-Fi on or off, then the new status.
 pub async fn set_wifi(on: bool) -> Status {
-    if let Ok(bus) = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await {
+    if let Ok(bus) = system(2).await {
         let _ = set_property(&bus, NM, "/org/freedesktop/NetworkManager", NM, "WirelessEnabled", on.into()).await;
     }
     read().await
@@ -197,7 +226,7 @@ pub async fn set_wifi(on: bool) -> Status {
 
 /// Every adapter on or off, then the new status.
 pub async fn set_bluetooth(on: bool) -> Status {
-    if let Ok(bus) = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into()).await
+    if let Ok(bus) = system(2).await
         && let Ok(manager) = async { ObjectManagerProxy::builder(&bus).destination("org.bluez")?.path("/")?.build().await }.await
     {
         for (path, interfaces) in manager.get_managed_objects().await.unwrap_or_default() {
@@ -224,7 +253,7 @@ async fn time(bus: &Connection) -> Option<Time> {
 /// "Set time and date automatically", then the new status. Interactive: polkit asks for the password through the
 /// desktop's agent, so the call waits for the answer instead of the usual 2 s.
 pub async fn set_ntp(on: bool) -> Status {
-    if let Ok(bus) = connect_waiting("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into(), Duration::from_secs(120)).await {
+    if let Ok(bus) = system(120).await {
         let _ = bus.call_method(Some(TIMEDATE), TIMEDATE_PATH, Some(TIMEDATE), "SetNTP", &(on, true)).await;
     }
     read().await
@@ -253,6 +282,57 @@ pub fn matching_zones(query: &str) -> impl Iterator<Item = &'static str> {
     ZONES.iter().map(String::as_str).filter(move |z| z.to_lowercase().contains(&query))
 }
 
+/// While the Bluetooth page shows: every adapter looks for nearby devices. Yields nothing; BlueZ stops a discovery
+/// when the connection that started it closes, which dropping the subscription does.
+pub fn discover() -> impl iced::futures::Stream<Item = ()> {
+    iced::stream::channel(1, async |_: iced::futures::channel::mpsc::Sender<()>| {
+        let bus = system(2).await.ok();
+        if let Some(bus) = &bus
+            && let Ok(manager) = async { ObjectManagerProxy::builder(bus).destination("org.bluez")?.path("/")?.build().await }.await
+        {
+            for (path, interfaces) in manager.get_managed_objects().await.unwrap_or_default() {
+                if interfaces.keys().any(|i| i.as_str() == "org.bluez.Adapter1") {
+                    let _ = bus.call_method(Some("org.bluez"), path.as_str(), Some("org.bluez.Adapter1"), "StartDiscovery", &()).await;
+                }
+            }
+        }
+        std::future::pending::<()>().await;
+        drop(bus);
+    })
+}
+
+/// Connects a device, pairing and trusting it first if need be (`on`), or disconnects it; then the new status and the
+/// error, if any. Pairing waits on the desktop's agent (its alert), so the calls get a minute.
+// ponytail: no "Connecting…" while it runs; the row changes when it is done.
+pub async fn connect_device(path: String, on: bool) -> (Status, Option<String>) {
+    let result = async {
+        let bus = system(60).await?;
+        let call = |method| bus.call_method(Some("org.bluez"), path.as_str(), Some("org.bluez.Device1"), method, &());
+        if !on {
+            return call("Disconnect").await.map(drop);
+        }
+        if !bool::try_from(property(&bus, "org.bluez", &path, "org.bluez.Device1", "Paired").await?)? {
+            call("Pair").await?;
+        }
+        set_property(&bus, "org.bluez", &path, "org.bluez.Device1", "Trusted", true.into()).await?;
+        call("Connect").await.map(drop)
+    };
+    let error = result.await.err().map(|err| format!("Couldn't {}: {err}", if on { "connect" } else { "disconnect" }));
+    (read().await, error)
+}
+
+/// Removes a paired device from its adapter (the path's parent), then the new status and the error, if any.
+pub async fn forget(path: String) -> (Status, Option<String>) {
+    let result = async {
+        let bus = system(10).await?;
+        let adapter = path.rsplit_once('/').map_or("/", |(adapter, _)| adapter);
+        let device = zbus::zvariant::ObjectPath::try_from(path.as_str())?;
+        bus.call_method(Some("org.bluez"), adapter, Some("org.bluez.Adapter1"), "RemoveDevice", &(device,)).await.map(drop)
+    };
+    let error = result.await.err().map(|err| format!("Couldn't forget the device: {err}"));
+    (read().await, error)
+}
+
 const OUTPUT: &str = "@DEFAULT_AUDIO_SINK@";
 const INPUT: &str = "@DEFAULT_AUDIO_SOURCE@";
 
@@ -275,6 +355,27 @@ pub async fn set_volume(output: bool, percent: u8) -> Status {
 pub async fn set_muted(output: bool, muted: bool) -> Status {
     let _ = wpctl(&["set-mute", if output { OUTPUT } else { INPUT }, if muted { "1" } else { "0" }]);
     read().await
+}
+
+/// Makes sink or source `id` the default, then the new status.
+pub async fn set_default(id: u32) -> Status {
+    let _ = wpctl(&["set-default", &id.to_string()]);
+    read().await
+}
+
+/// The first (audio) `Sinks:` or `Sources:` section of `wpctl status`: `│  *   63. Speaker   [vol: 0.89]`. The
+/// desktop's `sound::parse_outputs`.
+fn section(status: &str, header: &str) -> Vec<Choice> {
+    let lines = status.lines().skip_while(|line| !line.ends_with(header)).skip(1);
+    // The section ends at its blank `│` line.
+    lines
+        .map_while(|line| {
+            let line = line.trim_start_matches([' ', '│']);
+            let (id, rest) = line.trim_start_matches(['*', ' ']).split_once(". ")?;
+            let name = rest.rsplit_once(" [vol:").map_or(rest, |(name, _)| name).trim();
+            Some(Choice { id: id.parse().ok()?, name: name.to_owned(), current: line.starts_with('*') })
+        })
+        .collect()
 }
 
 /// `Volume: 0.40 [MUTED]` → (40, true). The desktop's `sound::parse_volume`.
@@ -399,6 +500,18 @@ mod tests {
         assert_eq!(parse_volume("nonsense"), None);
         assert_eq!(parse_name("  * node.description = \"Built-in Audio\"\n    node.nick = \"Speaker\"\n"), "Speaker");
         assert_eq!(parse_name("  node.description = \"HDMI\"\n"), "HDMI");
+    }
+
+    #[test]
+    fn sinks_and_sources() {
+        let status = "Audio\n ├─ Devices:\n │      57. Raptor Lake-P/U/H cAVS              [alsa]\n │  \n ├─ Sinks:\n │  *   44. Raptor Lake-P/U/H cAVS Speaker      [vol: 0.96]\n │      49. Raptor Lake-P/U/H cAVS HDMI / DisplayPort 3 Output (Stereo) [vol: 1.00]\n │  \n ├─ Sources:\n │      72. Raptor Lake-P/U/H cAVS Digital Microphone [vol: 1.00]\n │  *   80. USB Headset [vol: 0.50 MUTED]\n │  \n ├─ Filters:\n\nVideo\n ├─ Sources:\n │  *   81. HP 5MP Camera (V4L2)               \n";
+        let choice = |id, name: &str, current| Choice { id, name: name.into(), current };
+        assert_eq!(
+            section(status, "Sinks:"),
+            [choice(44, "Raptor Lake-P/U/H cAVS Speaker", true), choice(49, "Raptor Lake-P/U/H cAVS HDMI / DisplayPort 3 Output (Stereo)", false)]
+        );
+        assert_eq!(section(status, "Sources:"), [choice(72, "Raptor Lake-P/U/H cAVS Digital Microphone", false), choice(80, "USB Headset", true)]);
+        assert_eq!(section("", "Sinks:"), []);
     }
 
     #[test]
