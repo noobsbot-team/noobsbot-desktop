@@ -489,6 +489,22 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Trackpad, "", "touchpad.drag_lock", "Drag lock", "Keep dragging through a short lift", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.disable_while_typing", "Ignore while typing", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.ignore_with_mouse", "Ignore when a mouse is plugged in", "", Kind::Toggle),
+    s(
+        Page::Trackpad,
+        "Gestures",
+        "touchpad.swipe_fingers",
+        "Swipe with",
+        "Four leaves three-finger swipes to apps",
+        Kind::Steps(&[(3, "Three fingers"), (4, "Four fingers")]),
+    ),
+    s(
+        Page::Trackpad,
+        "Gestures",
+        "touchpad.gesture_sensitivity",
+        "Gesture sensitivity",
+        "Higher: a shorter swipe or pinch is enough",
+        Kind::Slider { min: 0.25, max: 4.0, step: 0.25 },
+    ),
     s(Page::Trackpad, "Gestures", "touchpad.gesture_spaces", "Swipe between Spaces", "Swipe left or right", Kind::Toggle),
     s(Page::Trackpad, "Gestures", "touchpad.gesture_mission_control", "Mission Control", "Swipe up", Kind::Toggle),
     s(Page::Trackpad, "Gestures", "touchpad.gesture_app_expose", "App Exposé", "Swipe down", Kind::Toggle),
@@ -635,6 +651,7 @@ fn shown(key: &str, value: f64) -> String {
             format!("{value:02.0}:00")
         }
         "night_light.temperature" => format!("{value:.0} K"),
+        "touchpad.gesture_sensitivity" => format!("{}×", (value * 100.0).round() / 100.0),
         "mouse.speed" | "touchpad.speed" => format!("{:.0}%", (value + 1.0) * 50.0),
         k if k.starts_with("idle.") => match value.round() as u32 {
             0 => "Never".into(),
