@@ -271,11 +271,23 @@ fn picture(
     alpha: f32,
     backdrop: &mut Cached,
 ) -> Vec<SceneElement> {
-    let (src, dst) = place(fit, image, size, scale);
-    let at = dst.loc.to_physical(scale);
-    let picture = TextureRenderElement::from_texture_buffer(at, texture, Some(alpha), Some(src), Some(dst.size.to_i32_round()), Kind::Unspecified);
-    let mut out = vec![SceneElement::Texture(picture)];
-    if dst.size.to_i32_round() != size || dst.loc != (0.0, 0.0).into() {
+    let rects = if fit == WallpaperFit::Tile { tiles(image, size, scale) } else { vec![place(fit, image, size, scale)] };
+    let (_, dst) = rects[0];
+    let mut out: Vec<SceneElement> = rects
+        .into_iter()
+        .map(|(src, dst)| {
+            let at = dst.loc.to_physical(scale);
+            SceneElement::Texture(TextureRenderElement::from_texture_buffer(
+                at,
+                texture,
+                Some(alpha),
+                Some(src),
+                Some(dst.size.to_i32_round()),
+                Kind::Unspecified,
+            ))
+        })
+        .collect();
+    if fit != WallpaperFit::Tile && (dst.size.to_i32_round() != size || dst.loc != (0.0, 0.0).into()) {
         if alpha < 1.0 || backdrop.as_ref().is_none_or(|(s, d, _)| (*s, *d) != (size, dark)) {
             let [r, g, b] = if dark { [0.11, 0.11, 0.12] } else { [0.82, 0.82, 0.84] };
             *backdrop = Some((size, dark, shaders.glass_shape(Rectangle::from_size(size), [r, g, b, alpha], 0.0, false, dark, scale)));
@@ -340,6 +352,7 @@ pub fn place(fit: WallpaperFit, image: Size<i32, Buffer>, output: Size<i32, Logi
             let s = (ow / iw).min(oh / ih);
             (whole, centred(iw * s, ih * s))
         }
+        WallpaperFit::Tile => tiles(image, output, scale).first().copied().unwrap_or_default(),
         WallpaperFit::Centre => {
             // One picture pixel per screen pixel; cropped where it is bigger than the output.
             let (w, h) = ((iw / scale).min(ow), (ih / scale).min(oh));
@@ -347,6 +360,23 @@ pub fn place(fit: WallpaperFit, image: Size<i32, Buffer>, output: Size<i32, Logi
             (src, centred(w, h))
         }
     }
+}
+
+/// Tile: the picture at one pixel per screen pixel, repeated rightwards and down from the top-left corner, the last
+/// row and column cropped to the output; (part of the picture, where it goes) for each copy.
+// ponytail: one texture element per copy, so a tiny pattern on a big screen makes thousands; repeat it into a bigger
+// texture on upload if that shows.
+pub fn tiles(image: Size<i32, Buffer>, output: Size<i32, Logical>, scale: f64) -> Vec<(Rectangle<f64, Logical>, Rectangle<f64, Logical>)> {
+    let (tw, th) = (f64::from(image.w).max(1.0) / scale, f64::from(image.h).max(1.0) / scale);
+    let (ow, oh) = (f64::from(output.w), f64::from(output.h));
+    let steps = |tile: f64, end: f64| (0..).map(move |i| f64::from(i) * tile).take_while(move |at| *at < end);
+    steps(th, oh)
+        .flat_map(|y| steps(tw, ow).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let (w, h) = (tw.min(ow - x), th.min(oh - y));
+            (Rectangle::from_size((w * scale, h * scale).into()), Rectangle::new((x, y).into(), (w, h).into()))
+        })
+        .collect()
 }
 
 /// PNG by its signature, anything else as JPEG. Alpha is dropped: a wallpaper is opaque. A picture more than twice
@@ -477,6 +507,16 @@ mod tests {
         assert_eq!((src, dst), (Rectangle::from_size((2000.0, 1000.0).into()), Rectangle::new((0.0, 250.0).into(), (1000.0, 500.0).into())));
         // Centre at 1×: cropped to the middle 1000 px.
         assert_eq!(place(WallpaperFit::Centre, image, output, 1.0).0, Rectangle::new((500.0, 0.0).into(), (1000.0, 1000.0).into()));
+    }
+
+    #[test]
+    fn tiles_repeat_from_the_corner_and_crop_the_last() {
+        // A 400×300 px picture at 2× is 200×150 logical: 3 columns (the last 100 wide) by 2 rows on 500×300.
+        let tiles = tiles(Size::from((400, 300)), Size::from((500, 300)), 2.0);
+        assert_eq!(tiles.len(), 6);
+        assert_eq!(tiles[0], (Rectangle::from_size((400.0, 300.0).into()), Rectangle::from_size((200.0, 150.0).into())));
+        assert_eq!(tiles[5], (Rectangle::from_size((200.0, 300.0).into()), Rectangle::new((400.0, 150.0).into(), (100.0, 150.0).into())));
+        assert_eq!(place(WallpaperFit::Tile, Size::from((400, 300)), Size::from((500, 300)), 2.0), tiles[0]);
     }
 
     fn png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {

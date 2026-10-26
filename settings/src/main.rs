@@ -225,6 +225,8 @@ pub enum Message {
     AppRule(String, pages::AppRule),
     /// The microphone's level, 0 … 1.
     Level(f32),
+    /// About ▸ Copy System Report.
+    CopyReport,
     /// A theme sound plays; `true`: it becomes the alert sound.
     Sound(&'static str, bool),
     Users(users::Users),
@@ -280,7 +282,8 @@ impl App {
         }
         let users = if page == Page::Users { Task::perform(users::read(), Message::Users) } else { Task::none() };
         // Typing searches at once (see `type_ahead`).
-        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs), users]))
+        let folders = app.config.str(gallery::FOLDERS).to_owned();
+        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(folders), Message::Thumbs), users]))
     }
 
     fn retheme(&mut self) {
@@ -368,6 +371,21 @@ impl App {
                 } else if key == users::NAME {
                     let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
                     return Task::perform(users::set(me.path.clone(), "SetRealName", value.trim().to_owned()), Message::UsersActed);
+                } else if key == gallery::ADD || key == gallery::FOLDERS {
+                    let folders = if key == gallery::ADD {
+                        if !std::path::Path::new(&gallery::add("", &value)).is_dir() {
+                            self.error = Some(format!("“{}” isn't a folder", value.trim()));
+                            self.texts.insert(key, value);
+                            return Task::none();
+                        }
+                        gallery::add(self.config.str(gallery::FOLDERS), &value)
+                    } else {
+                        value.trim().to_owned()
+                    };
+                    self.save(gallery::FOLDERS, folders.as_str());
+                    return Task::perform(gallery::load(folders), Message::Thumbs);
+                } else if let Some(path) = key.strip_prefix(system::RENAME) {
+                    return Task::perform(system::rename_device(path.to_owned(), value.trim().to_owned()), Message::Acted);
                 } else if let Some(name) = key.strip_prefix("display.custom_scale.") {
                     match pages::parse_scale(&value) {
                         Some(scale) => self.change_outputs(vec![(name.to_owned(), "scale", scale.into())], false),
@@ -378,6 +396,7 @@ impl App {
                 }
             }
             Message::Status(status) => self.status = status,
+            Message::CopyReport => return iced::clipboard::write(system::report(pages::version())),
             Message::Level(level) => self.level = level,
             Message::Sound(name, save) => {
                 if save {
