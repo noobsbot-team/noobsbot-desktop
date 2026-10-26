@@ -1,4 +1,4 @@
-//! Clipboard persistence (E1.1): Wayland drops the clipboard when the app that copied quits; macOS keeps it.
+//! Clipboard persistence (E1.1): Wayland drops the clipboard when the app that copied quits; we keep it.
 //! Every new clipboard is copied into memory (up to 10 MB); when its app is gone we serve the copy ourselves.
 
 use std::{

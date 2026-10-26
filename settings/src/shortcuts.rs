@@ -494,7 +494,7 @@ pub fn normalise(combo: &str) -> Option<([bool; 4], String)> {
     Some((mods, key))
 }
 
-/// "Super+Ctrl+Left" as shown: ⌃⌥⇧ first (macOS order), then "Super+" (as the README writes it), then the key.
+/// "Super+Ctrl+Left" as shown: ⌃⌥⇧ first, then "Super+" (as the README writes it), then the key.
 pub fn format(combo: &str) -> String {
     let Some((mods, key)) = normalise(combo) else { return combo.to_owned() };
     let original = combo.rsplit('+').next().unwrap_or_default().trim();

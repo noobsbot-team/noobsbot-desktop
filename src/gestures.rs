@@ -146,8 +146,8 @@ pub fn corner_at(p: Point<f64, Logical>, size: Size<i32, Logical>) -> Option<Cor
     }
 }
 
-/// A corner of the display at `geo` no other display touches: where one does, the pointer just crosses over (macOS
-/// fires no hot corner there either).
+/// A corner of the display at `geo` no other display touches: where one does, the pointer just crosses over and
+/// no hot corner fires.
 pub fn open_corner(corner: Corner, geo: Rect, others: &[Rect]) -> bool {
     let (right, bottom) = (geo.loc.x + geo.size.w - 1, geo.loc.y + geo.size.h - 1);
     // The corner pixel and the way out of it.

@@ -129,6 +129,7 @@ impl State {
         self.desktop_motion(self.to_output(host));
         self.mission_motion(self.to_output(host));
         self.hot_corner_motion(self.to_output(host));
+        self.bar_motion(host);
         let under = self.surface_under(current);
 
         let (mut locked, mut confined, mut region) = (false, false, None::<RegionAttributes>);
