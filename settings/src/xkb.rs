@@ -59,6 +59,37 @@ pub fn name(layout: &str, variant: &str) -> String {
         .map_or_else(|| if variant.is_empty() { layout.to_owned() } else { format!("{layout} ({variant})") }, |s| s.name.clone())
 }
 
+/// Caps Lock's dropdown: the option written, the label shown.
+pub const CAPS: &[(&str, &str)] = &[("", "Caps Lock"), ("ctrl:nocaps", "Control"), ("caps:escape", "Escape"), ("caps:none", "No Action")];
+pub const COMPOSE: &[(&str, &str)] = &[
+    ("", "None"),
+    ("compose:ralt", "Right Alt"),
+    ("compose:rctrl", "Right Ctrl"),
+    ("compose:rwin", "Right Super"),
+    ("compose:menu", "Menu"),
+    ("compose:caps", "Caps Lock"),
+];
+
+/// What Caps Lock does (any other choice from the same family replaces it).
+pub fn is_caps(option: &str) -> bool {
+    option.starts_with("caps:") || ["ctrl:nocaps", "ctrl:swapcaps"].contains(&option)
+}
+
+pub fn is_compose(option: &str) -> bool {
+    option.starts_with("compose:")
+}
+
+/// The option of `family` in `options`, or "" for none.
+pub fn current(options: &str, family: fn(&str) -> bool) -> &str {
+    options.split(',').map(str::trim).find(|o| family(o)).unwrap_or("")
+}
+
+/// `options` with `family`'s option replaced by `new` ("" removes it), the others kept in order.
+pub fn with_option(options: &str, family: fn(&str) -> bool, new: &str) -> String {
+    let kept = options.split(',').map(str::trim).filter(|o| !o.is_empty() && !family(o));
+    kept.chain((!new.is_empty()).then_some(new)).collect::<Vec<_>>().join(",")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,5 +109,14 @@ mod tests {
         assert_eq!(lists(&sources), ("us,np,de".into(), "intl,,".into()));
         assert_eq!(lists(&chosen("us,np", "")), ("us,np".into(), String::new()));
         assert!(chosen("", "").is_empty());
+    }
+    #[test]
+    fn options() {
+        let options = "grp:alt_shift_toggle, caps:swapescape";
+        assert_eq!(current(options, is_caps), "caps:swapescape");
+        assert_eq!(with_option(options, is_caps, "ctrl:nocaps"), "grp:alt_shift_toggle,ctrl:nocaps");
+        assert_eq!(with_option(options, is_caps, ""), "grp:alt_shift_toggle");
+        assert_eq!(with_option("", is_compose, "compose:ralt"), "compose:ralt");
+        assert_eq!(current(options, is_compose), "");
     }
 }

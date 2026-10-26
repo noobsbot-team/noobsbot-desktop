@@ -165,6 +165,8 @@ pub enum Kind {
     },
     Text(&'static str),
     Accent,
+    /// One xkb option in a comma list (the key is `keyboard.options`): its family, and the choices ("" = none).
+    XkbOption(fn(&str) -> bool, &'static [(&'static str, &'static str)]),
 }
 
 pub struct Setting {
@@ -238,7 +240,16 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_rate", "Key repeat rate", "", Kind::Slider { min: 0.0, max: 60.0, step: 1.0 }),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_delay", "Delay until repeat", "", Kind::Slider { min: 150.0, max: 1500.0, step: 50.0 }),
-    s(Page::Keyboard, "Input", "keyboard.options", "Options", "Like caps:escape", Kind::Text("None")),
+    s(Page::Keyboard, "Modifier keys", "keyboard.options", "Caps Lock key", "", Kind::XkbOption(crate::xkb::is_caps, crate::xkb::CAPS)),
+    s(
+        Page::Keyboard,
+        "Modifier keys",
+        "keyboard.options",
+        "Compose key",
+        "Then type a sequence, like ' e for é",
+        Kind::XkbOption(crate::xkb::is_compose, crate::xkb::COMPOSE),
+    ),
+    s(Page::Keyboard, "Modifier keys", "keyboard.options", "Other xkb options", "Like grp:alt_shift_toggle; Caps Lock and Compose above", Kind::Text("None")),
     s(Page::Trackpad, "", "touchpad.tap_to_click", "Tap to click", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.natural_scroll", "Natural scrolling", "Content follows your fingers", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.speed", "Tracking speed", "", Kind::Slider { min: -1.0, max: 1.0, step: 0.1 }),
@@ -403,6 +414,25 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
             }
             swatches.into()
         }
+        Kind::XkbOption(family, choices) => {
+            let options = app.config.str(key);
+            let current = crate::xkb::current(options, family);
+            let selected = choices.iter().find(|c| c.0 == current).map(|&(v, l)| Labelled(v, l));
+            let pick = pick_list(choices.iter().map(|&(v, l)| Labelled(v, l)).collect::<Vec<_>>(), selected, move |c: Labelled| {
+                Message::Options(crate::xkb::with_option(options, family, c.0))
+            });
+            pick.placeholder(current).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()
+        }
+    }
+}
+
+/// A dropdown choice: the value written, the label shown.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Labelled(&'static str, &'static str);
+
+impl std::fmt::Display for Labelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.1)
     }
 }
 

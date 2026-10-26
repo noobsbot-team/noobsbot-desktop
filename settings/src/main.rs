@@ -138,6 +138,8 @@ pub enum Message {
     Sources(Vec<(String, String)>),
     /// Open (or filter) the input source picker; `None` closes it.
     Picker(Option<String>),
+    /// `keyboard.options` rewritten by a Modifier Keys dropdown.
+    Options(String),
 }
 
 impl App {
@@ -236,6 +238,7 @@ impl App {
                 self.save("keyboard.layout", layouts);
             }
             Message::Picker(query) => self.picker = query,
+            Message::Options(options) => self.save("keyboard.options", options),
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
