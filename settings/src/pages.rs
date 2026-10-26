@@ -92,7 +92,7 @@ impl Page {
         matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery)
     }
 
-    /// A little space starts a new block in the sidebar, as in macOS.
+    /// A little space starts a new block in the sidebar.
     pub fn gap_before(self) -> bool {
         matches!(self, Page::Appearance | Page::Notifications | Page::General)
     }
@@ -332,6 +332,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Toggle,
     ),
     s(Page::Appearance, "Desktop", "desktop.icons", "Show Desktop folder on the wallpaper", "", Kind::Toggle),
+    s(Page::Appearance, "Desktop", "desktop.show_drives", "Show mounted drives on the desktop", "", Kind::Toggle),
     s(Page::Appearance, "Apps", "appearance.theme_apps", "Theme Qt apps", "Dark Mode also rewrites the Noobsbot Glass theme files", Kind::Toggle),
     s(Page::Displays, "Night Light", "night_light.enabled", "Night Light", "Warmer colours on a schedule; screenshots stay true", Kind::Toggle),
     s(
@@ -365,6 +366,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Dock, "Dock", "dock.minimise_into_icon", "Minimise windows into application icon", "", Kind::Toggle),
     s(Page::Dock, "Dock", "dock.minimise_effect", "Minimise windows using", "", Kind::Choice(&[("scale", "Scale Effect"), ("genie", "Genie Effect")])),
+    s(Page::Dock, "Dock", "dock.show_trash", "Show Trash in Dock", "", Kind::Toggle),
     s(
         Page::Dock,
         "Dock",
@@ -375,6 +377,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Dock, "Dock", "dock.middle", "Middle-click an app to", "", Kind::Choice(&[("new", "Open a new window"), ("close", "Close its windows")])),
     s(Page::Dock, "Dock", "dock.scroll", "Scroll on an app to cycle its windows", "", Kind::Choice(&[("on", "On"), ("reverse", "Reversed"), ("off", "Off")])),
+    s(Page::Dock, "Menu Bar", "menu_bar.auto_hide", "Automatically hide and show the menu bar", "Shows when the pointer touches the top edge", Kind::Toggle),
     s(
         Page::Dock,
         "Windows",
@@ -460,6 +463,7 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
     s(Page::General, "Software Update", "check_updates", "Check for updates daily", "Sends nothing but the version; installs at next login", Kind::Toggle),
+    s(Page::General, "Session", "windows.reopen_at_login", "Reopen windows when logging back in", "Also the Log Out alert's checkbox", Kind::Toggle),
 ];
 
 pub fn setting(key: &str) -> Option<&'static Setting> {
@@ -785,7 +789,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         Page::Sound => {
             let mut parts = Vec::new();
             for (output, header, device, choices) in [(true, "Output", &status.output, &status.outputs), (false, "Input", &status.input, &status.inputs)] {
-                // More than one: pick the default, a check by the current one (macOS's device table).
+                // More than one: pick the default, a check by the current one.
                 if choices.len() > 1 {
                     let rows = choices
                         .iter()
@@ -1129,7 +1133,7 @@ impl std::fmt::Display for Rate {
     }
 }
 
-/// The scale presets (the common desktop and macOS steps).
+/// The scale presets (the common desktop steps).
 const SCALES: [f64; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// `1.25` → `125%`, `1.333` → `133%`.

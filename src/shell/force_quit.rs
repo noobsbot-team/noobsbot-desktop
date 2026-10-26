@@ -301,7 +301,7 @@ impl State {
     fn force_quit_selected(&mut self, entries: &[Entry]) {
         let Some(entry) = self.force_quit.as_ref().and_then(|f| entries.iter().find(|e| Some(e.pid) == f.selection(entries))) else { return };
         self.kill(entry.pid, entry.client.clone());
-        // macOS keeps the window open on the next app.
+        // The window stays open on the next app.
         let next = entries.iter().find(|e| e.pid != entry.pid).map(|e| e.pid);
         self.force_quit = Some(ForceQuit { selected: next });
         self.schedule_redraw();
