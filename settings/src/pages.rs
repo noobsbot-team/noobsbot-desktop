@@ -211,6 +211,8 @@ pub enum Kind {
     Steps(&'static [(i64, &'static str)]),
     /// A sound from the system's sound theme, with a button that plays it.
     Sound,
+    /// `display.gpu`: Automatic, or one of `system::GPUS`.
+    Gpu,
     /// Degrees typed in a field, checked to lie within ± this.
     Degrees(f64),
     /// A switch for a two-word key: the value written off, then on.
@@ -380,6 +382,7 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Appearance, "Desktop", "desktop.icons", "Show Desktop folder on the wallpaper", "", Kind::Toggle),
     s(Page::Appearance, "Desktop", "desktop.show_drives", "Show mounted drives on the desktop", "", Kind::Toggle),
     s(Page::Appearance, "Apps", "appearance.theme_apps", "Theme Qt apps", "Dark Mode also rewrites the Noobsbot Glass theme files", Kind::Toggle),
+    s(Page::Displays, "Graphics", "display.gpu", "Draw the desktop with", "Applies at the next login", Kind::Gpu),
     s(Page::Displays, "Night Light", "night_light.enabled", "Night Light", "Warmer colours on a schedule; screenshots stay true", Kind::Toggle),
     s(
         Page::Displays,
@@ -799,6 +802,14 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
                 .width(180)
                 .style(t.input(false))
                 .into()
+        }
+        Kind::Gpu => {
+            let current = app.config.str(key);
+            let gpus = std::iter::once(Labelled("", "Automatic")).chain(crate::system::GPUS.iter().map(|(v, l)| Labelled(v, l)));
+            let gpus: Vec<_> = gpus.collect();
+            let selected = gpus.iter().copied().find(|g| g.0 == current);
+            let pick = pick_list(gpus, selected, move |c: Labelled| Message::Choose(key.into(), c.0));
+            pick.placeholder(current).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()
         }
         Kind::Degrees(limit) => {
             let saved = app.config.num(key);

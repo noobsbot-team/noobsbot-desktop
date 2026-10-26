@@ -158,7 +158,8 @@ bottom_left = "none"
 bottom_right = "none"
 
 [display]
-# The GPU that draws the desktop, e.g. "/dev/dri/card1"; empty = the one the computer booted with. Applies at next login.
+# The GPU that draws the desktop, e.g. "/dev/dri/card1" or its /dev/dri/by-path link; empty = the one the computer
+# booted with. Applies at next login.
 gpu = ""
 # How big everything is drawn: 1.0 = 100%, 1.25, 1.5, 2.0 …, or 0 = picked from the display's pixel density
 # (about 128 px per inch per 100% on a laptop's own panel, 110 on a monitor). Applies at once to every display.

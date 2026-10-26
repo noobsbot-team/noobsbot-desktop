@@ -543,6 +543,22 @@ fn sounds(files: Vec<String>) -> Vec<(String, String)> {
     out
 }
 
+/// Displays ▸ GPU: each GPU as `display.gpu` takes it (its stable `/dev/dri/by-path` link, else `/dev/dri/cardN`),
+/// and its label (`Intel Graphics (card1)`); read once.
+pub static GPUS: std::sync::LazyLock<Vec<(String, String)>> = std::sync::LazyLock::new(|| {
+    let links: Vec<_> = std::fs::read_dir("/dev/dri/by-path").into_iter().flatten().flatten().map(|e| e.path()).collect();
+    displays_root()
+        .filter(|card| !card.contains('-'))
+        .map(|card| {
+            let node = std::path::PathBuf::from(format!("/dev/dri/{card}"));
+            let path = links.iter().find(|l| std::fs::canonicalize(l).is_ok_and(|t| t == node)).unwrap_or(&node);
+            let uevent = std::fs::read_to_string(format!("/sys/class/drm/{card}/device/uevent")).unwrap_or_default().replace('=', ":");
+            let maker = field(&uevent, "DRIVER").map_or_else(|| "GPU".into(), gpu);
+            (path.to_string_lossy().into_owned(), format!("{maker} ({card})"))
+        })
+        .collect()
+});
+
 /// Plays theme sound `name` at `volume` percent as the desktop does (`bell::play`): the sound theme's, else the
 /// freedesktop file straight to PipeWire.
 pub fn play(name: &str, volume: u8) {
