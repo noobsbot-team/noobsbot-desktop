@@ -703,11 +703,16 @@ fn configure(device: &mut InputDevice, touchpad: &Touchpad, mouse: &Mouse) {
         let _ = device.config_accel_set_speed(touchpad.speed.clamp(-1.0, 1.0));
         let _ = device.config_dwt_set_enabled(touchpad.disable_while_typing);
         let _ = device.config_left_handed_set(mouse.left_handed);
-        let method = match touchpad.secondary_click {
-            SecondaryClick::TwoFingers => ClickMethod::Clickfinger,
-            SecondaryClick::Corner => ClickMethod::ButtonAreas,
-        };
-        let _ = device.config_click_set_method(method);
+        match click_method(touchpad.secondary_click) {
+            Some(method) => {
+                let _ = device.config_click_set_method(method);
+            }
+            // SAFETY: a live device; the `input` crate has no "none" variant, libinput takes 0.
+            None => unsafe {
+                use smithay::reexports::input::{AsRaw, ffi};
+                ffi::libinput_device_config_click_set_method(device.as_raw_mut(), ffi::libinput_config_click_method_LIBINPUT_CONFIG_CLICK_METHOD_NONE);
+            },
+        }
         let mode = match (touchpad.enabled, touchpad.ignore_with_mouse) {
             (false, _) => SendEventsMode::DISABLED,
             (true, true) => SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE,
@@ -720,6 +725,15 @@ fn configure(device: &mut InputDevice, touchpad: &Touchpad, mouse: &Mouse) {
         let _ = device.config_left_handed_set(mouse.left_handed);
         let _ = device.config_scroll_set_natural_scroll_enabled(mouse.natural_scroll);
         let _ = device.config_middle_emulation_set_enabled(mouse.middle_click_emulation);
+    }
+}
+
+/// libinput's click method for a secondary-click choice; `None`: no method (every click is a left click).
+fn click_method(secondary: SecondaryClick) -> Option<ClickMethod> {
+    match secondary {
+        SecondaryClick::TwoFingers => Some(ClickMethod::Clickfinger),
+        SecondaryClick::Corner => Some(ClickMethod::ButtonAreas),
+        SecondaryClick::Off => None,
     }
 }
 
@@ -826,6 +840,13 @@ impl<'a> RenderElement<Multi<'a>> for OnGpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secondary_click_maps_to_libinput() {
+        assert_eq!(click_method(SecondaryClick::TwoFingers), Some(ClickMethod::Clickfinger));
+        assert_eq!(click_method(SecondaryClick::Corner), Some(ClickMethod::ButtonAreas));
+        assert_eq!(click_method(SecondaryClick::Off), None);
+    }
 
     #[test]
     fn primary_gpu_choice() {

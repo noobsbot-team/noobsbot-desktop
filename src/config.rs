@@ -376,6 +376,8 @@ pub enum SecondaryClick {
     TwoFingers,
     /// Click in the bottom-right corner.
     Corner,
+    /// Every physical click is a primary click (a two-finger tap still right-clicks with tap to click).
+    Off,
 }
 
 /// Mice and trackballs (libinput).
@@ -1614,6 +1616,11 @@ mod tests {
         assert_eq!(ms("[mouse]\ndouble_click_ms = 650"), 650);
         assert_eq!(ms("[mouse]\ndouble_click_ms = 0"), 150, "0 would make double-clicks impossible");
         assert_eq!(ms("[mouse]\ndouble_click_ms = 99999"), 1000);
+    }
+
+    #[test]
+    fn secondary_click_off_parses() {
+        assert_eq!(parse("[touchpad]\nsecondary_click = \"off\"").unwrap().touchpad.secondary_click, SecondaryClick::Off);
     }
 
     #[test]
