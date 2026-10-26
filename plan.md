@@ -1715,7 +1715,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Keep-awake Control Center tile with the list of apps blocking sleep (done: idle-inhibit windows and logind `block`
   inhibitors; on until logout).
 - ~~Reopen windows at login (checkbox in the Log Out alert).~~ Done: `session.toml` in the state dir; each app starts once 3 s after login and its windows go back to their Space, display and frame as they map (20 s wait).
-- Thunderbolt "Allow accessory to connect?" alert through `boltd` (G2).
+- ~~Thunderbolt "Allow accessory to connect?" alert through `boltd` (G2).~~ Done: a device boltd lists as "connected" asks Don't Allow / Allow (queued while locked); Allow enrolls it with policy "auto". Real sessions only.
 - ~~Desktop icons for mounted drives with Eject.~~ Done: drives sit first at the top right (not draggable); double-click opens the file manager, right-click has Open and Eject; `[desktop] show_drives`.
 - Housekeeping: low-disk notification, Trash and thumbnail cleanup, recent-files age.
 
