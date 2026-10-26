@@ -256,6 +256,8 @@ settings file.
 | Super+1 … Super+9 | focus, cycle or open the n-th dock app (hold Super to see the numbers) |
 | Super+Shift+1 … 9 | a new window of the n-th dock app (not 3, 4, 5: screenshots) |
 | Super+Shift+Left / Right | move the window to the previous / next Space |
+| Super+Ctrl+Left / Right / Up / Down | tile the window to the left / right / top / bottom half |
+| Super+` | next window of the same app |
 | Super+Shift+3 / 4 / 5 | screenshot: screen / region / toolbar |
 | Super+Ctrl+Q | lock screen |
 | Super+Alt+Esc | Force Quit |

@@ -258,6 +258,22 @@ impl State {
         }
     }
 
+    /// Move to ▸ Space n (from 0): the window goes, the shown Space stays. Nothing if there is no such Space.
+    pub fn move_window_to_space(&mut self, window: &Window, desk: usize) {
+        if self.desks().is_some_and(|d| desk < d.list.len()) {
+            self.send_to_space(window, desk);
+        }
+    }
+
+    /// Move to ▸ New Space: a new Space at the end gets the window (dynamic Spaces only).
+    pub fn move_to_new_space(&mut self, window: &Window) {
+        let Some(before) = self.desks().map(|d| d.list.len()) else { return };
+        self.add_space();
+        if self.desks().is_some_and(|d| d.list.len() > before) {
+            self.send_to_space(window, before);
+        }
+    }
+
     /// The Space a window is on.
     pub fn desk_of_window(&mut self, window: &Window) -> usize {
         let row = self.window_row(window);
