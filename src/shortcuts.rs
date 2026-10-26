@@ -69,6 +69,11 @@ pub enum Action {
     Emoji,
     /// A row of a dock icon's right-click menu (E3.1).
     Dock(crate::shell::dock::Command),
+    /// The n-th dock icon, from 0 (Super+1…9, E8.3): focus, cycle or open it; `new`: a new window (Super+Shift+n).
+    DockApp {
+        n: usize,
+        new: bool,
+    },
     /// A row of a desktop icon's or the desktop's right-click menu (E7.2).
     Desktop(crate::shell::desktop::Command),
     /// Opens or closes Launchpad (E4.4; F4, off by default).
@@ -177,6 +182,8 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("space", "left") => Some(Action::SwitchSpace(-1)),
         ("space", "right") => Some(Action::SwitchSpace(1)),
         ("space", n) => n.parse::<usize>().ok().filter(|n| (1..=16).contains(n)).map(|n| Action::ShowSpace(n - 1)),
+        ("dock-app", n) => dock_n(n).map(|n| Action::DockApp { n, new: false }),
+        ("dock-app-new", n) => dock_n(n).map(|n| Action::DockApp { n, new: true }),
         ("move-to-space", "left") => Some(Action::MoveToSpace(-1)),
         ("move-to-space", "right") => Some(Action::MoveToSpace(1)),
         ("mission-control", "") => Some(Action::MissionControl),
@@ -188,6 +195,11 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("screenshot-toolbar", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Toolbar)),
         _ => None,
     }
+}
+
+/// "1"…"9": a dock icon, from 0.
+fn dock_n(n: &str) -> Option<usize> {
+    n.parse::<usize>().ok().filter(|n| (1..=9).contains(n)).map(|n| n - 1)
 }
 
 /// The shortcut table from the config's `[bindings]`; entries that don't parse are logged and skipped.
@@ -344,6 +356,7 @@ impl State {
                 self.schedule_redraw();
             }
             Action::Dock(command) => self.dock_command(command),
+            Action::DockApp { n, new } => self.dock_app(n, new),
             Action::Desktop(command) => self.desktop_command(command),
             Action::Launchpad => {
                 self.close_drawer();
@@ -500,7 +513,12 @@ mod tests {
         assert_eq!(lookup(&table, &ModifiersState { logo: true, alt: true, ..Default::default() }, Keysym::Escape, false), Some(&Action::ForceQuit));
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::Right, false), Some(&Action::SwitchSpace(1)));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::Left, false), Some(&Action::MoveToSpace(-1)));
-        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::_3, false), Some(&Action::ShowSpace(2)));
+        assert_eq!(lookup(&table, &mods(true, false, false), Keysym::_3, false), Some(&Action::DockApp { n: 2, new: false }));
+        assert_eq!(lookup(&table, &mods(true, false, true), Keysym::_2, false), Some(&Action::DockApp { n: 1, new: true }));
+        assert!(matches!(lookup(&table, &mods(true, false, true), Keysym::_3, false), Some(Action::Screenshot(_))), "Super+Shift+3 stays a screenshot");
+        let ctrl = ModifiersState { ctrl: true, ..Default::default() };
+        assert_eq!(lookup(&table, &ctrl, Keysym::_3, false), Some(&Action::ShowSpace(2)));
+        assert_eq!(action(&Config::default(), "dock-app 10"), None);
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::Up, false), Some(&Action::MissionControl));
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::Left, false), None, "plain arrows go to the app");
     }

@@ -251,7 +251,9 @@ settings file.
 | Super+N | Notification Center |
 | Super+Up / Super+Down | Mission Control / App Exposé |
 | Super+Left / Super+Right | previous / next Space |
-| Super+1 … Super+9 | go to Space 1–9 |
+| Ctrl+1 … Ctrl+9 | go to Space 1–9 |
+| Super+1 … Super+9 | focus, cycle or open the n-th dock app (hold Super to see the numbers) |
+| Super+Shift+1 … 9 | a new window of the n-th dock app (not 3, 4, 5: screenshots) |
 | Super+Shift+Left / Right | move the window to the previous / next Space |
 | Super+Shift+3 / 4 / 5 | screenshot: screen / region / toolbar |
 | Super+Ctrl+Q | lock screen |
@@ -293,7 +295,7 @@ doesn't understand is skipped and reported in the journal.
 | `[[display.outputs]]` | one screen by connector name: on or off, resolution, refresh rate, scale, rotation, position, which shows the menu bar and Dock (System Settings › Displays asks to keep or revert) |
 | `[windows]` | move key, magnetic edges, snapping, double-click title bar, number of Spaces |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week |
-| `[dock]` | pinned apps, icon size, magnification, auto-hide |
+| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions |
 | `[idle]` | when to dim, turn the screen off and sleep (battery and AC), locking |
 | `[privacy]` | which programs may record the screen |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |

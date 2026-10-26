@@ -520,6 +520,11 @@ impl SuperTap {
         }
     }
 
+    /// When Super went down alone, while it is still held with nothing else pressed.
+    pub fn down(&self) -> Option<Instant> {
+        self.down
+    }
+
     /// A click, scroll or gesture while Super is held: not a tap.
     pub fn cancel(&mut self) {
         self.down = None;

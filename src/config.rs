@@ -442,6 +442,42 @@ pub struct Dock {
     pub current_workspace_only: bool,
     /// The app's name over the hovered icon.
     pub tooltips: bool,
+    /// Clicking the focused app's icon (E8.3).
+    pub click: DockClick,
+    /// Middle-clicking an icon.
+    pub middle: DockMiddle,
+    /// Scrolling on an icon cycles its app's windows.
+    pub scroll: DockScroll,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockClick {
+    /// Minimise its windows.
+    #[default]
+    Toggle,
+    /// Its next window.
+    Cycle,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockMiddle {
+    /// A new window.
+    #[default]
+    New,
+    /// Close the app's windows.
+    Close,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DockScroll {
+    Off,
+    /// Down or right: the next window.
+    #[default]
+    On,
+    Reverse,
 }
 
 /// Notifications (E4.1).
@@ -555,6 +591,9 @@ impl Default for Dock {
             pinned_only: false,
             current_workspace_only: false,
             tooltips: true,
+            click: DockClick::Toggle,
+            middle: DockMiddle::New,
+            scroll: DockScroll::On,
         }
     }
 }
@@ -644,15 +683,30 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+period", "emoji"),
         ("Super+Left", "space left"),
         ("Super+Right", "space right"),
-        ("Super+1", "space 1"),
-        ("Super+2", "space 2"),
-        ("Super+3", "space 3"),
-        ("Super+4", "space 4"),
-        ("Super+5", "space 5"),
-        ("Super+6", "space 6"),
-        ("Super+7", "space 7"),
-        ("Super+8", "space 8"),
-        ("Super+9", "space 9"),
+        ("Ctrl+1", "space 1"),
+        ("Ctrl+2", "space 2"),
+        ("Ctrl+3", "space 3"),
+        ("Ctrl+4", "space 4"),
+        ("Ctrl+5", "space 5"),
+        ("Ctrl+6", "space 6"),
+        ("Ctrl+7", "space 7"),
+        ("Ctrl+8", "space 8"),
+        ("Ctrl+9", "space 9"),
+        ("Super+1", "dock-app 1"),
+        ("Super+2", "dock-app 2"),
+        ("Super+3", "dock-app 3"),
+        ("Super+4", "dock-app 4"),
+        ("Super+5", "dock-app 5"),
+        ("Super+6", "dock-app 6"),
+        ("Super+7", "dock-app 7"),
+        ("Super+8", "dock-app 8"),
+        ("Super+9", "dock-app 9"),
+        ("Super+Shift+1", "dock-app-new 1"),
+        ("Super+Shift+2", "dock-app-new 2"),
+        ("Super+Shift+6", "dock-app-new 6"),
+        ("Super+Shift+7", "dock-app-new 7"),
+        ("Super+Shift+8", "dock-app-new 8"),
+        ("Super+Shift+9", "dock-app-new 9"),
         ("Super+Shift+Left", "move-to-space left"),
         ("Super+Shift+Right", "move-to-space right"),
         ("Super+Up", "mission-control"),
