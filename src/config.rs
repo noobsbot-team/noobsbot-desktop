@@ -47,6 +47,7 @@ pub struct Config {
     pub menu_bar: MenuBar,
     pub dock: Dock,
     pub idle: Idle,
+    pub sound: Sound,
     pub privacy: Privacy,
     pub weather: Weather,
     pub widgets: Widgets,
@@ -513,6 +514,7 @@ impl Default for Config {
             menu_bar: MenuBar::default(),
             dock: Dock::default(),
             idle: Idle::default(),
+            sound: Sound::default(),
             privacy: Privacy::default(),
             weather: Weather::default(),
             widgets: Widgets::default(),
@@ -799,6 +801,22 @@ impl Default for Dock {
             minimise_effect: MinimiseEffect::Scale,
             show_trash: true,
         }
+    }
+}
+
+/// Sound effects (E8.2).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Sound {
+    /// The alert sound: a freedesktop sound theme name (`bell`, `dialog-warning`), played by the bell.
+    pub alert: String,
+    /// Screenshots, emptying the Trash and the volume keys make their sounds.
+    pub ui_sounds: bool,
+}
+
+impl Default for Sound {
+    fn default() -> Self {
+        Self { alert: "bell".into(), ui_sounds: true }
     }
 }
 

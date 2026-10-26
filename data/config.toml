@@ -248,6 +248,13 @@ lock_delay = 0
 # A line on the lock screen, under the clock ("If found, call …").
 lock_message = ""
 
+[sound]
+# The alert sound, by its name in the freedesktop sound theme (/usr/share/sounds/freedesktop/stereo): "bell",
+# "dialog-warning", "message" … Apps ringing the bell play it (see `bell` under [accessibility]).
+alert = "bell"
+# Play user interface sound effects: taking a screenshot, emptying the Trash, the volume keys.
+ui_sounds = true
+
 [privacy]
 # Programs (by path) allowed to record the screen through wlr-screencopy (grim, wf-recorder, OBS), and those denied.
 # The first time a program asks, an alert asks you and the answer is saved here. The screen-sharing portal,

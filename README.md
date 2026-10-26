@@ -328,6 +328,7 @@ doesn't understand is skipped and reported in the journal.
 | `[menu_bar]` | hide the menu bar until the pointer reaches the top edge |
 | `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions |
 | `[idle]` | when to dim, turn the screen off and sleep (battery and AC), locking |
+| `[sound]` | the alert sound (from the system's sound theme) and user interface sound effects on or off |
 | `[privacy]` | which programs may record the screen |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
 | `[widgets]` | order of other apps' widgets in Notification Center, and which go on the desktop instead |
