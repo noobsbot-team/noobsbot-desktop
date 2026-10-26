@@ -252,7 +252,7 @@ settings file.
 | Super+N | Notification Center |
 | Super+Up / Super+Down | Mission Control / App Exposé |
 | Super+Left / Super+Right | previous / next Space |
-| Ctrl+1 … Ctrl+9 | go to Space 1–9 |
+| Super+Ctrl+1 … 9 | go to Space 1–9 |
 | Super+1 … Super+9 | focus, cycle or open the n-th dock app (hold Super to see the numbers) |
 | Super+Shift+1 … 9 | a new window of the n-th dock app (not 3, 4, 5: screenshots) |
 | Super+Shift+Left / Right | move the window to the previous / next Space |

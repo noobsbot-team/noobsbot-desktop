@@ -516,8 +516,9 @@ mod tests {
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::_3, false), Some(&Action::DockApp { n: 2, new: false }));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::_2, false), Some(&Action::DockApp { n: 1, new: true }));
         assert!(matches!(lookup(&table, &mods(true, false, true), Keysym::_3, false), Some(Action::Screenshot(_))), "Super+Shift+3 stays a screenshot");
-        let ctrl = ModifiersState { ctrl: true, ..Default::default() };
-        assert_eq!(lookup(&table, &ctrl, Keysym::_3, false), Some(&Action::ShowSpace(2)));
+        let super_ctrl = ModifiersState { logo: true, ctrl: true, ..Default::default() };
+        assert_eq!(lookup(&table, &super_ctrl, Keysym::_3, false), Some(&Action::ShowSpace(2)));
+        assert_eq!(lookup(&table, &ModifiersState { ctrl: true, ..Default::default() }, Keysym::_3, false), None, "Ctrl+3 goes to the app");
         assert_eq!(action(&Config::default(), "dock-app 10"), None);
         assert_eq!(lookup(&table, &mods(true, false, false), Keysym::Up, false), Some(&Action::MissionControl));
         assert_eq!(lookup(&table, &mods(false, false, false), Keysym::Left, false), None, "plain arrows go to the app");
