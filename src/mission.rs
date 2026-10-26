@@ -250,11 +250,11 @@ impl State {
     }
 
     pub(crate) fn open_mission(&mut self, app: Option<String>) {
-        let now = Instant::now();
+        let (now, reduce) = (Instant::now(), self.config.appearance.reduce_motion);
         match self.mission.as_mut() {
-            Some(m) if m.progress.target() == 1.0 && m.app == app => m.progress = Tween::new(m.progress.value(now), 0.0),
+            Some(m) if m.progress.target() == 1.0 && m.app == app => m.progress = Tween::eased(m.progress.value(now), 0.0, reduce),
             Some(m) => {
-                m.progress = Tween::new(m.progress.value(now), 1.0);
+                m.progress = Tween::eased(m.progress.value(now), 1.0, reduce);
                 m.app = app;
             }
             None => {
@@ -263,7 +263,7 @@ impl State {
                 let output = self.pointer_output().map(|o| o.name()).unwrap_or_default();
                 self.mission = Some(Mission {
                     app,
-                    progress: Tween::new(0.0, 1.0),
+                    progress: Tween::eased(0.0, 1.0, reduce),
                     hover: None,
                     output,
                     expanded: false,
@@ -299,8 +299,9 @@ impl State {
     }
 
     pub fn close_mission(&mut self) {
+        let reduce = self.config.appearance.reduce_motion;
         if let Some(m) = self.mission.as_mut().filter(|m| m.progress.target() == 1.0) {
-            m.progress = Tween::new(m.progress.value(Instant::now()), 0.0);
+            m.progress = Tween::eased(m.progress.value(Instant::now()), 0.0, reduce);
             m.press = None;
             m.space_press = None;
             self.schedule_redraw();

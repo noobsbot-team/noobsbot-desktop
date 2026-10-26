@@ -58,12 +58,20 @@ pub struct Tween {
     settle: Option<Duration>,
 }
 
+/// The reduce-motion crossfade: critically damped, settled in about 200 ms.
+const FADE: Spring = Spring { response: 0.14, damping: 1.0 };
+
 /// The fastest a fling starts (per second): bounds its overshoot to under 8%.
 const MAX_SPEED: f64 = 3.0;
 
 impl Tween {
     pub fn new(from: f64, to: f64) -> Self {
         Self::spring(from, to, 0.0, SMOOTH)
+    }
+
+    /// `new`, or the reduce-motion crossfade's quicker settle.
+    pub fn eased(from: f64, to: f64, reduce: bool) -> Self {
+        if reduce { Self::spring(from, to, 0.0, FADE) } else { Self::new(from, to) }
     }
 
     /// Let go at `from` moving at `v` per second.
@@ -415,7 +423,7 @@ impl State {
     /// indicator comes up, on the displays of `key`.
     fn slide_and_show(&mut self, key: &str, from: usize, to: usize) {
         if self.mission.is_none() {
-            self.spaces.slide = Some(Slide { key: key.to_owned(), from, to, progress: Tween::new(0.0, 1.0) });
+            self.spaces.slide = Some(Slide { key: key.to_owned(), from, to, progress: Tween::eased(0.0, 1.0, self.config.appearance.reduce_motion) });
         }
         if let Some(token) = self.spaces.hud.take() {
             self.loop_handle.remove(token);
@@ -924,6 +932,14 @@ mod tests {
         assert!(tween.done(later));
         let held = Tween::hold(0.3);
         assert!(!held.done(later) && held.value(later) == 0.3, "held until let go");
+    }
+
+    #[test]
+    fn reduce_motion_fades_in_about_200_ms_without_overshoot() {
+        let t0 = Instant::now();
+        let fade = Tween { start: t0, ..Tween::eased(0.0, 1.0, true) };
+        assert!(fade.done(t0 + Duration::from_millis(250)) && !fade.done(t0 + Duration::from_millis(150)));
+        assert!((0..300).map(|ms| fade.value(t0 + Duration::from_millis(ms))).all(|v| (0.0..=1.0).contains(&v)));
     }
 
     #[test]
