@@ -197,6 +197,8 @@ pub struct WireGuard {
     private_key: String,
     addresses: Vec<(std::net::IpAddr, u32)>,
     dns: Vec<std::net::IpAddr>,
+    /// `DNS =` entries that aren't addresses.
+    search: Vec<String>,
     listen_port: Option<u32>,
     mtu: Option<u32>,
     peers: Vec<Peer>,
@@ -255,8 +257,14 @@ pub fn parse_wireguard(name: &str, conf: &str) -> Result<WireGuard, String> {
                     wg.addresses.push((ip, prefix));
                 }
             }
-            // ponytail: search domains are left out.
-            ("[interface]", "dns") => wg.dns.extend(list().filter_map(|d| d.parse::<std::net::IpAddr>().ok())),
+            ("[interface]", "dns") => {
+                for d in list() {
+                    match d.parse() {
+                        Ok(ip) => wg.dns.push(ip),
+                        Err(_) => wg.search.push(d.to_owned()),
+                    }
+                }
+            }
             ("[interface]", "listenport") => wg.listen_port = Some(number()?),
             ("[interface]", "mtu") => wg.mtu = Some(number()?),
             ("[peer]", key) => {
@@ -348,6 +356,12 @@ fn wireguard_settings(wg: &WireGuard) -> Dict<'_> {
     }
     if !v6.is_empty() && ipv6.contains_key("address-data") {
         ipv6.insert("dns", v6.into());
+    }
+    // Search domains go on IPv4, or IPv6 when only it has addresses.
+    if !wg.search.is_empty()
+        && let Some(ip) = [&mut ipv4, &mut ipv6].into_iter().find(|ip| ip.contains_key("address-data"))
+    {
+        ip.insert("dns-search", wg.search.clone().into());
     }
     let connection = HashMap::from([
         ("id", Value::from(wg.name.as_str())),
@@ -793,6 +807,15 @@ mod tests {
         let v6 = Vec::<Vec<u8>>::try_from(settings["ipv6"]["dns"].try_clone().unwrap()).unwrap();
         assert_eq!(v6, ["2606:4700:4700::1111".parse::<std::net::Ipv6Addr>().unwrap().octets().to_vec()]);
         assert_eq!(text(&address("ipv6")[0]["address"].try_clone().unwrap().into()), "fd00::2");
+        assert_eq!(Vec::<String>::try_from(settings["ipv4"]["dns-search"].try_clone().unwrap()).unwrap(), ["example.lan"]);
+        assert!(!settings["ipv6"].contains_key("dns-search"));
+        // Only IPv6 addresses: the search domains go there; none without any address.
+        let v6_only = parse_wireguard("wg0", &conf.replace("10.0.0.2/24, ", "")).unwrap();
+        let settings = wireguard_settings(&v6_only);
+        assert!(!settings["ipv4"].contains_key("dns-search"));
+        assert_eq!(Vec::<String>::try_from(settings["ipv6"]["dns-search"].try_clone().unwrap()).unwrap(), ["example.lan"]);
+        let none = parse_wireguard("wg0", &conf.replace("Address = 10.0.0.2/24, fd00::2\n", "")).unwrap();
+        assert!(wireguard_settings(&none).values().all(|s| !s.contains_key("dns-search")));
     }
 
     #[test]
