@@ -984,7 +984,7 @@ Goal: everything that informs you and helps you find things.
 - **Done when:** `notify-send "Title" "Body"` shows a correct banner; actions call back the app; DND silences everything.
 
 ### E4.2 Notification Center (the notification panel)
-- **What it is:** a panel on the right side with all notifications plus widgets, like macOS.
+- **What it is:** a panel on the right side with all notifications plus widgets.
 - **How to open:** click the **date & time** in the menu bar · **Super+N** · optional hot corner. Close: Esc, click
   outside, or click the clock again.
 - **Design:**
@@ -1029,7 +1029,7 @@ Goal: everything that informs you and helps you find things.
     | Weather (optional, later) | needs an online weather API, so off by default | later decision |
   - "Edit Widgets" (later, M7) to add, remove and reorder.
 - **Built with:** our widgets; the notification store from E4.1; UPower; chrono.
-- **Why:** this is macOS's notification panel (R1, R13); a single place for missed notifications.
+- **Why:** this is the design's notification panel (R1, R13); a single place for missed notifications.
 - **Done when:** notifications arrive in history, group by app, expand/collapse, clear and act; widgets show live data;
   open/close animates at 120 Hz.
 
@@ -1059,7 +1059,7 @@ Goal: everything that informs you and helps you find things.
 - **Done when:** any installed app is found within 1 frame of typing and launches on Enter.
 
 ### E4.4 Launchpad (app grid)
-- **What it is:** a full-screen grid of all apps, like macOS Launchpad.
+- **What it is:** a full-screen grid of all apps: Launchpad.
 - **How to open:** dock icon · 4-finger pinch in (E5.3) · F4 (off by default, E1.6). Close: Esc, click empty space, or pinch out.
 - **Design:**
   - Wallpaper **dimmed and desaturated** (no blur), so icons stand out.
@@ -1070,7 +1070,7 @@ Goal: everything that informs you and helps you find things.
   - Icons zoom in (scale 1.1→1, fade) on open with `smooth`.
   - Drag an icon onto the dock to pin it. Folders: later.
 - **Built with:** the shared app index + icons (M3); our widgets.
-- **Why:** macOS has it (R1), and it's cheap because the app index and icons already exist.
+- **Why:** the design calls for it (R1), and it's cheap because the app index and icons already exist.
 - **Done when:** all apps show, paging and search work, and opening/closing is smooth.
 
 ### E4.5 App switcher
@@ -1078,7 +1078,7 @@ Goal: everything that informs you and helps you find things.
 - **Design:** centred `hud` panel, radius 18, icons **96 px**, 12 px gaps; the selected app has a rounded (radius 12)
   white @ 20% highlight and its name in Body under the strip. Super+Tab = next, Super+Shift+Tab = previous,
   Super+` = windows of the same app, Super+Q while open = quit the selected app.
-  Appears only after a 150 ms hold (a quick tap switches instantly, like macOS).
+  Appears only after a 150 ms hold (a quick tap switches instantly).
 - **Built with:** our widgets + the window list the compositor already has (C5 benefit).
 - **Done when:** order is most-recently-used; it switches across Spaces (jumps to the app's Space).
 
@@ -1095,7 +1095,7 @@ Goal: everything that informs you and helps you find things.
 - **Done when:** plug → notification → open in Dolphin → eject → "safe to remove".
 
 ### E4.7 Force Quit window & "not responding" detection
-- **What it is:** macOS's Force Quit Applications window, plus a warning when an app freezes.
+- **What it is:** a Force Quit Applications window, plus a warning when an app freezes.
 - **Design:**
   ```
   ╭─────────────────────────────────────────╮
@@ -1127,26 +1127,26 @@ Goal: everything that informs you and helps you find things.
 ---
 
 ## M5 — Spaces, Mission Control, system gestures, animation polish — size L
-Goal: multiple workspaces and the full macOS gesture experience.
+Goal: multiple workspaces and the full multi-finger gesture experience.
 
 ### E5.1 Multiple workspaces ("Spaces")
 - **What it is:** several virtual desktops, each with its own windows.
 - **Design / behaviour:**
-  - **Dynamic** (macOS): start with 1 Space; **+** in Mission Control adds one; ✕ on a Space thumbnail removes it
+  - **Dynamic**: start with 1 Space; **+** in Mission Control adds one; ✕ on a Space thumbnail removes it
     (its windows move to the neighbouring Space). Option: fixed count (`spaces = 4`).
   - **Switch:** Super+← / →, Super+1…9 (Ctrl+arrows and Ctrl+digits stay with the apps, E1.6), **3-finger swipe left/right** (E5.3), or click a Space in Mission Control.
     The whole screen slides (spring `smooth`; follows the fingers with gestures).
   - **Move a window:** Super+Shift+← / → (the window comes with you), drag in Mission Control, or right-click title
     bar → Move to ▸ Space N.
   - **Fullscreen = its own Space** (green traffic light); exiting removes that Space. Alt+green = zoom instead.
-  - **Each monitor has its own Spaces** (macOS default).
+  - **Each monitor has its own Spaces** (default).
   - Clicking a dock icon or picking an app in the switcher **jumps to the Space** where its window is.
   - **Assign app:** dock → Options ▸ This Space / All Spaces / None (the quake terminal = All Spaces).
   - **Indicator:** on switch, a small `hud` pill at the top centre with dots (current dot = `label`, others @ 30%), fades after 0.8 s.
   - Optional Space number/dots in the menu bar (off by default).
 - **Built with:** `spaces.rs`: per monitor a list of Spaces, each with its own window stack and focus. Hidden Spaces
   are **not drawn** (zero GPU) but their apps keep running. `ext-workspace-v1` protocol so other tools can list and switch Spaces.
-- **Why:** dynamic Spaces are macOS behaviour (R1, R11); not drawing hidden Spaces keeps it free (R3).
+- **Why:** dynamic Spaces are the design (R1, R11); not drawing hidden Spaces keeps it free (R3).
 - **Done when:** all behaviours above work by keyboard, gesture and mouse; switching is interruptible midway.
 
 ### E5.2 Mission Control & App Exposé
@@ -1171,13 +1171,13 @@ Goal: multiple workspaces and the full macOS gesture experience.
     follows the fingers during the gesture).
   - Hover a window → 3 px accent outline + its title in a glass pill below it.
   - Click = focus that window and exit. Drag a window onto a Space thumbnail = move it there.
-  - The Spaces bar collapses to names (Callout) and expands into thumbnails on hover (macOS Sonoma behaviour).
+  - The Spaces bar collapses to names (Callout) and expands into thumbnails on hover.
 - **Built with:** layout algorithm in `mission.rs` (pure function, unit-tested); live window textures (only while open).
 - **Why:** thumbnails reuse the textures the apps already gave us, so no extra rendering happens while closed.
 - **Done when:** with 10+ windows, opening and closing stays at full frame rate; layout never overlaps.
 
 ### E5.3 Touchpad gestures (full system set)
-- **What it is:** the macOS multi-finger gesture set.
+- **What it is:** the multi-finger gesture set.
 - **Design (all gestures follow the fingers 1:1, then finish with a velocity-based spring; a quick flick is
   enough, and a slow drag that's released halfway cancels):**
   | Gesture | Action | Milestone |
@@ -1195,15 +1195,15 @@ Goal: multiple workspaces and the full macOS gesture experience.
   | **4-finger spread out** | **Show Desktop** (windows slide to the screen edges) | M5 |
   | 3-finger drag (optional, off by default) | drag windows/text without clicking (libinput feature) | M5 |
   | 3-finger hold (optional) | reserved for later (e.g. look up) | later |
-  - Option: use **4 fingers** instead of 3 for Space/Mission Control swipes (like macOS's setting), which leaves
+  - Option: use **4 fingers** instead of 3 for Space/Mission Control swipes (a setting), which leaves
     3-finger swipes to apps.
   - Gesture settings: sensitivity, natural scrolling, tap-to-click, finger count; in config now, Trackpad page in M7.
 - **Built with:** **libinput** gesture events (swipe / pinch / hold with begin–update–end and finger count) via
   Smithay; our recogniser in `input.rs` (gesture → action, with velocity tracking); pinch goes to apps through the
   `pointer-gestures` protocol, 2-finger movement as normal scroll events.
 - **Why:** libinput already recognises multi-finger gestures reliably on every Linux touchpad (with palm rejection).
-  We only map them to actions and animate them. Following the fingers 1:1 is what makes macOS gestures feel physical.
-- **Limit:** macOS's "swipe from the right edge with 2 fingers for Notification Center" isn't possible, because
+  We only map them to actions and animate them. Following the fingers 1:1 is what makes gestures feel physical.
+- **Limit:** A "swipe from the right edge with 2 fingers for Notification Center" isn't possible, because
   libinput doesn't report where fingers are on the pad. Notification Center opens by clicking the clock, Super+N or a hot corner.
 - **Done when:** every gesture in the table works on a real touchpad, is interruptible, and has no false triggers
   while typing (palm rejection) or scrolling.
