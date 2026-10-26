@@ -220,9 +220,8 @@ impl State {
             return false;
         }
         let Some(entry) = self.app_id(window).and_then(|app| take(&mut self.reopen, &app)) else { return false };
-        let first = self.space.outputs().next().cloned();
         if let Some(output) = self.space.outputs().find(|o| o.name() == entry.display).cloned() {
-            let area = if Some(&output) == first.as_ref() { self.work_area() } else { self.space.output_geometry(&output) };
+            let area = self.output_area(&output);
             let [x, y, w, h] = entry.frame;
             if let (Some(frame), Some(toplevel)) = (area.and_then(|a| crate::wm::recall(Rect::new((x, y).into(), (w, h).into()), a)), window.toplevel()) {
                 let size = self.content_size(window, frame.size);

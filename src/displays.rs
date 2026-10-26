@@ -763,6 +763,10 @@ mod tests {
         assert_eq!(mostly_on(rect(1400, 100, 800, 600), outputs()), Some(1.0), "more of it on the monitor");
         assert_eq!(mostly_on(rect(1536, 0, 800, 600), outputs()), Some(1.0), "touching the laptop's edge is not on it");
         assert_eq!(mostly_on(rect(5000, 5000, 800, 600), outputs()), None, "on no output");
+        // window_area's choice: a display left of the main one has a negative origin.
+        let left = || [(rect(0, 0, 1920, 1080), "main"), (rect(-1920, 0, 1920, 1080), "left")].into_iter();
+        assert_eq!(mostly_on(rect(-1000, 200, 800, 600), left()), Some("left"));
+        assert_eq!(mostly_on(rect(-300, 200, 800, 600), left()), Some("main"), "more of it on the main one");
     }
 
     #[test]
