@@ -358,7 +358,7 @@ impl State {
 
     /// A press on a user picks them; on the session name, the next session. `true` if it hit one.
     pub(super) fn greeter_press(&mut self, layout: &Layout, location: Point<f64, Logical>) -> bool {
-        let width = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.w);
+        let width = self.first_geometry().map_or(0, |g| g.size.w);
         let Some(g) = self.greeter().filter(|_| self.lock.as_ref().is_some_and(|l| l.checking.is_none())) else { return false };
         let row = row(layout, width, g.users.len());
         let hit = |r: &Rect| r.to_f64().contains(location);

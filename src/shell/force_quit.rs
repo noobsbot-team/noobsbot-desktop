@@ -248,7 +248,7 @@ impl State {
 
     /// The layout for this frame's entries.
     pub fn force_quit_layout(&self, count: usize) -> Option<Layout> {
-        let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
+        let size = self.first_geometry()?.size;
         Some(layout(size, count))
     }
 

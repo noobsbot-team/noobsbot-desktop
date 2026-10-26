@@ -317,13 +317,9 @@ impl State {
         self.anim_until.is_some()
     }
 
-    fn output_loc(&self) -> Point<i32, Logical> {
-        self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or_else(Default::default, |g| g.loc)
-    }
-
     /// `window`'s frame relative to its display, as the frame of its display draws it (render::scene).
     fn window_frame(&self, window: &Window) -> Option<Rectangle<f64, Logical>> {
-        let loc = self.window_output(window).and_then(|o| self.space.output_geometry(&o)).map_or_else(|| self.output_loc(), |g| g.loc);
+        let loc = self.window_output(window).and_then(|o| self.space.output_geometry(&o)).map_or_else(|| self.first_origin(), |g| g.loc);
         motion::window_frame(&self.space, window, loc)
     }
 

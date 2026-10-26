@@ -358,7 +358,7 @@ impl State {
 
     /// Rows are counted from the first display's top, for every display (they stay far apart: `STRIDE`).
     fn output_top(&self) -> Option<i32> {
-        self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.loc.y)
+        self.first_geometry().map(|g| g.loc.y)
     }
 
     /// The row a window is in (0: on screen).

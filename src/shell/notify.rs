@@ -432,10 +432,6 @@ fn banner_hit(cards: &[Card], more: Option<(Rect, usize)>, location: Point<f64, 
 }
 
 impl State {
-    pub(crate) fn output_size(&self) -> Size<i32, Logical> {
-        self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or_else(Default::default, |g| g.size)
-    }
-
     fn center_open(&self) -> bool {
         matches!(self.popup, Some(Popup::Notifications { .. }))
     }
@@ -445,7 +441,7 @@ impl State {
         if self.center_open() {
             return (Vec::new(), None);
         }
-        banners(&self.notifications, self.output_size().w, self.osd.is_some(), self.previews())
+        banners(&self.notifications, self.first_geometry().map_or(0, |g| g.size.w), self.osd.is_some(), self.previews())
     }
 
     /// Laptop battery, then Bluetooth devices that report one, then UPower's other peripherals: (name, percent).
