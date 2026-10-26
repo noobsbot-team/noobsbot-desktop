@@ -45,6 +45,8 @@ pub struct Status {
     pub profile: Option<String>,
     /// Sound outputs: PipeWire id, short name, current.
     pub outputs: Vec<(u32, String, bool)>,
+    /// Apps playing sound, under the Sound slider.
+    pub apps: Vec<AppVolume>,
     /// The rows of an open Wi-Fi or Bluetooth list.
     pub rows: Vec<ListRow>,
     /// The first row the list shows (scrolled past the ones above); `layout` clamps it.
@@ -80,6 +82,18 @@ pub struct ListRow {
     pub on: bool,
 }
 
+/// An app's own volume row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppVolume {
+    /// PipeWire node id.
+    pub id: u32,
+    pub name: String,
+    /// Its theme icon, if found.
+    pub icon: Option<String>,
+    /// Percent; 0 when muted.
+    pub volume: u8,
+}
+
 /// A clickable or draggable part.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Control {
@@ -98,6 +112,8 @@ pub enum Control {
     SoundMore,
     /// A sound output, by PipeWire id.
     Output(u32),
+    /// An app's volume slider, by PipeWire node id.
+    AppVolume(u32),
     /// The Wi-Fi label: shows or hides the networks.
     WifiMore,
     /// The Bluetooth label: shows or hides the devices.
@@ -123,6 +139,8 @@ pub struct Layout {
     pub sound: Option<Rect>,
     /// The output rows of an open Sound module.
     pub outputs: Vec<Rect>,
+    /// The Sound card's app rows, one per `Status::apps`.
+    pub apps: Vec<Rect>,
     /// The list under the top row while Wi-Fi or Bluetooth is open, and its rows: as many as fit above the
     /// bottom of the screen, from `Status::rows[scroll]`.
     pub list: Option<(Rect, Vec<Rect>)>,
@@ -175,6 +193,24 @@ pub fn track_in(card: Rect) -> Rect {
     Rectangle::new((card.loc.x + 12, card.loc.y + ts(28)).into(), (card.size.w - 24, TOGGLE).into())
 }
 
+/// An app row's height: its slider and a little air.
+fn app_row() -> i32 {
+    ts(LIST_ROW) + 6
+}
+
+/// The rows the Sound card adds under its slider: the apps, then the open outputs list.
+fn sound_extra(status: &Status, open: bool) -> i32 {
+    let apps = status.apps.len() as i32 * app_row();
+    let outputs = if open { 2 * LIST_PAD + status.outputs.len() as i32 * ts(LIST_ROW) } else { 0 };
+    apps + outputs
+}
+
+/// An app row's slider: right of its icon and name.
+pub fn app_track(row: Rect) -> Rect {
+    let x = row.loc.x + 120;
+    Rectangle::new((x, row.loc.y + (row.size.h - TOGGLE) / 2).into(), (row.loc.x + row.size.w - 6 - x, TOGGLE).into())
+}
+
 /// The Now Playing buttons, right to left from the card's edge: previous, play/pause, next.
 pub fn media_buttons(card: Rect) -> [Rect; 3] {
     let at = |i: i32| {
@@ -223,7 +259,7 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         // The cards under it must stay on screen: the list shows the rows that fit and scrolls the rest.
         let after: i32 = [
             (status.brightness.is_some(), slider_h()),
-            (status.volume.is_some(), slider_h()),
+            (status.volume.is_some(), slider_h() + sound_extra(status, status.expanded == Some(Module::Sound) && !status.outputs.is_empty())),
             (true, awake_h),
             (true, media_h),
             (status.battery.is_some() || status.profile.is_some(), power_h),
@@ -272,18 +308,20 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     };
     let display = slider(Control::Brightness, status.brightness.is_some(), 0, &mut y);
     let open = status.expanded == Some(Module::Sound) && !status.outputs.is_empty();
-    let extra = if open { 2 * LIST_PAD + status.outputs.len() as i32 * list_row } else { 0 };
-    let sound = slider(Control::Volume, status.volume.is_some(), extra, &mut y);
+    let sound = slider(Control::Volume, status.volume.is_some(), sound_extra(status, open), &mut y);
     hits.extend(display.map(|c| (Control::NightLight, night_toggle(c))));
-    let mut outputs = Vec::new();
+    let (mut outputs, mut apps) = (Vec::new(), Vec::new());
     if let Some(c) = sound {
         hits.push((Control::SoundMore, Rectangle::new(c.loc, (c.size.w, ts(28)).into())));
+        for (i, app) in status.apps.iter().enumerate() {
+            let row = Rectangle::new((c.loc.x + LIST_PAD, c.loc.y + slider_h() + i as i32 * app_row()).into(), (c.size.w - 2 * LIST_PAD, app_row()).into());
+            hits.push((Control::AppVolume(app.id), app_track(row)));
+            apps.push(row);
+        }
+        let below = c.loc.y + slider_h() + status.apps.len() as i32 * app_row();
         if open {
             for (i, (id, _, _)) in status.outputs.iter().enumerate() {
-                let row = Rectangle::new(
-                    (c.loc.x + LIST_PAD, c.loc.y + slider_h() + LIST_PAD + i as i32 * list_row).into(),
-                    (c.size.w - 2 * LIST_PAD, list_row).into(),
-                );
+                let row = Rectangle::new((c.loc.x + LIST_PAD, below + LIST_PAD + i as i32 * list_row).into(), (c.size.w - 2 * LIST_PAD, list_row).into());
                 hits.push((Control::Output(*id), row));
                 outputs.push(row);
             }
@@ -315,6 +353,7 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         display,
         sound,
         outputs,
+        apps,
         list,
         scroll,
         awake,
@@ -417,6 +456,18 @@ impl State {
                 let names = short_names(&s.outputs.iter().map(|o| o.name.clone()).collect::<Vec<_>>());
                 s.outputs.iter().zip(names).map(|(o, name)| (o.id, name, o.current)).collect()
             }),
+            apps: self.sound.as_ref().map_or_else(Vec::new, |s| {
+                s.streams
+                    .iter()
+                    .map(|st| AppVolume {
+                        id: st.id,
+                        // The installed app's name and icon (`firefox` → Firefox's), else what the stream says.
+                        name: self.apps.find(&st.name).map_or_else(|| st.name.clone(), |a| a.name.clone()),
+                        icon: self.apps.find(&st.name).map(|a| a.icon.clone()).or_else(|| st.icon.clone()),
+                        volume: if st.muted { 0 } else { st.volume },
+                    })
+                    .collect()
+            }),
             rows: match self.expanded {
                 Some(Module::Wifi) => self.network.as_ref().map_or_else(Vec::new, |n| {
                     let current = match &n.link {
@@ -516,7 +567,7 @@ impl State {
                 }
             }
             Control::NightLight => self.night_light.toggle(&self.config.night_light),
-            Control::Brightness | Control::Volume => {
+            Control::Brightness | Control::Volume | Control::AppVolume(_) => {
                 self.shell_drag = Some(control);
                 self.control_drag(location);
             }
@@ -601,6 +652,13 @@ impl State {
                 if output.muted && percent > 0 {
                     output.muted = false;
                     self.services.send(Command::Mute { output: true, muted: false });
+                }
+            }
+            Control::AppVolume(id) => {
+                let Some(stream) = self.sound.as_mut().and_then(|s| s.streams.iter_mut().find(|s| s.id == id)) else { return };
+                if stream.volume != percent {
+                    stream.volume = percent;
+                    self.services.send(Command::StreamVolume { id, percent });
                 }
             }
             _ => return,
@@ -702,6 +760,31 @@ mod tests {
         assert_eq!(open.hit(centre(open.outputs[1])), Some(Control::Output(52)));
         assert!(open.outputs.iter().all(|r| open.sound.unwrap().contains_rect(*r)));
         assert_eq!(closed.hit(closed.sound.unwrap().loc.to_f64() + Point::from((100.0, 10.0))), Some(Control::SoundMore));
+    }
+
+    #[test]
+    fn apps_get_rows_under_the_sound_slider() {
+        let mut status = full();
+        status.outputs = vec![(51, "Speaker".into(), true)];
+        let app = |id, name: &str| AppVolume { id, name: name.into(), icon: None, volume: 50 };
+        let without = layout((1280, 800).into(), &status);
+        status.apps = vec![app(89, "Firefox"), app(95, "Music")];
+        let l = layout((1280, 800).into(), &status);
+        assert_eq!(l.rect.size.h - without.rect.size.h, 2 * app_row());
+        let sound = l.sound.unwrap();
+        assert_eq!(l.apps.len(), 2);
+        assert!(l.apps.iter().all(|r| sound.contains_rect(*r) && sound.contains_rect(app_track(*r))));
+        assert!(l.apps[0].loc.y >= track_in(sound).loc.y + TOGGLE && l.apps[1].loc.y == l.apps[0].loc.y + app_row());
+        let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
+        assert_eq!(l.hit(centre(app_track(l.apps[1]))), Some(Control::AppVolume(95)));
+        // The name is not a button; the main slider still is.
+        assert_eq!(l.hit(l.apps[0].loc.to_f64() + Point::from((20.0, 10.0))), None);
+        assert_eq!(l.hit(centre(track_in(sound))), Some(Control::Volume));
+        // Open, the outputs follow the apps.
+        status.expanded = Some(Module::Sound);
+        let open = layout((1280, 800).into(), &status);
+        assert!(open.outputs[0].loc.y >= open.apps[1].loc.y + app_row());
+        assert_eq!(open.hit(centre(open.outputs[0])), Some(Control::Output(51)));
     }
 
     #[test]
