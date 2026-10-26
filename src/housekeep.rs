@@ -13,6 +13,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use crate::{
     config::{self, Housekeeping},
     services::notifications::{Notification, load_icon},
+    shell::trash,
     state::State,
 };
 
@@ -100,48 +101,16 @@ fn due(stamp: &Path) -> bool {
 
 /// The daily cleanups; runs on its own thread.
 fn clean(settings: &Housekeeping) {
-    let data = config::xdg_dir("XDG_DATA_HOME", ".local/share");
-    let days = |n: u32| chrono::Local::now().naive_local() - chrono::Duration::days(n.into());
     if settings.empty_trash_days > 0 {
-        empty_trash(&data.join("Trash"), days(settings.empty_trash_days));
+        trash::empty_before(&trash::dir(), chrono::Local::now().naive_local() - chrono::Duration::days(settings.empty_trash_days.into()));
     }
     remove_thumbnails(&config::xdg_dir("XDG_CACHE_HOME", ".cache").join("thumbnails"));
     if settings.recent_days > 0 {
-        let path = data.join("recently-used.xbel");
+        let path = crate::shell::dock::recent_path();
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(settings.recent_days.into())).format("%Y-%m-%dT%H:%M:%SZ").to_string();
         // ponytail: read, prune, rename; an app writing the file in between loses that one entry.
         if let Some(pruned) = fs::read_to_string(&path).ok().and_then(|xbel| prune_recent(&xbel, &cutoff)) {
             let _ = config::save_atomic(&path, &pruned).inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
-        }
-    }
-}
-
-/// The `DeletionDate` of a `.trashinfo` file (local time, as the spec has it).
-fn deletion_date(info: &str) -> Option<chrono::NaiveDateTime> {
-    let value = info.lines().find_map(|l| l.trim().strip_prefix("DeletionDate="))?;
-    chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%dT%H:%M:%S").ok()
-}
-
-/// Deletes the items moved to `trash` before `cutoff`, and their info files.
-fn empty_trash(trash: &Path, cutoff: chrono::NaiveDateTime) {
-    let Ok(infos) = fs::read_dir(trash.join("info")) else { return };
-    for info in infos.flatten() {
-        let path = info.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".trashinfo")) else { continue };
-        if !fs::read_to_string(&path).ok().and_then(|t| deletion_date(&t)).is_some_and(|d| d < cutoff) {
-            continue;
-        }
-        let item = trash.join("files").join(name);
-        // A link is removed itself, never followed.
-        let gone = match fs::symlink_metadata(&item) {
-            Ok(m) if m.is_dir() => fs::remove_dir_all(&item),
-            Ok(_) => fs::remove_file(&item),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err),
-        };
-        match gone {
-            Ok(()) => drop(fs::remove_file(&path)),
-            Err(err) => tracing::warn!("{}: {err}", item.display()),
         }
     }
 }
@@ -205,14 +174,6 @@ mod tests {
         assert!(low(20 * GB, 500 * GB), "under 5%");
         assert!(!low(30 * GB, 500 * GB));
         assert!(low(0, 0));
-    }
-
-    #[test]
-    fn trashinfo_dates() {
-        let info = "[Trash Info]\nPath=/home/u/a%20b.txt\nDeletionDate=2026-09-01T13:45:07\n";
-        assert_eq!(deletion_date(info).map(|d| d.to_string()).as_deref(), Some("2026-09-01 13:45:07"));
-        assert_eq!(deletion_date("[Trash Info]\nPath=/x\n"), None);
-        assert_eq!(deletion_date("DeletionDate=yesterday"), None);
     }
 
     #[test]
