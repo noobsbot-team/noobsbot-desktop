@@ -689,12 +689,15 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   - Right (12 px gaps, symbols 16 px): tray icons · keyboard layout (only if more than one) · Wi-Fi · Bluetooth ·
     battery (% optional) · volume · **Control Center** ⊞ · **date & time**.
   - Click an item → its menu/popover drops 4 px below the bar; the item gets a pressed pill highlight (radius 4).
+    Wi-Fi, Bluetooth and volume open their Control Center module under the item (toggle and networks, toggle and
+    devices, slider and outputs) with a "… Settings…" row; behind a captive portal Wi-Fi adds "Sign in to network…".
+    While a screen recording runs, a stop item with its elapsed time sits left of Wi-Fi; a click stops it.
   - Restart / Shut Down / Log Out show an **alert** (D8) with a 60 s countdown.
 - **Built with:** our widgets; tray through **StatusNotifierItem** + **dbusmenu** (zbus; **we host the `StatusNotifierWatcher`** service, because
   without a watcher apps never register their icons); power actions via
   **logind**.
 - **Why:** this is the menu-bar layout of the design (R1). StatusNotifierItem is the tray standard modern apps use.
-- **Done when:** every item opens its menu; tray icons from apps appear and their menus work; Sleep/Restart/
+- **Done when:** every item opens its menu (the battery its menu; Wi-Fi, Bluetooth, volume their module); tray icons from apps appear and their menus work; Sleep/Restart/
   Shut Down/Log Out work.
 
 ### E2.3 Control Center
