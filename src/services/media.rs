@@ -28,6 +28,8 @@ pub enum Action {
     Next,
     Previous,
     Stop,
+    /// Ten seconds on (`true`) or back.
+    Seek(bool),
 }
 
 #[zbus::proxy(interface = "org.mpris.MediaPlayer2.Player", default_path = "/org/mpris/MediaPlayer2")]
@@ -36,6 +38,8 @@ trait Player {
     fn next(&self) -> zbus::Result<()>;
     fn previous(&self) -> zbus::Result<()>;
     fn stop(&self) -> zbus::Result<()>;
+    /// Microseconds from the current position.
+    fn seek(&self, offset: i64) -> zbus::Result<()>;
     #[zbus(property)]
     fn playback_status(&self) -> zbus::Result<String>;
     #[zbus(property)]
@@ -100,6 +104,7 @@ pub async fn control(bus: &Connection, player: &str, action: Action) {
                 Action::Next => proxy.next().await,
                 Action::Previous => proxy.previous().await,
                 Action::Stop => proxy.stop().await,
+                Action::Seek(on) => proxy.seek(if on { 10_000_000 } else { -10_000_000 }).await,
             },
             Err(err) => Err(err),
         },

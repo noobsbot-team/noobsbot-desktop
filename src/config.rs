@@ -815,6 +815,8 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("XF86AudioNext", "media next"),
         ("XF86AudioPrev", "media previous"),
         ("XF86AudioStop", "media stop"),
+        ("XF86AudioForward", "media forward"),
+        ("XF86AudioRewind", "media rewind"),
         ("XF86PowerOff", "shut-down"),
         ("XF86Sleep", "sleep"),
         ("Super+Shift+Q", "log-out"),
