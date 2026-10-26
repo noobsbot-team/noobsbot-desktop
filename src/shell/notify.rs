@@ -368,6 +368,8 @@ pub fn tiles(medium: &[bool], x: i32, mut y: i32, w: i32) -> (Vec<Rect>, i32) {
 /// What a click in Notification Center hits.
 #[derive(Debug, Clone, PartialEq)]
 enum Hit {
+    /// The ⚙ beside the date: Settings ▸ Notifications.
+    Settings,
     ClearAll,
     DndOff,
     Collapse,
@@ -383,6 +385,9 @@ enum Hit {
 
 fn center_hit(center: &Center, location: Point<f64, Logical>) -> Option<Hit> {
     let on = |r: Rect| center.visible(r) && r.to_f64().contains(location);
+    if on(center.settings) {
+        return Some(Hit::Settings);
+    }
     if center.header.is_some_and(|(_, clear)| on(clear)) {
         return Some(Hit::ClearAll);
     }
@@ -671,6 +676,10 @@ impl State {
     pub(super) fn center_press(&mut self, location: Point<f64, Logical>) {
         let Some(center) = self.center_layout() else { return };
         match center_hit(&center, location) {
+            Some(Hit::Settings) => {
+                self.popup = None;
+                self.spawn(&["noobsbot-desktop-settings".into(), "--page".into(), "notifications".into()]);
+            }
             Some(Hit::ClearAll) => self.clear(self.notifications.list.iter().map(|n| n.id).collect()),
             Some(Hit::DndOff) => {
                 self.config.notifications.dnd = false;
@@ -949,6 +958,7 @@ mod tests {
         assert_eq!(center_hit(&center, at(center.groups[0].cards[0].rect)), Some(Hit::Expand("A".into())));
         assert_eq!(center_hit(&center, at(center.groups[1].cards[0].rect)), Some(Hit::Card(2)));
         assert_eq!(center_hit(&center, at(center.header.unwrap().1)), Some(Hit::ClearAll));
+        assert_eq!(center_hit(&center, at(center.settings)), Some(Hit::Settings));
         // Opened out: every card, newest first, and Show Less.
         store.expanded = Some("A".into());
         let open = super::center(&store, size, false, (5, false), 0, 0, false, &[], true);
