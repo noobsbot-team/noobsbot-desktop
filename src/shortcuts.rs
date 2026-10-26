@@ -20,6 +20,8 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Spawn(String),
+    /// Opens the default app for a MIME type (`x-scheme-handler/https`), or the first app in a category (`Calculator`).
+    DefaultApp(String),
     /// Close every window of the focused app (Super+Q).
     QuitApp,
     CloseWindow,
@@ -174,6 +176,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
     match text.split_once(' ').map_or((text, ""), |(a, rest)| (a, rest.trim())) {
         ("terminal", "") => Some(Action::Spawn(config.terminal.clone())),
         ("exec", command) if !command.is_empty() => Some(Action::Spawn(command.into())),
+        ("default-app", kind) if !kind.is_empty() => Some(Action::DefaultApp(kind.into())),
         ("quit", "") => Some(Action::QuitApp),
         ("close", "") => Some(Action::CloseWindow),
         ("minimise" | "minimize", "") => Some(Action::Minimise),
@@ -304,6 +307,19 @@ impl State {
                 self.spawn(&command.split_whitespace().map(String::from).collect::<Vec<_>>());
             }
             Action::Quake => self.toggle_quake(),
+            Action::DefaultApp(kind) => {
+                let app = if kind.contains('/') {
+                    // ponytail: xdg-mime runs on the frame loop (tens of ms, once per key press); a worker thread if it shows.
+                    let id = std::process::Command::new("xdg-mime").args(["query", "default", &kind]).output();
+                    let id = id.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
+                    (!id.is_empty()).then(|| self.apps.find(&id).cloned()).flatten()
+                } else {
+                    self.apps.list().iter().find(|a| !a.no_display && a.categories.contains(&kind)).cloned()
+                };
+                if !self.launch(app.as_ref()) {
+                    tracing::warn!("no app for {kind}");
+                }
+            }
             Action::CloseWindow => {
                 if let Some(window) = focused {
                     self.close_window(&window);
@@ -635,6 +651,7 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_TouchpadToggle, false), Some(&Action::Touchpad(None)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_TouchpadOff, false), Some(&Action::Touchpad(Some(false))));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Display, false), Some(&Action::Spawn("noobsbot-desktop-settings --page displays".into())));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_WWW, false), Some(&Action::DefaultApp("x-scheme-handler/https".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
