@@ -297,6 +297,25 @@ impl State {
         }
     }
 
+    /// Steps a held volume or brightness key again while `code` stays down: after the repeat delay, at the repeat rate
+    /// up to 30 a second. Shares `key_repeat`, so release or another press stops it.
+    fn repeat_action(&mut self, code: Keycode, action: Action) {
+        let (rate, delay) = self.config.keyboard.repeat();
+        let Some(every) = shortcuts::repeat_every(rate) else { return };
+        let timer = Timer::from_duration(Duration::from_millis(delay as u64));
+        let token = self.loop_handle.insert_source(timer, move |_, _, state| {
+            if !state.key_repeat.as_ref().is_some_and(|(c, _)| *c == code) {
+                return TimeoutAction::Drop;
+            }
+            state.run_action(action.clone());
+            TimeoutAction::ToDuration(every)
+        });
+        match token {
+            Ok(token) => self.key_repeat = Some((code, token)),
+            Err(err) => tracing::warn!("key repeat: {err}"),
+        }
+    }
+
     pub fn stop_repeat(&mut self) {
         if let Some((_, token)) = self.key_repeat.take() {
             self.loop_handle.remove(token);
@@ -460,7 +479,13 @@ impl State {
             self.run_action(Action::AppDrawer);
         }
         match action {
-            Some(Some(action)) => self.run_action(action),
+            Some(Some(action)) => {
+                let held = action.held_repeats() && key_state == KeyState::Pressed;
+                self.run_action(action.clone());
+                if held {
+                    self.repeat_action(code, action);
+                }
+            }
             // A key the app gets: is it still answering (E4.7)?
             None if key_state == KeyState::Pressed => {
                 if let Some(window) = self.focused_window() {
