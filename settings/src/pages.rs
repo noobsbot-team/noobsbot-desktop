@@ -219,6 +219,22 @@ pub const SETTINGS: &[Setting] = &[
         "",
         Kind::Choice(&[("fill", "Fill"), ("fit", "Fit"), ("centre", "Centre"), ("stretch", "Stretch")]),
     ),
+    s(
+        Page::Appearance,
+        "Text and pointer",
+        "appearance.text_scale",
+        "Text size",
+        "Menus, menu bar, dock and notifications; GTK and Qt apps follow",
+        Kind::Slider { min: 0.8, max: 1.5, step: 0.05 },
+    ),
+    s(
+        Page::Appearance,
+        "Text and pointer",
+        "appearance.pointer_size",
+        "Pointer size",
+        "Apps started after the change follow",
+        Kind::Slider { min: 0.0, max: 96.0, step: 8.0 },
+    ),
     s(Page::Appearance, "Motion", "appearance.reduce_motion", "Reduce motion", "Windows, menus and banners crossfade instead of moving", Kind::Toggle),
     s(Page::Appearance, "Desktop", "desktop.icons", "Show Desktop folder on the wallpaper", "", Kind::Toggle),
     s(Page::Appearance, "Apps", "appearance.theme_apps", "Theme Qt apps", "Dark Mode also rewrites the Noobsbot Glass theme files", Kind::Toggle),
@@ -345,7 +361,9 @@ fn shown(key: &str, value: f64) -> String {
     match key {
         "appearance.glass_opacity" => format!("{:.0}%", value * 100.0),
         "dock.zoom_percent" => format!("{value:.0}%"),
-        "dock.icon_size" => format!("{value:.0} px"),
+        "appearance.pointer_size" if value < 1.0 => "System".into(),
+        "dock.icon_size" | "appearance.pointer_size" => format!("{value:.0} px"),
+        "appearance.text_scale" => format!("{:.0}%", value * 100.0),
         "windows.spaces" if whole(key, value) == 0 => "Dynamic".into(),
         "sound.output" | "sound.input" => format!("{value:.0}%"),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
@@ -1237,5 +1255,6 @@ mod tests {
         assert_eq!(whole("dock.icon_size", 1.0), 1);
         assert_eq!(shown("windows.spaces", 0.0), "Dynamic");
         assert_eq!(shown("appearance.glass_opacity", 0.85), "85%");
+        assert_eq!((shown("appearance.pointer_size", 0.0), shown("appearance.pointer_size", 32.0)), ("System".into(), "32 px".into()));
     }
 }

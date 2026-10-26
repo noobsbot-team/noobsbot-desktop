@@ -134,6 +134,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     // A display change the last run never got to keep or revert (it crashed on it, say).
     displays::revert_displays();
     let mut state = State::new(&mut event_loop, display, nested, config::load(&config_path))?;
+    text::set_scale(state.config.appearance.text_scale());
     let codes = state.config.keyboard.resolved().layout;
     state.read_layouts(&codes);
 
@@ -166,6 +167,16 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             if config.appearance != state.config.appearance {
                 if let Some(winit) = state.backend.as_mut() {
                     winit.wallpaper.set(&config.appearance);
+                }
+                text::set_scale(config.appearance.text_scale());
+                let (new, old) = (&config.appearance, &state.config.appearance);
+                if (new.text_scale, new.pointer_size) != (old.text_scale, old.pointer_size) {
+                    if !state.nested {
+                        theme::sizes_in_background(new);
+                    }
+                    if new.theme_apps {
+                        theme::write_in_background(new.clone(), !state.nested);
+                    }
                 }
                 state.schedule_redraw();
             }
@@ -512,7 +523,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     if state.greeter().is_some() {
         command.clear();
     } else {
-        state.x_display = xwayland::spawn(&state.socket_name);
+        state.x_display = xwayland::spawn(&state.socket_name, backend::cursor::size(state.config.appearance.pointer_size));
     }
     if !command.is_empty() {
         state.spawn(&command);
