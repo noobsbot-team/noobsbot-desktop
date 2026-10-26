@@ -251,6 +251,7 @@ impl State {
         tracing::info!("screen unlocked");
         let top = self.top_window();
         self.focus_window(top, SERIAL_COUNTER.next_serial());
+        self.ask_thunderbolt();
         self.schedule_redraw();
     }
 
