@@ -8,6 +8,17 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/noobsbot-team/noobsbot-desktop/compare/v0.5.0...v0.6.0) - 2026-10-26
+
+### Added
+
+- *(update)* noobsbot-desktop --update runs Software Update from a terminal (E6.13)
+
+### Other
+
+- Merge pull request #12 from noobsbot-team/chore/noobsbot-team-urls
+- repo URLs point to noobsbot-team after the move from anil0403
+
 ## [0.5.0](https://github.com/noobsbot-team/noobsbot-desktop/compare/v0.4.1...v0.5.0) - 2026-10-26
 
 ### Added
