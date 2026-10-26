@@ -20,6 +20,16 @@ pub fn flash_alpha(elapsed: Duration) -> Option<f32> {
     (elapsed < FLASH).then(|| 0.4 * (1.0 - elapsed.as_secs_f32() / FLASH.as_secs_f32()))
 }
 
+/// The sound theme's `id` (described as `what`), else the freedesktop one straight to PipeWire; in the background.
+pub fn play(id: &'static str, what: &'static str) {
+    std::thread::spawn(move || {
+        let quiet = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+        if !quiet(Command::new("canberra-gtk-play").args(["-i", id, "-d", what])) {
+            quiet(Command::new("pw-play").arg(format!("/usr/share/sounds/freedesktop/stereo/{id}.oga")));
+        }
+    });
+}
+
 impl State {
     pub fn ring_bell(&mut self) {
         let now = Instant::now();
@@ -32,13 +42,7 @@ impl State {
             self.schedule_redraw();
         }
         if matches!(mode, Bell::Sound | Bell::Both) {
-            // The sound theme's bell, else the freedesktop one straight to PipeWire.
-            std::thread::spawn(|| {
-                let quiet = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
-                if !quiet(Command::new("canberra-gtk-play").args(["-i", "bell", "-d", "Alert"])) {
-                    quiet(Command::new("pw-play").arg("/usr/share/sounds/freedesktop/stereo/bell.oga"));
-                }
-            });
+            play("bell", "Alert");
         }
     }
 
