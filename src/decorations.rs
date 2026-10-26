@@ -73,7 +73,7 @@ impl Decorations {
     }
 }
 
-/// Set on a window while the pointer is over its traffic lights: all three show their glyphs (macOS).
+/// Set on a window while the pointer is over its traffic lights: all three show their glyphs.
 #[derive(Default)]
 struct LightsHover(AtomicBool);
 
@@ -127,7 +127,7 @@ impl State {
         None
     }
 
-    /// A press on a title bar: the lights act on release (macOS), the title moves the window or, double-clicked, does
+    /// A press on a title bar: the lights act on release, the title moves the window or, double-clicked, does
     /// `windows.double_click_title` (zoom by default).
     pub fn bar_press(&mut self, window: Window, part: Part, start_data: GrabStartData<Self>, serial: Serial) {
         if part != Part::Title {
@@ -147,7 +147,7 @@ impl State {
         if let Some(toplevel) = window.toplevel().cloned()
             && let Some(restore) = self.unfill(&toplevel, xdg_toplevel::State::Maximized)
         {
-            // Dragging a zoomed window un-zooms it first, under the pointer (macOS).
+            // Dragging a zoomed window un-zooms it first, under the pointer.
             let at = start_data.location.to_i32_round::<i32>();
             self.set_visible_loc(&window, (at.x - restore.size.w / 2, at.y - BAR / 2).into());
         }
@@ -163,7 +163,7 @@ impl State {
         match part {
             Part::Close => self.close_window(&window),
             Part::Minimise => self.minimise(vec![window]),
-            // macOS: the green light is full screen, Alt+green zoom.
+            // By design: the green light is full screen, Alt+green zoom.
             Part::Zoom if self.modifiers().alt => self.toggle_zoom(&window),
             Part::Zoom => self.toggle_fullscreen(&window),
             Part::Title => {}
