@@ -154,6 +154,10 @@ pub enum Message {
     AutoJoin(String, bool),
     /// Known Networks ▸ Forget: a saved connection's path.
     ForgetNetwork(String),
+    /// Networks ▸ Other…: opens (`true`) or closes the hidden-network form.
+    OtherNetwork(bool),
+    /// The hidden-network form ▸ Join.
+    JoinOther,
     /// Opens `nm-connection-editor`.
     Advanced,
     Bluetooth(bool),
@@ -335,7 +339,10 @@ impl App {
                 }
             }
             Message::Type(key, value) => {
-                self.texts.insert(key, value);
+                // Fields may hold passwords: the old text is zeroed, not just freed.
+                if let Some(mut old) = self.texts.insert(key, value) {
+                    network::wipe(&mut old);
+                }
             }
             Message::Submit(key) => {
                 let Some(value) = self.texts.remove(&key) else { return Task::none() };
@@ -382,6 +389,31 @@ impl App {
             Message::Join(ssid) => return self.join(&ssid, None),
             Message::AutoJoin(path, on) => return Task::perform(network::change(move |bus| network::auto_join(bus, path, on)), Message::Status),
             Message::ForgetNetwork(path) => return Task::perform(network::change(move |bus| network::forget(bus, path)), Message::Status),
+            Message::OtherNetwork(open) => {
+                let fields: Vec<String> = self.texts.keys().filter(|k| k.starts_with(network::OTHER)).cloned().collect();
+                for key in fields {
+                    self.texts.remove(&key).as_mut().map(network::wipe);
+                }
+                if open {
+                    for (field, value) in [("ssid", ""), ("security", "psk"), ("eap", "peap"), ("inner", "mschapv2")] {
+                        self.texts.insert(format!("{}{field}", network::OTHER), value.into());
+                    }
+                }
+            }
+            Message::JoinOther => {
+                let Some(device) = self.status.wifi.as_ref().and_then(|w| w.network.wifi_device.clone()) else { return Task::none() };
+                let mut take = |field: &str| self.texts.remove(&format!("{}{field}", network::OTHER)).unwrap_or_default();
+                let hidden = network::Hidden {
+                    ssid: take("ssid"),
+                    security: take("security"),
+                    password: take("password"),
+                    eap: take("eap"),
+                    inner: take("inner"),
+                    identity: take("identity"),
+                    ca: take("ca"),
+                };
+                return Task::perform(network::change(move |bus| network::join_hidden(bus, device, hidden)), Message::Status);
+            }
             Message::Advanced => network::advanced(),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::PowerMode(profile) => return Task::perform(system::set_power_mode(profile), Message::Status),

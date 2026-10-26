@@ -1152,6 +1152,9 @@ fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<
         }
         parts.push(group(t, "Networks", rows));
     }
+    if wifi.enabled && net.wifi_device.is_some() {
+        parts.push(other_network(app));
+    }
     if !net.known.is_empty() {
         let rows = net
             .known
@@ -1186,6 +1189,52 @@ fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<
         parts.push(note(t, error));
     }
     parts
+}
+
+/// Networks ▸ "Other…", or its form for a network that doesn't announce its name (fields in `App::texts`).
+fn other_network(app: &App) -> Element<'_, Message> {
+    let t = app.tokens;
+    let push = |label: &'static str, primary: bool, message: Option<Message>| {
+        button(text(label).size(12)).padding([3, 10]).style(t.push(primary)).on_press_maybe(message)
+    };
+    let key = |field: &str| format!("{}{field}", crate::network::OTHER);
+    let Some(ssid) = app.texts.get(&key("ssid")) else {
+        return container(push("Other…", false, Some(Message::OtherNetwork(true)))).align_right(Length::Fill).into();
+    };
+    let value = |field: &str| app.texts.get(&key(field)).map_or("", String::as_str);
+    let field = |field: &'static str, placeholder: &'static str, secure: bool| -> Element<'_, Message> {
+        text_input(placeholder, value(field))
+            .secure(secure)
+            .on_input(move |v| Message::Type(key(field), v))
+            .size(13)
+            .padding([3, 8])
+            .width(220)
+            .style(t.input(false))
+            .into()
+    };
+    let pick = |field: &'static str, options: &[(&'static str, &'static str)]| {
+        segments(t, options.iter().map(|&(v, label)| (label.to_owned(), value(field) == v, Message::Type(key(field), v.into()))).collect())
+    };
+    let security = value("security");
+    let mut rows = vec![
+        line(t, "Network name", "", field("ssid", "Name", false)),
+        line(t, "Security", "", pick("security", &[("none", "None"), ("psk", "WPA2/WPA3 Personal"), ("eap", "WPA2 Enterprise")])),
+    ];
+    if security == "eap" {
+        rows.push(line(t, "EAP method", "", pick("eap", &[("peap", "PEAP"), ("ttls", "TTLS")])));
+        rows.push(line(t, "Inner authentication", "", pick("inner", &[("mschapv2", "MSCHAPv2"), ("pap", "PAP")])));
+        rows.push(line(t, "Username", "", field("identity", "Identity", false)));
+    }
+    if security != "none" {
+        rows.push(line(t, "Password", "", field("password", "Password", true)));
+    }
+    if security == "eap" {
+        rows.push(line(t, "CA certificate", "Optional; without one the server isn't checked", field("ca", "/path/to/ca.pem", false)));
+    }
+    let ready = !ssid.trim().is_empty() && (security == "none" || !value("password").is_empty());
+    let buttons = row![push("Cancel", false, Some(Message::OtherNetwork(false))), push("Join", true, ready.then_some(Message::JoinOther))].spacing(8);
+    rows.push(container(buttons).align_right(Length::Fill).padding([8, 12]).into());
+    group(t, "Join Other Network", rows)
 }
 
 /// Appearance ▸ Wallpaper: the built-in opal, then the pictures found (`gallery`), as tiles that wrap.
