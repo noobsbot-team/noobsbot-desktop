@@ -226,6 +226,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   They are saved to `~/Pictures/Screenshots` and copied to the clipboard.
 - **Lock screen:** Super+Ctrl+Q, or automatically when the screen turns off and always before sleep.
 - **Emoji:** Super+Ctrl+E or Super+period opens the picker; the emoji is typed into the focused text field, or copied.
+- **On-screen keyboard:** the `on-screen-keyboard` action (or the input menu) shows a keyboard to click, on the lock
+  screen too; `[accessibility] on_screen_keyboard = true` keeps it up.
 - **Quake terminal:** F12 drops a terminal down from the top of the screen.
 - **Desktop icons:** files in `~/Desktop` appear on the wallpaper. Drag to arrange, double-click to open,
   right-click for Open, Rename, Move to Trash and New Folder.

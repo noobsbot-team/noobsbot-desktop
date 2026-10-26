@@ -14,6 +14,7 @@ pub mod greeter;
 pub mod launchpad;
 pub mod lock;
 pub mod notify;
+pub mod osk;
 pub mod plank;
 pub mod screenshot;
 pub mod spotlight;
@@ -320,7 +321,7 @@ impl State {
     /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar, an open popup or the dock.
     pub fn shell_covers(&self, location: Point<f64, Logical>) -> bool {
         let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(location));
-        if on_alert || self.on_banner(location) || self.mission_open() {
+        if on_alert || self.on_banner(location) || self.mission_open() || self.osk_panel().is_some_and(|r| r.to_f64().contains(location)) {
             return true;
         }
         if self.spotlight.is_some() && self.spotlight_layout(self.spotlight_results().len()).is_some_and(|l| l.rect.to_f64().contains(location)) {
