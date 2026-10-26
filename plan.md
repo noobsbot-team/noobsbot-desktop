@@ -1030,7 +1030,7 @@ Goal: everything that informs you and helps you find things.
     | World Clock (optional) | 1–4 cities, analogue mini faces | `chrono-tz` |
     | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open) | `/proc`, `/sys` |
     | Weather (optional, later) | needs an online weather API, so off by default | later decision |
-  - "Edit Widgets" (later, M7) to add, remove and reorder.
+  - "Edit Widgets…" (under the widgets) opens Settings ▸ Notifications, which shows, hides and reorders other apps' widgets (`[widgets]`) for Notification Center and the desktop.
 - **Built with:** our widgets; the notification store from E4.1; UPower; chrono.
 - **Why:** this is the design's notification panel (R1, R13); a single place for missed notifications.
 - **Done when:** notifications arrive in history, group by app, expand/collapse, clear and act; widgets show live data;
