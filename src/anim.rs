@@ -466,14 +466,18 @@ impl State {
             self.restore_desktop();
             return;
         }
-        let Some(output) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
+        let screens: Vec<crate::wm::Rect> = self.space.outputs().filter_map(|o| self.space.output_geometry(o)).collect();
+        let first = self.space.outputs().next().cloned();
         let windows: Vec<Window> = self.space.elements().filter(|w| self.on_current(w)).cloned().collect();
         let mut saved = Vec::new();
         for window in windows {
             let Some(geo) = self.space.element_geometry(&window) else { continue };
             let bar = crate::decorations::bar_height(&window);
             let frame = Rectangle::new(geo.loc - Point::from((0, bar)), geo.size + (0, bar).into());
-            self.slide_window(&window, aside(frame, output));
+            // Aside on its own display.
+            let output = self.window_output(&window).or_else(|| first.clone());
+            let Some(screen) = output.and_then(|o| self.space.output_geometry(&o)) else { continue };
+            self.slide_window(&window, aside(frame, screen, &screens));
             saved.push((window, frame.loc));
         }
         self.desktop_shown = Some(saved);
@@ -501,12 +505,18 @@ impl State {
 /// How much of a window Show Desktop leaves on screen.
 const PEEK: i32 = 16;
 
-/// Where Show Desktop pushes `frame`: past the nearer side edge of `output`, `PEEK` px still showing.
-// ponytail: sideways only; up or down would cross into other Spaces' rows (spaces.rs stacks them vertically).
-fn aside(frame: crate::wm::Rect, output: crate::wm::Rect) -> Point<i32, Logical> {
-    let left = frame.loc.x + frame.size.w / 2 < output.loc.x + output.size.w / 2;
-    let x = if left { output.loc.x - frame.size.w + PEEK } else { output.loc.x + output.size.w - PEEK };
-    (x, frame.loc.y).into()
+/// Where Show Desktop pushes `frame`: past the nearer side edge of `output`, `PEEK` px still showing, unless another of
+/// `screens` lies there (it would show the window): then past the other side.
+// ponytail: sideways only; up or down would cross into other Spaces' rows (spaces.rs stacks them vertically). A
+// display with neighbours on both sides gets the nearer side anyway.
+fn aside(frame: crate::wm::Rect, output: crate::wm::Rect, screens: &[crate::wm::Rect]) -> Point<i32, Logical> {
+    let at = |left: bool| -> Point<i32, Logical> {
+        let x = if left { output.loc.x - frame.size.w + PEEK } else { output.loc.x + output.size.w - PEEK };
+        (x, frame.loc.y).into()
+    };
+    let free = |loc: Point<i32, Logical>| !screens.iter().any(|s| *s != output && s.overlaps(Rectangle::new(loc, frame.size)));
+    let near = frame.loc.x + frame.size.w / 2 < output.loc.x + output.size.w / 2;
+    [at(near), at(!near)].into_iter().find(|&loc| free(loc)).unwrap_or(at(near))
 }
 
 #[cfg(test)]
@@ -606,9 +616,27 @@ mod tests {
     fn show_desktop_pushes_to_the_nearer_side() {
         let output = Rectangle::new((0, 0).into(), (1280, 800).into());
         let left = Rectangle::new((100, 50).into(), (400, 300).into());
-        assert_eq!(aside(left, output), Point::from((16 - 400, 50)));
+        assert_eq!(aside(left, output, &[output]), Point::from((16 - 400, 50)));
         let right = Rectangle::new((800, 200).into(), (400, 300).into());
-        assert_eq!(aside(right, output), Point::from((1280 - 16, 200)));
+        assert_eq!(aside(right, output, &[output]), Point::from((1280 - 16, 200)));
+    }
+
+    #[test]
+    fn show_desktop_stays_off_other_displays() {
+        let (main, second) = (Rectangle::new((0, 0).into(), (1280, 800).into()), Rectangle::new((1280, 0).into(), (1920, 1080).into()));
+        let screens = [main, second];
+        // On the second display, nearer its left side: the main display is there, so it goes right.
+        let near_left = Rectangle::new((1400, 50).into(), (400, 300).into());
+        assert_eq!(aside(near_left, second, &screens), Point::from((1280 + 1920 - 16, 50)));
+        let near_right = Rectangle::new((2600, 50).into(), (400, 300).into());
+        assert_eq!(aside(near_right, second, &screens), Point::from((1280 + 1920 - 16, 50)));
+        // On the main one, nearer its right side: the second display is there, so it goes left.
+        let main_right = Rectangle::new((900, 50).into(), (300, 200).into());
+        assert_eq!(aside(main_right, main, &screens), Point::from((16 - 300, 50)));
+        // A display left of the main one, with a negative origin.
+        let left = Rectangle::new((-1920, 0).into(), (1920, 1080).into());
+        let on_left = Rectangle::new((-1000, 50).into(), (400, 300).into());
+        assert_eq!(aside(on_left, left, &[main, left]), Point::from((-1920 - 400 + 16, 50)));
     }
 
     #[test]
