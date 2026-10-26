@@ -29,8 +29,9 @@ use crate::{
 /// `displays` (their identity and modes filled in) with what each should be lit with: on or off, mode, scale,
 /// rotation, position and primary. Entries are matched by connector name; a display without one gets its preferred
 /// mode at the highest refresh, the `[display] scale` (or auto) and a place right of the others. At least one
-/// display stays on, and exactly one on display is primary.
-pub fn plan(mut displays: Vec<Display>, config: &Displays) -> Vec<Display> {
+/// display stays on, and exactly one on display is primary. With the lid closed, the built-in panel is off while
+/// another display is on (clamshell).
+pub fn plan(mut displays: Vec<Display>, config: &Displays, lid_closed: bool) -> Vec<Display> {
     let entry = |name: &str| config.outputs.iter().find(|o| o.name == name).cloned().unwrap_or_default();
     for d in &mut displays {
         let e = entry(&d.name);
@@ -45,6 +46,7 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays) -> Vec<Display> {
         (d.width, d.height) = ((f64::from(w) / d.scale).ceil() as i32, (f64::from(h) / d.scale).ceil() as i32);
         d.primary = false;
     }
+    clamshell(&mut displays, lid_closed);
     if !displays.iter().any(|d| d.enabled)
         && let Some(first) = displays.first_mut()
     {
@@ -77,6 +79,16 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays) -> Vec<Display> {
         displays[i].primary = true;
     }
     displays
+}
+
+/// Clamshell (E6.2): the lid closed and another display on → the built-in panel goes off; its windows and Spaces
+/// then go the way of an unplugged display's. Lid open (or nothing else on): left as configured.
+fn clamshell(displays: &mut [Display], lid_closed: bool) {
+    if lid_closed && displays.iter().any(|d| d.enabled && !d.built_in) {
+        for d in displays.iter_mut().filter(|d| d.built_in) {
+            d.enabled = false;
+        }
+    }
 }
 
 /// The entry's `mode = "WxH"` at the refresh nearest its `refresh` (0: the highest); `None` when it names no mode the
@@ -298,7 +310,7 @@ impl State {
                     nested: true,
                     ..Default::default()
                 };
-                plan(vec![nested], &self.config.display).into_iter().map(|d| (d, Some(output.clone()))).collect()
+                plan(vec![nested], &self.config.display, false).into_iter().map(|d| (d, Some(output.clone()))).collect()
             }
             None => return,
         };
@@ -529,13 +541,13 @@ mod tests {
 
     #[test]
     fn defaults_without_entries() {
-        let p = plan(laptop_and_monitor(), &Displays::default());
+        let p = plan(laptop_and_monitor(), &Displays::default(), false);
         assert!(p.iter().all(|d| d.enabled));
         assert_eq!((p[0].mode, p[0].scale, p[0].x, p[0].width, p[0].height), (mode(1920, 1200, 60, true), 1.25, 0, 1536, 960));
         assert_eq!((p[1].mode.refresh, p[1].scale, p[1].x, p[1].y, p[1].width), (144_000, 1.0, 1536, 0, 2560), "highest refresh, placed right");
         assert!(p[0].primary && !p[1].primary, "the first is primary");
         let global = Displays { scale: 2.0, ..Default::default() };
-        assert!(plan(laptop_and_monitor(), &global).iter().all(|d| d.scale == 2.0));
+        assert!(plan(laptop_and_monitor(), &global, false).iter().all(|d| d.scale == 2.0));
     }
 
     #[test]
@@ -557,7 +569,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let p = plan(laptop_and_monitor(), &config);
+        let p = plan(laptop_and_monitor(), &config, false);
         let hdmi = &p[1];
         assert_eq!((hdmi.mode.width, hdmi.mode.refresh, hdmi.scale, hdmi.rotation), (1920, 50_000, 1.0, 90));
         assert_eq!((hdmi.width, hdmi.height), (1080, 1920), "rotated: portrait");
@@ -574,34 +586,48 @@ mod tests {
             ],
             ..Default::default()
         };
-        let p = plan(laptop_and_monitor(), &config);
+        let p = plan(laptop_and_monitor(), &config, false);
         assert_eq!((p[0].mode.width, p[0].rotation, p[0].scale), (1920, 0, 3.0), "unknown mode: preferred; scale clamped");
         assert_eq!(p[1].mode.refresh, 144_000);
         let odd = Displays { scale: 1.3333, ..Default::default() };
-        let p = plan(laptop_and_monitor(), &odd);
+        let p = plan(laptop_and_monitor(), &odd, false);
         assert_eq!((p[0].scale, p[0].width), (160.0 / 120.0, 1440), "rounded to a 1/120 step");
     }
 
     #[test]
     fn off_displays_and_the_last_one_on() {
         let one_off = Displays { outputs: vec![OutputSettings { enabled: false, ..output("eDP-1") }], ..Default::default() };
-        let p = plan(laptop_and_monitor(), &one_off);
+        let p = plan(laptop_and_monitor(), &one_off, false);
         assert!(!p[0].enabled && p[1].enabled && p[1].primary);
         assert_eq!(p[1].x, 0, "nothing left of it any more");
         let all_off = Displays {
             outputs: vec![OutputSettings { enabled: false, ..output("eDP-1") }, OutputSettings { enabled: false, ..output("HDMI-A-1") }],
             ..Default::default()
         };
-        let p = plan(laptop_and_monitor(), &all_off);
+        let p = plan(laptop_and_monitor(), &all_off, false);
         assert!(p[0].enabled && p[0].primary && !p[1].enabled, "the first stays on");
         let primary_off = Displays { outputs: vec![OutputSettings { enabled: false, primary: true, ..output("eDP-1") }], ..Default::default() };
-        assert!(plan(laptop_and_monitor(), &primary_off)[1].primary, "an off display is never primary");
+        assert!(plan(laptop_and_monitor(), &primary_off, false)[1].primary, "an off display is never primary");
+    }
+
+    #[test]
+    fn clamshell_turns_the_panel_off_only_with_another_display_on() {
+        let p = plan(laptop_and_monitor(), &Displays::default(), true);
+        assert!(!p[0].enabled && p[1].enabled && p[1].primary, "lid closed, monitor on: panel off");
+        assert_eq!(p[1].x, 0, "the monitor takes the panel's place");
+        let p = plan(laptop_and_monitor(), &Displays::default(), false);
+        assert!(p[0].enabled && p[1].enabled, "lid open: both");
+        let laptop = plan(laptop_and_monitor()[..1].to_vec(), &Displays::default(), true);
+        assert!(laptop[0].enabled, "nothing else: the panel stays on");
+        let monitor_off = Displays { outputs: vec![OutputSettings { enabled: false, ..output("HDMI-A-1") }], ..Default::default() };
+        let p = plan(laptop_and_monitor(), &monitor_off, true);
+        assert!(p[0].enabled && !p[1].enabled, "the monitor turned off in Settings: the panel stays on");
     }
 
     #[test]
     fn unplaced_go_right_of_placed() {
         let config = Displays { outputs: vec![OutputSettings { position: Some([-1536, 100]), ..output("eDP-1") }], ..Default::default() };
-        let p = plan(laptop_and_monitor(), &config);
+        let p = plan(laptop_and_monitor(), &config, false);
         assert_eq!((p[0].x, p[0].y, p[1].x), (-1536, 100, 0));
     }
 
@@ -614,13 +640,13 @@ mod tests {
                 OutputSettings { position: Some([1536, 0]), ..output("HDMI-A-1") },
             ]
         };
-        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.0), ..Default::default() });
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.0), ..Default::default() }, false);
         assert_eq!((p[0].width, p[1].x, p[1].y), (1920, 1920, 0), "pushed out to the edge");
         // At 150% it is 1280 wide: the gap closes.
-        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.5), ..Default::default() });
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.5), ..Default::default() }, false);
         assert_eq!((p[0].width, p[1].x), (1280, 1280));
         // Still touching: nothing moves.
-        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.25), ..Default::default() });
+        let p = plan(laptop_and_monitor(), &Displays { outputs: outputs(1.25), ..Default::default() }, false);
         assert_eq!((p[0].x, p[0].y, p[1].x, p[1].y), (0, 0, 1536, 0));
     }
 
@@ -674,7 +700,7 @@ mod tests {
         assert!(dp.primary && dp.position == Some([-2560, 0]));
         assert_eq!(back.iter().find(|o| o.name == "eDP-1").unwrap().scale, 1.5);
         // Planned with the restored entries: the monitor left of the laptop, main.
-        let p = plan(laptop_and_monitor(), &Displays { outputs: restore(&saved, &desk, &[]), ..Default::default() });
+        let p = plan(laptop_and_monitor(), &Displays { outputs: restore(&saved, &desk, &[]), ..Default::default() }, false);
         assert!(p[1].primary && p[1].x < p[0].x);
     }
 
