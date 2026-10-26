@@ -543,7 +543,7 @@ fn shown(key: &str, value: f64) -> String {
         "dock.icon_size" | "appearance.pointer_size" => format!("{value:.0} px"),
         "appearance.text_scale" => format!("{:.0}%", value * 100.0),
         "windows.spaces" if whole(key, value) == 0 => "Dynamic".into(),
-        "sound.output" | "sound.input" => format!("{value:.0}%"),
+        "sound.output" | "sound.input" | "keyboard.backlight" => format!("{value:.0}%"),
         "sound.balance" if value.abs() < 0.5 => "Centre".into(),
         "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
@@ -1007,7 +1007,12 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                 }
                 None => fact(t, "Power mode", "Needs power-profiles-daemon".into()),
             };
-            vec![group(t, "", rows), group(t, "", vec![mode])]
+            let mut parts = vec![group(t, "", rows), group(t, "", vec![mode])];
+            if let Some(level) = status.kbd_backlight {
+                let value = app.drafts.get("keyboard.backlight").copied().unwrap_or(f64::from(level));
+                parts.push(group(t, "", vec![line(t, "Keyboard brightness", "", slider_row(t, "keyboard.backlight", 0.0..=100.0, 1.0, value))]));
+            }
+            parts
         }
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
         Page::Appearance => vec![gallery(app)],
