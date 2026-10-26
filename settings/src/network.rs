@@ -194,7 +194,7 @@ pub struct WireGuard {
     name: String,
     private_key: String,
     addresses: Vec<(std::net::IpAddr, u32)>,
-    dns: Vec<std::net::Ipv4Addr>,
+    dns: Vec<std::net::IpAddr>,
     listen_port: Option<u32>,
     mtu: Option<u32>,
     peers: Vec<Peer>,
@@ -253,8 +253,8 @@ pub fn parse_wireguard(name: &str, conf: &str) -> Result<WireGuard, String> {
                     wg.addresses.push((ip, prefix));
                 }
             }
-            // ponytail: IPv4 servers only; IPv6 servers and search domains are left out.
-            ("[interface]", "dns") => wg.dns.extend(list().filter_map(|d| d.parse::<std::net::Ipv4Addr>().ok())),
+            // ponytail: search domains are left out.
+            ("[interface]", "dns") => wg.dns.extend(list().filter_map(|d| d.parse::<std::net::IpAddr>().ok())),
             ("[interface]", "listenport") => wg.listen_port = Some(number()?),
             ("[interface]", "mtu") => wg.mtu = Some(number()?),
             ("[peer]", key) => {
@@ -322,9 +322,29 @@ fn wireguard_settings(wg: &WireGuard) -> Dict<'_> {
         }
         setting
     };
-    let mut ipv4 = ip(true);
-    if !wg.dns.is_empty() {
-        ipv4.insert("dns", wg.dns.iter().map(|a| u32::from_ne_bytes(a.octets())).collect::<Vec<u32>>().into());
+    // `ipv4.dns` is `au` in network byte order, `ipv6.dns` `aay` of 16 bytes each.
+    let (mut ipv4, mut ipv6) = (ip(true), ip(false));
+    let v4: Vec<u32> = wg
+        .dns
+        .iter()
+        .filter_map(|a| match a {
+            std::net::IpAddr::V4(a) => Some(u32::from_ne_bytes(a.octets())),
+            std::net::IpAddr::V6(_) => None,
+        })
+        .collect();
+    let v6: Vec<Vec<u8>> = wg
+        .dns
+        .iter()
+        .filter_map(|a| match a {
+            std::net::IpAddr::V6(a) => Some(a.octets().to_vec()),
+            std::net::IpAddr::V4(_) => None,
+        })
+        .collect();
+    if !v4.is_empty() {
+        ipv4.insert("dns", v4.into());
+    }
+    if !v6.is_empty() {
+        ipv6.insert("dns", v6.into());
     }
     let connection = HashMap::from([
         ("id", Value::from(wg.name.as_str())),
@@ -332,7 +352,7 @@ fn wireguard_settings(wg: &WireGuard) -> Dict<'_> {
         ("interface-name", wg.name.as_str().into()),
         ("autoconnect", false.into()),
     ]);
-    Dict::from([("connection", connection), ("wireguard", wireguard), ("ipv4", ipv4), ("ipv6", ip(false))])
+    Dict::from([("connection", connection), ("wireguard", wireguard), ("ipv4", ipv4), ("ipv6", ipv6)])
 }
 
 /// VPN ▸ Import WireGuard: reads the `.conf` at `path` and saves it as a NetworkManager connection.
@@ -689,7 +709,7 @@ mod tests {
     #[test]
     fn wireguard_conf() {
         let conf = format!(
-            "[Interface]\nPrivateKey = {PRIVATE}\nAddress = 10.0.0.2/24, fd00::2\nDNS = 1.1.1.1, example.lan\nPostUp = iptables …\n\n\
+            "[Interface]\nPrivateKey = {PRIVATE}\nAddress = 10.0.0.2/24, fd00::2\nDNS = 1.1.1.1, example.lan, 2606:4700:4700::1111\nPostUp = iptables …\n\n\
              [Peer] # the server\nPublicKey = {PUBLIC}\nPresharedKey = {PUBLIC}\nEndpoint = vpn.example.com:51820\n\
              AllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n"
         );
@@ -711,6 +731,9 @@ mod tests {
         );
         assert_eq!(u32::try_from(&address("ipv6")[0]["prefix"]).unwrap(), 128);
         assert_eq!(Vec::<u32>::try_from(settings["ipv4"]["dns"].try_clone().unwrap()).unwrap(), [u32::from_ne_bytes([1, 1, 1, 1])]);
+        let v6 = Vec::<Vec<u8>>::try_from(settings["ipv6"]["dns"].try_clone().unwrap()).unwrap();
+        assert_eq!(v6, ["2606:4700:4700::1111".parse::<std::net::Ipv6Addr>().unwrap().octets().to_vec()]);
+        assert_eq!(text(&address("ipv6")[0]["address"].try_clone().unwrap().into()), "fd00::2");
     }
 
     #[test]
