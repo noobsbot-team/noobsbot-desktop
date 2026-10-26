@@ -564,6 +564,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             state.apply_screen_reader();
         }
         state.session_restore();
+        state.startup_sound();
     }
     if !command.is_empty() {
         state.spawn(&command);

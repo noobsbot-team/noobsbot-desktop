@@ -337,7 +337,7 @@ doesn't understand is skipped and reported in the journal.
 | `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions, `cycle_across_apps`; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To) |
 | `[idle]` | when to dim, turn the screen off and sleep (each on battery and on AC), turn the keyboard backlight off, locking |
 | `[battery]` | the percentage beside the menu bar's battery symbol, slightly dim the display on battery |
-| `[sound]` | the alert sound (from the system's sound theme) and its volume, user interface sound effects on or off |
+| `[sound]` | the alert sound (from the system's sound theme) and its volume, user interface sound effects on or off, the sound at login |
 | `[privacy]` | which programs may record the screen |
 | `[notifications]` | Do Not Disturb, on a schedule too (`dnd_scheduled`, `dnd_from`, `dnd_until`), banners over full-screen windows (`full_screen`), previews always, when unlocked or never (`previews`) |
 | `[notification_apps]` | per app: banners, alerts, Notification Center only or off; sound, dock badge, kept in Notification Center, shown on the lock screen (`lock`) |

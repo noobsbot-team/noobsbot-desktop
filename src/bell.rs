@@ -2,6 +2,7 @@
 //! or neither.
 
 use std::{
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
 };
@@ -43,7 +44,34 @@ pub fn play(name: &str, volume: u8) {
     });
 }
 
+/// The login sound's file: `desktop-login` from any sound theme in `themes`, else `service-login`, else none.
+fn login_sound(themes: &[PathBuf], exists: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    ["desktop-login", "service-login"]
+        .iter()
+        .flat_map(|name| themes.iter().flat_map(move |theme| ["oga", "ogg", "wav"].map(|ext| theme.join("stereo").join(format!("{name}.{ext}")))))
+        .find(|file| exists(file))
+}
+
 impl State {
+    /// `[sound] startup_sound`: the login sound, once per login. A marker for this login session in the runtime dir
+    /// keeps a restarted desktop quiet.
+    pub fn startup_sound(&self) {
+        let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR").map(|d| PathBuf::from(d).join("noobsbot-desktop")) else { return };
+        let session = std::env::var("XDG_SESSION_ID").unwrap_or_default();
+        let _ = std::fs::create_dir_all(&dir);
+        if std::fs::File::create_new(dir.join(format!("login-sound{session}"))).is_err() || !self.config.sound.startup_sound {
+            return;
+        }
+        std::thread::spawn(|| {
+            let mut themes: Vec<_> = std::fs::read_dir("/usr/share/sounds").map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
+            // The freedesktop theme's first, the rest by name.
+            themes.sort_by_key(|t| (!t.ends_with("freedesktop"), t.clone()));
+            if let Some(file) = login_sound(&themes, Path::exists) {
+                let _ = Command::new("pw-play").arg(file).stdout(Stdio::null()).stderr(Stdio::null()).status();
+            }
+        });
+    }
+
     pub fn ring_bell(&mut self) {
         let now = Instant::now();
         if self.bell.is_some_and(|t| now.saturating_duration_since(t) < QUIET) {
@@ -89,6 +117,16 @@ mod tests {
         assert_eq!(flash_alpha(Duration::ZERO), Some(0.4));
         assert!(flash_alpha(Duration::from_millis(150)).is_some_and(|a| (a - 0.2).abs() < 1e-6));
         assert_eq!(flash_alpha(FLASH), None);
+    }
+
+    #[test]
+    fn login_sound_falls_back() {
+        let themes = [PathBuf::from("/s/freedesktop"), PathBuf::from("/s/ocean")];
+        let has = |files: &'static [&'static str]| move |p: &Path| files.iter().any(|f| p == Path::new(f));
+        let found = |files| login_sound(&themes, has(files));
+        assert_eq!(found(&["/s/freedesktop/stereo/service-login.oga", "/s/ocean/stereo/desktop-login.ogg"]), Some("/s/ocean/stereo/desktop-login.ogg".into()));
+        assert_eq!(found(&["/s/freedesktop/stereo/service-login.oga"]), Some("/s/freedesktop/stereo/service-login.oga".into()));
+        assert_eq!(found(&["/s/freedesktop/stereo/bell.oga"]), None);
     }
 
     #[test]

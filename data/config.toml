@@ -297,6 +297,8 @@ alert = "bell"
 alert_volume = 100
 # Play user interface sound effects: taking a screenshot, emptying the Trash, the volume keys.
 ui_sounds = true
+# Play a sound at login ("desktop-login" from a sound theme, else "service-login"); not again when the desktop restarts.
+startup_sound = false
 
 [privacy]
 # Programs (by path) allowed to record the screen through wlr-screencopy (grim, wf-recorder, OBS), and those denied.
