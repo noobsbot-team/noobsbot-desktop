@@ -15,23 +15,26 @@ pub enum Weight {
 }
 
 macro_rules! symbols {
-    ($($variant:ident = $file:literal,)*) => {
-        /// One per file in `assets/phosphor/{regular,fill}/`.
+    ($($variant:ident = $file:literal,)*; $($fill:ident = $fill_file:literal,)*) => {
+        /// One per file in `assets/phosphor/{regular,fill}/`; those after the `;` have only the fill file, drawn in
+        /// both weights.
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
         pub enum Symbol {
             /// The Noobsbot mark (`assets/logo.svg`), same weight in both styles.
             Logo,
             $($variant,)*
+            $($fill,)*
         }
 
         impl Symbol {
             #[cfg(test)]
-            const ALL: &[Symbol] = &[Symbol::Logo, $(Symbol::$variant,)*];
+            const ALL: &[Symbol] = &[Symbol::Logo, $(Symbol::$variant,)* $(Symbol::$fill,)*];
 
             /// By its file name in `assets/phosphor/` (`"cloud-sun"`), for names that come from outside (D-Bus widgets).
             pub fn named(name: &str) -> Option<Symbol> {
                 match name {
                     $($file => Some(Symbol::$variant),)*
+                    $($fill_file => Some(Symbol::$fill),)*
                     _ => None,
                 }
             }
@@ -43,6 +46,7 @@ macro_rules! symbols {
                         (Symbol::$variant, Weight::Regular) => include_str!(concat!("../assets/phosphor/regular/", $file, ".svg")),
                         (Symbol::$variant, Weight::Fill) => include_str!(concat!("../assets/phosphor/fill/", $file, ".svg")),
                     )*
+                    $((Symbol::$fill, _) => include_str!(concat!("../assets/phosphor/fill/", $fill_file, ".svg")),)*
                 }
             }
         }
@@ -131,6 +135,14 @@ symbols! {
     DotsThreeCircle = "dots-three-circle",
     SignOut = "sign-out",
     Power = "power",
+    ;
+    // Fill only: the Settings pages' symbols, for Spotlight (E4.3).
+    UserCircle = "user-circle",
+    MouseSimple = "mouse-simple",
+    CursorClick = "cursor-click",
+    Clock = "clock",
+    GearSix = "gear-six",
+    Info = "info",
 }
 
 type Key = (Symbol, Weight, u16, u64, [u8; 4]);
