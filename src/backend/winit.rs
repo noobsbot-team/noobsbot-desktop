@@ -117,7 +117,7 @@ impl State {
                 // Its own ghosts of closing and minimising windows, in front of the windows.
                 let now = self.frame_time;
                 views.ghosts.retain(|g| !g.anim.done(now));
-                let ghosts = views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, now, scale)).collect();
+                let ghosts = views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)).collect();
                 render::scene(
                     renderer,
                     &views.shaders,
@@ -534,7 +534,7 @@ impl State {
         }
         // Ghosts of closing and minimising windows: behind the dock, in front of windows.
         ghosts.retain(|g| !g.anim.done(now));
-        bar.extend(ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, now, scale)));
+        bar.extend(ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, shaders, now, scale)));
         if let (Some(components), Some(geo)) = (components.as_mut(), self.space.output_geometry(output)) {
             bar.extend(components.elements(renderer, shaders, &mut self.text, &mut self.symbols, geo.size, dark, accent, appearance.glass_opacity, scale));
         }

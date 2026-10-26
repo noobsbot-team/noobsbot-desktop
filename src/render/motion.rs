@@ -8,20 +8,20 @@ use smithay::{
     backend::{
         allocator::Fourcc,
         renderer::{
-            Bind, Color32F, Frame, Offscreen, Renderer,
+            Bind, Color32F, Frame, Offscreen, Renderer, Texture,
             element::{Element, Id, Kind, RenderElement, texture::TextureRenderElement},
-            gles::{GlesRenderer, GlesTexture, ffi},
-            utils::CommitCounter,
+            gles::{GlesError, GlesFrame, GlesRenderer, GlesTexProgram, GlesTexture, Uniform, ffi},
+            utils::{CommitCounter, DamageSet, OpaqueRegions},
         },
     },
     desktop::{Space, Window},
     output::Output,
-    utils::{Logical, Physical, Point, Rectangle, Size, Transform},
+    utils::{Buffer, Logical, Physical, Point, Rectangle, Scale, Size, Transform},
 };
 
 use super::{SceneElement, Shaders, Shadow, grow, window_elements};
 use crate::{
-    anim::{Anim, CROSSFADE, Curve, Entrance, FADE_OUT, Look, Motion},
+    anim::{Anim, CROSSFADE, Curve, Entrance, FADE_OUT, Genie, GenieRun, Look, Motion},
     text::Text,
 };
 
@@ -131,10 +131,123 @@ fn quad_as(id: Id, renderer: &GlesRenderer, shot: &Shot, frame: Rectangle<f64, L
     ))
 }
 
-/// `elements` of a window with frame `frame`, drawn at `look` instead; `None` if the snapshot failed.
-pub fn moved(renderer: &mut GlesRenderer, elements: &[SceneElement], frame: Rectangle<f64, Logical>, look: Look, scale: f64) -> Option<SceneElement> {
+/// `elements` of a window with frame `frame`, drawn at `look` instead, or warped by a genie (target, `q`);
+/// `None` if the snapshot failed.
+pub fn moved(
+    renderer: &mut GlesRenderer,
+    shaders: &Shaders,
+    elements: &[SceneElement],
+    frame: Rectangle<f64, Logical>,
+    look: Look,
+    genie: Option<(Rectangle<f64, Logical>, f64)>,
+    scale: f64,
+) -> Option<SceneElement> {
     let shot = snapshot(renderer, elements, area(frame).to_physical_precise_round(scale), scale)?;
-    Some(quad(renderer, &shot, frame, look, scale))
+    Some(match genie {
+        Some((target, q)) => genie_quad(renderer, shaders, &shot, frame, target, q, scale),
+        None => quad(renderer, &shot, frame, look, scale),
+    })
+}
+
+/// The shot of a window with frame `frame` warped by the genie at `q` towards `target` (where the frame ends up).
+fn genie_quad(
+    renderer: &GlesRenderer,
+    shaders: &Shaders,
+    shot: &Shot,
+    frame: Rectangle<f64, Logical>,
+    target: Rectangle<f64, Logical>,
+    q: f64,
+    scale: f64,
+) -> SceneElement {
+    let area = shot.src.to_f64().to_logical(scale);
+    let genie = Genie { area, target: Look::at(target).map(frame, area), q };
+    let b = genie.bounds();
+    let size = b.size.to_i32_ceil::<i32>();
+    let (w, h) = (f64::from(size.w.max(1)), f64::from(size.h.max(1)));
+    let norm = |r: Rectangle<f64, Logical>| (((r.loc.x - b.loc.x) / w) as f32, ((r.loc.y - b.loc.y) / h) as f32, (r.size.w / w) as f32, (r.size.h / h) as f32);
+    let (squeeze, top, bottom) = genie.span();
+    let uniforms = vec![
+        Uniform::new("area", norm(genie.area)),
+        Uniform::new("target", norm(genie.target)),
+        Uniform::new("span", (squeeze as f32, ((top - b.loc.y) / h) as f32, ((bottom - b.loc.y) / h) as f32)),
+    ];
+    let src = Rectangle::new((f64::from(shot.src.loc.x), f64::from(shot.src.loc.y)).into(), (f64::from(shot.src.size.w), f64::from(shot.src.size.h)).into());
+    let inner = TextureRenderElement::from_static_texture(
+        Id::new(),
+        renderer.context_id(),
+        b.loc.to_physical(scale),
+        shot.texture.clone(),
+        1,
+        Transform::Normal,
+        None,
+        Some(src),
+        Some((size.w.max(1), size.h.max(1)).into()),
+        None,
+        Kind::Unspecified,
+    );
+    let texture = (shot.texture.size(), shot.texture.is_y_inverted());
+    SceneElement::Genie(GenieElement { inner, program: shaders.genie.clone(), uniforms, texture })
+}
+
+/// A snapshot drawn through `genie.frag`.
+#[derive(Debug)]
+pub struct GenieElement {
+    inner: TextureRenderElement<GlesTexture>,
+    program: GlesTexProgram,
+    /// The shape; `to_px` and `box` are added where it is drawn.
+    uniforms: Vec<Uniform<'static>>,
+    /// The snapshot's size and whether it is upside down.
+    texture: (Size<i32, Buffer>, bool),
+}
+
+impl Element for GenieElement {
+    fn id(&self) -> &Id {
+        self.inner.id()
+    }
+    fn current_commit(&self) -> CommitCounter {
+        self.inner.current_commit()
+    }
+    fn src(&self) -> Rectangle<f64, Buffer> {
+        self.inner.src()
+    }
+    fn geometry(&self, scale: Scale<f64>) -> Rectangle<i32, Physical> {
+        self.inner.geometry(scale)
+    }
+    fn transform(&self) -> Transform {
+        self.inner.transform()
+    }
+    fn damage_since(&self, scale: Scale<f64>, commit: Option<CommitCounter>) -> DamageSet<i32, Physical> {
+        self.inner.damage_since(scale, commit)
+    }
+    fn opaque_regions(&self, _scale: Scale<f64>) -> OpaqueRegions<i32, Physical> {
+        OpaqueRegions::default()
+    }
+    fn alpha(&self) -> f32 {
+        self.inner.alpha()
+    }
+    fn kind(&self) -> Kind {
+        self.inner.kind()
+    }
+}
+
+impl RenderElement<GlesRenderer> for GenieElement {
+    fn draw(
+        &self,
+        frame: &mut GlesFrame<'_, '_>,
+        src: Rectangle<f64, Buffer>,
+        dst: Rectangle<i32, Physical>,
+        damage: &[Rectangle<i32, Physical>],
+        opaque_regions: &[Rectangle<i32, Physical>],
+    ) -> Result<(), GlesError> {
+        let to_px = super::to_geo(self.texture.0, self.texture.1, src, dst, dst.loc);
+        let mut uniforms = self.uniforms.clone();
+        uniforms.push(Uniform::new("to_px", to_px));
+        uniforms.push(Uniform::new("box", (dst.size.w.max(1) as f32, dst.size.h.max(1) as f32)));
+        frame.override_default_tex_program(self.program.clone(), uniforms);
+        let drawn = RenderElement::<GlesRenderer>::draw(&self.inner, frame, src, dst, damage, opaque_regions);
+        frame.clear_tex_program_override();
+        drawn
+    }
 }
 
 /// Shell pieces (popovers, banners, the OSD) drawn as one snapshot at `look(their bounds)`; unchanged if empty.
@@ -276,6 +389,8 @@ pub struct Ghost {
     pub from: Look,
     pub to: Look,
     pub anim: Anim,
+    /// Minimising with the genie: drawn warped instead of at its look.
+    pub genie: Option<GenieRun>,
 }
 
 impl Ghost {
@@ -296,7 +411,7 @@ impl Ghost {
         let shot = snapshot(renderer, &elements, area(frame).to_physical_precise_round(scale), scale)?;
         let look = Look::at(frame);
         let anim = Anim::new(crate::anim::Curve::Ease(crate::anim::FADE_OUT));
-        Some(Ghost { id: Id::new(), window: window.clone(), output: output.clone(), shot, frame, from: look, to: look, anim })
+        Some(Ghost { id: Id::new(), window: window.clone(), output: output.clone(), shot, frame, from: look, to: look, anim, genie: None })
     }
 
     pub fn frame(&self) -> Rectangle<f64, Logical> {
@@ -307,13 +422,16 @@ impl Ghost {
         self.from.lerp(self.to, self.anim.progress(now))
     }
 
-    pub fn element(&self, renderer: &GlesRenderer, now: Instant, scale: f64) -> SceneElement {
-        quad(renderer, &self.shot, self.frame, self.look(now), scale)
+    pub fn element(&self, renderer: &GlesRenderer, shaders: &Shaders, now: Instant, scale: f64) -> SceneElement {
+        match self.genie {
+            Some(g) => genie_quad(renderer, shaders, &self.shot, self.frame, g.target, g.at(self.anim.progress(now)), scale),
+            None => quad(renderer, &self.shot, self.frame, self.look(now), scale),
+        }
     }
 
     /// A copy that keeps the last frame for good (a minimised window's tile).
     pub fn still(&self) -> Ghost {
-        Ghost { id: Id::new(), window: self.window.clone(), output: self.output.clone(), shot: self.shot.clone(), ..*self }
+        Ghost { id: Id::new(), window: self.window.clone(), output: self.output.clone(), shot: self.shot.clone(), genie: None, ..*self }
     }
 
     /// The frame drawn at `look`, as the same element every frame.
