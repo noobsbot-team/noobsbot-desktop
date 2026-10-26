@@ -1160,7 +1160,9 @@ fn warn_unknown(prefix: &str, user: &toml::Table, known: &toml::Table) {
                     }
                 }
             }
-            (Some(toml::Value::Table(known)), toml::Value::Table(user)) if name != "bindings" => warn_unknown(&name, user, known),
+            (Some(toml::Value::Table(known)), toml::Value::Table(user)) if name != "bindings" && name != "notification_apps" => {
+                warn_unknown(&name, user, known)
+            }
             _ => {}
         }
     }
