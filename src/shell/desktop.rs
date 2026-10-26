@@ -47,7 +47,6 @@ pub fn cell_size() -> (i32, i32) {
 pub fn label_w() -> i32 {
     ts(LABEL_W)
 }
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// The pointer moves this far with the button down before an icon drags.
 const DRAG_START: f64 = 4.0;
 const FOLDER: &str = "folder";
@@ -498,12 +497,13 @@ impl State {
             return;
         }
         let hit = self.desktop_hit(location).map(|i| self.desktop_icons().swap_remove(i).name);
+        let double_click = self.config.mouse.double_click();
         let d = &mut self.desktop;
         d.selected = hit.clone();
         match (button, hit) {
             (crate::input::BTN_LEFT, Some(name)) => {
                 let now = Instant::now();
-                let double = d.last_click.as_ref().is_some_and(|(n, at)| *n == name && now - *at < DOUBLE_CLICK);
+                let double = d.last_click.as_ref().is_some_and(|(n, at)| *n == name && now - *at < double_click);
                 if double {
                     d.last_click = None;
                     self.desktop_open(&name);

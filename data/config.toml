@@ -130,6 +130,8 @@ left_handed = false
 natural_scroll = false
 # Pressing left and right together acts as the middle button.
 middle_click_emulation = false
+# Two clicks closer than this many ms are a double-click (150 … 1000), here and in GTK apps.
+double_click_ms = 400
 
 [hot_corners]
 # Rest the pointer in a screen corner for a moment to trigger an action (any action from [bindings] below, like
