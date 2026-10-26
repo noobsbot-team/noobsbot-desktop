@@ -26,6 +26,7 @@ use crate::{
     config::{self, Dock, DockClick, DockMiddle, DockScroll},
     shell::{Row, dock_fx::CLICK_TIME, drawer, launchpad},
     shortcuts::Action,
+    spaces::Assign,
     state::State,
     wm::Rect,
 };
@@ -858,6 +859,8 @@ pub enum Command {
     Login,
     /// Shows the app's desktop file in the file manager.
     ShowInFiles,
+    /// Options ▸ Assign To: `ASSIGN[n]`.
+    Assign(usize),
     /// Close / Close All.
     Close,
     /// The app's n-th desktop action.
@@ -868,32 +871,47 @@ pub enum Command {
     EmptyTrash,
 }
 
+/// Options ▸ Assign To, in order: `[dock] assign` "all", the Space it was chosen on, nothing.
+pub const ASSIGN: [&str; 3] = ["All Spaces", "This Space", "None"];
+
+/// What the Options submenu shows for an app.
+#[derive(Debug, Default)]
+pub struct Options {
+    /// Keep in Dock, ticked while pinned; `None` when it can't be pinned.
+    pub pinned: Option<bool>,
+    /// Open at Login, ticked while on; `None` without a desktop file, which also hides Show in Files.
+    pub login: Option<bool>,
+    /// Assign To with `ASSIGN[n]` ticked; `None` hides it (a builtin, a minimised window's tile).
+    pub assign: Option<usize>,
+}
+
 /// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
-/// actions, the Options section (Keep in Dock, `pinned` `None` when it can't be pinned; Open at Login, `login` `None`
-/// without a desktop file, which also hides Show in Files), then Close (Close All with several windows).
-// ponytail: Options is an inline section, since dock menu rows have no submenus yet.
-pub fn menu_rows(
-    titles: &[String],
-    active: Option<usize>,
-    recent: &[String],
-    actions: &[String],
-    pinned: Option<bool>,
-    login: Option<bool>,
-) -> Vec<Option<Row>> {
+/// actions, the Options submenu (Keep in Dock, Open at Login, Show in Files, Assign To), then Close (Close All with
+/// several windows).
+pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], actions: &[String], options: &Options) -> Vec<Option<Row>> {
     let row =
         |label: &str, shortcut, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
     let tick = |on: bool| if on { "✓" } else { "" };
     let windows = titles.iter().enumerate().map(|(i, t)| row(t, "", (active != Some(i)).then_some(Command::Window(i)))).collect();
     let recent = recent.iter().enumerate().map(|(i, r)| row(r, "", Some(Command::Recent(i)))).collect();
     let actions = actions.iter().enumerate().map(|(i, a)| row(a, "", Some(Command::Action(i)))).collect();
-    let mut options = Vec::new();
-    if let Some(pinned) = pinned {
-        options.push(row("Keep in Dock", tick(pinned), Some(Command::Pin)));
+    let mut sub = Vec::new();
+    if let Some(pinned) = options.pinned {
+        sub.push(row("Keep in Dock", tick(pinned), Some(Command::Pin)));
     }
-    if let Some(login) = login {
-        options.push(row("Open at Login", tick(login), Some(Command::Login)));
-        options.push(row("Show in Files", "", Some(Command::ShowInFiles)));
+    if let Some(login) = options.login {
+        sub.push(row("Open at Login", tick(login), Some(Command::Login)));
+        sub.push(row("Show in Files", "", Some(Command::ShowInFiles)));
     }
+    // ponytail: a greyed heading, since a submenu row can't open another submenu.
+    if let Some(on) = options.assign {
+        if !sub.is_empty() {
+            sub.push(None);
+        }
+        sub.push(row("Assign To", "", None));
+        sub.extend(ASSIGN.iter().enumerate().map(|(i, name)| row(name, tick(i == on), Some(Command::Assign(i)))));
+    }
+    let options = if sub.is_empty() { Vec::new() } else { vec![Some(Row { sub, label: "Options".to_owned(), shortcut: "", action: None })] };
     let close = if titles.is_empty() { Vec::new() } else { vec![row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close))] };
     let mut rows = Vec::new();
     for group in [windows, recent, actions, options, close] {
@@ -1013,6 +1031,13 @@ pub fn set_items(text: &str, items: &[String]) -> String {
     config::set_array(text, "dock", "items", items)
 }
 
+/// `map` as a one-line TOML inline table.
+fn inline_table(map: &std::collections::BTreeMap<String, String>) -> String {
+    let q = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
+    let pairs: Vec<String> = map.iter().map(|(k, v)| format!("{} = {}", q(k), q(v))).collect();
+    if pairs.is_empty() { "{}".to_owned() } else { format!("{{ {} }}", pairs.join(", ")) }
+}
+
 /// The URIs of a `text/uri-list` (comments and blank lines skipped).
 pub fn uri_list(text: &str) -> Vec<String> {
     text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(String::from).collect()
@@ -1071,7 +1096,13 @@ impl State {
         let actions: Vec<String> = item.app.as_ref().map(|a| crate::apps::actions(&a.id).into_iter().map(|(n, _)| n).collect()).unwrap_or_default();
         let name_of = |uri: &String| crate::apps::file_path(uri).and_then(|p| Some(std::path::Path::new(&p).file_name()?.to_string_lossy().into_owned()));
         let recent: Vec<String> = self.dock_ui.recent.iter().map(|u| name_of(u).unwrap_or_else(|| u.clone())).collect();
-        menu_rows(&titles, active, &recent, &actions, pinned, self.dock_ui.login)
+        let assign =
+            (!item.is_tile() && Builtin::of(&item.key).is_none()).then(|| match self.config.dock.assign.get(&item.key).and_then(|v| Assign::parse(v)) {
+                Some(Assign::All) => 0,
+                Some(Assign::Space { .. }) => 1,
+                None => 2,
+            });
+        menu_rows(&titles, active, &recent, &actions, &Options { pinned, login: self.dock_ui.login, assign })
     }
 
     /// Right click: icon `i`'s menu, centred over it.
@@ -1150,6 +1181,20 @@ impl State {
                 let script = "dbus-send --session --print-reply --dest=org.freedesktop.FileManager1 /org/freedesktop/FileManager1 \
                               org.freedesktop.FileManager1.ShowItems array:string:\"$1\" string: >/dev/null 2>&1 || xdg-open \"$2\"";
                 self.spawn(&["sh", "-c", script, "sh", &uri, &dir].map(String::from));
+            }
+            Command::Assign(i) => {
+                let here = self.pointer_output().map(|o| (o.name(), self.output_key(&o)));
+                let assign = match (i, here) {
+                    (0, _) => Some(Assign::All),
+                    (1, Some((display, key))) => Some(Assign::Space { display, desk: self.desks_at(&key).current }),
+                    _ => None,
+                };
+                match assign {
+                    Some(a) => self.config.dock.assign.insert(item.key.clone(), a.value()),
+                    None => self.config.dock.assign.remove(&item.key),
+                };
+                let table = inline_table(&self.config.dock.assign);
+                self.dock_save(move |text| config::set_key(text, "dock", "assign", &table));
             }
             Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             Command::Open => self.dock_click(item, false),
@@ -1458,7 +1503,7 @@ mod tests {
         let actions = ["New Window".to_owned()];
         let recent = ["notes.md".to_owned()];
         assert_eq!(
-            labels(menu_rows(&two, Some(0), &recent, &actions, Some(true), Some(false))),
+            labels(menu_rows(&two, Some(0), &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2) })),
             [
                 s("a.txt", "", false),
                 s("◆ b.txt", "", true),
@@ -1467,23 +1512,51 @@ mod tests {
                 None,
                 s("New Window", "", true),
                 None,
-                s("Keep in Dock", "✓", true),
-                s("Open at Login", "", true),
-                s("Show in Files", "", true),
+                s("Options", "", false),
                 None,
                 s("Close All", "", true)
             ]
         );
-        // Not running; locked items, no desktop file: nothing to pin, no login item.
+        let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2) });
         assert_eq!(
-            labels(menu_rows(&[], None, &[], &[], Some(true), Some(true))),
-            [s("Keep in Dock", "✓", true), s("Open at Login", "✓", true), s("Show in Files", "", true)]
+            labels(rows[7].clone().unwrap().sub),
+            [
+                s("Keep in Dock", "✓", true),
+                s("Open at Login", "", true),
+                s("Show in Files", "", true),
+                None,
+                s("Assign To", "", false),
+                s("All Spaces", "", true),
+                s("This Space", "", true),
+                s("None", "✓", true)
+            ]
         );
-        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], None, None)), [s("a.txt", "", true), None, s("Close", "", true)]);
-        let rows = menu_rows(&two, None, &recent, &actions, None, None);
+        // Not running; locked items, no desktop file, a builtin: no Options at all.
+        let options = |rows: Vec<Option<Row>>| rows.into_iter().flatten().find(|r| r.label == "Options").map(|r| labels(r.sub));
+        assert_eq!(menu_rows(&[], None, &[], &[], &Options::default()), []);
+        assert_eq!(
+            options(menu_rows(&[], None, &[], &[], &Options { pinned: Some(true), login: Some(true), assign: None })),
+            Some(vec![s("Keep in Dock", "✓", true), s("Open at Login", "✓", true), s("Show in Files", "", true)])
+        );
+        let all = options(menu_rows(&[], None, &[], &[], &Options { assign: Some(0), ..Options::default() })).unwrap();
+        assert_eq!(all[0], s("Assign To", "", false), "no separator at the top");
+        assert_eq!(all[1], s("All Spaces", "✓", true));
+        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], &Options::default())), [s("a.txt", "", true), None, s("Close", "", true)]);
         assert_eq!(rows[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
         assert_eq!(rows[3].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Recent(0))));
         assert_eq!(rows[5].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Action(0))));
+    }
+
+    #[test]
+    fn assign_saves_as_one_line() {
+        let mut map = std::collections::BTreeMap::new();
+        assert_eq!(inline_table(&map), "{}");
+        map.insert("org.kde.kate".to_owned(), "all".to_owned());
+        map.insert("kitty".to_owned(), "DP-1:2".to_owned());
+        let line = inline_table(&map);
+        assert_eq!(line, r#"{ "kitty" = "DP-1:2", "org.kde.kate" = "all" }"#);
+        let back: toml::Table = toml::from_str(&format!("assign = {line}")).unwrap();
+        assert_eq!(back["assign"]["org.kde.kate"].as_str(), Some("all"));
     }
 
     #[test]
