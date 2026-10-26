@@ -1708,7 +1708,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout.
 
 ### E8.8 Menu bar, tray, widgets and session
-- Tray: real submenus and an overflow "»" menu.
+- ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row (flipped left at the edge), one level deep; deeper ones list inline.
 - Menu bar on every display; auto-hide option; a Recent Items menu with Clear.
 - Trash at the dock's right end; Launchpad folders and drag to rearrange.
 - Widgets for Notification Center and the desktop as separate processes over D-Bus (no plugins in the compositor).
