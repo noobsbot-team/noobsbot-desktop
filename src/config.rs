@@ -1022,13 +1022,15 @@ impl Default for Dock {
 pub struct Sound {
     /// The alert sound: a freedesktop sound theme name (`bell`, `dialog-warning`), played by the bell.
     pub alert: String,
+    /// The alert sound's volume, 0 … 100 percent.
+    pub alert_volume: u8,
     /// Screenshots, emptying the Trash and the volume keys make their sounds.
     pub ui_sounds: bool,
 }
 
 impl Default for Sound {
     fn default() -> Self {
-        Self { alert: "bell".into(), ui_sounds: true }
+        Self { alert: "bell".into(), alert_volume: 100, ui_sounds: true }
     }
 }
 
