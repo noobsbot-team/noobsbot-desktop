@@ -59,7 +59,6 @@ pub fn commits(d: f64, full: f64, v: f64) -> bool {
 }
 
 /// `x` past an end, given back as a rubber band: a third as far at first, never more than `RUBBER`.
-#[cfg_attr(not(test), expect(dead_code, reason = "the next commits rubber-band Space swipes"))]
 pub fn rubber(x: f64) -> f64 {
     RUBBER * x / (x.abs() + 3.0 * RUBBER)
 }
