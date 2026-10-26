@@ -162,10 +162,10 @@ impl State {
         Some((elements, animating || fading || flash.is_some() || zooming))
     }
 
-    /// The on-screen keyboard, in front of everything (the lock screen too), on the shell's output.
-    // ponytail: the first output, like the rest of the shell; follow the pointer's display with a per-output hit test.
+    /// The on-screen keyboard, in front of everything (the lock screen too), on the display with the focused text
+    /// field or the pointer (`osk_output`).
     fn osk_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
-        let Some(geo) = self.osk_panel().filter(|_| self.space.outputs().next() == Some(output)).and_then(|_| self.space.output_geometry(output)) else {
+        let Some(geo) = self.osk_panel().filter(|_| self.osk_output().as_ref() == Some(output)).and_then(|_| self.space.output_geometry(output)) else {
             return Vec::new();
         };
         let labels = self.osk_labels();
