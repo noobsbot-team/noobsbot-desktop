@@ -1,14 +1,20 @@
-//! Pointer accessibility (E8.6): shake to find the pointer.
+//! Pointer accessibility (E8.6): shake to find the pointer, dwell click.
 
 use std::{
     collections::VecDeque,
     time::{Duration, Instant},
 };
 
-use smithay::utils::{Logical, Point};
+use smithay::{
+    backend::input::ButtonState,
+    reexports::calloop::timer::{TimeoutAction, Timer},
+    utils::{Logical, Point, Rectangle},
+};
 
-use crate::state::State;
+use crate::{input::BTN_LEFT, state::State};
 
+/// How far the pointer may drift and still be resting (logical px).
+const STILL: f64 = 4.0;
 /// A shake: this many direction changes, covering this distance, within this time.
 const SHAKE_TURNS: usize = 4;
 const SHAKE_DISTANCE: f64 = 600.0;
@@ -18,6 +24,10 @@ pub const SHAKE_GROW: f64 = 4.0;
 const GROW_IN: Duration = Duration::from_millis(150);
 const GROW_HOLD: Duration = Duration::from_millis(1000);
 const GROW_OUT: Duration = Duration::from_millis(300);
+
+fn near(a: Point<f64, Logical>, b: Point<f64, Logical>) -> bool {
+    (a.x - b.x).hypot(a.y - b.y) <= STILL
+}
 
 fn smoothstep(t: f64) -> f64 {
     let t = t.clamp(0.0, 1.0);
@@ -62,24 +72,113 @@ impl Shake {
     }
 }
 
+/// Counts down while the pointer rests; one click per rest.
 #[derive(Default)]
-pub struct Assist {
-    pub shake: Shake,
+pub struct Dwell {
+    /// Where and since when the pointer rests, while a click is still to come.
+    rest: Option<(Instant, Point<f64, Logical>)>,
+    anchor: Option<Point<f64, Logical>>,
 }
 
-impl Assist {
-    /// The pointer is growing or shrinking.
-    pub fn animating(&self, now: Instant) -> bool {
-        self.shake.scale(now) > 1.0
+impl Dwell {
+    /// The pointer is at `pos`; true when it left its resting place (a new countdown starts).
+    pub fn motion(&mut self, now: Instant, pos: Point<f64, Logical>) -> bool {
+        if self.anchor.is_some_and(|a| near(a, pos)) {
+            return false;
+        }
+        (self.anchor, self.rest) = (Some(pos), Some((now, pos)));
+        true
+    }
+
+    /// No click for this rest (a button is down).
+    pub fn cancel(&mut self) {
+        self.rest = None;
+    }
+
+    /// Time left until the click, while one is coming.
+    pub fn remaining(&self, now: Instant, wait: Duration) -> Option<Duration> {
+        self.rest.map(|(since, _)| wait.saturating_sub(now.duration_since(since)))
+    }
+
+    /// 0 → 1 over the countdown, while one runs.
+    pub fn progress(&self, now: Instant, wait: Duration) -> Option<f64> {
+        let left = self.remaining(now, wait)?;
+        (!wait.is_zero()).then(|| 1.0 - left.as_secs_f64() / wait.as_secs_f64())
     }
 }
 
+#[derive(Default)]
+pub struct Assist {
+    pub shake: Shake,
+    pub dwell: Dwell,
+    dwell_timer: bool,
+}
+
+impl Assist {
+    /// The pointer is growing or shrinking, or a dwell ring is counting down.
+    pub fn animating(&self, now: Instant, dwell: Duration) -> bool {
+        self.shake.scale(now) > 1.0 || self.dwell.progress(now, dwell).is_some_and(|p| p < 1.0)
+    }
+}
+
+fn ms(ms: u32) -> Duration {
+    Duration::from_millis(ms.into())
+}
+
 impl State {
+    pub fn dwell_wait(&self) -> Duration {
+        ms(self.config.accessibility.dwell_click_ms)
+    }
+
+    fn now_msec(&self) -> u32 {
+        Duration::from(self.protocols.clock.now()).as_millis() as u32
+    }
+
     /// The pointer moves from where it is to `to` by `delta` (pointer_motion, before anything sees it).
-    pub fn assist_motion(&mut self, _to: Point<f64, Logical>, delta: Point<f64, Logical>) {
-        if self.config.accessibility.shake_to_find && self.pointer_assist.shake.motion(Instant::now(), delta) {
+    pub fn assist_motion(&mut self, to: Point<f64, Logical>, delta: Point<f64, Logical>) {
+        let now = Instant::now();
+        if self.config.accessibility.shake_to_find && self.pointer_assist.shake.motion(now, delta) {
             self.schedule_redraw();
         }
+        let wait = self.dwell_wait();
+        if wait.is_zero() {
+            return;
+        }
+        let moved = self.pointer_assist.dwell.motion(now, to);
+        if self.seat.get_pointer().is_some_and(|p| p.is_grabbed()) {
+            self.pointer_assist.dwell.cancel();
+        } else if moved && !std::mem::replace(&mut self.pointer_assist.dwell_timer, true) {
+            // One timer per rest: it waits again whenever the pointer moved on meanwhile.
+            let armed = self.loop_handle.insert_source(Timer::from_duration(wait), |_, _, state| {
+                let left = state.pointer_assist.dwell.remaining(Instant::now(), state.dwell_wait()).filter(|_| !state.dwell_wait().is_zero());
+                match left {
+                    Some(left) if !left.is_zero() => TimeoutAction::ToDuration(left),
+                    Some(_) => {
+                        state.pointer_assist.dwell.cancel();
+                        state.pointer_assist.dwell_timer = false;
+                        let time = state.now_msec();
+                        state.pointer_button(BTN_LEFT, ButtonState::Pressed, time);
+                        state.pointer_button(BTN_LEFT, ButtonState::Released, time);
+                        state.schedule_redraw();
+                        TimeoutAction::Drop
+                    }
+                    None => {
+                        state.pointer_assist.dwell_timer = false;
+                        TimeoutAction::Drop
+                    }
+                }
+            });
+            self.pointer_assist.dwell_timer = armed.is_ok();
+        }
+    }
+
+    /// The dwell countdown ring around the pointer, output-relative (logical).
+    pub fn dwell_ring(&self, output_origin: Point<i32, Logical>) -> Option<Rectangle<i32, Logical>> {
+        let progress = self.pointer_assist.dwell.progress(self.frame_time, self.dwell_wait())?;
+        let at = self.seat.get_pointer()?.current_location().to_i32_round() - output_origin;
+        // Shrinks from 24 px to 6 px across.
+        let r = (12.0 - 9.0 * progress).round() as i32;
+        Some(Rectangle::new(at - Point::from((r, r)), (2 * r, 2 * r).into()))
     }
 }
 
@@ -111,5 +210,21 @@ mod tests {
         // Jitter back and forth by a pixel is no shake either.
         let mut jitter = Shake::default();
         assert!(!(0..40).any(|i| jitter.motion(t0 + Duration::from_millis(i * 5), p(if i % 2 == 0 { 0.5 } else { -0.5 }, 0.0))));
+    }
+
+    #[test]
+    fn dwell_counts_down_once_per_rest() {
+        let (t0, wait) = (Instant::now(), Duration::from_millis(1000));
+        let mut dwell = Dwell::default();
+        assert_eq!(dwell.remaining(t0, wait), None);
+        assert!(dwell.motion(t0, p(100.0, 100.0)));
+        assert!(!dwell.motion(t0 + Duration::from_millis(300), p(102.0, 101.0)), "a few px of drift still rests");
+        assert_eq!(dwell.progress(t0 + Duration::from_millis(250), wait), Some(0.25));
+        assert_eq!(dwell.remaining(t0 + Duration::from_millis(1200), wait), Some(Duration::ZERO));
+        dwell.cancel();
+        assert_eq!(dwell.remaining(t0 + Duration::from_millis(2000), wait), None, "clicked: no more until it moves");
+        assert!(!dwell.motion(t0 + Duration::from_millis(2100), p(101.0, 100.0)));
+        assert!(dwell.motion(t0 + Duration::from_millis(2200), p(120.0, 100.0)));
+        assert_eq!(dwell.remaining(t0 + Duration::from_millis(2700), wait), Some(Duration::from_millis(500)));
     }
 }

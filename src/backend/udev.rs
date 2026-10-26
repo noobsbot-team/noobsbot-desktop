@@ -62,7 +62,7 @@ use crate::{
     display_info::{self, Display},
     displays,
     frame::FrameClock,
-    render::SceneElement,
+    render::{self, SceneElement},
     state::State,
 };
 
@@ -429,7 +429,7 @@ impl State {
             }
             Err(err) => tracing::warn!("{}: render: {err}", screen.output.name()),
         }
-        if animating || self.pointer_assist.animating(self.frame_time) {
+        if animating || self.pointer_assist.animating(self.frame_time, self.dwell_wait()) {
             screen.again = true;
         }
         if let Some(damaged) = damaged {
@@ -447,15 +447,21 @@ impl State {
         }
         let scale = output.current_scale().fractional_scale();
         let at = (location - geo.loc.to_f64()).to_physical(scale);
+        // The dwell click's countdown: an accent ring shrinking around the pointer.
+        let ring = self.dwell_ring(geo.loc).and_then(|rect| {
+            let color = render::accent(self.config.appearance.accent, render::is_dark(&self.config.appearance)).map(|c| f32::from(c) / 255.0);
+            let shaders = &self.backend.as_ref()?.shaders;
+            Some(SceneElement::Shader(shaders.ring(rect, f64::from(rect.size.w) / 2.0, 2, [color[0], color[1], color[2], 1.0], scale)))
+        });
         // Shaken (shake to find), the theme's arrow grows in place of an app's own cursor too.
         let grow = self.pointer_assist.shake.scale(self.frame_time);
         let icon = match &self.protocols.cursor {
-            CursorImageStatus::Hidden => return Vec::new(),
+            CursorImageStatus::Hidden => return ring.into_iter().collect(),
             CursorImageStatus::Surface(surface) if grow <= 1.0 => {
                 let hotspot = with_states(surface, |s| s.data_map.get::<CursorImageSurfaceData>().and_then(|d| d.lock().ok().map(|d| d.hotspot)));
                 let at = (at - hotspot.unwrap_or_default().to_f64().to_physical(scale)).to_i32_round();
                 let surface = render_elements_from_surface_tree(renderer, surface, at, scale, 1.0, Kind::Cursor).into_iter().map(SceneElement::Surface);
-                return surface.collect();
+                return surface.chain(ring).collect();
             }
             CursorImageStatus::Surface(_) => CursorIcon::Default,
             CursorImageStatus::Named(icon) => *icon,
@@ -479,6 +485,7 @@ impl State {
             .ok()
             .map(SceneElement::Memory)
             .into_iter()
+            .chain(ring)
             .collect()
     }
 
