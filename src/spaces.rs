@@ -206,6 +206,20 @@ pub fn step(current: usize, delta: i32, count: usize) -> Option<usize> {
     (0..count as i64).contains(&to).then_some(to as usize).filter(|t| *t != current)
 }
 
+/// The slide a swipe `q` screen widths towards the next Space (negative: the previous) shows while `current` of
+/// `count` is shown: (from, to, progress), drawn as sliding back from the neighbour to `current`. With no neighbour
+/// that way `from == to` and the screen only gives a little; past the neighbour too.
+#[cfg_attr(not(test), expect(dead_code, reason = "the next commit slides Spaces under the fingers"))]
+pub fn swipe_slide(current: usize, count: usize, q: f64) -> (usize, usize, f64) {
+    match step(current, if q > 0.0 { 1 } else { -1 }, count) {
+        Some(next) if q != 0.0 => {
+            let q = q.abs();
+            (next, current, 1.0 - if q > 1.0 { 1.0 + crate::gestures::rubber(q - 1.0) } else { q })
+        }
+        _ => (current, current, 1.0 + crate::gestures::rubber(q)),
+    }
+}
+
 /// Whose Spaces a display named `name` shows: its own, or (`""`) the one set every display shares.
 pub fn desk_key(per_display: bool, name: &str) -> String {
     if per_display { name.to_owned() } else { String::new() }
@@ -775,6 +789,22 @@ mod tests {
         assert_eq!(step(2, 1, 3), None);
         assert_eq!(step(2, -2, 3), Some(0));
         assert_eq!(step(1, 0, 3), None);
+    }
+
+    #[test]
+    fn swipes_slide_one_to_one_and_rubber_band_at_the_ends() {
+        // Fingers 40% left on Space 1 of 3: Space 2 is 40% in, drawn as sliding back from it to 60%.
+        assert_eq!(swipe_slide(1, 3, 0.4), (2, 1, 0.6));
+        assert_eq!(swipe_slide(1, 3, -0.25), (0, 1, 0.75));
+        assert_eq!(swipe_slide(1, 3, 0.0), (1, 1, 1.0));
+        // On the last Space there is nothing to the right: it gives only a little.
+        let (from, to, p) = swipe_slide(2, 3, 0.8);
+        assert!(from == 2 && to == 2 && p > 1.0 && p < 1.1, "{p}");
+        let (_, _, back) = swipe_slide(0, 3, -0.8);
+        assert!(back < 1.0 && back > 0.9);
+        // Past the neighbour the same.
+        let (_, _, p) = swipe_slide(0, 3, 1.5);
+        assert!(p < 0.0 && p > -0.1);
     }
 
     #[test]
