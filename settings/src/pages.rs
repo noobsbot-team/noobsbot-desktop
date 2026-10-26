@@ -233,9 +233,15 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Choice(&[("sunday", "Sunday"), ("monday", "Monday"), ("saturday", "Saturday")]),
     ),
     s(Page::Spaces, "", "windows.spaces", "Spaces", "Dynamic: + in Mission Control adds more", Kind::Slider { min: 0.0, max: 16.0, step: 1.0 }),
+    s(Page::Notifications, "", "notifications.dnd", "Do Not Disturb", "Banners stay quiet; Notification Center still collects them", Kind::Toggle),
     s(Page::Notifications, "Weather", "weather.enabled", "Weather widget", "Forecast from Open-Meteo every 30 minutes; sends only the place", Kind::Toggle),
     s(Page::Notifications, "Weather", "weather.city", "City", "Looked up once; never located by IP", Kind::Text("Kathmandu")),
     s(Page::Notifications, "Weather", "weather.units", "Units", "", Kind::Choice(&[("celsius", "°C"), ("fahrenheit", "°F")])),
+    s(Page::LockScreen, "", "idle.dim", "Dim the display when inactive", "", Kind::Slider { min: 0.0, max: 600.0, step: 30.0 }),
+    s(Page::LockScreen, "", "idle.screen_off", "Turn display off when inactive", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
+    s(Page::LockScreen, "", "idle.lock", "Lock when the display turns off", "It always locks before sleeping", Kind::Toggle),
+    s(Page::LockScreen, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
+    s(Page::LockScreen, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
     s(Page::General, "Software Update", "check_updates", "Check for updates daily", "Sends nothing but the version; installs at next login", Kind::Toggle),
 ];
@@ -258,6 +264,12 @@ fn shown(key: &str, value: f64) -> String {
         "dock.icon_size" => format!("{value:.0} px"),
         "windows.spaces" if whole(key, value) == 0 => "Dynamic".into(),
         "sound.output" | "sound.input" => format!("{value:.0}%"),
+        k if k.starts_with("idle.") => match value.round() as u32 {
+            0 => "Never".into(),
+            s if s < 60 => format!("{s} s"),
+            s if s % 60 == 0 => format!("{} min", s / 60),
+            s => format!("{} min {} s", s / 60, s % 60),
+        },
         _ => format!("{value:.0}"),
     }
 }
@@ -471,8 +483,8 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             let rows = crate::system::about().into_iter().map(|(label, value)| fact(t, label, value)).collect();
             vec![container(head).center_x(Length::Fill).into(), group(t, "", rows)]
         }
-        Page::Notifications => vec![note(t, "Per-app banners and the Do Not Disturb schedule come here; Do Not Disturb is in Control Center.")],
-        Page::LockScreen => vec![note(t, "Idle times and the password delay come with the lock screen.")],
+        Page::Notifications => vec![note(t, "Per-app banners and the Do Not Disturb schedule come here.")],
+        Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
         _ => Vec::new(),
     }
 }
