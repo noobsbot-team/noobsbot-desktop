@@ -21,8 +21,12 @@ const SAVED: &str = "org.freedesktop.NetworkManager.Settings.Connection";
 const EDITOR: &str = "nm-connection-editor";
 /// `App::texts` key prefix of a network's password field, then its name.
 pub const PASSWORD: &str = "wifi.password.";
+/// `App::texts` key prefix of the "Other…" form's fields (`ssid`, `security`, …); open while its `ssid` is there.
+pub const OTHER: &str = "wifi.other.";
 
 type Settings = HashMap<String, HashMap<String, OwnedValue>>;
+/// A connection's settings as sent to NetworkManager (`a{sa{sv}}`).
+type Dict<'a> = HashMap<&'static str, HashMap<&'static str, Value<'a>>>;
 
 #[derive(Clone, Debug, Default)]
 pub struct Network {
@@ -32,6 +36,8 @@ pub struct Network {
     pub known: Vec<Known>,
     /// The Wi-Fi and Ethernet devices that are up.
     pub details: Vec<Details>,
+    /// The Wi-Fi device ("Other…" joins through it).
+    pub wifi_device: Option<String>,
     /// `nm-connection-editor` is installed ("Advanced…").
     pub editor: bool,
     /// The last change NetworkManager refused.
@@ -76,7 +82,8 @@ pub async fn read(bus: &Connection) -> Network {
     let objects = async { ObjectManagerProxy::builder(bus).destination(NM)?.path("/org/freedesktop")?.build().await?.get_managed_objects().await };
     let objects = objects.await.unwrap_or_default();
     let editor = std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(EDITOR).is_file()));
-    Network { networks: networks(&objects, &known), details: details(&objects), known, editor, error: None }
+    let wifi_device = objects.iter().find(|(_, i)| i.keys().any(|i| i.as_str() == WIRELESS)).map(|(p, _)| p.to_string());
+    Network { networks: networks(&objects, &known), details: details(&objects), known, wifi_device, editor, error: None }
 }
 
 async fn known(bus: &Connection) -> zbus::Result<Vec<Known>> {
@@ -204,6 +211,67 @@ pub async fn join(bus: Connection, ap: Ap, password: Option<String>) -> zbus::Re
     Ok(())
 }
 
+/// "Other…": a network that doesn't announce its name. `security` is "none", "psk" (WPA2/WPA3 Personal) or "eap"
+/// (WPA2 Enterprise, with `eap` "peap" or "ttls", `inner` "mschapv2" or "pap", and an optional `ca` file).
+#[derive(Default)]
+pub struct Hidden {
+    pub ssid: String,
+    pub security: String,
+    pub password: String,
+    pub eap: String,
+    pub inner: String,
+    pub identity: String,
+    pub ca: String,
+}
+
+impl Drop for Hidden {
+    fn drop(&mut self) {
+        wipe(&mut self.password);
+    }
+}
+
+/// Zeroes a secret before its memory goes back to the allocator.
+pub fn wipe(secret: &mut String) {
+    let mut bytes = std::mem::take(secret).into_bytes();
+    // SAFETY: plain byte writes inside the vector; volatile so they aren't optimised away before the free.
+    bytes.iter_mut().for_each(|b| unsafe { std::ptr::write_volatile(b, 0) });
+}
+
+/// The new connection for a hidden network.
+fn hidden_settings(h: &Hidden) -> Dict<'_> {
+    let mut settings = Dict::from([
+        ("connection", HashMap::from([("type", Value::from("802-11-wireless")), ("id", Value::from(h.ssid.as_str()))])),
+        ("802-11-wireless", HashMap::from([("ssid", Value::from(h.ssid.as_bytes())), ("hidden", Value::from(true))])),
+    ]);
+    match h.security.as_str() {
+        // ponytail: wpa-psk joins WPA2 and WPA2/WPA3 mixed networks; a WPA3-only one needs "sae" (Advanced…).
+        "psk" => drop(settings.insert("802-11-wireless-security", HashMap::from([("key-mgmt", "wpa-psk".into()), ("psk", h.password.as_str().into())]))),
+        "eap" => {
+            settings.insert("802-11-wireless-security", HashMap::from([("key-mgmt", Value::from("wpa-eap"))]));
+            let mut x = HashMap::from([
+                ("eap", Value::from(vec![h.eap.as_str()])),
+                ("phase2-auth", h.inner.as_str().into()),
+                ("identity", h.identity.as_str().into()),
+                ("password", h.password.as_str().into()),
+            ]);
+            if !h.ca.trim().is_empty() {
+                // A path is given as a NUL-terminated `file://` URI in bytes.
+                x.insert("ca-cert", Value::from(format!("file://{}\0", h.ca.trim()).into_bytes()));
+            }
+            settings.insert("802-1x", x);
+        }
+        _ => {}
+    }
+    settings
+}
+
+/// "Other…" ▸ Join: adds the hidden network's connection and joins it through `device`.
+pub async fn join_hidden(bus: Connection, device: String, hidden: Hidden) -> zbus::Result<()> {
+    let call = (hidden_settings(&hidden), ObjectPath::try_from(device.as_str())?, ObjectPath::from_static_str_unchecked("/"));
+    bus.call_method(Some(NM), "/org/freedesktop/NetworkManager", Some(NM), "AddAndActivateConnection", &call).await?;
+    Ok(())
+}
+
 /// Known Networks ▸ Auto-Join: `connection.autoconnect`. NetworkManager keeps the stored secrets when `Update` has none.
 pub async fn auto_join(bus: Connection, path: String, on: bool) -> zbus::Result<()> {
     let mut settings: Settings = bus.call_method(Some(NM), path.as_str(), Some(SAVED), "GetSettings", &()).await?.body().deserialize()?;
@@ -254,6 +322,44 @@ mod tests {
 
     fn path(p: &str) -> OwnedObjectPath {
         OwnedObjectPath::try_from(p).unwrap()
+    }
+
+    #[test]
+    fn hidden_network_settings() {
+        let text = |v: &Value| String::try_from(v.try_clone().unwrap()).unwrap();
+        let mut h = Hidden::default();
+        (h.ssid, h.security) = ("Lab".into(), "none".into());
+        let open = hidden_settings(&h);
+        assert_eq!(open["802-11-wireless"]["hidden"], Value::from(true));
+        assert_eq!(Vec::<u8>::try_from(open["802-11-wireless"]["ssid"].try_clone().unwrap()).unwrap(), b"Lab");
+        assert_eq!(text(&open["connection"]["type"]), "802-11-wireless");
+        assert!(!open.contains_key("802-11-wireless-security"));
+        drop(open);
+
+        h.security = "psk".into();
+        h.password = "hunter22".into();
+        let psk = hidden_settings(&h);
+        assert_eq!((text(&psk["802-11-wireless-security"]["key-mgmt"]), text(&psk["802-11-wireless-security"]["psk"])), ("wpa-psk".into(), "hunter22".into()));
+        drop(psk);
+
+        (h.ssid, h.security, h.password, h.eap, h.inner, h.identity, h.ca) =
+            ("Corp".into(), "eap".into(), "pw".into(), "peap".into(), "mschapv2".into(), "me".into(), "/etc/ca.pem".into());
+        let eap = hidden_settings(&h);
+        assert_eq!(text(&eap["802-11-wireless-security"]["key-mgmt"]), "wpa-eap");
+        let x = &eap["802-1x"];
+        assert_eq!(Vec::<String>::try_from(x["eap"].try_clone().unwrap()).unwrap(), ["peap"]);
+        assert_eq!([text(&x["phase2-auth"]), text(&x["identity"]), text(&x["password"])], ["mschapv2", "me", "pw"]);
+        assert_eq!(Vec::<u8>::try_from(x["ca-cert"].try_clone().unwrap()).unwrap(), b"file:///etc/ca.pem\0");
+        drop(eap);
+        h.ca.clear();
+        assert!(!hidden_settings(&h)["802-1x"].contains_key("ca-cert"));
+    }
+
+    #[test]
+    fn wipe_empties() {
+        let mut secret = String::from("hunter22");
+        wipe(&mut secret);
+        assert!(secret.is_empty());
     }
 
     #[test]
