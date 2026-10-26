@@ -9,6 +9,7 @@ mod display_info;
 mod gallery;
 mod network;
 mod pages;
+mod shortcuts;
 mod style;
 mod system;
 mod xkb;
@@ -47,6 +48,9 @@ fn main() -> iced::Result {
             if app.page == Page::Bluetooth {
                 all.push(iced::Subscription::run(system::discover).map(|()| Message::Rescan));
                 all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::Rescan));
+            }
+            if app.shortcuts.as_ref().is_some_and(|e| e.recording.is_some()) {
+                all.push(iced::event::listen_with(shortcuts::key_pressed));
             }
             iced::Subscription::batch(all)
         })
@@ -109,6 +113,8 @@ pub struct App {
     picker: Option<String>,
     /// Apps in the notification history, read when Notifications opens.
     notifiers: Vec<String>,
+    /// Keyboard ▸ Keyboard Shortcuts…, open.
+    shortcuts: Option<shortcuts::Editor>,
 }
 
 #[derive(Clone, Debug)]
@@ -181,6 +187,7 @@ pub enum Message {
     Picker(Option<String>),
     /// `keyboard.options` rewritten by a Modifier Keys dropdown.
     Options(String),
+    Shortcuts(shortcuts::Msg),
 }
 
 impl App {
@@ -205,6 +212,7 @@ impl App {
             installed: Vec::new(),
             picker: None,
             notifiers: config::notifying_apps(),
+            shortcuts: None,
         };
         app.retheme();
         if page == Page::General {
@@ -370,6 +378,9 @@ impl App {
                     self.keep = None;
                 }
             }
+            Message::Shortcuts(msg) => return shortcuts::update(self, msg),
+            // The shortcuts sheet takes the keys.
+            Message::TypeAhead(_) if self.shortcuts.is_some() => {}
             Message::TypeAhead(text) => {
                 self.query.push_str(&text);
                 use iced::widget::operation::{focus, move_cursor_to_end};
@@ -388,9 +399,10 @@ impl App {
         }
         let content = scrollable(container(body).center_x(Length::Fill)).direction(style::thin()).style(t.scroll()).height(Length::Fill);
         let window = row![self.sidebar(), content].height(Length::Fill);
-        match &self.keep {
-            Some(keep) => stack![window, pages::keep_sheet(t, keep.left(Instant::now()))].into(),
-            None => window.into(),
+        match (&self.keep, &self.shortcuts) {
+            (Some(keep), _) => stack![window, pages::keep_sheet(t, keep.left(Instant::now()))].into(),
+            (None, Some(editor)) => stack![window, shortcuts::view(self, editor)].into(),
+            (None, None) => window.into(),
         }
     }
 

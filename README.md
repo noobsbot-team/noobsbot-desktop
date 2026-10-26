@@ -237,7 +237,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
 - **Force Quit:** Super+Alt+Esc.
 
 ## Keyboard shortcuts
-Super is the key with the Windows or Command logo. All shortcuts can be changed in the `[bindings]` section of the
+Super is the key with the Windows or Command logo. All shortcuts can be changed in System Settings ▸ Keyboard ▸
+Keyboard Shortcuts… (click a shortcut's keys, then press the new ones), or in the `[bindings]` section of the
 settings file.
 
 | Shortcut | Action |

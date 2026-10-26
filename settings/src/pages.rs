@@ -941,28 +941,10 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
     let t = app.tokens;
     match page {
         Page::Keyboard => {
-            let rows = app
-                .config
-                .bindings()
-                .into_iter()
-                .map(|(keys, action)| {
-                    let key = format!("bindings.{keys}");
-                    let value = app.texts.get(&key).cloned().unwrap_or(action);
-                    let field = text_input("none", &value)
-                        .on_input({
-                            let key = key.clone();
-                            move |v| Message::Type(key.clone(), v)
-                        })
-                        .on_submit(Message::Submit(key))
-                        .size(12)
-                        .padding([3, 8])
-                        .width(220)
-                        .style(t.input(false));
-                    line(t, keys.replace('+', " + "), "", field.into())
-                })
-                .collect();
+            let open =
+                button(text("Keyboard Shortcuts…").size(13)).padding([3, 10]).style(t.push(false)).on_press(Message::Shortcuts(crate::shortcuts::Msg::Open));
             let mut parts = input_sources(app);
-            parts.extend([group(t, "Shortcuts", rows), note(t, "Type an action and press Return; “none” frees the key.")]);
+            parts.push(group(t, "Shortcuts", vec![line(t, "Keyboard shortcuts", "Change, turn off or add the desktop's keys", open.into())]));
             parts
         }
         Page::Notifications => notifying_apps(app),
