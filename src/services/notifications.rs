@@ -2,7 +2,12 @@
 //! frame loop owns the store (shell/notify.rs) and answers with `Command`s that emit the closed and action signals.
 //! Icons are decoded and scaled here, so the frame loop only uploads them. History lives in a file (E4.2, last 100).
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use resvg::tiny_skia;
 use smithay::reexports::calloop::channel::Sender;
@@ -70,6 +75,36 @@ struct Server {
     updates: Sender<Update>,
     next: u32,
     icons: HashMap<String, Option<Arc<Rendered>>>,
+    limit: Limit,
+}
+
+/// New notifications an app may show a second; more merge into its latest one ("and 3 more").
+const RATE: usize = 5;
+
+/// Per app: when its last `RATE` notifications showed, how many merged since, and the last one shown.
+#[derive(Default)]
+struct Limit(HashMap<String, (VecDeque<Instant>, u32, Option<Notification>)>);
+
+impl Limit {
+    /// `None`: show it. `Some(n)`: over the limit, the n-th merged since the last one shown.
+    fn check(&mut self, app: &str, now: Instant) -> Option<u32> {
+        let second = Duration::from_secs(1);
+        // Names come from any app: forget the quiet ones before the map grows.
+        if self.0.len() >= MAX_ICONS && !self.0.contains_key(app) {
+            self.0.retain(|_, (times, _, _)| times.back().is_some_and(|t| now.duration_since(*t) < second));
+        }
+        let (times, merged, _) = self.0.entry(app.into()).or_default();
+        while times.front().is_some_and(|t| now.duration_since(*t) >= second) {
+            times.pop_front();
+        }
+        if times.len() < RATE {
+            times.push_back(now);
+            *merged = 0;
+            return None;
+        }
+        *merged += 1;
+        Some(*merged)
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.Notifications")]
@@ -106,6 +141,20 @@ impl Server {
             n.icon = hints.get("icon_data").and_then(|v| image_data(v)).map(Arc::new);
         }
         tracing::debug!(id, app = n.app, summary = n.summary, "notification");
+        // Only new ones count: an app updating its own (progress) replaces, it doesn't add.
+        if id != replaces_id {
+            let app = n.app.clone();
+            if let Some(merged) = self.limit.check(&app, Instant::now()) {
+                if let Some(last) = self.limit.0.get(&app).and_then(|(_, _, last)| last.clone()) {
+                    let id = last.id;
+                    let body = format!("{}\nand {merged} more", last.body);
+                    let _ = self.updates.send(Update::Notify(Box::new(Notification { body, ..last })));
+                    return id;
+                }
+            } else if let Some(entry) = self.limit.0.get_mut(&app) {
+                entry.2 = Some(n.clone());
+            }
+        }
         let _ = self.updates.send(Update::Notify(Box::new(n)));
         id
     }
@@ -288,7 +337,7 @@ fn decode(path: &std::path::Path) -> Option<Rendered> {
 pub async fn serve(bus: &Connection, updates: &Sender<Update>) {
     let history = load_history();
     let next = history.iter().map(|n| n.id).max().unwrap_or(0).checked_add(1).unwrap_or(1);
-    let mut server = Server { updates: updates.clone(), next, icons: HashMap::new() };
+    let mut server = Server { updates: updates.clone(), next, icons: HashMap::new(), limit: Limit::default() };
     // The update notice is the updater's to post again: after an update it would offer a version already running.
     let history = history
         .into_iter()
@@ -397,6 +446,24 @@ pub fn decode_history(text: &str) -> Vec<Notification> {
 mod tests {
     use super::*;
     use zbus::zvariant::StructureBuilder;
+
+    #[test]
+    fn rate_limit() {
+        let mut limit = Limit::default();
+        let t0 = Instant::now();
+        let at = |ms| t0 + Duration::from_millis(ms);
+        // Five a second show; the sixth and seventh merge, counted.
+        for ms in [0, 100, 200, 300, 400] {
+            assert_eq!(limit.check("chat", at(ms)), None);
+        }
+        assert_eq!(limit.check("chat", at(500)), Some(1));
+        assert_eq!(limit.check("chat", at(900)), Some(2));
+        // Per app.
+        assert_eq!(limit.check("mail", at(900)), None);
+        // A second after the first, a slot frees and the count starts over.
+        assert_eq!(limit.check("chat", at(1000)), None);
+        assert_eq!(limit.check("chat", at(1050)), Some(1));
+    }
 
     fn hints(pairs: Vec<(&str, Value<'static>)>) -> HashMap<String, OwnedValue> {
         pairs.into_iter().map(|(k, v)| (k.to_owned(), OwnedValue::try_from(v).unwrap())).collect()
