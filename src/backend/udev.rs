@@ -20,7 +20,7 @@ use smithay::{
             compositor::{DrmCompositor, FrameFlags},
             exporter::gbm::GbmFramebufferExporter,
         },
-        input::{AbsolutePositionEvent, Event, InputEvent, PointerMotionEvent},
+        input::{AbsolutePositionEvent, Event, InputEvent, PointerMotionEvent, Switch, SwitchState, SwitchToggleEvent},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
             ImportDma, RendererSuper,
@@ -263,7 +263,7 @@ impl State {
     }
 
     /// Reads which displays are connected and drops unplugged ones (E6.2 hotplug); `apply_displays` lights the new.
-    // ponytail: no 500 ms settle for docks, no clamshell.
+    // ponytail: no 500 ms settle for docks.
     fn scan_connectors(&mut self, node: DrmNode) {
         let Some(Device::Udev(udev)) = self.device.as_mut() else { return };
         let Some(card) = udev.cards.get_mut(&node) else { return };
@@ -291,7 +291,7 @@ impl State {
         let all: Vec<(DrmNode, usize)> = nodes.iter().flat_map(|n| (0..udev.cards[n].connected.len()).map(|i| (*n, i))).collect();
         let connected: Vec<Display> = all.iter().map(|(n, i)| udev.cards[n].connected[*i].1.clone()).collect();
         self.follow_layout(&connected);
-        let planned = displays::plan(connected, &self.config.display);
+        let planned = displays::plan(connected, &self.config.display, self.lid_closed);
         let Some(Device::Udev(udev)) = self.device.as_mut() else { return Vec::new() };
         let mut shown = Vec::new();
         for ((node, i), d) in all.into_iter().zip(planned) {
@@ -576,6 +576,16 @@ impl State {
                 }
             }
             InputEvent::PointerMotion { event } => self.relative_motion(event.delta(), event.time()),
+            // Clamshell: the panel goes off with the lid closed while another display is on (`displays::plan`).
+            // libinput sends the lid's state as its switch is added, so a lid already closed at start counts too.
+            InputEvent::SwitchToggle { event } if SwitchToggleEvent::switch(&event) == Some(Switch::Lid) => {
+                let closed = SwitchToggleEvent::state(&event) == SwitchState::On;
+                if closed != self.lid_closed {
+                    tracing::info!(closed, "lid");
+                    self.lid_closed = closed;
+                    self.apply_displays();
+                }
+            }
             // A touchscreen or tablet maps onto its own display, not the first.
             InputEvent::PointerMotionAbsolute { event } => {
                 let outputs: Vec<(String, Rectangle<i32, Logical>)> =
