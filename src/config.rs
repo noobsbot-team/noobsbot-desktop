@@ -515,14 +515,26 @@ pub struct OutputSettings {
     pub position: Option<[i32; 2]>,
     /// The menu bar and dock go here.
     pub primary: bool,
+    /// Mirror: show this connector's picture instead of extending the desktop; empty = extended.
+    pub mirror: String,
 }
 
 /// The keys an `[[display.outputs]]` entry may have (unknown ones are warned about).
-const OUTPUT_KEYS: [&str; 8] = ["name", "enabled", "mode", "refresh", "scale", "rotation", "position", "primary"];
+const OUTPUT_KEYS: [&str; 9] = ["name", "enabled", "mode", "refresh", "scale", "rotation", "position", "primary", "mirror"];
 
 impl Default for OutputSettings {
     fn default() -> Self {
-        Self { name: String::new(), enabled: true, mode: String::new(), refresh: 0.0, scale: 0.0, rotation: 0, position: None, primary: false }
+        Self {
+            name: String::new(),
+            enabled: true,
+            mode: String::new(),
+            refresh: 0.0,
+            scale: 0.0,
+            rotation: 0,
+            position: None,
+            primary: false,
+            mirror: String::new(),
+        }
     }
 }
 
@@ -1701,11 +1713,12 @@ mod tests {
         let c = parse(concat!(
             "[display]\nscale = 1.5\n",
             "[[display.outputs]]\nname = \"eDP-1\"\nmode = \"1920x1200\"\nrefresh = 59.95\nscale = 1.25\nrotation = 90\nposition = [0, -200]\nprimary = true\nshiny = 1\n",
+            "[[display.outputs]]\nname = \"DP-1\"\nmirror = \"eDP-1\"\n",
             "[[display.outputs]]\nname = \"HDMI-A-1\"\nenabled = false\n",
         ))
         .unwrap();
         assert_eq!(c.display.scale, 1.5);
-        let [laptop, hdmi] = &c.display.outputs[..] else { panic!("{:?}", c.display.outputs) };
+        let [laptop, dp, hdmi] = &c.display.outputs[..] else { panic!("{:?}", c.display.outputs) };
         assert_eq!(
             laptop,
             &OutputSettings {
@@ -1716,10 +1729,12 @@ mod tests {
                 scale: 1.25,
                 rotation: 90,
                 position: Some([0, -200]),
-                primary: true
+                primary: true,
+                mirror: String::new()
             }
         );
         assert_eq!(hdmi, &OutputSettings { name: "HDMI-A-1".into(), enabled: false, ..Default::default() }, "unset keys: the defaults");
+        assert_eq!(dp.mirror, "eDP-1");
     }
 
     #[test]
