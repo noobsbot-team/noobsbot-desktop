@@ -134,7 +134,7 @@ impl State {
             self.zones.bar_press = Some((window, part));
             return;
         }
-        let double = self.zones.last_title_press.take().is_some_and(|(at, w)| at.elapsed() < wm::DOUBLE_CLICK && w == window);
+        let double = self.zones.last_title_press.take().is_some_and(|(at, w)| at.elapsed() < self.config.mouse.double_click() && w == window);
         if double {
             match self.config.windows.double_click_title {
                 crate::config::TitleAction::Zoom => self.toggle_zoom(&window),

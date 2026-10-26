@@ -322,6 +322,7 @@ doesn't understand is skipped and reported in the journal.
 | `[accessibility]` | Zoom style (whole screen or a lens), colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown, the Orca screen reader |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
 | `[touchpad]` | on or off, tap to click, natural scrolling, three or four-finger swipes, gesture sensitivity |
+| `[mouse]` | tracking speed, acceleration, primary button, natural scrolling, middle-click emulation, double-click speed (also given to GTK apps) |
 | `[hot_corners]` | an action for each screen corner (off by default) |
 | `[display]` | which GPU draws the desktop, scale for every screen |
 | `[[display.outputs]]` | one screen by connector name: on or off, resolution, refresh rate, scale, rotation, position, which shows the menu bar and Dock (System Settings › Displays asks to keep or revert) |

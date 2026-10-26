@@ -433,6 +433,7 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Mouse, "", "mouse.natural_scroll", "Natural scrolling", "Content follows the wheel", Kind::Toggle),
     s(Page::Mouse, "", "mouse.left_handed", "Primary button on the right", "The trackpad follows", Kind::Toggle),
     s(Page::Mouse, "", "mouse.middle_click_emulation", "Left + right = middle click", "", Kind::Toggle),
+    s(Page::Mouse, "", "mouse.double_click_ms", "Double-click speed", "Longest gap between two clicks", Kind::Slider { min: 150.0, max: 1000.0, step: 50.0 }),
     s(Page::DateTime, "", "clock.timezone", "Time zone", "Type a city; picking one also sets the system's", Kind::Zone),
     s(Page::DateTime, "", "clock.hour24", "24-hour time", "", Kind::Toggle),
     s(Page::DateTime, "Menu bar clock", "clock.weekday", "Show the day of the week", "", Kind::Toggle),
@@ -530,7 +531,7 @@ fn shown(key: &str, value: f64) -> String {
         "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
         "keyboard.repeat_rate" => format!("{value:.0}/s"),
-        "keyboard.repeat_delay" => format!("{value:.0} ms"),
+        "keyboard.repeat_delay" | "mouse.double_click_ms" => format!("{value:.0} ms"),
         "appearance.dark_from" | "appearance.dark_until" | "night_light.from" | "night_light.until" | "notifications.dnd_from" | "notifications.dnd_until" => {
             format!("{value:02.0}:00")
         }

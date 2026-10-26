@@ -391,11 +391,20 @@ pub struct Mouse {
     pub natural_scroll: bool,
     /// Left and right together act as the middle button.
     pub middle_click_emulation: bool,
+    /// Two clicks closer than this (ms) are a double-click: our title bars, desktop icons and edges, and GTK apps.
+    pub double_click_ms: u32,
 }
 
 impl Default for Mouse {
     fn default() -> Self {
-        Self { speed: 0.0, acceleration: true, left_handed: false, natural_scroll: false, middle_click_emulation: false }
+        Self { speed: 0.0, acceleration: true, left_handed: false, natural_scroll: false, middle_click_emulation: false, double_click_ms: 400 }
+    }
+}
+
+impl Mouse {
+    /// The double-click time, kept between 150 ms and 1 s.
+    pub fn double_click(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.double_click_ms.clamp(150, 1000).into())
     }
 }
 
@@ -1586,6 +1595,15 @@ mod tests {
             }
         );
         assert_eq!(hdmi, &OutputSettings { name: "HDMI-A-1".into(), enabled: false, ..Default::default() }, "unset keys: the defaults");
+    }
+
+    #[test]
+    fn double_click_time_is_kept_sane() {
+        let ms = |text: &str| parse(text).unwrap().mouse.double_click().as_millis();
+        assert_eq!(ms(""), 400);
+        assert_eq!(ms("[mouse]\ndouble_click_ms = 650"), 650);
+        assert_eq!(ms("[mouse]\ndouble_click_ms = 0"), 150, "0 would make double-clicks impossible");
+        assert_eq!(ms("[mouse]\ndouble_click_ms = 99999"), 1000);
     }
 
     #[test]

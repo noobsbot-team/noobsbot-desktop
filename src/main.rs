@@ -198,6 +198,10 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             let displays = config.display != state.config.display;
+            let (new, old) = (&config.mouse, &state.config.mouse);
+            if new.double_click_ms != old.double_click_ms && !state.nested {
+                theme::mouse_in_background(new);
+            }
             if (config.touchpad != state.config.touchpad || config.mouse != state.config.mouse)
                 && let Some(backend::Device::Udev(udev)) = state.device.as_mut()
             {
