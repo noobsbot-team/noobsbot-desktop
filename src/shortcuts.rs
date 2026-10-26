@@ -571,6 +571,10 @@ impl State {
             Action::NotificationCenter => {
                 let (year, month) = crate::shell::this_month();
                 let open = matches!(self.popup, Some(crate::shell::Popup::Notifications { .. }));
+                if !open {
+                    // On the display under the pointer.
+                    self.bar_output = self.pointer_output();
+                }
                 self.popup = (!open).then_some(crate::shell::Popup::Notifications { year, month });
                 self.schedule_redraw();
             }

@@ -605,6 +605,8 @@ impl State {
         match (id, close, action) {
             (None, ..) => {
                 let (year, month) = super::this_month();
+                // On the banners' display, the first.
+                self.bar_output = None;
                 self.popup = Some(Popup::Notifications { year, month });
                 self.schedule_redraw();
             }
