@@ -101,11 +101,7 @@ impl State {
         // The volume as it is now: it may have been unmounted meanwhile.
         let now = self.disks.volumes.iter().flatten().find(|n| n.block == v.block).cloned().unwrap_or(v);
         match key {
-            "eject" => {
-                let blocks = self.disks.volumes.iter().flatten().filter(|n| n.drive == now.drive && !n.mounts.is_empty()).map(|n| n.block.clone()).collect();
-                self.disks.ejecting.push(now.drive.clone());
-                self.services.send(Command::Eject { drive: now.drive, blocks, name: now.name });
-            }
+            "eject" => self.eject(now),
             _ => {
                 if let Some(mount) = now.mounts.first() {
                     self.spawn(&["dolphin".into(), mount.clone()]);
@@ -113,6 +109,22 @@ impl State {
             }
         }
         true
+    }
+
+    /// The eject key: the last mounted removable drive.
+    // ponytail: UDisks2's order, not the order they were plugged in; track plug-in times if two drives confuse it.
+    pub fn eject_last(&mut self) {
+        let last = self.disks.volumes.iter().flatten().rfind(|v| v.auto && v.drive != "/" && !v.mounts.is_empty()).cloned();
+        if let Some(v) = last {
+            self.eject(v);
+        }
+    }
+
+    /// Unmounts every mounted volume of `v`'s drive, then powers it off.
+    fn eject(&mut self, v: Volume) {
+        let blocks = self.disks.volumes.iter().flatten().filter(|n| n.drive == v.drive && !n.mounts.is_empty()).map(|n| n.block.clone()).collect();
+        self.disks.ejecting.push(v.drive.clone());
+        self.services.send(Command::Eject { drive: v.drive, blocks, name: v.name });
     }
 }
 
