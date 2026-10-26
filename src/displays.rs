@@ -30,7 +30,8 @@ use crate::{
 /// rotation, position and primary. Entries are matched by connector name; a display without one gets its preferred
 /// mode at the highest refresh, the `[display] scale` (or auto) and a place right of the others. At least one
 /// display stays on, and exactly one on display is primary. With the lid closed, the built-in panel is off while
-/// another display is on (clamshell).
+/// another display is on (clamshell). A mirror (`mirror = "<connector>"`) shows an on, non-mirror other display's
+/// picture and is left out of the arrangement; otherwise it falls back to extended.
 pub fn plan(mut displays: Vec<Display>, config: &Displays, lid_closed: bool) -> Vec<Display> {
     let entry = |name: &str| config.outputs.iter().find(|o| o.name == name).cloned().unwrap_or_default();
     for d in &mut displays {
@@ -45,6 +46,7 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays, lid_closed: bool) -> 
         // As smithay's `Space::output_geometry` rounds, so neighbours meet exactly.
         (d.width, d.height) = ((f64::from(w) / d.scale).ceil() as i32, (f64::from(h) / d.scale).ceil() as i32);
         d.primary = false;
+        d.mirror = String::new();
     }
     clamshell(&mut displays, lid_closed);
     if !displays.iter().any(|d| d.enabled)
@@ -52,29 +54,31 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays, lid_closed: bool) -> 
     {
         first.enabled = true;
     }
+    mirrors(&mut displays, |name| entry(name).mirror);
     // Placed ones first, then the rest in a row right of them, tops aligned.
     let mut right = i32::MIN;
-    for d in displays.iter_mut().filter(|d| d.enabled) {
+    let extended = |d: &Display| d.enabled && d.mirror.is_empty();
+    for d in displays.iter_mut().filter(|d| extended(d)) {
         if let Some([x, y]) = entry(&d.name).position {
             (d.x, d.y) = (x, y);
             right = right.max(x + d.width);
         }
     }
     let mut right = right.max(0);
-    for d in displays.iter_mut().filter(|d| d.enabled && entry(&d.name).position.is_none()) {
+    for d in displays.iter_mut().filter(|d| extended(d) && entry(&d.name).position.is_none()) {
         (d.x, d.y) = (right, 0);
         right += d.width;
     }
     // Saved positions were for the sizes of their day: a scale, mode or rotation change leaves overlaps or gaps,
     // where the pointer gets trapped. Each display is re-snapped edge to edge onto the ones before it.
     let mut placed: Vec<Area> = Vec::new();
-    for d in displays.iter_mut().filter(|d| d.enabled) {
+    for d in displays.iter_mut().filter(|d| extended(d)) {
         if !placed.is_empty() {
             (d.x, d.y) = snap(Area::of(d), &placed, 0);
         }
         placed.push(Area::of(d));
     }
-    let primary = displays.iter().position(|d| d.enabled && entry(&d.name).primary).or_else(|| displays.iter().position(|d| d.enabled));
+    let primary = displays.iter().position(|d| extended(d) && entry(&d.name).primary).or_else(|| displays.iter().position(extended));
     if let Some(i) = primary {
         displays[i].primary = true;
     }
@@ -88,6 +92,22 @@ fn clamshell(displays: &mut [Display], lid_closed: bool) {
         for d in displays.iter_mut().filter(|d| d.built_in) {
             d.enabled = false;
         }
+    }
+}
+
+/// Each on display's `mirror` (by connector name, from `wanted`) where it names another on display; then any whose
+/// source is itself a mirror goes back to extended (no chains; two mirroring each other both do).
+fn mirrors(displays: &mut [Display], wanted: impl Fn(&str) -> String) {
+    let on: Vec<String> = displays.iter().filter(|d| d.enabled).map(|d| d.name.clone()).collect();
+    for d in displays.iter_mut().filter(|d| d.enabled) {
+        let source = wanted(&d.name);
+        if source != d.name && on.contains(&source) {
+            d.mirror = source;
+        }
+    }
+    let mirroring: Vec<String> = displays.iter().filter(|d| !d.mirror.is_empty()).map(|d| d.name.clone()).collect();
+    for d in displays.iter_mut().filter(|d| mirroring.contains(&d.mirror)) {
+        d.mirror.clear();
     }
 }
 
@@ -325,6 +345,11 @@ impl State {
         for (d, output) in &lit {
             // winit's GL surface is upside down relative to Wayland; Flipped180 corrects it.
             let base = if d.nested { Transform::Flipped180 } else { Transform::Normal };
+            // A mirror is drawn in its own pixels (scale 1) and gets no place, so no Spaces, bar, dock or windows.
+            if !d.mirror.is_empty() {
+                output.change_current_state(None, Some(base + rotation(d.rotation)), Some(Scale::Integer(1)), None);
+                continue;
+            }
             output.change_current_state(None, Some(base + rotation(d.rotation)), Some(Scale::Fractional(d.scale)), Some((d.x, d.y).into()));
             self.space.map_output(output, (d.x, d.y));
             layer_map_for_output(output).arrange();
@@ -625,6 +650,35 @@ mod tests {
         let monitor_off = Displays { outputs: vec![OutputSettings { enabled: false, ..output("HDMI-A-1") }], ..Default::default() };
         let p = plan(laptop_and_monitor(), &monitor_off, true);
         assert!(p[0].enabled && !p[1].enabled, "the monitor turned off in Settings: the panel stays on");
+    }
+
+    #[test]
+    fn a_mirror_is_left_out_of_the_arrangement() {
+        let mirror = |name: &str, of: &str| OutputSettings { mirror: of.into(), ..output(name) };
+        let config = Displays { outputs: vec![mirror("eDP-1", "HDMI-A-1"), OutputSettings { primary: true, ..output("eDP-1") }], ..Default::default() };
+        let p = plan(laptop_and_monitor(), &config, false);
+        assert_eq!(p[0].mirror, "HDMI-A-1");
+        assert!(p[0].enabled && !p[0].primary && p[1].primary, "a mirror is never primary");
+        assert_eq!(p[1].x, 0, "the source alone in the arrangement");
+        // Gone, off, itself or unknown: extended.
+        for bad in ["DP-9", "eDP-1", ""] {
+            let p = plan(laptop_and_monitor(), &Displays { outputs: vec![mirror("eDP-1", bad)], ..Default::default() }, false);
+            assert_eq!((p[0].mirror.as_str(), p[1].x), ("", 1536), "{bad:?}");
+        }
+        let off = Displays { outputs: vec![mirror("eDP-1", "HDMI-A-1"), OutputSettings { enabled: false, ..output("HDMI-A-1") }], ..Default::default() };
+        let p = plan(laptop_and_monitor(), &off, false);
+        assert!(p[0].mirror.is_empty() && p[0].primary, "its source turned off");
+        // Lid closed: the panel goes off, so the monitor mirroring it takes over as the desktop.
+        let p = plan(laptop_and_monitor(), &Displays { outputs: vec![mirror("HDMI-A-1", "eDP-1")], ..Default::default() }, true);
+        assert!(!p[0].enabled && p[1].mirror.is_empty() && p[1].primary);
+        // Each mirroring the other: neither (no chains).
+        let both = Displays { outputs: vec![mirror("eDP-1", "HDMI-A-1"), mirror("HDMI-A-1", "eDP-1")], ..Default::default() };
+        assert!(plan(laptop_and_monitor(), &both, false).iter().all(|d| d.mirror.is_empty()));
+        let mut three = laptop_and_monitor();
+        three.push(display("DP-1", vec![mode(1920, 1080, 60, true)], (531, 299)));
+        let chain = Displays { outputs: vec![mirror("DP-1", "HDMI-A-1"), mirror("HDMI-A-1", "eDP-1")], ..Default::default() };
+        let p = plan(three, &chain, false);
+        assert_eq!((p[1].mirror.as_str(), p[2].mirror.as_str()), ("eDP-1", ""), "a chain's far end goes back to extended");
     }
 
     #[test]
