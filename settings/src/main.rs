@@ -9,6 +9,7 @@ mod display_info;
 mod gallery;
 mod network;
 mod pages;
+mod shortcuts;
 mod style;
 mod system;
 mod xkb;
