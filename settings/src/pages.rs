@@ -483,6 +483,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Steps(&[(0, "Immediately"), (5, "5 s"), (60, "1 min"), (300, "5 min"), (3600, "1 h")]),
     ),
     s(Page::LockScreen, "", "idle.lock_message", "Message on the lock screen", "Shown under the clock", Kind::Text("If found, please call …")),
+    s(Page::Battery, "", "battery.show_percentage", "Show percentage", "Beside the battery in the menu bar", Kind::Toggle),
     s(Page::Battery, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),

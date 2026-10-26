@@ -256,6 +256,10 @@ lock_delay = 0
 # A line on the lock screen, under the clock ("If found, call …").
 lock_message = ""
 
+[battery]
+# The percentage beside the menu bar's battery symbol.
+show_percentage = true
+
 [sound]
 # The alert sound, by its name in the freedesktop sound theme (/usr/share/sounds/freedesktop/stereo): "bell",
 # "dialog-warning", "message" … Apps ringing the bell play it (see `bell` under [accessibility]).

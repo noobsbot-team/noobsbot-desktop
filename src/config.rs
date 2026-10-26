@@ -48,6 +48,7 @@ pub struct Config {
     pub menu_bar: MenuBar,
     pub dock: Dock,
     pub idle: Idle,
+    pub battery: Battery,
     pub sound: Sound,
     pub privacy: Privacy,
     pub weather: Weather,
@@ -515,6 +516,7 @@ impl Default for Config {
             menu_bar: MenuBar::default(),
             dock: Dock::default(),
             idle: Idle::default(),
+            battery: Battery::default(),
             sound: Sound::default(),
             privacy: Privacy::default(),
             weather: Weather::default(),
@@ -925,6 +927,20 @@ pub struct Sound {
 impl Default for Sound {
     fn default() -> Self {
         Self { alert: "bell".into(), ui_sounds: true }
+    }
+}
+
+/// Battery (E8.2).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Battery {
+    /// The percentage beside the menu bar's battery symbol.
+    pub show_percentage: bool,
+}
+
+impl Default for Battery {
+    fn default() -> Self {
+        Self { show_percentage: true }
     }
 }
 
