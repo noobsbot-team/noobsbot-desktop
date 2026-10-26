@@ -332,6 +332,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Toggle,
     ),
     s(Page::Appearance, "Desktop", "desktop.icons", "Show Desktop folder on the wallpaper", "", Kind::Toggle),
+    s(Page::Appearance, "Desktop", "desktop.show_drives", "Show mounted drives on the desktop", "", Kind::Toggle),
     s(Page::Appearance, "Apps", "appearance.theme_apps", "Theme Qt apps", "Dark Mode also rewrites the Noobsbot Glass theme files", Kind::Toggle),
     s(Page::Displays, "Night Light", "night_light.enabled", "Night Light", "Warmer colours on a schedule; screenshots stay true", Kind::Toggle),
     s(

@@ -271,6 +271,9 @@ channel = "stable"
 # The files in your Desktop folder (XDG_DESKTOP_DIR, usually ~/Desktop) as icons on the wallpaper. Drag them to
 # arrange; right-click for Open, Rename, Move to Trash and New Folder.
 icons = true
+# Mounted USB drives, SD cards and other disks as icons too, at the top right above the files. Double-click opens one;
+# right-click for Open and Eject.
+show_drives = true
 
 [notifications]
 # Do Not Disturb (the Control Center tile): banners stay quiet; Notification Center still collects them.

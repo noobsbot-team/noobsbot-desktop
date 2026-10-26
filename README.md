@@ -234,7 +234,7 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   screen too; `[accessibility] on_screen_keyboard = true` keeps it up.
 - **Quake terminal:** F12 drops a terminal down from the top of the screen.
 - **Desktop icons:** files in `~/Desktop` appear on the wallpaper. Drag to arrange, double-click to open,
-  right-click for Open, Rename, Move to Trash and New Folder.
+  right-click for Open, Rename, Move to Trash and New Folder. Mounted drives show at the top right, with Eject.
 - **Calendar events:** put `.ics` files in `~/.local/share/noobsbot-desktop/calendars/`. They show in Up Next, as dots
   in the calendar, and as reminders.
 - **USB drives:** appear in a notification with Open and Eject.
@@ -327,7 +327,7 @@ doesn't understand is skipped and reported in the journal.
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
-| `[desktop]` | desktop icons on or off |
+| `[desktop]` | desktop icons on or off, mounted drives among them (`show_drives`) |
 | `[bindings]` | keyboard shortcuts |
 | `[[rules]]` | window rules: open on a Space, size, position, always on top, no title bar, opacity |
 
