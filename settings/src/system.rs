@@ -2,7 +2,7 @@
 //! paths, `src/services/`), and the About facts from `/proc`, `/sys` and `/etc`. Read once when a page opens.
 //! ponytail: no change signals; the page re-reads after its own changes, a live follow if that falls short.
 
-use std::{os::unix::net::UnixStream, process::Command, time::Duration};
+use std::{collections::HashMap, os::unix::net::UnixStream, process::Command, time::Duration};
 
 use zbus::{
     Connection,
@@ -31,9 +31,21 @@ pub struct Status {
     pub kbd_backlight: Option<u8>,
     /// NetworkManager's connectivity check is on; `None`: no NetworkManager, or no check address configured.
     pub connectivity: Option<bool>,
+    /// Apps' camera, microphone and speaker answers in the portal's permission store.
+    pub grants: Vec<Grant>,
     /// Every output and input, for the pickers.
     pub outputs: Vec<Choice>,
     pub inputs: Vec<Choice>,
+}
+
+/// An app's answer for one of the `devices` table's ids (xdg-desktop-portal's Camera and Device portals).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Grant {
+    /// `camera`, `microphone` or `speakers`.
+    pub device: &'static str,
+    /// The app's id (`org.mozilla.firefox`).
+    pub app: String,
+    pub allowed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -133,6 +145,7 @@ pub async fn read() -> Status {
         power_mode,
         kbd_backlight,
         connectivity,
+        grants: grants().await,
         outputs: section(&pw, "Sinks:"),
         inputs: section(&pw, "Sources:"),
     }
@@ -305,6 +318,50 @@ pub async fn set_connectivity(on: bool) -> Status {
         let _ = set_property(&bus, NM, "/org/freedesktop/NetworkManager", NM, "ConnectivityCheckEnabled", on.into()).await;
     }
     read().await
+}
+
+const STORE: &str = "org.freedesktop.impl.portal.PermissionStore";
+const STORE_PATH: &str = "/org/freedesktop/impl/portal/PermissionStore";
+/// The permission store's `devices` ids, with their labels.
+pub const DEVICES: [(&str, &str); 3] = [("camera", "Camera"), ("microphone", "Microphone"), ("speakers", "Speakers")];
+
+/// Every app's answer for each device; none without the permission store (no xdg-desktop-portal).
+async fn grants() -> Vec<Grant> {
+    let Ok(bus) = session().await else { return Vec::new() };
+    let mut list = Vec::new();
+    for (device, _) in DEVICES {
+        // No entry yet (nobody asked) is an error.
+        let Ok(reply) = bus.call_method(Some(STORE), STORE_PATH, Some(STORE), "Lookup", &("devices", device)).await else { continue };
+        if let Ok((table, _)) = reply.body().deserialize::<(HashMap<String, Vec<String>>, OwnedValue)>() {
+            list.extend(parse_grants(device, table));
+        }
+    }
+    list
+}
+
+/// One device's `Lookup` answer as grants, by app: allowed when its first word is `yes`. The empty id (apps outside a
+/// sandbox) isn't an app to show.
+fn parse_grants(device: &'static str, table: HashMap<String, Vec<String>>) -> Vec<Grant> {
+    let mut list: Vec<Grant> = table
+        .into_iter()
+        .filter(|(app, _)| !app.is_empty())
+        .map(|(app, words)| Grant { device, allowed: words.first().is_some_and(|w| w == "yes"), app })
+        .collect();
+    list.sort_by(|a, b| a.app.cmp(&b.app));
+    list
+}
+
+/// An app's device answer, written to the permission store (the portal reads it next time), then the new status.
+pub async fn set_grant(device: String, app: String, allowed: bool) -> Status {
+    if let Ok(bus) = session().await {
+        let answer = vec![if allowed { "yes" } else { "no" }];
+        let _ = bus.call_method(Some(STORE), STORE_PATH, Some(STORE), "SetPermission", &("devices", true, device.as_str(), app.as_str(), answer)).await;
+    }
+    read().await
+}
+
+async fn session() -> zbus::Result<Connection> {
+    zbus::connection::Builder::session()?.method_timeout(Duration::from_secs(2)).build().await
 }
 
 const TIMEDATE: &str = "org.freedesktop.timedate1";
@@ -763,6 +820,22 @@ mod tests {
         assert_eq!(installed(7_900_000.0), 8);
         assert_eq!(gpu("i915"), "Intel Graphics");
         assert_eq!(gpu("virtio_gpu"), "virtio_gpu");
+    }
+
+    #[test]
+    fn permission_store_answers() {
+        let table = HashMap::from([
+            ("org.mozilla.firefox".to_owned(), vec!["yes".to_owned()]),
+            ("com.discordapp.Discord".to_owned(), vec!["no".to_owned()]),
+            ("".to_owned(), vec!["yes".to_owned()]),
+            ("org.x.Empty".to_owned(), vec![]),
+        ]);
+        let grant = |app: &str, allowed| Grant { device: "camera", app: app.into(), allowed };
+        assert_eq!(
+            parse_grants("camera", table),
+            [grant("com.discordapp.Discord", false), grant("org.mozilla.firefox", true), grant("org.x.Empty", false)],
+            "by app; the unsandboxed entry left out; no answer is no"
+        );
     }
 
     #[test]

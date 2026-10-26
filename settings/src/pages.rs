@@ -1138,7 +1138,25 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                 ),
                 None => fact(t, "Connectivity check", "Off in NetworkManager's configuration".into()),
             };
-            vec![group(t, "Network", vec![check])]
+            let mut parts = vec![group(t, "Network", vec![check])];
+            for (device, label) in crate::system::DEVICES {
+                let rows: Vec<_> = status
+                    .grants
+                    .iter()
+                    .filter(|g| g.device == device)
+                    .map(|g| {
+                        let app = g.app.clone();
+                        line(t, g.app.as_str(), "", toggle(t, g.allowed, move |on| Message::Grant(device.into(), app.clone(), on)))
+                    })
+                    .collect();
+                if !rows.is_empty() {
+                    parts.push(group(t, label, rows));
+                }
+            }
+            if status.grants.is_empty() {
+                parts.push(note(t, "Sandboxed apps that ask for the camera or microphone show here, each with Allow."));
+            }
+            parts
         }
         Page::Appearance => vec![gallery(app)],
         Page::Users => users_part(app),
