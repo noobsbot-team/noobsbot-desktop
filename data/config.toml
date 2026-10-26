@@ -178,6 +178,11 @@ focus = "click"
 # Log Out / Restart / Shut Down reopen the running apps' windows at the next login (the alert's checkbox sets it).
 reopen_at_login = true
 
+[spaces]
+# Each display has its own Spaces and switches them on its own (keys and swipes act on the display under the
+# pointer); false: one set of Spaces every display switches together.
+per_display = true
+
 [clock]
 # Time zone, like "Asia/Kathmandu"; empty = keep the system's. Changing it sets the system zone (may ask for your password).
 timezone = ""

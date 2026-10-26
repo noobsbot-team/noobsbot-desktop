@@ -499,7 +499,7 @@ impl State {
             && !self.shot_press(self.to_output(location), button == BTN_LEFT)
             && !self.drawer_press(self.to_output(location), button == BTN_RIGHT)
             && !self.dock_press(self.to_output(location), button)
-            && !self.mission_press(self.to_output(location), button)
+            && !self.mission_press(location, button)
             && !self.shell_press(self.to_output(location), button == BTN_RIGHT)
         {
             let zone = self.zone_under(location);
@@ -549,7 +549,7 @@ impl State {
         if state == ButtonState::Released && button == BTN_LEFT {
             self.shot_release();
             self.bar_release(pointer.current_location());
-            self.mission_release(self.to_output(pointer.current_location()));
+            self.mission_release(pointer.current_location());
             self.shell_release();
             self.desktop_release();
             self.launchpad_release();
