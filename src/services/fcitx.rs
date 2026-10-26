@@ -47,7 +47,13 @@ pub async fn read(bus: &Connection) -> Option<Fcitx> {
 
 /// ibus's engines in the same shape (`[keyboard] input_method = "ibus"`).
 pub fn read_ibus() -> Option<Fcitx> {
-    crate::ibus::read().map(|(methods, current)| Fcitx { methods, current })
+    let all = crate::ibus::engines()?;
+    let methods = crate::ibus::preloaded().into_iter().map(|id| {
+        let name = all.iter().find(|e| e.0 == id).map_or_else(|| id.clone(), |e| e.1.clone());
+        (id, name)
+    });
+    let current = crate::ibus::run("ibus", &["engine"]).unwrap_or_default().trim().to_owned();
+    Some(Fcitx { methods: methods.collect(), current })
 }
 
 /// Each group item with its display name (the unique name if fcitx5 doesn't list it).

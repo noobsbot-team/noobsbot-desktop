@@ -455,7 +455,7 @@ async fn handle(
                 let _ = updates.send(Update::Fcitx(fcitx::read_ibus()));
             }
             (Command::InputMethod { name, ibus: true }, ..) => {
-                crate::ibus::set_current(&name);
+                crate::ibus::run("ibus", &["engine", &name]);
                 let _ = updates.send(Update::Fcitx(fcitx::read_ibus()));
             }
             (Command::ImeRead { ibus: false }, _, Some(bus)) => {
