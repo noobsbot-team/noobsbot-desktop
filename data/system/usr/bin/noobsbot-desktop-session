@@ -59,7 +59,8 @@ started=$(date +%s)
 # Versions from before the watchdog run bare.
 watchdog=${run%/*}/noobsbot-desktop-watchdog
 [ -x "$watchdog" ] || watchdog=""
-${watchdog:+"$watchdog"} "$run" -- sh -c 'dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY
+# XMODIFIERS again: the compositor gives its children ibus's with `[keyboard] input_method = "ibus"`.
+${watchdog:+"$watchdog"} "$run" -- sh -c 'dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY ${XMODIFIERS:+XMODIFIERS}
     systemctl --user start noobsbot-desktop-session.target
     [ -z "$NOOBSBOT_ROLLED_BACK" ] || gdbus call --session --dest org.freedesktop.Notifications \
         --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify Noobsbot\ Desktop 0 "" \
