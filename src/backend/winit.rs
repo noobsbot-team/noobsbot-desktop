@@ -468,9 +468,9 @@ impl State {
         (bar, dock_frame.animating)
     }
 
-    /// The alert, on `output` when it shows there (`alert_output`).
+    /// The alert, on `output` when it shows there (`focus_output`).
     fn alert_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
-        let shown = self.alert.is_some() && self.alert_output().as_ref() == Some(output);
+        let shown = self.alert.is_some() && self.focus_output().as_ref() == Some(output);
         let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
         let (scale, reopen) = (output.current_scale().fractional_scale(), self.config.windows.reopen_at_login);
         let appearance = &self.config.appearance;
@@ -487,6 +487,120 @@ impl State {
                 Vec::new()
             }
         }
+    }
+
+    /// Launchpad, when it shows on `output` (it then covers that display's menu bar and windows).
+    fn launchpad_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<Vec<SceneElement>> {
+        let l = self.launchpad.as_ref().filter(|l| self.overlay_output(l.output.as_ref()).as_ref() == Some(output))?;
+        let grid = self.launchpad_grid()?;
+        let size = self.space.output_geometry(output)?.size;
+        let now = self.frame_time;
+        let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &l.field.text);
+        let (lifted, offsets) = (l.lifted(&grid, now), l.offsets(now));
+        let open = l.folder.as_ref().and_then(|f| match tiles.get(f.index) {
+            Some(crate::shell::launchpad::Tile::Folder(_, apps)) => Some((crate::shell::launchpad::folder_grid(&grid, apps.len()), f)),
+            _ => None,
+        });
+        let frame = LaunchpadFrame {
+            tiles: &tiles,
+            grid: &grid,
+            output: size,
+            position: l.position(now),
+            page: l.page,
+            shown: l.shown.at(now),
+            field: &l.field,
+            lifted,
+            offsets: &offsets,
+            onto: l.press.as_ref().and_then(|p| p.onto(now)),
+            folder: open.as_ref().map(|((panel, inner), f)| (*panel, inner, *f, f.shown.at(now))),
+        };
+        let appearance = &self.config.appearance;
+        let (dark, glass, scale) = (render::is_dark(appearance), appearance.glass_opacity, output.current_scale().fractional_scale());
+        let accent = render::accent(appearance.accent, dark);
+        let views = self.backend.as_mut()?;
+        Some(views.launchpad.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, &mut self.icons, &frame, dark, accent, glass, scale))
+    }
+
+    /// The app drawer on `output` when it shows there, with its entrance; once closed, its fade-out on the display
+    /// it was on.
+    fn drawer_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let open = self.drawer.is_some().then(|| self.drawer_output());
+        let frame = self.drawer_frame();
+        let appearance = &self.config.appearance;
+        let (dark, glass, scale, reduce) =
+            (render::is_dark(appearance), appearance.glass_opacity, output.current_scale().fractional_scale(), appearance.reduce_motion);
+        let accent = render::accent(appearance.accent, dark);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        match open {
+            Some(on) if on.as_ref() != Some(output) => return Vec::new(),
+            Some(_) => views.drawer.output = Some(output.name()),
+            None if views.drawer.output != Some(output.name()) => return Vec::new(),
+            None => {}
+        }
+        let mut elements = match &frame {
+            Some(frame) => {
+                views.drawer.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, &mut self.icons, frame, dark, accent, glass, scale)
+            }
+            None => Vec::new(),
+        };
+        views.drawer.motion(renderer, &mut elements, 0, frame.is_some(), reduce, scale, self.frame_time, &mut self.anim_until);
+        elements
+    }
+
+    /// The screenshot overlay and its toolbar, on `output` when it is up there.
+    fn shot_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let here = self.overlay_output(self.screenshots.output.as_ref()).as_ref() == Some(output);
+        let Some(shot) = self.screenshots.shot.clone().filter(|_| here) else { return Vec::new() };
+        let flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
+        let size = self.shot_size();
+        let appearance = &self.config.appearance;
+        let (dark, glass, scale) = (render::is_dark(appearance), appearance.glass_opacity, output.current_scale().fractional_scale());
+        let accent = render::accent(appearance.accent, dark);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        views.screenshot.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, &shot, flags, size, dark, accent, glass, scale)
+    }
+
+    /// The screenshot thumbnail, on `output` when it shows there (`thumbnail_output`).
+    fn thumbnail_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let frame = self.thumbnail_frame();
+        let here = self.thumbnail_output().as_ref() == Some(output);
+        let (dark, scale) = (render::is_dark(&self.config.appearance), output.current_scale().fractional_scale());
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        match &frame {
+            Some((rect, thumb, alpha)) if here => views.screenshot.thumbnail(renderer, &views.shaders, thumb, *rect, *alpha, dark, scale),
+            Some(_) => Vec::new(),
+            None => {
+                views.screenshot.hide_thumbnail();
+                Vec::new()
+            }
+        }
+    }
+
+    /// Spotlight, on `output` when it shows there.
+    fn spotlight_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let Some(open) = self.spotlight.clone().filter(|s| self.overlay_output(s.output.as_ref()).as_ref() == Some(output)) else { return Vec::new() };
+        let hits = self.spotlight_results();
+        let Some(layout) = self.spotlight_layout(hits.len()) else { return Vec::new() };
+        let selected = open.selected.min(layout.rows.len().saturating_sub(1));
+        let appearance = &self.config.appearance;
+        let (dark, glass, scale) = (render::is_dark(appearance), appearance.glass_opacity, output.current_scale().fractional_scale());
+        let accent = render::accent(appearance.accent, dark);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        views.spotlight.elements(
+            renderer,
+            &views.shaders,
+            &mut self.text,
+            &mut self.symbols,
+            &mut self.icons,
+            &hits,
+            selected,
+            &open.field,
+            &layout,
+            dark,
+            accent,
+            glass,
+            scale,
+        )
     }
 
     /// The hot-corner ripple (E5.4) on `output`, if its corner is there: a faint glass disc with a light rim, growing
@@ -506,9 +620,9 @@ impl State {
         ]
     }
 
-    // ponytail: most of the shell (alerts, banners, Launchpad) is on the first output only, since its caches and hit
-    // tests are for one output; the other displays get a menu bar and a dock of their own and the popups opened from
-    // the bar (`bar_elements`).
+    // ponytail: banners, the OSD, Force Quit, the emoji picker and the desktop icons are on the first output only,
+    // since their caches and hit tests are for one output; every display gets its own menu bar, dock and bar popups,
+    // and the alert, Spotlight, Launchpad, the app drawer and the screenshot overlay and thumbnail where they show.
     fn scene_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
         let switcher_elements = self.switcher_elements(renderer, output);
         if self.space.outputs().next() != Some(output) {
@@ -521,9 +635,15 @@ impl State {
             let slide = if overview.is_none() { self.slide_frame(output) } else { None };
             let indicator = self.space_indicator(output);
             let animating = animating || overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
+            // Launchpad when it shows here, covering the menu bar and the windows.
+            let pad = self.launchpad_elements(renderer, output);
             // Its own menu bar and the popups opened from it.
-            let (strip, popups) = self.bar_elements(renderer, output, locked);
+            let (strip, popups) = self.bar_elements(renderer, output, locked || pad.is_some());
+            let drawer = self.drawer_elements(renderer, output);
             let mut ripple = self.alert_elements(renderer, output);
+            ripple.extend(self.shot_elements(renderer, output));
+            ripple.extend(self.thumbnail_elements(renderer, output));
+            ripple.extend(self.spotlight_elements(renderer, output));
             ripple.extend(self.ripple_elements(output));
             let animating = animating || !ripple.is_empty();
             // Its own dock, in front of the windows.
@@ -542,8 +662,11 @@ impl State {
                 views.ghosts.retain(|g| !g.anim.done(now));
                 let mut front = ripple;
                 front.extend(popups);
+                front.extend(drawer);
                 front.extend(strip);
                 front.extend(dock);
+                let pad_here = pad.is_some();
+                front.extend(pad.into_iter().flatten());
                 front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
                 let appearance = &self.config.appearance;
                 let mission = views.missions.entry(output.name()).or_default();
@@ -557,6 +680,7 @@ impl State {
                         Some(mission.windows(renderer, &views.shaders, text, &self.space, overview, geo, dark, accent, glass, scale))
                     }
                     (None, Some(slide)) => Some(render::sliding(renderer, &views.shaders, &mut self.text, &self.space, slide, scale, dark)),
+                    (None, None) if pad_here => Some(Vec::new()),
                     (None, None) => None,
                 };
                 render::scene(
@@ -583,25 +707,22 @@ impl State {
             return Some((elements, animating || views.wallpaper.fading()));
         }
         self.capture_ask();
-        let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
-        let thumbnail = self.thumbnail_frame();
+        let shot = self.shot_elements(renderer, output);
+        let thumbnail = self.thumbnail_elements(renderer, output);
         let quit_list = self.force_quit.clone().map(|f| {
             let entries = self.force_quit_entries();
             let selected = f.selection(&entries);
             (entries, selected)
         });
-        let search = self.spotlight.clone().and_then(|s| {
-            let hits = self.spotlight_results();
-            Some((self.spotlight_layout(hits.len())?, hits, s))
-        });
+        let search = self.spotlight_elements(renderer, output);
         let (cards, more) = self.banner_layout();
         let (dock_elements, dock_animating) = self.dock_elements(renderer, output);
         let now = self.frame_time;
         self.launchpad_frame(now);
-        let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
+        let pad = self.launchpad_elements(renderer, output);
         let desktop_frame = self.desktop_frame();
         let desktop_widgets = self.desktop_widgets();
-        let drawer_frame = self.drawer_frame();
+        let drawer = self.drawer_elements(renderer, output);
         let overview = self.mission_frame(output);
         let slide = if overview.is_none() { self.slide_frame(output) } else { None };
         let indicator = self.space_indicator(output);
@@ -633,18 +754,18 @@ impl State {
             docks: _,
             switcher: _,
             force_quit,
-            spotlight,
+            spotlight: _,
             emoji: emoji_view,
             osk: _,
-            launchpad: pad_view,
-            drawer: drawer_view,
+            launchpad: _,
+            drawer: _,
             mission,
             missions: _,
             ghosts,
             tiles: _,
             entrances,
             lock: lock_view,
-            screenshot,
+            screenshot: _,
             desktop: desktop_view,
             widgets: widget_view,
         } = self.backend.as_mut()?;
@@ -659,49 +780,14 @@ impl State {
         let mut bar = Vec::new();
         bar.extend(alert);
         // The screenshot overlay and its thumbnail: in front of all but the alert.
-        if let Some(shot) = &self.screenshots.shot {
-            let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
-            bar.extend(screenshot.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                shot,
-                shot_flags,
-                size,
-                dark,
-                accent,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
-        match &thumbnail {
-            Some((rect, thumb, alpha)) => bar.extend(screenshot.thumbnail(renderer, shaders, thumb, *rect, *alpha, dark, scale)),
-            None => screenshot.hide_thumbnail(),
-        }
+        bar.extend(shot);
+        bar.extend(thumbnail);
         let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
         bar.extend(switcher_elements);
         if let Some((entries, selected)) = &quit_list {
             bar.extend(force_quit.elements(renderer, shaders, &mut self.text, &mut self.icons, entries, *selected, size, dark, accent, scale));
         }
-        if let Some((layout, hits, open)) = &search {
-            let selected = open.selected.min(layout.rows.len().saturating_sub(1));
-            bar.extend(spotlight.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                &mut self.icons,
-                hits,
-                selected,
-                &open.field,
-                layout,
-                dark,
-                accent,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
+        bar.extend(search);
         if let Some(picker) = &self.emoji {
             bar.extend(emoji_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, picker, dark, accent, appearance.glass_opacity, scale));
         }
@@ -758,59 +844,13 @@ impl State {
         entrances.fade_banners.track(renderer, &mut bar, mark, false, false, reduce, scale, now, &mut self.anim_until);
         bar.extend(popups);
         // The app drawer: behind its right-click menu, in front of the bar and the dock.
-        let mark = bar.len();
-        if let Some(frame) = &drawer_frame {
-            bar.extend(drawer_view.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                &mut self.icons,
-                frame,
-                dark,
-                accent,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
-        drawer_view.motion(renderer, &mut bar, mark, drawer_frame.is_some(), reduce, scale, now, &mut self.anim_until);
+        bar.extend(drawer);
         bar.extend(strip);
         // The dock: behind the bar and popups, above windows.
         bar.extend(dock_elements);
         // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.
-        if let (Some(((position, shown, field, page), grid)), Some(l)) = (&pad, self.launchpad.as_ref()) {
-            let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &field.text);
-            let (lifted, offsets) = (l.lifted(grid, now), l.offsets(now));
-            let open = l.folder.as_ref().and_then(|f| match tiles.get(f.index) {
-                Some(crate::shell::launchpad::Tile::Folder(_, apps)) => Some((crate::shell::launchpad::folder_grid(grid, apps.len()), f)),
-                _ => None,
-            });
-            let frame = LaunchpadFrame {
-                tiles: &tiles,
-                grid,
-                output: size,
-                position: *position,
-                page: *page,
-                shown: *shown,
-                field,
-                lifted,
-                offsets: &offsets,
-                onto: l.press.as_ref().and_then(|p| p.onto(now)),
-                folder: open.as_ref().map(|((panel, inner), f)| (*panel, inner, *f, f.shown.at(now))),
-            };
-            bar.extend(pad_view.elements(
-                renderer,
-                shaders,
-                &mut self.text,
-                &mut self.symbols,
-                &mut self.icons,
-                &frame,
-                dark,
-                accent,
-                appearance.glass_opacity,
-                scale,
-            ));
-        }
+        let pad_here = pad.is_some();
+        bar.extend(pad.into_iter().flatten());
         // Ghosts of closing and minimising windows: behind the dock, in front of windows.
         ghosts.retain(|g| !g.anim.done(now));
         bar.extend(ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, shaders, now, scale)));
@@ -832,7 +872,7 @@ impl State {
             }
             (None, Some(slide)) => Some(render::sliding(renderer, shaders, &mut self.text, &self.space, slide, scale, dark)),
             // Launchpad shows only the wallpaper.
-            (None, None) if pad.is_some() => Some(Vec::new()),
+            (None, None) if pad_here => Some(Vec::new()),
             (None, None) => None,
         };
         let mut elements = render::scene(renderer, shaders, wallpaper, &mut self.text, &self.space, output, appearance, bar, windows, now);
