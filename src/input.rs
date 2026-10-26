@@ -135,6 +135,79 @@ impl State {
         }
     }
 
+    /// A key going down or up, from a keyboard or the on-screen keyboard: shell surfaces and shortcuts first, then
+    /// the focused app.
+    pub fn key_input(&mut self, code: Keycode, key_state: KeyState, time: u32) {
+        let Some(keyboard) = self.seat.get_keyboard() else { return };
+        let serial = SERIAL_COUNTER.next_serial();
+        let inhibited = self.shortcuts_inhibited();
+        let super_down = self.super_tap.down();
+        let action = keyboard.input::<Option<Action>, _>(self, code, key_state, serial, time, |state, mods, key| {
+            let code = key.raw_code();
+            let logo = matches!(key.modified_sym(), Keysym::Super_L | Keysym::Super_R);
+            state.super_tap.key(logo, key_state == KeyState::Pressed, !mods.ctrl && !mods.alt && !mods.shift, std::time::Instant::now());
+            if key_state == KeyState::Released {
+                if state.key_repeat.as_ref().is_some_and(|(c, _)| *c == code) {
+                    state.stop_repeat();
+                }
+                state.switcher_release(mods);
+                // The release of a shortcut key never reaches the app, which never saw the press.
+                return match state.suppressed.iter().position(|c| *c == code) {
+                    Some(i) => {
+                        state.suppressed.swap_remove(i);
+                        FilterResult::Intercept(None)
+                    }
+                    None => FilterResult::Forward,
+                };
+            }
+            // A new press ends the repeat of the last one, as on the app side.
+            state.stop_repeat();
+            // Ctrl+Alt+F1…F12 on the real screen switch virtual terminals, whatever is open.
+            if state.switch_vt(key.modified_sym()) {
+                state.suppressed.push(code);
+                return FilterResult::Intercept(None);
+            }
+            let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
+            if state.shell_key(key.modified_sym(), raw, mods) {
+                state.suppressed.push(code);
+                state.start_repeat(code, key.modified_sym(), raw, *mods);
+                return FilterResult::Intercept(None);
+            }
+            // Locked: the lock screen took every key, or its client's lock surface gets them.
+            if state.locked() {
+                return FilterResult::Forward;
+            }
+            // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
+            let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
+            match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
+                Some(action) => {
+                    state.suppressed.push(code);
+                    FilterResult::Intercept(Some(action))
+                }
+                None => FilterResult::Forward,
+            }
+        });
+        self.switcher_settle();
+        // Super pressed or let go alone: the dock's number pills come or go (E8.3).
+        if self.super_tap.down() != super_down {
+            self.schedule_redraw();
+        }
+        // A lone Super tap (its release goes on to the app, which saw the press).
+        if std::mem::take(&mut self.super_tap.fired) && self.config.app_drawer.super_tap && !inhibited && !self.locked() && self.alert.is_none() {
+            self.run_action(Action::AppDrawer);
+        }
+        match action {
+            Some(Some(action)) => self.run_action(action),
+            // A key the app gets: is it still answering (E4.7)?
+            None if key_state == KeyState::Pressed => {
+                if let Some(window) = self.focused_window() {
+                    self.ping(&window);
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         self.idle_activity();
         // Clicks, scrolls and gestures with Super held aren't a Super tap; moving the pointer is fine.
@@ -142,77 +215,7 @@ impl State {
             self.super_tap.cancel();
         }
         match event {
-            InputEvent::Keyboard { event } => {
-                let Some(keyboard) = self.seat.get_keyboard() else { return };
-                let serial = SERIAL_COUNTER.next_serial();
-                let key_state = event.state();
-                let inhibited = self.shortcuts_inhibited();
-                let super_down = self.super_tap.down();
-                let action = keyboard.input::<Option<Action>, _>(self, event.key_code(), key_state, serial, event.time_msec(), |state, mods, key| {
-                    let code = key.raw_code();
-                    let logo = matches!(key.modified_sym(), Keysym::Super_L | Keysym::Super_R);
-                    state.super_tap.key(logo, key_state == KeyState::Pressed, !mods.ctrl && !mods.alt && !mods.shift, std::time::Instant::now());
-                    if key_state == KeyState::Released {
-                        if state.key_repeat.as_ref().is_some_and(|(c, _)| *c == code) {
-                            state.stop_repeat();
-                        }
-                        state.switcher_release(mods);
-                        // The release of a shortcut key never reaches the app, which never saw the press.
-                        return match state.suppressed.iter().position(|c| *c == code) {
-                            Some(i) => {
-                                state.suppressed.swap_remove(i);
-                                FilterResult::Intercept(None)
-                            }
-                            None => FilterResult::Forward,
-                        };
-                    }
-                    // A new press ends the repeat of the last one, as on the app side.
-                    state.stop_repeat();
-                    // Ctrl+Alt+F1…F12 on the real screen switch virtual terminals, whatever is open.
-                    if state.switch_vt(key.modified_sym()) {
-                        state.suppressed.push(code);
-                        return FilterResult::Intercept(None);
-                    }
-                    let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
-                    if state.shell_key(key.modified_sym(), raw, mods) {
-                        state.suppressed.push(code);
-                        state.start_repeat(code, key.modified_sym(), raw, *mods);
-                        return FilterResult::Intercept(None);
-                    }
-                    // Locked: the lock screen took every key, or its client's lock surface gets them.
-                    if state.locked() {
-                        return FilterResult::Forward;
-                    }
-                    // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
-                    let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
-                    match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
-                        Some(action) => {
-                            state.suppressed.push(code);
-                            FilterResult::Intercept(Some(action))
-                        }
-                        None => FilterResult::Forward,
-                    }
-                });
-                self.switcher_settle();
-                // Super pressed or let go alone: the dock's number pills come or go (E8.3).
-                if self.super_tap.down() != super_down {
-                    self.schedule_redraw();
-                }
-                // A lone Super tap (its release goes on to the app, which saw the press).
-                if std::mem::take(&mut self.super_tap.fired) && self.config.app_drawer.super_tap && !inhibited && !self.locked() && self.alert.is_none() {
-                    self.run_action(Action::AppDrawer);
-                }
-                match action {
-                    Some(Some(action)) => self.run_action(action),
-                    // A key the app gets: is it still answering (E4.7)?
-                    None if key_state == KeyState::Pressed => {
-                        if let Some(window) = self.focused_window() {
-                            self.ping(&window);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            InputEvent::Keyboard { event } => self.key_input(event.key_code(), event.state(), event.time_msec()),
             InputEvent::PointerMotionAbsolute { event } => {
                 let Some(output_geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
                 self.pointer_motion(event.position_transformed(output_geo.size) + output_geo.loc.to_f64(), event.time());
