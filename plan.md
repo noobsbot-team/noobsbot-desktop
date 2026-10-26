@@ -1682,17 +1682,20 @@ Rows live on the Appearance page (E8.2). Behind them:
   cursor size). Missing: accent for GTK, monospace font.
 
 ### E8.5 Window management
-- **Tiling:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
+- ~~**Tiling:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
   300 ms hold; dragging out restores the old size (E1.2). Keyboard: Super+Ctrl+arrows tile (replaces the unbuilt
-  nudge keys in E1.2).
-- **Window menu:** right-click the title bar, or the app asks (`show_window_menu`): Minimize, Zoom, Fill, Center,
-  Move & Resize ▸ halves and quarters, Full Screen, Keep on Top, Move to ▸ Space n / Display, Close.
-- **Sheets:** modal dialogs attach under the parent's title bar and move with it (E1.2 stacking).
-- **Actions** for bindings: `zoom`, `fullscreen` (Super+Ctrl+F), `keep-on-top`, `center`, `move-to-display`,
-  `move-to-space <n>`, `move-to-new-space`, `cycle-app-windows` (Super+`, E4.5).
-- Each app's window frame remembered (E1.2).
-- Switcher: pick with hover and click; H hides the selected app; centred on the active display.
-- Optional: Super + right-drag resizes; focus follows mouse as a hidden `[windows] focus = "hover"`.
+  nudge keys in E1.2).~~ Done: `wm::tile_at` in the move grab behind `[windows] snapping` (Ctrl skips it); the preview
+  shows on arrival, and a side edge held 700 ms switches Space instead; `untile` restores; Super+Ctrl+arrows.
+- ~~**Window menu:** right-click the title bar, or the app asks (`show_window_menu`): Minimize, Zoom, Fill, Center,
+  Move & Resize ▸ halves and quarters, Full Screen, Keep on Top, Move to ▸ Space n / Display, Close.~~ Done:
+  `src/decorations.rs` window menu, also from `show_window_menu`.
+- ~~**Sheets:** modal dialogs attach under the parent's title bar and move with it (E1.2 stacking).~~ Done: `src/sheets.rs`.
+- ~~**Actions** for bindings: `zoom`, `fullscreen` (Super+Ctrl+F), `keep-on-top`, `center`, `move-to-display`,
+  `move-to-space <n>`, `move-to-new-space`, `cycle-app-windows` (Super+`, E4.5).~~ Done: all in `src/shortcuts.rs`.
+- ~~Each app's window frame remembered (E1.2).~~ Done: `window-frames` in the state dir (`src/sheets.rs`).
+- ~~Switcher: pick with hover and click; H hides the selected app; centred on the active display.~~ Done: `src/shell/switcher.rs`.
+- ~~Optional: Super + right-drag resizes; focus follows mouse as a hidden `[windows] focus = "hover"`.~~ Done: both
+  (`src/input.rs`).
 
 ### E8.6 Accessibility
 - **Zoom** (full screen and picture-in-picture), with invert and greyscale filters; keys Super+Alt+8 / = / −. Built
