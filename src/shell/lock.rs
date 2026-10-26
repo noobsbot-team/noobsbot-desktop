@@ -169,6 +169,8 @@ pub struct Layout {
     pub date: Rect,
     pub clock: Rect,
     pub missed: Rect,
+    /// `[idle] lock_message`.
+    pub message: Rect,
     pub avatar: Rect,
     pub name: Rect,
     pub field: Rect,
@@ -192,6 +194,7 @@ pub fn layout(size: Size<i32, Logical>) -> Layout {
     let date = centred(w.min(600), top, 22);
     let clock = centred(w.min(600), top + 22, 100);
     let missed = centred(w.min(600), clock.loc.y + 100 + 8, 15);
+    let message = centred(w.min(600), missed.loc.y + 20, 15);
     // The user block sits in the lower third, above the buttons.
     let avatar_y = (h * 64 / 100).min(h - EDGE - BUTTON_H - 24 - (AVATAR + 12 + 16 + 16 + FIELD_H + 8 + 15)).max(missed.loc.y + 40);
     let avatar = centred(AVATAR, avatar_y, AVATAR);
@@ -202,7 +205,7 @@ pub fn layout(size: Size<i32, Logical>) -> Layout {
     let row = 3 * BUTTON_W + 2 * 8;
     let buttons = [0, 1, 2].map(|i| Rectangle::new(((w - row) / 2 + i * (BUTTON_W + 8), y).into(), (BUTTON_W, BUTTON_H).into()));
     let status = Rectangle::new((w - EDGE - 200, y).into(), (200, BUTTON_H).into());
-    Layout { date, clock, missed, avatar, name, field, hint, buttons, status }
+    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status }
 }
 
 impl State {

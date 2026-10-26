@@ -106,6 +106,8 @@ pub struct App {
     installed: Vec<autostart::Installed>,
     /// Keyboard ▸ Input Sources' picker, open, with what is typed in its search field.
     picker: Option<String>,
+    /// Apps in the notification history, read when Notifications opens.
+    notifiers: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -113,7 +115,10 @@ pub enum Message {
     Page(Page),
     Search(String),
     Toggle(&'static str, bool),
-    Choose(&'static str, &'static str),
+    Choose(String, &'static str),
+    Number(&'static str, i64),
+    /// General ▸ Privacy: empty every app's recent files.
+    ClearRecent,
     Slide(String, f64),
     Release(String),
     Type(String, String),
@@ -190,6 +195,7 @@ impl App {
             login_items: Vec::new(),
             installed: Vec::new(),
             picker: None,
+            notifiers: config::notifying_apps(),
         };
         app.retheme();
         if page == Page::General {
@@ -226,6 +232,9 @@ impl App {
                 if page == Page::General {
                     (self.login_items, self.installed) = autostart::load();
                 }
+                if page == Page::Notifications {
+                    self.notifiers = config::notifying_apps();
+                }
                 if page.is_system() {
                     return Task::perform(system::read(), Message::Status);
                 }
@@ -233,9 +242,11 @@ impl App {
             Message::Search(query) => self.query = query,
             Message::Toggle(key, on) => self.save(key, on),
             Message::Choose(key, value) => {
-                self.texts.remove(key);
-                self.save(key, value);
+                self.texts.remove(&key);
+                self.save(&key, value);
             }
+            Message::Number(key, value) => self.save(key, value),
+            Message::ClearRecent => self.error = config::clear_recent_files().err().map(|err| format!("Couldn't clear recent files: {err}")),
             Message::Slide(key, value) => {
                 self.drafts.insert(key, value);
             }

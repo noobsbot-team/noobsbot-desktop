@@ -50,6 +50,8 @@ pub struct Config {
     pub update: Update,
     pub desktop: Desktop,
     pub notifications: Notifications,
+    /// App name (as it sends notifications) → how they show.
+    pub notification_apps: BTreeMap<String, AppStyle>,
     pub app_drawer: AppDrawer,
     /// Key combination (`"Super+Return"`) → action (`"close"`, `"exec helium-browser"`, …). Parsed by input.rs.
     pub bindings: BTreeMap<String, String>,
@@ -373,6 +375,7 @@ impl Default for Config {
             update: Update::default(),
             desktop: Desktop::default(),
             notifications: Notifications::default(),
+            notification_apps: BTreeMap::new(),
             app_drawer: AppDrawer::default(),
             bindings: default_bindings(),
             rules: vec![
@@ -447,6 +450,20 @@ pub struct Dock {
 pub struct Notifications {
     /// Do Not Disturb: banners stay quiet, Notification Center still collects them.
     pub dnd: bool,
+}
+
+/// One app's notification style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AppStyle {
+    /// Goes after a few seconds.
+    Banner,
+    /// Stays until dismissed.
+    Alert,
+    /// Notification Center only.
+    None,
+    /// Dropped.
+    Off,
 }
 
 /// Desktop icons (E7.2): the files in `~/Desktop` on the wallpaper.
@@ -552,11 +569,15 @@ pub struct Idle {
     pub sleep_on_ac: u32,
     /// Lock when the screen turns off.
     pub lock: bool,
+    /// Seconds after the screen turns off before it locks; input meanwhile wakes it unlocked.
+    pub lock_delay: u32,
+    /// Shown on the lock screen, under the clock.
+    pub lock_message: String,
 }
 
 impl Default for Idle {
     fn default() -> Self {
-        Self { dim: 120, screen_off: 300, sleep_on_battery: 900, sleep_on_ac: 0, lock: true }
+        Self { dim: 120, screen_off: 300, sleep_on_battery: 900, sleep_on_ac: 0, lock: true, lock_delay: 0, lock_message: String::new() }
     }
 }
 
