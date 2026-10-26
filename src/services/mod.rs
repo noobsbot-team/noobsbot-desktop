@@ -60,8 +60,8 @@ pub enum Update {
     Media(Option<media::Media>),
     /// A device asks to pair; `None`: BlueZ gave up.
     Pairing(Option<bluetooth::Pairing>),
-    /// NetworkManager asks for this network's password; `None`: it gave up.
-    WifiSecret(Option<String>),
+    /// NetworkManager asks for this network's password (or WEP key, or login); `None`: it gave up.
+    WifiSecret(Option<(String, network::Secret)>),
     /// A pairing device needs a PIN (or, `passkey`, six digits) typed for it.
     PinEntry { device: String, passkey: bool },
     /// Our polkit agent asks for, rejects or is done with an admin password.
@@ -160,7 +160,7 @@ pub enum Command {
     },
     /// The pairing alert's answer.
     PairingAnswer(bool),
-    /// The password NetworkManager asked for, or `None`: cancelled.
+    /// The password, key or user name NetworkManager asked for, or `None`: cancelled.
     WifiSecret(Option<String>),
     /// The PIN or passkey typed for a pairing device, or `None`: cancelled.
     PinEntry(Option<String>),

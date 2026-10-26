@@ -395,13 +395,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn secret_only_for_wifi_with_interaction() {
-        let ssid = OwnedValue::try_from(Value::from(b"Home".to_vec())).unwrap();
-        let connection: Settings = HashMap::from([("802-11-wireless".to_string(), HashMap::from([("ssid".to_string(), ssid)]))]);
-        assert_eq!(secret_ssid(&connection, "802-11-wireless-security", ALLOW_INTERACTION).as_deref(), Some("Home"));
-        assert_eq!(secret_ssid(&connection, "802-11-wireless-security", 0), None);
-        assert_eq!(secret_ssid(&connection, "802-1x", ALLOW_INTERACTION), None);
-        assert_eq!(secret_ssid(&Settings::new(), "802-11-wireless-security", ALLOW_INTERACTION), None);
+    fn secrets_asked_by_setting_and_key_mgmt() {
+        let value = |v: Value| OwnedValue::try_from(v).unwrap();
+        let connection = |key_mgmt: &str, eap: &[&str], identity: &str| -> Settings {
+            HashMap::from([
+                ("802-11-wireless".into(), HashMap::from([("ssid".into(), value(Value::from(b"Home".to_vec())))])),
+                ("802-11-wireless-security".into(), HashMap::from([("key-mgmt".into(), value(Value::from(key_mgmt)))])),
+                ("802-1x".into(), HashMap::from([("eap".into(), value(Value::from(eap.to_vec()))), ("identity".into(), value(Value::from(identity)))])),
+            ])
+        };
+        let ask = |c: &Settings, setting| prompt(c, setting, ALLOW_INTERACTION);
+        let wifi = "802-11-wireless-security";
+        assert_eq!(ask(&connection("wpa-psk", &[], ""), wifi), Some(("Home".into(), Prompt::Psk)));
+        assert_eq!(ask(&connection("sae", &[], ""), wifi).map(|a| a.1), Some(Prompt::Psk));
+        assert_eq!(ask(&connection("none", &[], ""), wifi).map(|a| a.1), Some(Prompt::Wep(0)));
+        assert_eq!(ask(&connection("wpa-eap", &["peap"], ""), "802-1x").map(|a| a.1), Some(Prompt::Login(None)));
+        assert_eq!(ask(&connection("wpa-eap", &["ttls"], "ann"), "802-1x").map(|a| a.1), Some(Prompt::Login(Some("ann".into()))));
+        // Certificates, LEAP and OWE: nothing to type.
+        assert_eq!(ask(&connection("wpa-eap", &["tls"], "ann"), "802-1x"), None);
+        assert_eq!(ask(&connection("leap", &[], ""), wifi), None);
+        assert_eq!(ask(&connection("owe", &[], ""), wifi), None);
+        // No interaction allowed, or not Wi-Fi.
+        assert_eq!(prompt(&connection("wpa-psk", &[], ""), wifi, 0), None);
+        assert_eq!(ask(&Settings::new(), wifi), None);
+    }
+
+    #[test]
+    fn secrets_reply() {
+        let text = |s: &Settings, setting: &str, k: &str| String::try_from(s[setting][k].try_clone().unwrap()).unwrap();
+        let wifi = "802-11-wireless-security";
+        let psk = reply(wifi.into(), &Prompt::Psk, None, "hunter22".into()).unwrap();
+        assert_eq!(text(&psk, wifi, "psk"), "hunter22");
+        let wep = reply(wifi.into(), &Prompt::Wep(1), None, "a long passphrase".into()).unwrap();
+        assert_eq!((text(&wep, wifi, "wep-key1"), u32::try_from(&wep[wifi]["wep-key-type"]).unwrap()), ("a long passphrase".into(), 2));
+        let login = reply("802-1x".into(), &Prompt::Login(None), Some("ann".into()), "pw".into()).unwrap();
+        assert_eq!((text(&login, "802-1x", "identity"), text(&login, "802-1x", "password")), ("ann".into(), "pw".into()));
+        assert_eq!(Secret::Psk.shortest(), 8);
+        assert_eq!(Secret::Wep.shortest(), 1);
     }
 
     #[test]
@@ -535,18 +565,91 @@ struct SecretAgent {
     answer: super::Answer<Option<String>>,
 }
 
+/// What the Wi-Fi password alert asks for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Secret {
+    /// A WPA/WPA3 personal password.
+    Psk,
+    /// A WEP key or passphrase.
+    Wep,
+    /// An enterprise (PEAP/TTLS) login's user name, then its password.
+    Identity,
+    Password,
+}
+
+impl Secret {
+    /// The fewest characters the alert takes: WPA's 8, else one.
+    pub fn shortest(self) -> usize {
+        if self == Secret::Psk { 8 } else { 1 }
+    }
+}
+
+/// What a `GetSecrets` call needs from the user.
+#[derive(Debug, PartialEq)]
+enum Prompt {
+    Psk,
+    /// The key slot (`wep-tx-keyidx`).
+    Wep(u32),
+    /// PEAP or TTLS: the saved identity, else it is asked too.
+    Login(Option<String>),
+}
+
 /// NetworkManager's `NM_SECRET_AGENT_GET_SECRETS_FLAG_ALLOW_INTERACTION`.
 const ALLOW_INTERACTION: u32 = 0x1;
 
-/// The network a `GetSecrets` call may ask the user about: a Wi-Fi security setting, with interaction allowed.
-fn secret_ssid(connection: &Settings, setting: &str, flags: u32) -> Option<String> {
+/// The network a `GetSecrets` call may ask the user about, with interaction allowed, and what to ask.
+// ponytail: TLS (certificate) logins, LEAP and wired 802.1X get NoSecrets; their certificates and keys are set up
+// in the Settings app's Advanced… editor.
+fn prompt(connection: &Settings, setting: &str, flags: u32) -> Option<(String, Prompt)> {
     let ssid = connection.get("802-11-wireless").and_then(|w| w.get("ssid")).and_then(bytes)?;
-    (setting == "802-11-wireless-security" && flags & ALLOW_INTERACTION != 0).then(|| String::from_utf8_lossy(&ssid).into())
+    if flags & ALLOW_INTERACTION == 0 {
+        return None;
+    }
+    let field = |setting: &str, key: &str| connection.get(setting)?.get(key)?.try_clone().ok();
+    let text = |setting, key| String::try_from(field(setting, key)?).ok();
+    let prompt = match (setting, text("802-11-wireless-security", "key-mgmt").as_deref()) {
+        ("802-11-wireless-security", Some("wpa-psk" | "sae")) => Prompt::Psk,
+        ("802-11-wireless-security", Some("none")) => Prompt::Wep(field(setting, "wep-tx-keyidx").and_then(|v| u32::try_from(v).ok()).unwrap_or(0)),
+        ("802-1x", _) => {
+            let eap = field("802-1x", "eap").and_then(|v| Vec::<String>::try_from(v).ok()).unwrap_or_default();
+            if !eap.iter().any(|m| m == "peap" || m == "ttls") {
+                return None;
+            }
+            Prompt::Login(text("802-1x", "identity").filter(|i| !i.is_empty()))
+        }
+        _ => return None,
+    };
+    Some((String::from_utf8_lossy(&ssid).into(), prompt))
+}
+
+/// The `GetSecrets` answer for `setting`: `secret` is the password or key typed, `identity` a login's user name.
+fn reply(setting: String, prompt: &Prompt, identity: Option<String>, secret: String) -> zbus::Result<Settings> {
+    let value = |v: Value| OwnedValue::try_from(v).map_err(zbus::Error::from);
+    let fields = match prompt {
+        Prompt::Psk => HashMap::from([("psk".to_string(), value(secret.into())?)]),
+        Prompt::Wep(index) => {
+            let kind = wep_key_type(&secret);
+            HashMap::from([(format!("wep-key{index}"), value(secret.into())?), ("wep-key-type".into(), value(kind.into())?)])
+        }
+        Prompt::Login(_) => HashMap::from([("identity".to_string(), value(identity.unwrap_or_default().into())?), ("password".into(), value(secret.into())?)]),
+    };
+    Ok(HashMap::from([(setting, fields)]))
+}
+
+impl SecretAgent {
+    /// Shows the alert for `secret` and waits for what is typed.
+    async fn ask(&self, ssid: &str, secret: Secret) -> Result<String, SecretError> {
+        let rx = self.answer.wait();
+        let _ = self.updates.send(Update::WifiSecret(Some((ssid.into(), secret))));
+        match rx.recv().await {
+            Ok(Some(typed)) => Ok(typed),
+            _ => Err(SecretError::UserCanceled("cancelled".into())),
+        }
+    }
 }
 
 #[zbus::interface(name = "org.freedesktop.NetworkManager.SecretAgent")]
 impl SecretAgent {
-    // ponytail: WPA/WPA3 personal (`psk`) only; WEP keys and enterprise (802.1X) logins get NoSecrets.
     async fn get_secrets(
         &self,
         connection: Settings,
@@ -555,16 +658,15 @@ impl SecretAgent {
         _hints: Vec<String>,
         flags: u32,
     ) -> Result<Settings, SecretError> {
-        let Some(ssid) = secret_ssid(&connection, &setting, flags) else { return Err(SecretError::NoSecrets("not a Wi-Fi password".into())) };
-        let rx = self.answer.wait();
-        let _ = self.updates.send(Update::WifiSecret(Some(ssid)));
-        match rx.recv().await {
-            Ok(Some(psk)) => {
-                let psk = OwnedValue::try_from(Value::from(psk)).map_err(|err| SecretError::ZBus(err.into()))?;
-                Ok(HashMap::from([(setting, HashMap::from([("psk".to_string(), psk)]))]))
-            }
-            _ => Err(SecretError::UserCanceled("cancelled".into())),
-        }
+        let Some((ssid, prompt)) = prompt(&connection, &setting, flags) else { return Err(SecretError::NoSecrets("not a Wi-Fi password".into())) };
+        let (identity, secret) = match &prompt {
+            Prompt::Psk => (None, Secret::Psk),
+            Prompt::Wep(_) => (None, Secret::Wep),
+            Prompt::Login(Some(identity)) => (Some(identity.clone()), Secret::Password),
+            Prompt::Login(None) => (Some(self.ask(&ssid, Secret::Identity).await?), Secret::Password),
+        };
+        let typed = self.ask(&ssid, secret).await?;
+        Ok(reply(setting, &prompt, identity, typed)?)
     }
 
     fn cancel_get_secrets(&self, _path: OwnedObjectPath, _setting: String) {
