@@ -61,6 +61,8 @@ pub enum Action {
     Brightness(bool),
     /// The keyboard backlight one step up or down, or (`None`) off and on.
     KbdBacklight(Option<bool>),
+    /// The trackpad on (`true`), off, or (`None`) the other way; until the config is next reloaded.
+    Touchpad(Option<bool>),
     /// To the Now Playing player.
     Media(MediaAction),
     /// Ejects the last mounted removable drive.
@@ -200,6 +202,9 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("keyboard-backlight", "up") => Some(Action::KbdBacklight(Some(true))),
         ("keyboard-backlight", "down") => Some(Action::KbdBacklight(Some(false))),
         ("keyboard-backlight", "toggle") => Some(Action::KbdBacklight(None)),
+        ("touchpad", "toggle") => Some(Action::Touchpad(None)),
+        ("touchpad", "on") => Some(Action::Touchpad(Some(true))),
+        ("touchpad", "off") => Some(Action::Touchpad(Some(false))),
         ("media", "play-pause") => Some(Action::Media(MediaAction::PlayPause)),
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
@@ -400,6 +405,15 @@ impl State {
                 self.show_osd(osd);
             }
             Action::Eject => self.eject_last(),
+            Action::Touchpad(on) => {
+                let touchpad = &mut self.config.touchpad;
+                touchpad.enabled = on.unwrap_or(!touchpad.enabled);
+                let text = if touchpad.enabled { "Trackpad On" } else { "Trackpad Off" };
+                if let Some(crate::backend::Device::Udev(udev)) = self.device.as_mut() {
+                    udev.configure_inputs(&self.config.touchpad, &self.config.mouse);
+                }
+                self.show_osd(Osd { symbol: Symbol::Toggle, level: None, text: Some(text.into()) });
+            }
             // The OSD comes with UPower's answer (`Update::KbdBacklight`).
             Action::KbdBacklight(change) => self.services.send(Command::KbdBacklight(change)),
             Action::SwitchSpace(delta) => self.switch_space(delta),
@@ -618,6 +632,8 @@ mod tests {
         assert_eq!(lookup(&table, &shift_alt, Keysym::XF86_AudioLowerVolume, false), Some(&Action::VolumeFine(false)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_KbdBrightnessUp, false), Some(&Action::KbdBacklight(Some(true))));
         assert_eq!(lookup(&table, &none, Keysym::XF86_KbdLightOnOff, false), Some(&Action::KbdBacklight(None)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_TouchpadToggle, false), Some(&Action::Touchpad(None)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_TouchpadOff, false), Some(&Action::Touchpad(Some(false))));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
