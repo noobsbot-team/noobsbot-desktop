@@ -60,6 +60,8 @@ until = 7
 # Zoom (Super+Alt+8 on/off, Super+Alt+= / Super+Alt+- in and out, 1x … 16x): "full" magnifies the whole screen
 # following the pointer, "lens" a window around the pointer.
 zoom_style = "full"
+# Zoom also follows the text cursor as you type, and the window keyboard focus moves to.
+zoom_follows_focus = true
 # The whole screen through a filter: "none", "invert", "invert-hue" (light and dark swap, colours keep their hue) or
 # "greyscale". Screenshots and screen sharing stay true to colour.
 colour_filter = "none"

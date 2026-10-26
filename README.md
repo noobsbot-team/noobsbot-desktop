@@ -320,7 +320,7 @@ doesn't understand is skipped and reported in the journal.
 |---|---|
 | `[appearance]` | light / dark / auto (set hours, or sunset to sunrise at the weather place), accent colour, glass opacity, wallpapers, gallery folders and slideshow, theming Qt apps to match, reduce motion, text size and pointer size (exported to apps) |
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
-| `[accessibility]` | Zoom style (whole screen or a lens), colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown, the Orca screen reader |
+| `[accessibility]` | Zoom style (whole screen or a lens) and whether it follows the text cursor and keyboard focus, colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown, the Orca screen reader |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
 | `[touchpad]` | on or off, tap to click, natural scrolling, secondary click (two fingers, corner or off), scroll method (two fingers, edge or none), three or four-finger swipes, gesture sensitivity, each gesture on or off |
 | `[mouse]` | tracking speed, acceleration, primary button, natural scrolling, middle-click emulation, double-click speed and middle-click paste (also given to GTK apps) |
