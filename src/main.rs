@@ -147,6 +147,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     let codes = state.config.keyboard.resolved().layout;
     state.read_layouts(&codes);
     housekeep::start(&state);
+    state.update_checks();
 
     // Saving the settings file applies it at once (E1.8).
     let (tx, rx) = channel::channel();
@@ -196,11 +197,6 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             if config.weather != state.config.weather {
                 let _ = state.weather_settings.send(config.weather.clone());
             }
-            if config.update != state.config.update
-                && let Some(tx) = &state.update_channel
-            {
-                let _ = tx.send(config.update.channel);
-            }
             state.bindings = shortcuts::from_config(&config);
             state.rules = rules::compile(&config.rules);
             let displays = config.display != state.config.display;
@@ -221,7 +217,11 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             let idle = config.idle != state.config.idle;
             let spaces = config.spaces != state.config.spaces;
             let reader = config.accessibility.screen_reader != state.config.accessibility.screen_reader;
+            let updates = config.check_updates != state.config.check_updates || config.update != state.config.update;
             state.config = config;
+            if updates {
+                state.update_checks();
+            }
             if paste && let Some(focus) = state.seat.get_keyboard().map(|k| k.current_focus()) {
                 let seat = state.seat.clone();
                 smithay::input::SeatHandler::focus_changed(state, &seat, focus.as_ref());

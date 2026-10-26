@@ -146,8 +146,8 @@ pub struct State {
     pub widgets: Vec<crate::services::widgets::Widget>,
     /// Every changed `[weather]` goes to the weather thread.
     pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
-    /// Every changed `[update] channel` goes to the update thread, while it runs.
-    pub update_channel: Option<std::sync::mpsc::Sender<crate::services::update::Channel>>,
+    /// Every changed `[update] channel` or `check_updates` goes to the update thread, once started (`update_checks`).
+    pub update_channel: Option<std::sync::mpsc::Sender<Option<crate::services::update::Channel>>>,
     pub zones: crate::input::Zones,
     /// Shake to find, dwell click, hold for secondary click (E8.6).
     pub pointer_assist: crate::pointer_assist::Assist,
@@ -380,19 +380,6 @@ impl State {
         })?;
         let (services_tx, services_rx) = channel::channel();
         let services = crate::services::spawn(services_tx, !nested);
-        // Nested is a dev session: no network.
-        let mut update_channel = None;
-        if !nested && config.check_updates {
-            let (found_tx, found_rx) = channel::channel();
-            update_channel = Some(crate::services::update::spawn(found_tx, config.update.channel));
-            handle.insert_source(found_rx, |event, _, state| {
-                if let channel::Event::Msg(release) = event {
-                    state.notify(crate::services::update::notice(&release));
-                    state.update = Some(release);
-                    state.schedule_redraw();
-                }
-            })?;
-        }
         // Off by default (only `[weather] enabled` fetches); also nested, so it can be tried in a dev session.
         let (weather_tx, weather_rx) = channel::channel();
         let weather_settings = crate::services::weather::spawn(config.weather.clone(), weather_tx);
@@ -519,7 +506,7 @@ impl State {
             weather: None,
             widgets: Vec::new(),
             weather_settings,
-            update_channel,
+            update_channel: None,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
             recording: Default::default(),
