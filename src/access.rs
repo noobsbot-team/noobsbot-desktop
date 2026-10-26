@@ -30,6 +30,23 @@ pub struct Shell {
     pub banners: Vec<Note>,
     /// Open Notification Center's cards, newest first.
     pub center: Option<Vec<Note>>,
+    /// An alert sheet (polkit's too) or Force Quit.
+    pub dialog: Option<Dialog>,
+}
+
+/// An alert or Force Quit: title, message, a field, a list (Force Quit's apps) with its selected row, the buttons
+/// and the one Return presses.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Dialog {
+    pub title: String,
+    pub message: String,
+    /// The message counts down each second: not read again on every change.
+    pub ticking: bool,
+    pub field: Option<Field>,
+    pub rows: Vec<String>,
+    pub selected: Option<usize>,
+    pub buttons: Vec<String>,
+    pub default: usize,
 }
 
 /// A notification: its body is `None` while previews are hidden; actions are (key, label).
@@ -127,6 +144,12 @@ const LAUNCHPAD_PAGE: NodeId = NodeId(11);
 const LAUNCHPAD_GRID: NodeId = NodeId(12);
 const BANNERS: NodeId = NodeId(13);
 const CENTER: NodeId = NodeId(14);
+const DIALOG: NodeId = NodeId(15);
+const DIALOG_MESSAGE: NodeId = NodeId(16);
+const DIALOG_FIELD: NodeId = NodeId(17);
+const DIALOG_LIST: NodeId = NodeId(18);
+const DIALOG_ROW: u64 = 6000;
+const DIALOG_BUTTON: u64 = 7000;
 const MISSION_ITEM: NodeId = NodeId(3000);
 const BAR_ITEM: u64 = 100;
 const DOCK_ITEM: u64 = 1000;
@@ -263,6 +286,62 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
         nodes.extend(list);
         children.push(CENTER);
     }
+    if let Some(d) = &shell.dialog {
+        let mut parts = Vec::new();
+        let mut message = Node::new(Role::Label);
+        message.set_value(d.message.as_str());
+        // A changed message ("The password is incorrect.") is read.
+        if !d.ticking {
+            message.set_live(Live::Polite);
+        }
+        parts.push((DIALOG_MESSAGE, message));
+        if let Some(field) = &d.field {
+            parts.push((DIALOG_FIELD, field.node(Role::TextInput)));
+        }
+        if !d.rows.is_empty() {
+            let rows: Vec<_> = d
+                .rows
+                .iter()
+                .enumerate()
+                .map(|(i, name)| {
+                    let mut row = Node::new(Role::ListBoxOption);
+                    row.set_label(name.as_str());
+                    row.set_position_in_set(i);
+                    row.set_selected(d.selected == Some(i));
+                    row.add_action(Action::Click);
+                    (NodeId(DIALOG_ROW + i as u64), row)
+                })
+                .collect();
+            let mut list = Node::new(Role::ListBox);
+            list.set_size_of_set(rows.len());
+            list.set_children(rows.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+            if let Some(i) = d.selected {
+                list.set_active_descendant(NodeId(DIALOG_ROW + i as u64));
+            }
+            parts.push((DIALOG_LIST, list));
+            parts.extend(rows);
+        }
+        let buttons: Vec<_> = d
+            .buttons
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                let mut button = Node::new(if i == d.default { Role::DefaultButton } else { Role::Button });
+                button.set_label(label.as_str());
+                button.add_action(Action::Click);
+                (NodeId(DIALOG_BUTTON + i as u64), button)
+            })
+            .collect();
+        let top = [DIALOG_MESSAGE, DIALOG_FIELD, DIALOG_LIST];
+        let mut node = Node::new(Role::AlertDialog);
+        node.set_label(d.title.as_str());
+        node.set_description(d.message.as_str());
+        node.set_children(parts.iter().map(|(id, _)| *id).filter(|id| top.contains(id)).chain(buttons.iter().map(|(id, _)| *id)).collect::<Vec<_>>());
+        nodes.push((DIALOG, node));
+        nodes.extend(parts);
+        nodes.extend(buttons);
+        children.push(DIALOG);
+    }
     let mut root = Node::new(Role::Window);
     root.set_label("Desktop");
     root.set_children(children);
@@ -272,7 +351,15 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
 
 /// What has the keyboard: the topmost open surface, else the desktop.
 fn focus(shell: &Shell) -> NodeId {
-    if shell.spotlight.is_some() {
+    if let Some(d) = &shell.dialog {
+        if d.field.is_some() {
+            DIALOG_FIELD
+        } else if d.selected.is_some() {
+            DIALOG_LIST
+        } else {
+            NodeId(DIALOG_BUTTON + d.default as u64)
+        }
+    } else if shell.spotlight.is_some() {
         SPOTLIGHT_FIELD
     } else if let Some(apps) = &shell.launchpad {
         // An open folder takes typing as its new name.
@@ -353,7 +440,7 @@ impl State {
         self.reader_tree = Some(Access { adapter, shell });
     }
 
-    fn access_shell(&self) -> Shell {
+    fn access_shell(&mut self) -> Shell {
         let status = self.control_status();
         let mut bar = vec!["Noobsbot menu".to_owned()];
         if let Some(content) = self.menu_bar() {
@@ -387,7 +474,38 @@ impl State {
         });
         let launchpad = self.access_launchpad();
         let (banners, center) = self.access_notes();
-        Shell { bar, dock, controls, mission, spotlight, launchpad, banners, center }
+        let dialog = self.access_dialog();
+        Shell { bar, dock, controls, mission, spotlight, launchpad, banners, center, dialog }
+    }
+
+    /// The alert, else Force Quit.
+    fn access_dialog(&mut self) -> Option<Dialog> {
+        use crate::shell::alert::Kind;
+        if let Some(alert) = &self.alert {
+            let field = alert.field().map(|f| {
+                let label = match &alert.kind {
+                    Kind::Pin { passkey: true, .. } => "Passkey",
+                    Kind::Pin { .. } => "PIN",
+                    _ => "Password",
+                };
+                Field::new(label, f)
+            });
+            let buttons: Vec<String> = alert.cancellable().then(|| alert.cancel().to_owned()).into_iter().chain([alert.confirm().to_owned()]).collect();
+            let default = buttons.len() - 1;
+            let message = alert.body(std::time::Instant::now());
+            return Some(Dialog { title: alert.title(), message, ticking: alert.deadline.is_some(), field, buttons, default, ..Default::default() });
+        }
+        self.force_quit.as_ref()?;
+        let entries = self.force_quit_entries();
+        let pid = self.force_quit.as_ref().and_then(|f| f.selection(&entries));
+        Some(Dialog {
+            title: "Force Quit Applications".into(),
+            message: "If an app doesn't respond for a while, select its name and click Force Quit.".into(),
+            rows: entries.iter().map(|e| if e.frozen { format!("{} (not responding)", e.name) } else { e.name.clone() }).collect(),
+            selected: entries.iter().position(|e| Some(e.pid) == pid),
+            buttons: vec!["Force Quit".into()],
+            ..Default::default()
+        })
     }
 
     /// The banners and Notification Center's cards.
@@ -456,6 +574,18 @@ impl State {
         if (DOCK_ITEM..CONTROL_ITEM).contains(&id) {
             if let Some(item) = self.dock_items().into_iter().nth((id - DOCK_ITEM) as usize) {
                 self.dock_click(item, false);
+            }
+        } else if (DIALOG_ROW..DIALOG_BUTTON + 1000).contains(&id) {
+            if let Some(alert) = &self.alert {
+                // The last button is the default one.
+                let last = alert.cancellable() as u64;
+                self.alert_answer(if id == DIALOG_BUTTON + last { crate::shell::alert::Button::Confirm } else { crate::shell::alert::Button::Cancel });
+            } else if self.force_quit.is_some() {
+                let entries = self.force_quit_entries();
+                match id.checked_sub(DIALOG_BUTTON) {
+                    Some(_) => self.force_quit_selected(&entries),
+                    None => self.force_quit = Some(crate::shell::force_quit::ForceQuit { selected: entries.get((id - DIALOG_ROW) as usize).map(|e| e.pid) }),
+                }
             }
         } else if id >= BANNER_ITEM {
             let (note, j) = ((id >> 8) as u32, (id & 0xff) as usize);
@@ -582,6 +712,40 @@ mod tests {
         assert_eq!(center.focus, CENTER);
         let card = node(&center, NodeId(CENTER_ITEM + (7 << 8)));
         assert_eq!((card.role(), card.live(), card.children().len()), (Role::ListItem, None, 1));
+    }
+
+    #[test]
+    fn a_dialog_reads_its_title_message_and_default_button() {
+        let field = Some(Field { label: "Password".into(), text: "ab".into(), secure: true });
+        let dialog = Dialog {
+            title: "Authentication is needed".into(),
+            message: "Enter the password for “anil” to allow this.".into(),
+            field,
+            buttons: vec!["Cancel".into(), "OK".into()],
+            default: 1,
+            ..Default::default()
+        };
+        let update = tree(&Shell { dialog: Some(dialog.clone()), spotlight: Some(Search::default()), ..Default::default() });
+        assert_eq!(update.focus, DIALOG_FIELD, "the dialog is above everything else");
+        let sheet = node(&update, DIALOG);
+        assert_eq!((sheet.role(), sheet.label(), sheet.description()), (Role::AlertDialog, Some("Authentication is needed"), Some(dialog.message.as_str())));
+        assert_eq!(node(&update, DIALOG_FIELD).role(), Role::PasswordInput);
+        assert_eq!(node(&update, NodeId(DIALOG_BUTTON)).role(), Role::Button);
+        let ok = node(&update, NodeId(DIALOG_BUTTON + 1));
+        assert_eq!((ok.role(), ok.label()), (Role::DefaultButton, Some("OK")));
+        assert_eq!(node(&update, DIALOG_MESSAGE).live(), Some(Live::Polite), "a wrong password is read");
+
+        let power = tree(&Shell { dialog: Some(Dialog { field: None, ticking: true, ..dialog }), ..Default::default() });
+        assert_eq!(power.focus, NodeId(DIALOG_BUTTON + 1), "no field: the default button");
+        assert_eq!(node(&power, DIALOG_MESSAGE).live(), None, "a countdown isn't read every second");
+
+        let rows = vec!["Files".into(), "Notes (not responding)".into()];
+        let quit = Dialog { title: "Force Quit Applications".into(), rows, selected: Some(1), buttons: vec!["Force Quit".into()], ..Default::default() };
+        let quit = tree(&Shell { dialog: Some(quit), ..Default::default() });
+        assert_eq!(quit.focus, DIALOG_LIST);
+        assert_eq!(node(&quit, DIALOG_LIST).active_descendant(), Some(NodeId(DIALOG_ROW + 1)));
+        assert_eq!(node(&quit, NodeId(DIALOG_ROW + 1)).is_selected(), Some(true));
+        assert_eq!(node(&quit, NodeId(DIALOG_BUTTON)).role(), Role::DefaultButton);
     }
 
     #[test]
