@@ -620,9 +620,9 @@ impl State {
         ]
     }
 
-    // ponytail: most of the shell (alerts, banners, Launchpad) is on the first output only, since its caches and hit
-    // tests are for one output; the other displays get a menu bar and a dock of their own and the popups opened from
-    // the bar (`bar_elements`).
+    // ponytail: banners, the OSD, Force Quit, the emoji picker and the desktop icons are on the first output only,
+    // since their caches and hit tests are for one output; every display gets its own menu bar, dock and bar popups,
+    // and the alert, Spotlight, Launchpad, the app drawer and the screenshot overlay and thumbnail where they show.
     fn scene_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
         let switcher_elements = self.switcher_elements(renderer, output);
         if self.space.outputs().next() != Some(output) {
