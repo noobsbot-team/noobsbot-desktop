@@ -329,6 +329,7 @@ doesn't understand is skipped and reported in the journal.
 | `[menu_bar]` | hide the menu bar until the pointer reaches the top edge |
 | `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions |
 | `[idle]` | when to dim, turn the screen off and sleep (battery and AC), locking |
+| `[sound]` | the alert sound (from the system's sound theme) and user interface sound effects on or off |
 | `[privacy]` | which programs may record the screen |
 | `[notifications]` | Do Not Disturb, on a schedule too (`dnd_scheduled`, `dnd_from`, `dnd_until`), banners over full-screen windows (`full_screen`), previews always, when unlocked or never (`previews`) |
 | `[notification_apps]` | per app: banners, alerts, Notification Center only or off; sound, dock badge, kept in Notification Center |

@@ -324,7 +324,7 @@ browser_info() {
 arch_packages() {
     PKGS=(
         base-devel git curl zstd minisign pciutils
-        sof-firmware alsa-ucm-conf pipewire wireplumber pipewire-pulse pipewire-alsa
+        sof-firmware alsa-ucm-conf pipewire wireplumber pipewire-pulse pipewire-alsa libpulse
         networkmanager bluez bluez-utils
         libinput libxkbcommon seatd
         wayland xorg-xwayland xwayland-satellite mesa
@@ -364,7 +364,7 @@ arch_packages() {
 debian_packages() {
     PKGS=(
         git curl ca-certificates zstd minisign pciutils
-        alsa-ucm-conf pipewire pipewire-bin wireplumber pipewire-pulse pipewire-alsa
+        alsa-ucm-conf pipewire pipewire-bin wireplumber pipewire-pulse pipewire-alsa pulseaudio-utils
         network-manager wpasupplicant bluez
         libinput10 libxkbcommon0 seatd libseat1 libpam0g libgbm1 libudev1 libegl1 libgles2 libgl1-mesa-dri
         xwayland libxcb1 libxcb-cursor0

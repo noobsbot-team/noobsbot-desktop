@@ -18,6 +18,8 @@ pub struct Status {
     /// `None`: no adapter, or BlueZ isn't running.
     pub bluetooth: Option<Bluetooth>,
     pub output: Option<Device>,
+    /// The output's left/right balance, -1 … 1; `None` without `pactl`.
+    pub balance: Option<f32>,
     pub input: Option<Device>,
     /// `None`: systemd-timedated isn't there.
     pub time: Option<Time>,
@@ -107,10 +109,16 @@ pub async fn read() -> Status {
         None => (None, None, None, None, None),
     };
     let pw = wpctl(&["status"]).unwrap_or_default();
+    let pactl = crate::pactl::read();
     Status {
         wifi,
         bluetooth,
-        output: device(OUTPUT),
+        output: device(OUTPUT).map(|mut d| {
+            // wpctl reads one channel; with the balance off centre the louder one is the volume.
+            d.volume = pactl.filter(|(_, b)| *b != 0.0).map_or(d.volume, |(loudest, _)| loudest);
+            d
+        }),
+        balance: pactl.map(|(_, b)| b),
         input: device(INPUT),
         time,
         battery,
@@ -349,7 +357,91 @@ fn device(target: &str) -> Option<Device> {
 
 /// Output (`true`) or input volume in percent, then the new status.
 pub async fn set_volume(output: bool, percent: u8) -> Status {
+    // wpctl would centre the balance; pactl keeps it.
+    if output && crate::pactl::read().is_some_and(|(_, balance)| balance != 0.0 && crate::pactl::set(percent.min(100), balance)) {
+        return read().await;
+    }
     let _ = wpctl(&["set-volume", if output { OUTPUT } else { INPUT }, &format!("{}%", percent.min(100))]);
+    read().await
+}
+
+/// The freedesktop sound theme's sounds, the ones the desktop can always play: (name, label), by label.
+pub static SOUNDS: std::sync::LazyLock<Vec<(String, String)>> = std::sync::LazyLock::new(|| {
+    let files = std::fs::read_dir(SOUND_DIR).map(|d| d.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect()).unwrap_or_default();
+    sounds(files)
+});
+
+const SOUND_DIR: &str = "/usr/share/sounds/freedesktop/stereo";
+
+/// `dialog-warning.oga` → ("dialog-warning", "Dialog warning"); test tones and channel checks left out.
+fn sounds(files: Vec<String>) -> Vec<(String, String)> {
+    let mut out: Vec<_> = files
+        .into_iter()
+        .filter_map(|file| Some(file.strip_suffix(".oga")?.to_owned()))
+        .filter(|name| !name.is_empty() && !name.starts_with("audio-channel-") && name != "audio-test-signal")
+        .map(|name| {
+            let mut label = name.replace(['-', '_'], " ");
+            if let Some(first) = label.get_mut(..1) {
+                first.make_ascii_uppercase();
+            }
+            (name, label)
+        })
+        .collect();
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out
+}
+
+/// Plays theme sound `name` as the desktop does: the sound theme's, else the freedesktop file straight to PipeWire.
+pub fn play(name: &str) {
+    let name = name.to_owned();
+    std::thread::spawn(move || {
+        let quiet = |c: &mut Command| c.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+        if !quiet(Command::new("canberra-gtk-play").args(["-i", &name])) {
+            quiet(Command::new("pw-play").arg(format!("{SOUND_DIR}/{name}.oga")));
+        }
+    });
+}
+
+/// The default microphone's level, 0 … 1, twenty times a second while subscribed: `pw-record` to a pipe, ended
+/// when the subscription is.
+pub fn level() -> impl iced::futures::Stream<Item = f32> {
+    iced::stream::channel(1, async |tx: iced::futures::channel::mpsc::Sender<f32>| {
+        let mut sender = tx.clone();
+        let spawned = std::thread::Builder::new().name("level".into()).spawn(move || {
+            use std::io::Read;
+            let args = ["--rate", "16000", "--channels", "1", "--format", "s16", "-"];
+            let Ok(mut child) = Command::new("pw-record").args(args).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn() else {
+                return;
+            };
+            let mut stdout = child.stdout.take().expect("piped");
+            // 50 ms of 16 kHz mono s16.
+            let mut chunk = [0u8; 1600];
+            while !sender.is_closed() && stdout.read_exact(&mut chunk).is_ok() {
+                let _ = sender.try_send(meter(chunk.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes(*b))));
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+        });
+        if let Err(err) = spawned {
+            eprintln!("level: {err}");
+        }
+        std::future::pending::<()>().await;
+        drop(tx);
+    })
+}
+
+/// The peak of `samples` on a 60 dB scale: -60 dBFS and below is 0, full scale is 1.
+pub fn meter(samples: impl Iterator<Item = i16>) -> f32 {
+    let peak = samples.map(i16::unsigned_abs).max().unwrap_or(0);
+    let db = 20.0 * (f32::from(peak) / 32768.0).max(1e-6).log10();
+    ((db + 60.0) / 60.0).clamp(0.0, 1.0)
+}
+
+/// The output's balance, -1 left … 1 right, its loudest channel kept; then the new status.
+pub async fn set_balance(balance: f32) -> Status {
+    if let Some((loudest, _)) = crate::pactl::read() {
+        crate::pactl::set(loudest, balance);
+    }
     read().await
 }
 
@@ -493,6 +585,22 @@ pub fn user() -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_sounds() {
+        let files = [".oga", "message.oga", "dialog-warning.oga", "audio-channel-front-left.oga", "audio-test-signal.oga", "index.theme", "bell.oga"];
+        let names: Vec<_> = sounds(files.map(String::from).to_vec()).into_iter().map(|(n, l)| format!("{n}={l}")).collect();
+        assert_eq!(names, ["bell=Bell", "dialog-warning=Dialog warning", "message=Message"]);
+    }
+
+    #[test]
+    fn meter_is_peak_decibels() {
+        assert_eq!(meter([].into_iter()), 0.0);
+        assert_eq!(meter([0, 30, -32].into_iter()), 0.0, "below -60 dBFS");
+        assert_eq!(meter([12, i16::MIN, 5].into_iter()), 1.0);
+        // -20 dBFS: two thirds up.
+        assert!((meter([3277].into_iter()) - 2.0 / 3.0).abs() < 0.01);
+    }
 
     #[test]
     fn volume_and_name() {

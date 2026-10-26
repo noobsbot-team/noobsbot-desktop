@@ -400,6 +400,7 @@ impl State {
             Kind::EmptyTrash => {
                 // Off the frame thread: a big trash takes a while; the watcher turns the icon empty.
                 let _ = std::thread::Builder::new().name("empty-trash".into()).spawn(|| crate::shell::trash::empty(&crate::shell::trash::dir()));
+                self.ui_sound("trash-empty");
                 return;
             }
             Kind::Polkit { .. } => return,

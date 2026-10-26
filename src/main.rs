@@ -24,6 +24,7 @@ mod idle;
 mod ime;
 mod input;
 mod mission;
+mod pactl;
 mod pam;
 mod perms;
 mod pointer_assist;

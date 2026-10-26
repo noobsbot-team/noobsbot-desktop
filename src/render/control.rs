@@ -12,16 +12,18 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
+    apps::Icons,
     shell::control::{
-        self, Layout, Module, Status, TOGGLE, label_top, media_buttons, night_toggle, profile_name, slider_fill, tile_toggle, toggle_in, track_in,
+        self, Layout, Module, Status, TOGGLE, app_track, label_top, media_buttons, night_toggle, profile_name, slider_fill, tile_toggle, toggle_in, track_in,
     },
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text, ts},
     wm::Rect,
 };
 
-/// What the glass depends on: the layout's rect, the status, dark, accent, opacity, scale.
-type Key = (Rect, Status, bool, [u8; 3], u32, u64);
+/// What the glass depends on: the layout's rect, the status, dark, accent, opacity, scale, which app icons were found
+/// (the rest get a letter tile in the glass).
+type Key = (Rect, Status, bool, [u8; 3], u32, u64, Vec<bool>);
 
 #[derive(Default)]
 pub struct ControlCenter {
@@ -84,6 +86,7 @@ impl ControlCenter {
         shaders: &Shaders,
         text: &mut Text,
         symbols: &mut Symbols,
+        icons: &mut Icons,
         status: &Status,
         output: Size<i32, Logical>,
         dark: bool,
@@ -92,9 +95,22 @@ impl ControlCenter {
         scale: f64,
     ) -> Vec<SceneElement> {
         let layout = control::layout(output, status);
-        let key = (layout.rect, status.clone(), dark, accent, glass_opacity.to_bits(), scale.to_bits());
+        // Each app row's icon, left of its name: the theme's, else a letter tile.
+        let app_icons: Vec<_> = layout
+            .apps
+            .iter()
+            .zip(&status.apps)
+            .map(|(row, app)| {
+                let rect = Rectangle::new((row.loc.x + 4, row.loc.y + (row.size.h - 20) / 2).into(), (20, 20).into());
+                (rect, super::switcher::app_icon(shaders, text, icons, &app.name, app.icon.as_deref(), rect, dark, scale))
+            })
+            .collect();
+        let found = app_icons.iter().map(|(_, (tile, _))| tile.is_none()).collect();
+        let key = (layout.rect, status.clone(), dark, accent, glass_opacity.to_bits(), scale.to_bits(), found);
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
-            self.glass = Some((key, glass(shaders, &layout, status, dark, accent, glass_opacity, scale)));
+            let mut elements: Vec<_> = app_icons.iter().filter_map(|(_, (tile, _))| tile.clone()).collect();
+            elements.extend(glass(shaders, &layout, status, dark, accent, glass_opacity, scale));
+            self.glass = Some((key, elements));
         }
 
         // label, label-secondary (Part D).
@@ -229,6 +245,12 @@ impl ControlCenter {
                 }
             }
         }
+        for ((row, app), (icon, (_, piece))) in layout.apps.iter().zip(&status.apps).zip(app_icons) {
+            put(piece, icon, false);
+            let x = icon.loc.x + 20 + 8;
+            let right = app_track(*row).loc.x - 8;
+            put(text.label(&app.name, body, (right - x) as u32, scale), row_rect(x, row.loc.y, right, row.size.h), true);
+        }
         for (row, (_, name, current)) in layout.outputs.iter().zip(&status.outputs) {
             let icon = Rectangle::new((row.loc.x + 6, row.loc.y + (row.size.h - 16) / 2).into(), (16, 16).into());
             put(symbols.get(output_symbol(name), Weight::Regular, 16, scale, label), icon, false);
@@ -338,9 +360,11 @@ fn glass(shaders: &Shaders, layout: &Layout, status: &Status, dark: bool, accent
             out.push(shaders.light(circle, if item.on { on } else { off }, false, scale));
         }
     }
-    for (card, value) in [(layout.display, status.brightness), (layout.sound, status.volume.map(|(v, muted)| if muted { 0 } else { v }))] {
-        let (Some(card), Some(value)) = (card, value) else { continue };
-        let track = track_in(card);
+    let main = [(layout.display, status.brightness), (layout.sound, status.volume.map(|(v, muted)| if muted { 0 } else { v }))]
+        .into_iter()
+        .filter_map(|(card, value)| Some((track_in(card?), value?)));
+    let apps = layout.apps.iter().zip(&status.apps).map(|(row, app)| (app_track(*row), app.volume));
+    for (track, value) in main.chain(apps) {
         out.push(shaders.glass_shape(Rectangle::new(track.loc, (slider_fill(track, value), TOGGLE).into()), slider, round, false, dark, scale));
         out.push(shaders.glass_shape(track, off, round, false, dark, scale));
     }
