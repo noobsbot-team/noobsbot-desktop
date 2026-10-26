@@ -797,4 +797,90 @@ mod tests {
         // Rate then delay, as told to apps: 30/s, 500 ms by default; 0 turns repeat off.
         assert_eq!(crate::config::Keyboard::default().repeat(), (30, 500));
     }
+
+    /// Xkb keycode of evdev `code`.
+    fn k(code: u32) -> Keycode {
+        Keycode::new(code + 8)
+    }
+
+    #[test]
+    fn sticky_tap_latches_twice_locks_third_unlocks() {
+        let (shift, a) = (k(42), k(30));
+        let mut keys = AccessKeys::default();
+        // Off: everything passes.
+        assert_eq!(keys.sticky(shift, true, false), Some(vec![]));
+        // Tap: the press passes, the release is kept (Shift stays down), the next key lets it go.
+        assert_eq!(keys.sticky(shift, true, true), Some(vec![]));
+        assert_eq!(keys.sticky(shift, false, true), None);
+        assert_eq!(keys.sticky(a, true, true), Some(vec![shift]));
+        assert_eq!(keys.sticky(a, false, true), Some(vec![]));
+        // Tap twice: locked, kept through keys; a third tap's release goes through.
+        assert_eq!(keys.sticky(shift, true, true), Some(vec![]));
+        assert_eq!(keys.sticky(shift, false, true), None);
+        assert_eq!(keys.sticky(shift, true, true), None);
+        assert_eq!(keys.sticky(shift, false, true), None);
+        assert_eq!(keys.stuck(), (vec![], vec![shift]));
+        assert_eq!(keys.sticky(a, true, true), Some(vec![]));
+        assert_eq!(keys.sticky(shift, true, true), None);
+        assert_eq!(keys.sticky(shift, false, true), Some(vec![]));
+        assert_eq!(keys.stuck(), (vec![], vec![]));
+        // A chord (Shift held while A) is ordinary.
+        assert_eq!(keys.sticky(shift, true, true), Some(vec![]));
+        assert_eq!(keys.sticky(a, true, true), Some(vec![]));
+        assert_eq!(keys.sticky(shift, false, true), Some(vec![]));
+        assert_eq!(keys.stuck(), (vec![], vec![]));
+    }
+
+    #[test]
+    fn five_quick_shifts_toggle() {
+        let (shift, a, t) = (k(54), k(30), Instant::now());
+        let mut keys = AccessKeys::default();
+        let ms = |n| t + Duration::from_millis(n);
+        assert!(!(0..4).any(|i| keys.five_shifts(shift, false, ms(i * 200))));
+        assert!(keys.five_shifts(shift, false, ms(800)));
+        // Another key or a pause starts over.
+        assert!(!(0..4).any(|i| keys.five_shifts(shift, false, ms(1000 + i * 200))));
+        keys.five_shifts(a, true, ms(1700));
+        assert!(!keys.five_shifts(shift, false, ms(1800)));
+        assert!(!(0..4).any(|i| keys.five_shifts(shift, false, ms(4000 + i * 1200))));
+    }
+
+    #[test]
+    fn bounce_drops_a_quick_second_press_and_its_release() {
+        let (a, b, t) = (k(30), k(48), Instant::now());
+        let window = Duration::from_millis(100);
+        let mut keys = AccessKeys::default();
+        assert!(keys.bounce(a, true, t, window));
+        assert!(keys.bounce(a, false, t, window));
+        assert!(!keys.bounce(a, true, t + Duration::from_millis(50), window));
+        assert!(!keys.bounce(a, false, t + Duration::from_millis(60), window));
+        // Another key, or the same one later, passes.
+        assert!(keys.bounce(b, true, t + Duration::from_millis(70), window));
+        assert!(keys.bounce(a, true, t + Duration::from_millis(150), window));
+    }
+
+    #[test]
+    fn slow_keys_count_only_presses_still_held() {
+        let (a, t) = (k(30), Instant::now());
+        let mut keys = AccessKeys::default();
+        keys.slow_press(a, t);
+        // Let go early: the release is dropped and the timer finds nothing.
+        assert!(!keys.slow_release(a));
+        assert!(!keys.slow_fire(a, t));
+        // Held: it counts, and its release goes through.
+        let later = t + Duration::from_millis(10);
+        keys.slow_press(a, later);
+        assert!(!keys.slow_fire(a, t), "an old timer doesn't count a newer press");
+        assert!(keys.slow_fire(a, later));
+        assert!(keys.slow_release(a));
+    }
+
+    #[test]
+    fn mouse_keys_speed_up_and_combine() {
+        let step = |held: &[u32], ms| mouse_step(held, Duration::from_millis(ms));
+        assert_eq!(step(&[77], 0), (1.0, 0.0).into());
+        assert_eq!(step(&[71], 2000), (-20.0, -20.0).into());
+        assert_eq!(step(&[72, 75], 0), (-1.0, -1.0).into());
+        assert_eq!(step(&[75, 77], 0), (0.0, 0.0).into());
+    }
 }
