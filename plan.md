@@ -1632,7 +1632,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 | ~~Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow~~ | `src/gestures.rs` | Done: the slide and Mission Control follow the swipe, then a `gesture` spring from the fingers' speed; reduce motion acts on release |
 | ~~Logo menu "System Settings…" and "About This Computer" rows are disabled~~ | `src/shell/mod.rs` | Done: open Settings at Appearance / About |
 | ~~Do Not Disturb is lost on restart~~ | `src/shell/control.rs` | Done: saved as `[notifications] dnd` |
-| Dock, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
+| ~~Dock, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one)~~ | `src/backend/winit.rs`, `src/shell/notify.rs` | Done: a dock on every display (`[dock] displays = "all" \| "main" \| "pointer"`), hot corners on every display (closed where displays meet), banners on the main display, Notification Center on the clicked bar's display, alerts on the focused window's display (else the pointer's), the on-screen keyboard on the focused text field's display (else the pointer's), the switcher on the one it opened on; a lock client's surfaces each sized to their own display, ours over every display with the password on the main one |
 | ~~`show-desktop` has no default key~~ | `data/config.toml` | Done: Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
@@ -1667,7 +1667,9 @@ The dock stays per app, by design. Every per-window job a taskbar does gets a su
   window's surroundings dim (`src/shell/dock.rs` `Peek`, `src/render/dock.rs`); a still press held 0.5 s shows them too.
 - **Minimised windows** as thumbnail tiles after a separator at the dock's right end (E3); the minimise animation
   lands on the tile. Built; `[dock] minimise_into_icon` turns them off.
-- **One dock per display** with its own filtering (D13, E3).
+- ~~**One dock per display** with its own filtering (D13, E3).~~ Done: `[dock] displays` (all / main / pointer); each dock
+  has its own hide state and zoom, shares pins, badges, dots and the Trash, and with `current_workspace_only` shows its
+  own display's current Space. Pins stay one list for every dock.
 - ~~**Super+1…9** focuses, cycles or opens the n-th dock app, Super+Shift+n opens a new window, and holding Super shows
   number pills over the icons. Space keys move to Super+Ctrl+1…9, so Ctrl+1…9 stays with apps (browser tabs).~~ Done:
   `dock-app` / `dock-app-new` actions, number pills, Spaces on Super+Ctrl+1…9.
