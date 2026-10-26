@@ -73,7 +73,8 @@ pub struct Known {
     pub ssid: String,
     pub wifi: bool,
     pub auto_join: bool,
-    pub ip4: Ip4,
+    pub ip4: Ip,
+    pub ip6: Ip,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -84,9 +85,9 @@ pub struct Vpn {
     pub active: Option<String>,
 }
 
-/// A saved connection's IPv4 setup, as typed in its Details sheet.
+/// A saved connection's IPv4 or IPv6 setup, as typed in its Details sheet.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub struct Ip4 {
+pub struct Ip {
     /// Manual addresses; else DHCP.
     pub manual: bool,
     pub address: String,
@@ -148,7 +149,8 @@ fn saved(path: String, settings: &Settings) -> Option<Known> {
         false => connection.get("id").and_then(text)?,
     };
     let auto_join = connection.get("autoconnect").and_then(|v| bool::try_from(v).ok()).unwrap_or(true);
-    Some(Known { path, ssid, wifi, auto_join, ip4: settings.get("ipv4").map(ip4).unwrap_or_default() })
+    let (ip4, ip6) = [false, true].map(|v6| settings.get(if v6 { "ipv6" } else { "ipv4" }).map(|s| ip(s, v6)).unwrap_or_default()).into();
+    Some(Known { path, ssid, wifi, auto_join, ip4, ip6 })
 }
 
 /// A saved connection, if it is a VPN (a NetworkManager VPN plugin's, or WireGuard).
@@ -372,12 +374,22 @@ fn text(v: &OwnedValue) -> Option<String> {
     String::try_from(v.try_clone().ok()?).ok()
 }
 
-/// The `ipv4` setting: method, the first address, gateway and DNS (`dns` is `au` in network byte order).
-fn ip4(setting: &HashMap<String, OwnedValue>) -> Ip4 {
+/// The `ipv4` (`v6`: `ipv6`) setting: method, the first address, gateway and DNS (`dns` is `au` in network byte order
+/// for IPv4, `aay` of 16 bytes each for IPv6).
+fn ip(setting: &HashMap<String, OwnedValue>, v6: bool) -> Ip {
+    use std::net::{Ipv4Addr, Ipv6Addr};
     let address = dicts(setting.get("address-data")).into_iter().next().unwrap_or_default();
-    let dns = setting.get("dns").and_then(|v| Vec::<u32>::try_from(v.try_clone().ok()?).ok()).unwrap_or_default();
-    let dns: Vec<String> = dns.into_iter().map(|n| std::net::Ipv4Addr::from(n.to_ne_bytes()).to_string()).collect();
-    Ip4 {
+    let dns = setting.get("dns").and_then(|v| v.try_clone().ok());
+    let dns: Vec<String> = match (dns, v6) {
+        (Some(v), false) => Vec::<u32>::try_from(v).unwrap_or_default().into_iter().map(|n| Ipv4Addr::from(n.to_ne_bytes()).to_string()).collect(),
+        (Some(v), true) => Vec::<Vec<u8>>::try_from(v)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|b| <[u8; 16]>::try_from(b).ok().map(|b| Ipv6Addr::from(b).to_string()))
+            .collect(),
+        (None, _) => Vec::new(),
+    };
+    Ip {
         manual: setting.get("method").and_then(text).as_deref() == Some("manual"),
         address: address.get("address").and_then(text).unwrap_or_default(),
         prefix: address.get("prefix").map(|p| number(Some(p)).to_string()).unwrap_or_default(),
@@ -386,31 +398,48 @@ fn ip4(setting: &HashMap<String, OwnedValue>) -> Ip4 {
     }
 }
 
-/// Writes `ip4` into a saved connection's settings; the error says which field isn't an address.
-fn set_ip4(settings: &mut Settings, ip4: &Ip4) -> Result<(), String> {
-    use std::net::Ipv4Addr;
-    let parse = |what: &str, s: &str| s.trim().parse::<Ipv4Addr>().map_err(|_| format!("“{}” isn't an IPv4 {what}", s.trim()));
-    let owned = |v: Value| OwnedValue::try_from(v).map_err(|e| e.to_string());
-    let dns = ip4.dns.split([',', ' ']).filter(|s| !s.is_empty()).map(|s| parse("DNS server", s)).collect::<Result<Vec<_>, _>>()?;
-    let mut new = HashMap::from([("method", owned(Value::from(if ip4.manual { "manual" } else { "auto" }))?)]);
-    if !dns.is_empty() {
-        new.insert("dns", owned(Value::from(dns.iter().map(|a| u32::from_ne_bytes(a.octets())).collect::<Vec<u32>>()))?);
+/// Writes `typed` into a saved connection's `ipv4` (`v6`: `ipv6`) setting; the error says which field isn't an
+/// address. A setup left as it was read stays untouched, so an IPv6 method other than DHCP or manual (ignore, …) keeps.
+fn set_ip(settings: &mut Settings, typed: &Ip, v6: bool) -> Result<(), String> {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    let name = if v6 { "ipv6" } else { "ipv4" };
+    if settings.get(name).map(|s| ip(s, v6)).unwrap_or_default() == *typed {
+        return Ok(());
     }
-    if ip4.manual {
-        let address = parse("address", &ip4.address)?;
-        let prefix = ip4
+    let version = if v6 { "IPv6" } else { "IPv4" };
+    let parse = |what: &str, s: &str| {
+        let s = s.trim();
+        let ip = if v6 { s.parse::<Ipv6Addr>().map(IpAddr::V6) } else { s.parse::<Ipv4Addr>().map(IpAddr::V4) };
+        ip.map_err(|_| format!("“{s}” isn't an {version} {what}"))
+    };
+    let owned = |v: Value| OwnedValue::try_from(v).map_err(|e| e.to_string());
+    let dns = typed.dns.split([',', ' ']).filter(|s| !s.is_empty()).map(|s| parse("DNS server", s)).collect::<Result<Vec<_>, _>>()?;
+    let mut new = HashMap::from([("method", owned(Value::from(if typed.manual { "manual" } else { "auto" }))?)]);
+    if !dns.is_empty() {
+        let dns = match v6 {
+            false => {
+                Value::from(dns.iter().filter_map(|a| if let IpAddr::V4(a) = a { Some(u32::from_ne_bytes(a.octets())) } else { None }).collect::<Vec<u32>>())
+            }
+            true => Value::from(dns.iter().filter_map(|a| if let IpAddr::V6(a) = a { Some(a.octets().to_vec()) } else { None }).collect::<Vec<Vec<u8>>>()),
+        };
+        new.insert("dns", owned(dns)?);
+    }
+    if typed.manual {
+        let address = parse("address", &typed.address)?;
+        let most = if v6 { 128 } else { 32 };
+        let prefix = typed
             .prefix
             .trim()
             .parse::<u32>()
             .ok()
-            .filter(|p| (1..=32).contains(p))
-            .ok_or_else(|| format!("“{}” isn't a prefix length (1–32)", ip4.prefix.trim()))?;
+            .filter(|p| (1..=most).contains(p))
+            .ok_or_else(|| format!("“{}” isn't a prefix length (1–{most})", typed.prefix.trim()))?;
         new.insert("address-data", owned(Value::from(vec![HashMap::from([("address", Value::from(address.to_string())), ("prefix", Value::from(prefix))])]))?);
-        if !ip4.gateway.trim().is_empty() {
-            new.insert("gateway", owned(Value::from(parse("router", &ip4.gateway)?.to_string()))?);
+        if !typed.gateway.trim().is_empty() {
+            new.insert("gateway", owned(Value::from(parse("router", &typed.gateway)?.to_string()))?);
         }
     }
-    let setting = settings.entry("ipv4".into()).or_default();
+    let setting = settings.entry(name.into()).or_default();
     // The older `addresses` and newer `dns-data` would win over (or clash with) what is written here.
     for key in ["method", "addresses", "address-data", "gateway", "dns", "dns-data"] {
         setting.remove(key);
@@ -419,10 +448,10 @@ fn set_ip4(settings: &mut Settings, ip4: &Ip4) -> Result<(), String> {
     Ok(())
 }
 
-/// Details ▸ Update: the connection's IPv4 setup; it applies the next time the connection comes up.
-pub async fn update_ip4(bus: Connection, path: String, ip4: Ip4) -> zbus::Result<()> {
+/// Details ▸ Update: the connection's IPv4 and IPv6 setup; it applies the next time the connection comes up.
+pub async fn update_ip(bus: Connection, path: String, ip4: Ip, ip6: Ip) -> zbus::Result<()> {
     let mut settings: Settings = bus.call_method(Some(NM), path.as_str(), Some(SAVED), "GetSettings", &()).await?.body().deserialize()?;
-    set_ip4(&mut settings, &ip4).map_err(zbus::Error::Failure)?;
+    set_ip(&mut settings, &ip4, false).and_then(|()| set_ip(&mut settings, &ip6, true)).map_err(zbus::Error::Failure)?;
     bus.call_method(Some(NM), path.as_str(), Some(SAVED), "Update", &(settings,)).await?;
     Ok(())
 }
@@ -687,20 +716,49 @@ mod tests {
             "ipv4".to_string(),
             HashMap::from([("method".to_string(), value(Value::from("auto"))), ("addresses".to_string(), value(Value::from(Vec::<Vec<u32>>::new())))]),
         )]);
-        let typed = Ip4 { manual: true, address: "192.168.1.20".into(), prefix: "24".into(), gateway: "192.168.1.1".into(), dns: "1.1.1.1, 9.9.9.9".into() };
-        set_ip4(&mut settings, &typed).unwrap();
+        let typed = Ip { manual: true, address: "192.168.1.20".into(), prefix: "24".into(), gateway: "192.168.1.1".into(), dns: "1.1.1.1, 9.9.9.9".into() };
+        set_ip(&mut settings, &typed, false).unwrap();
         assert!(!settings["ipv4"].contains_key("addresses"));
         // `dns` is in network byte order: 1.1.1.1's bytes as they are.
         assert_eq!(Vec::<u32>::try_from(settings["ipv4"]["dns"].try_clone().unwrap()).unwrap()[0], u32::from_ne_bytes([1, 1, 1, 1]));
-        assert_eq!(ip4(&settings["ipv4"]), typed);
+        assert_eq!(ip(&settings["ipv4"], false), typed);
 
-        let auto = Ip4 { dns: String::new(), ..typed.clone() };
-        set_ip4(&mut settings, &Ip4 { manual: false, ..auto }).unwrap();
-        assert_eq!(ip4(&settings["ipv4"]), Ip4::default());
+        let auto = Ip { dns: String::new(), ..typed.clone() };
+        set_ip(&mut settings, &Ip { manual: false, ..auto }, false).unwrap();
+        assert_eq!(ip(&settings["ipv4"], false), Ip::default());
 
-        for bad in [Ip4 { prefix: "33".into(), ..typed.clone() }, Ip4 { gateway: "router".into(), ..typed.clone() }, Ip4 { dns: "1.1.1".into(), ..typed }] {
-            assert!(set_ip4(&mut settings, &bad).is_err());
+        for bad in [Ip { prefix: "33".into(), ..typed.clone() }, Ip { gateway: "router".into(), ..typed.clone() }, Ip { dns: "1.1.1".into(), ..typed }] {
+            assert!(set_ip(&mut settings, &bad, false).is_err());
         }
+    }
+
+    #[test]
+    fn manual_ip6_round_trip() {
+        let mut settings: Settings = HashMap::from([("ipv6".to_string(), HashMap::from([("method".to_string(), value(Value::from("ignore")))]))]);
+        // Left as read: "ignore" stays.
+        set_ip(&mut settings, &Ip::default(), true).unwrap();
+        assert_eq!(text(&settings["ipv6"]["method"]).as_deref(), Some("ignore"));
+
+        let typed =
+            Ip { manual: true, address: "2001:db8::20".into(), prefix: "64".into(), gateway: "fe80::1".into(), dns: "2606:4700:4700::1111, ::1".into() };
+        set_ip(&mut settings, &typed, true).unwrap();
+        let dns = Vec::<Vec<u8>>::try_from(settings["ipv6"]["dns"].try_clone().unwrap()).unwrap();
+        assert_eq!(dns[1], std::net::Ipv6Addr::LOCALHOST.octets());
+        assert_eq!(ip(&settings["ipv6"], true), typed);
+        assert!(!settings.contains_key("ipv4"), "IPv6 alone");
+
+        let bad = [
+            Ip { prefix: "129".into(), ..typed.clone() },
+            Ip { address: "192.168.1.20".into(), ..typed.clone() },
+            Ip { address: "2001:db8::g".into(), ..typed.clone() },
+            Ip { gateway: "router".into(), ..typed.clone() },
+            Ip { dns: "1.1.1.1".into(), ..typed.clone() },
+        ];
+        for bad in bad {
+            assert!(set_ip(&mut settings, &bad, true).is_err(), "{bad:?}");
+        }
+        set_ip(&mut settings, &Ip::default(), true).unwrap();
+        assert_eq!(text(&settings["ipv6"]["method"]).as_deref(), Some("auto"));
     }
 
     const PRIVATE: &str = "yAnz5TF+lXXJte14tji3zlMNq+hd2rYUIgJBgB3fBmk=";
@@ -829,7 +887,7 @@ mod tests {
                 ),
             ),
         ]);
-        let known = [Known { path: "/s/1".into(), ssid: "Home".into(), wifi: true, auto_join: true, ip4: Ip4::default() }];
+        let known = [Known { path: "/s/1".into(), ssid: "Home".into(), wifi: true, auto_join: true, ip4: Ip::default(), ip6: Ip::default() }];
         let found = networks(&objects, &known);
         let summary: Vec<_> = found.iter().map(|n| (n.ssid.as_str(), n.strength, n.secure, n.saved.as_deref(), n.connected, n.ap.as_str())).collect();
         assert_eq!(summary, [("Home", 90, true, Some("/s/1"), true, "/ap/3"), ("Cafe", 70, false, None, false, "/ap/2")]);
