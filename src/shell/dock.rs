@@ -10,7 +10,7 @@ use std::{
     os::fd::AsFd,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
@@ -263,9 +263,12 @@ pub enum Builtin {
     Screenshot,
     /// The Trash (E8.8): always last, after a separator, never pinned or dragged (`[dock] show_trash`).
     Trash,
+    /// Jobs wait in the CUPS queue: shown among the running apps until it empties; a click opens Settings ▸ Printers.
+    Printing,
 }
 
 pub const TRASH_KEY: &str = "trash";
+pub const PRINTING_KEY: &str = "printing";
 pub const SCREENSHOT_KEY: &str = "screenshot";
 /// Screenshot apps that can't work here, by desktop-file id.
 const SCREENSHOT_APPS: [&str; 2] = ["org.kde.spectacle", "spectacle"];
@@ -277,6 +280,7 @@ impl Builtin {
             drawer::DOCK_KEY => Some(Self::AppDrawer),
             SCREENSHOT_KEY => Some(Self::Screenshot),
             TRASH_KEY => Some(Self::Trash),
+            PRINTING_KEY => Some(Self::Printing),
             _ if SCREENSHOT_APPS.contains(&key) => Some(Self::Screenshot),
             _ => None,
         }
@@ -288,6 +292,7 @@ impl Builtin {
             Self::AppDrawer => drawer::ICON,
             Self::Screenshot => "spectacle",
             Self::Trash => super::trash::icon(),
+            Self::Printing => "printer",
         }
     }
 
@@ -297,6 +302,7 @@ impl Builtin {
             Self::AppDrawer => "Applications",
             Self::Screenshot => "Screenshot",
             Self::Trash => "Trash",
+            Self::Printing => "Printing",
         }
     }
 }
@@ -332,6 +338,33 @@ impl Item {
             (None, Some(b)) => b.title(),
             (None, None) => &self.key,
         }
+    }
+}
+
+/// Jobs in the CUPS queue, as of the last look.
+static PRINTING: AtomicBool = AtomicBool::new(false);
+
+/// Looks at the CUPS queue every 5 s, calling `changed` whenever it fills or empties; stops when `changed` returns
+/// false. Nothing without CUPS.
+// ponytail: polls `lpstat -o` instead of cupsd's D-Bus job signals, and only while cupsd runs, so the look doesn't
+// socket-activate it and keep it from idling out; listen for `com.redhat.PrinterSpooler` if 5 s feels late.
+pub fn watch_print_queue(mut changed: impl FnMut() -> bool + Send + 'static) {
+    if !crate::ibus::on_path("lpstat") {
+        return;
+    }
+    let cupsd = || std::fs::read_dir("/proc").into_iter().flatten().flatten().any(|e| std::fs::read(e.path().join("comm")).is_ok_and(|c| c == b"cupsd\n"));
+    let jobs = || std::process::Command::new("lpstat").arg("-o").output().is_ok_and(|o| o.stdout.iter().any(|b| !b.is_ascii_whitespace()));
+    let spawned = std::thread::Builder::new().name("print-queue".into()).spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+            let busy = cupsd() && jobs();
+            if PRINTING.swap(busy, Ordering::Relaxed) != busy && !changed() {
+                return;
+            }
+        }
+    });
+    if let Err(err) = spawned {
+        tracing::warn!("print queue: {err}");
     }
 }
 
@@ -461,7 +494,7 @@ impl State {
         let dock = &self.config.dock;
         let mut items: Vec<Item> = Vec::new();
         for name in self.dock_list(output) {
-            if name == TRASH_KEY {
+            if name == TRASH_KEY || name == PRINTING_KEY {
                 continue;
             }
             if Builtin::of(name).is_some() && !items.iter().any(|i| i.key == *name) {
@@ -487,6 +520,9 @@ impl State {
         let stack: Vec<&Window> = self.space.elements().rev().collect();
         for item in &mut items {
             item.windows.sort_by_key(|w| stack.iter().position(|s| *s == w).unwrap_or(usize::MAX));
+        }
+        if PRINTING.load(Ordering::Relaxed) {
+            items.push(Item { key: PRINTING_KEY.to_owned(), app: None, windows: Vec::new() });
         }
         // Minimised windows' tiles at the right end, in the order they were minimised.
         if !dock.minimise_into_icon {
@@ -746,6 +782,9 @@ impl State {
             Builtin::Screenshot => self.screenshot(crate::shell::screenshot::Start::Toolbar),
             Builtin::Trash => {
                 self.spawn(&["xdg-open".to_owned(), "trash:///".to_owned()]);
+            }
+            Builtin::Printing => {
+                self.spawn(&["noobsbot-desktop-settings".into(), "--page".into(), "printers".into()]);
             }
         }
     }
@@ -1303,7 +1342,7 @@ impl State {
     /// The item key a `[dock] items` entry pins: a builtin, or the app it names (`None`: not installed).
     fn pin_key(&self, name: &str) -> Option<String> {
         match Builtin::of(name) {
-            Some(Builtin::Trash) => None,
+            Some(Builtin::Trash | Builtin::Printing) => None,
             Some(_) => Some(name.to_owned()),
             None => self.apps.find(name).map(|a| a.id.clone()),
         }
@@ -1341,6 +1380,9 @@ impl State {
                 |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Dock) });
             let full = super::trash::any_full();
             return vec![row("Open", Some(Command::Open)), None, row("Empty Trash", full.then_some(Command::EmptyTrash))];
+        }
+        if item.key == PRINTING_KEY {
+            return vec![Some(Row { sub: Vec::new(), label: "Open Printers".into(), shortcut: "", action: Some(Action::Dock(Command::Open)) })];
         }
         let name = item.title().to_owned();
         let titles: Vec<String> = item
@@ -1539,7 +1581,12 @@ impl State {
     fn dock_drag_motion(&mut self, to: Point<f64, Logical>) {
         let Some(drag) = self.dock_ui.drag.as_ref().filter(|_| !self.dock_ui.held_for_peek()) else { return };
         let (start, key) = (drag.start, drag.key.clone());
-        if self.config.dock.lock_items || key.starts_with(TILE) || key == TRASH_KEY || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
+        if self.config.dock.lock_items
+            || key.starts_with(TILE)
+            || key == TRASH_KEY
+            || key == PRINTING_KEY
+            || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START)
+        {
             return;
         }
         let Some(layout) = self.dock_layout(&self.dock_items()) else { return };
