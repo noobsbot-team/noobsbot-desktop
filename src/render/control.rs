@@ -11,7 +11,9 @@ use super::{
     titlebar::{Label, keep_buffers, label_element},
 };
 use crate::{
-    shell::control::{self, LIST_ROW, Layout, Module, Status, TOGGLE, media_buttons, profile_name, slider_fill, tile_toggle, toggle_in, track_in},
+    shell::control::{
+        self, LIST_ROW, Layout, Module, Status, TOGGLE, media_buttons, night_toggle, profile_name, slider_fill, tile_toggle, toggle_in, track_in,
+    },
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
     wm::Rect,
@@ -141,6 +143,10 @@ impl ControlCenter {
             put(text.label(name, title, 200, scale), row(card.loc.x + 12, card.loc.y + 8, card.loc.x + card.size.w - 12, 16), true);
             let track = track_in(card);
             put(symbols.get(symbol, Weight::Fill, 16, scale, on_fill), Rectangle::new((track.loc.x + 6, track.loc.y + 6).into(), (16, 16).into()), false);
+        }
+        if let Some(card) = layout.display {
+            let on = if status.night { white } else { label };
+            put(symbols.get(Symbol::Sun, Weight::Fill, 12, scale, on), centred(night_toggle(card), 12), false);
         }
         if let Some(card) = layout.sound {
             let caret = if status.expanded == Some(Module::Sound) { Symbol::CaretDown } else { Symbol::CaretRight };
@@ -278,7 +284,8 @@ fn glass(shaders: &Shaders, layout: &Layout, status: &Status, dark: bool, accent
         (tile_toggle(layout.dnd), status.dnd),
         (tile_toggle(layout.dark), status.dark),
     ];
-    for (rect, state) in toggles {
+    let night = layout.display.map(|card| (night_toggle(card), status.night));
+    for (rect, state) in toggles.into_iter().chain(night) {
         out.push(shaders.light(rect, if state { on } else { off }, false, scale));
     }
     if let Some((_, rows)) = &layout.list {

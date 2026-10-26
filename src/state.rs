@@ -230,6 +230,8 @@ pub struct State {
     pub lock: Option<crate::shell::lock::Lock>,
     /// Idle timers, idle-notify, idle-inhibit and session-lock globals (E6.5).
     pub idle: crate::idle::Idle,
+    /// Night Light's fade and the Control Center's override (E8.4).
+    pub night_light: crate::render::NightLight,
     /// The screenshot overlay, toolbar and thumbnail (E6.8).
     pub screenshots: crate::shell::screenshot::Screenshots,
     /// wlr-screencopy for other programs (E6.8, E6.11).
@@ -490,6 +492,7 @@ impl State {
             corners: Default::default(),
             lock: None,
             idle: crate::idle::Idle::new(&dh, handle.clone()),
+            night_light: Default::default(),
             screenshots: Default::default(),
             capture: crate::capture::Capture::new(&dh),
             display_handle: dh,

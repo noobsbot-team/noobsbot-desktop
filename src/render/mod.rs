@@ -18,6 +18,7 @@ mod menu;
 pub mod menubar;
 mod mission;
 pub mod motion;
+mod night;
 mod notify;
 mod osd;
 mod screenshot;
@@ -43,6 +44,7 @@ pub use lock::{Content as LockContent, LockView};
 pub use menu::MenuPopover;
 pub use menubar::MenuBar;
 pub use mission::{MissionView, sliding};
+pub use night::{NightLight, TintElement};
 pub use notify::{NotificationViews, View};
 pub use osd::OsdPopover;
 pub use screenshot::ScreenshotView;
@@ -91,6 +93,7 @@ render_elements! {
     Memory=MemoryRenderBufferRenderElement<GlesRenderer>,
     Moved=RelocateRenderElement<RescaleRenderElement<WindowElement>>,
     Genie=motion::GenieElement,
+    Tint=TintElement,
 }
 
 render_elements! {
@@ -127,21 +130,20 @@ pub fn window_title(window: &Window) -> String {
     titlebar::title_of(window)
 }
 
-/// Dark mode on? `auto` follows the clock.
+/// Dark mode on? `auto` follows the clock, or the sun at the weather place.
 pub fn is_dark(appearance: &Appearance) -> bool {
-    dark_at(appearance, chrono::Timelike::hour(&chrono::Local::now()))
+    let now = chrono::Local::now();
+    let sun = (appearance.mode == Mode::Auto && appearance.auto_sunset).then(|| crate::sun::place().and_then(|p| crate::sun::is_night(now.to_utc(), p)));
+    sun.flatten().unwrap_or_else(|| dark_at(appearance, chrono::Timelike::hour(&now)))
 }
 
 /// Dark at `hour` o'clock? `auto` is dark from `dark_from` until `dark_until` (19 → 7 by default), across midnight
 /// when `from` is the later hour.
-// ponytail: whole hours; sunset/sunrise needs a location (E2.6).
 pub fn dark_at(appearance: &Appearance, hour: u32) -> bool {
-    let (from, until) = (appearance.dark_from % 24, appearance.dark_until % 24);
     match appearance.mode {
         Mode::Dark => true,
         Mode::Light => false,
-        Mode::Auto if from <= until => (from..until).contains(&hour),
-        Mode::Auto => hour >= from || hour < until,
+        Mode::Auto => crate::sun::within(appearance.dark_from, appearance.dark_until, hour),
     }
 }
 

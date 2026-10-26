@@ -16,6 +16,8 @@ check_updates = true
 mode = "light"
 dark_from = 19
 dark_until = 7
+# auto: dark from sunset to sunrise at the [weather] city or coordinates instead (the hours above without one).
+auto_sunset = false
 # blue, purple, pink, red, orange, yellow, green or graphite.
 accent = "blue"
 # Multiplies the opacity of every glass surface (0.0 … 1.0).
@@ -35,6 +37,16 @@ reduce_motion = false
 text_scale = 1.0
 # Pointer size in px, e.g. 24, 32, 48 (0 = $XCURSOR_SIZE, else 24); apps started here get it as XCURSOR_SIZE.
 pointer_size = 0
+
+[night_light]
+# Warms the screen on a schedule, fading over a minute. Screenshots and screen sharing stay true to colour.
+enabled = false
+# Kelvin: 6500 = no change, 2700 = warm lamp light (1000 … 6500).
+temperature = 3400
+# "custom" (from … until, whole hours of local time) or "sunset" (sunset to sunrise at the [weather] place).
+schedule = "custom"
+from = 19
+until = 7
 
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).

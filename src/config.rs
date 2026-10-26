@@ -35,6 +35,7 @@ pub struct Config {
     /// Software Update asks GitHub for a newer release once a day (E6.13); read at start.
     pub check_updates: bool,
     pub appearance: Appearance,
+    pub night_light: NightLight,
     pub keyboard: Keyboard,
     pub touchpad: Touchpad,
     pub mouse: Mouse,
@@ -83,6 +84,37 @@ pub struct Appearance {
     pub text_scale: f32,
     /// Pointer size in px; 0 = `$XCURSOR_SIZE`, else 24. Apps we start get it as `XCURSOR_SIZE`.
     pub pointer_size: u32,
+    /// `auto` is dark from sunset to sunrise at the weather place instead (the hours without one).
+    pub auto_sunset: bool,
+}
+
+/// Night Light (E6.2, E8.4): the screen warmed on a schedule.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct NightLight {
+    /// The schedule is on; the Control Center turns it on or off until the schedule next turns.
+    pub enabled: bool,
+    /// Kelvin, 1000 (warmest) … 6500 (none).
+    pub temperature: u32,
+    pub schedule: NightSchedule,
+    /// `custom`: from this hour until `until` (0 … 23, local time).
+    pub from: u32,
+    pub until: u32,
+}
+
+impl Default for NightLight {
+    fn default() -> Self {
+        Self { enabled: false, temperature: 3400, schedule: NightSchedule::Custom, from: 19, until: 7 }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NightSchedule {
+    #[default]
+    Custom,
+    /// Sunset to sunrise at the weather place; the hours without one.
+    Sunset,
 }
 
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
@@ -364,6 +396,7 @@ impl Default for Config {
             terminal: "noobsbot".into(),
             check_updates: true,
             appearance: Appearance::default(),
+            night_light: NightLight::default(),
             keyboard: Keyboard::default(),
             touchpad: Touchpad::default(),
             mouse: Mouse::default(),
@@ -662,6 +695,7 @@ impl Default for Appearance {
             dark_until: 7,
             text_scale: 1.0,
             pointer_size: 0,
+            auto_sunset: false,
         }
     }
 }
