@@ -100,6 +100,38 @@ pub fn empty(dir: &Path) {
     let _ = fs::remove_file(dir.join("directorysizes"));
 }
 
+/// The `DeletionDate` of a `.trashinfo` file (local time, as the spec has it).
+fn deletion_date(info: &str) -> Option<chrono::NaiveDateTime> {
+    let value = info.lines().find_map(|l| l.trim().strip_prefix("DeletionDate="))?;
+    chrono::NaiveDateTime::parse_from_str(value.trim(), "%Y-%m-%dT%H:%M:%S").ok()
+}
+
+/// Erases the items moved to the trash at `trash` before `cutoff` (local time), and their info files.
+pub fn empty_before(trash: &Path, cutoff: chrono::NaiveDateTime) {
+    let Ok(infos) = fs::read_dir(trash.join("info")) else { return };
+    for info in infos.flatten() {
+        let path = info.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(".trashinfo")) else { continue };
+        if !fs::read_to_string(&path).ok().and_then(|t| deletion_date(&t)).is_some_and(|d| d < cutoff) {
+            continue;
+        }
+        let item = trash.join("files").join(name);
+        // A link is removed itself, never followed.
+        let gone = match fs::symlink_metadata(&item) {
+            Ok(m) if m.is_dir() => fs::remove_dir_all(&item),
+            Ok(_) => fs::remove_file(&item),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err),
+        };
+        match gone {
+            Ok(()) => drop(fs::remove_file(&path)),
+            Err(err) => tracing::warn!("trash: {}: {err}", item.display()),
+        }
+    }
+    // A cache of folder sizes; rebuilt by whoever reads it.
+    let _ = fs::remove_file(trash.join("directorysizes"));
+}
+
 /// Watches `files/`, keeping `icon` current and calling `changed` whenever it flips; stops when `changed` returns false.
 pub fn watch(mut changed: impl FnMut() -> bool + Send + 'static) {
     let spawned = std::thread::Builder::new().name("trash-watch".into()).spawn(move || {
@@ -135,6 +167,14 @@ pub fn watch(mut changed: impl FnMut() -> bool + Send + 'static) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn trashinfo_dates() {
+        let info = "[Trash Info]\nPath=/home/u/a%20b.txt\nDeletionDate=2026-09-01T13:45:07\n";
+        assert_eq!(deletion_date(info).map(|d| d.to_string()).as_deref(), Some("2026-09-01 13:45:07"));
+        assert_eq!(deletion_date("[Trash Info]\nPath=/x\n"), None);
+        assert_eq!(deletion_date("DeletionDate=yesterday"), None);
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("noobsbot-desktop-test-trash-{name}-{}", std::process::id()));
