@@ -461,7 +461,7 @@ impl State {
     }
 
     pub fn control_layout(&self) -> Layout {
-        layout(self.output_size(), &self.control_status())
+        layout(self.popup_size(), &self.control_status())
     }
 
     /// The wheel or a two-finger swipe over the panel scrolls its open list. `true`: the panel took it.
@@ -470,7 +470,7 @@ impl State {
             return false;
         }
         let status = self.control_status();
-        let layout = layout(self.output_size(), &status);
+        let layout = layout(self.popup_size(), &status);
         if !layout.rect.to_f64().contains(location) {
             return false;
         }
