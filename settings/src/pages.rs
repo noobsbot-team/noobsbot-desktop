@@ -228,6 +228,9 @@ const fn s(page: Page, group: &'static str, key: &'static str, label: &'static s
     Setting { page, group, key, label, help, kind }
 }
 
+/// Date & Time ▸ Calendars ▸ Add…: the chooser's, or the path field's, `texts` key.
+pub const CALENDAR_ADD: &str = "calendar.add";
+
 /// Every setting in `config.toml` (`data/config.toml`), in page order.
 pub const SETTINGS: &[Setting] = &[
     s(Page::Sound, "Sound Effects", "sound.alert", "Alert sound", "Played when an app rings the bell", Kind::Sound),
@@ -559,6 +562,14 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Choice(&[("auto", "Region default"), ("sunday", "Sunday"), ("monday", "Monday"), ("saturday", "Saturday")]),
     ),
     s(Page::DateTime, "Calendar", "clock.week_numbers", "Show week numbers", "In the Notification Center calendar", Kind::Toggle),
+    s(
+        Page::DateTime,
+        "Calendar",
+        "calendar.files",
+        "Calendars",
+        "Events for Up Next and reminders: .ics files, folders or dir/*.ics",
+        Kind::List(Some(CALENDAR_ADD)),
+    ),
     s(Page::Spaces, "", "windows.spaces", "Spaces", "Dynamic: + in Mission Control adds more", Kind::Slider { min: 0.0, max: 16.0, step: 1.0 }),
     s(Page::Spaces, "", "spaces.per_display", "Displays have separate Spaces", "Off: every display switches Spaces together", Kind::Toggle),
     s(Page::Notifications, "", "notifications.dnd", "Do Not Disturb", "Banners stay quiet; Notification Center still collects them", Kind::Toggle),
