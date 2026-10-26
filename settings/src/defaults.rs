@@ -1,9 +1,54 @@
 //! Desktop & Dock ▸ Default Apps: `mimeapps.list`'s `[Default Applications]`, which `xdg-open` (and the
 //! `default-app` keys) follow. Only that section's keys for the chosen kind change; every other line stays.
 
-use std::{io, path::PathBuf};
+use std::{
+    collections::HashMap,
+    io,
+    path::{Path, PathBuf},
+};
+
+use crate::autostart::{self, Installed};
 
 const SECTION: &str = "[Default Applications]";
+
+/// Each row: its label and the MIME types a choice is written for (the first one shows the current default).
+pub const KINDS: &[(&str, &[&str])] = &[
+    ("Web browser", &["x-scheme-handler/https", "x-scheme-handler/http", "text/html", "application/xhtml+xml"]),
+    ("Mail", &["x-scheme-handler/mailto", "message/rfc822"]),
+    ("Files", &["inode/directory"]),
+    ("Text editor", &["text/plain", "text/markdown", "application/x-shellscript"]),
+    ("Images", &["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/tiff", "image/svg+xml"]),
+    ("Video", &["video/mp4", "video/x-matroska", "video/webm", "video/mpeg", "video/quicktime", "video/x-msvideo"]),
+    ("Music", &["audio/mpeg", "audio/flac", "audio/ogg", "audio/x-vorbis+ogg", "audio/x-wav", "audio/mp4", "audio/aac"]),
+    ("PDF", &["application/pdf"]),
+];
+
+/// The apps whose `MimeType` lists any of `mimes`.
+pub fn handlers(dirs: &[PathBuf], desktop: &str, mimes: &[&str]) -> Vec<Installed> {
+    autostart::installed_in(dirs, desktop, |fields: &HashMap<&str, &str>| {
+        fields.get("MimeType").is_some_and(|types| types.split(';').any(|t| mimes.contains(&t.trim())))
+    })
+}
+
+/// The desktop-file id written to `mimeapps.list`: the file name.
+pub fn id(app: &Installed) -> String {
+    app.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+}
+
+/// Each kind's current default (a desktop-file id) and the apps that can be it; then the terminal emulators.
+pub fn load() -> (Vec<(Option<String>, Vec<Installed>)>, Vec<Installed>) {
+    let (dirs, desktop) = (autostart::app_dirs(), autostart::desktop());
+    let kinds = KINDS.iter().map(|(_, mimes)| (current(mimes[0]), handlers(&dirs, &desktop, mimes))).collect();
+    let terminals = autostart::installed_in(&dirs, &desktop, |f| f.get("Categories").is_some_and(|c| c.split(';').any(|c| c == "TerminalEmulator")));
+    (kinds, terminals)
+}
+
+/// The command an app's `Exec` runs, its field codes (`%U`, …) dropped: what the `terminal` key holds.
+pub fn command(app: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(app).ok()?;
+    let exec = autostart::fields(&text).get("Exec")?.split_whitespace().filter(|w| !w.starts_with('%')).collect::<Vec<_>>().join(" ");
+    (!exec.is_empty()).then_some(exec)
+}
 
 /// The default for `mime` in one `mimeapps.list`: the first desktop-file id listed.
 pub fn default_in(text: &str, mime: &str) -> Option<String> {
@@ -52,16 +97,9 @@ pub fn with_default(text: &str, mimes: &[&str], id: &str) -> String {
     out
 }
 
-fn env_dir(variable: &str, home_relative: &str) -> PathBuf {
-    std::env::var_os(variable)
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(home_relative))
-}
-
 /// `~/.config/mimeapps.list`, where a choice is written.
 pub fn user_list() -> PathBuf {
-    env_dir("XDG_CONFIG_HOME", ".config").join("mimeapps.list")
+    autostart::env_dir("XDG_CONFIG_HOME", ".config").join("mimeapps.list")
 }
 
 /// Every `mimeapps.list` read for the current default, most important first: the user's, `$XDG_CONFIG_DIRS`',
@@ -74,7 +112,7 @@ fn lists() -> Vec<PathBuf> {
     std::iter::once(user_list())
         .chain(config.split(':').filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join("mimeapps.list")))
         .chain(
-            std::iter::once(env_dir("XDG_DATA_HOME", ".local/share"))
+            std::iter::once(autostart::env_dir("XDG_DATA_HOME", ".local/share"))
                 .chain(data.split(':').filter(|d| !d.is_empty()).map(PathBuf::from))
                 .map(|d| d.join("applications/mimeapps.list")),
         )
@@ -118,6 +156,26 @@ mod tests {
             "# mine\n[Added Associations]\ntext/html=a.desktop;\n\n[Default Applications]\ntext/html=new.desktop;\nx-scheme-handler/http=new.desktop;\n# keep\ntext/plain=kate.desktop;\n\n[Removed Associations]\nimage/png=x.desktop;\n"
         );
         assert_eq!(with_default(&out, &["text/html", "x-scheme-handler/http"], "new.desktop"), out);
+    }
+
+    #[test]
+    fn handlers_of_a_kind() {
+        let dir = std::env::temp_dir().join(format!("noobsbot-defaults-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let app = |file: &str, name: &str, extra: &str| {
+            std::fs::write(dir.join(file), format!("[Desktop Entry]\nType=Application\nName={name}\nExec={name} %U\n{extra}")).unwrap()
+        };
+        app("web.desktop", "Web", "MimeType=text/html;x-scheme-handler/https;\n");
+        app("edit.desktop", "Edit", "MimeType=text/plain;\n");
+        app("hidden.desktop", "Hidden", "MimeType=text/html;\nNoDisplay=true\n");
+        app("term.desktop", "Term", "Categories=System;TerminalEmulator;\n");
+        let names = |mimes| handlers(std::slice::from_ref(&dir), "noobsbot-desktop", mimes).into_iter().map(|a| a.name).collect::<Vec<_>>();
+        assert_eq!(names(KINDS[0].1), ["Web"]);
+        assert_eq!(names(KINDS[3].1), ["Edit"]);
+        assert!(names(KINDS[2].1).is_empty());
+        assert_eq!(command(&dir.join("term.desktop")).as_deref(), Some("Term"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
