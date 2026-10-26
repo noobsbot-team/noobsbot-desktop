@@ -207,7 +207,10 @@ impl LockView {
             }
             for (button, rect) in Button::ALL.into_iter().zip(layout.buttons) {
                 if lock.hover == Some(button) {
+                    // The text here is always white, so the hover is always the dark-mode one.
+                    let dark = std::mem::replace(&mut ui.dark, true);
                     ui.states(rect, CONTROL_RADIUS, State::Hover);
+                    ui.dark = dark;
                 }
                 ui.text(button.label(), Style { color: WHITE85, ..CALLOUT }, rect, Align::Centre);
             }
