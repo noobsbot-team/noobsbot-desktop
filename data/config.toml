@@ -151,6 +151,8 @@ pinned_only = false
 current_workspace_only = false
 # The app's name over the hovered icon.
 tooltips = true
+# Minimised windows go into their app's icon; false: thumbnail tiles at the dock's right end, after a separator.
+minimise_into_icon = false
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.

@@ -51,6 +51,8 @@ pub struct Views {
     pub mission: MissionView,
     /// Closing and minimising windows still animating (E5.5).
     pub ghosts: Vec<render::motion::Ghost>,
+    /// Minimised windows' last frames, drawn on their dock tiles.
+    pub tiles: Vec<render::motion::Ghost>,
     pub entrances: render::motion::Entrances,
     pub lock: LockView,
     pub screenshot: ScreenshotView,
@@ -81,6 +83,7 @@ impl Views {
             drawer: DrawerView::default(),
             mission: MissionView::default(),
             ghosts: Vec::new(),
+            tiles: Vec::new(),
             entrances: Default::default(),
             lock: LockView::default(),
             screenshot: ScreenshotView::default(),

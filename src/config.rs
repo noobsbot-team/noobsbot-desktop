@@ -439,6 +439,8 @@ pub struct Dock {
     pub current_workspace_only: bool,
     /// The app's name over the hovered icon.
     pub tooltips: bool,
+    /// Minimised windows go into their app's icon instead of tiles after the separator.
+    pub minimise_into_icon: bool,
 }
 
 /// Notifications (E4.1).
@@ -538,6 +540,7 @@ impl Default for Dock {
             pinned_only: false,
             current_workspace_only: false,
             tooltips: true,
+            minimise_into_icon: false,
         }
     }
 }

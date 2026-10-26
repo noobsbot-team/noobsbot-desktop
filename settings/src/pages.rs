@@ -228,6 +228,7 @@ pub const SETTINGS: &[Setting] = &[
         "Intelligent: while a window overlaps it",
         Kind::Choice(&[("intelligent", "Intelligent"), ("never", "Never")]),
     ),
+    s(Page::Dock, "Dock", "dock.minimise_into_icon", "Minimise windows into application icon", "", Kind::Toggle),
     s(
         Page::Dock,
         "Windows",
