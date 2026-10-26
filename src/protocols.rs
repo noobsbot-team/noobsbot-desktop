@@ -47,6 +47,7 @@ use smithay::{
 
 use crate::state::{ClientState, State};
 
+mod output_management;
 mod toplevel_list;
 mod virtual_pointer;
 
@@ -73,6 +74,7 @@ pub struct Protocols {
     _virtual_keyboard: VirtualKeyboardManagerState,
     toplevel_list: toplevel_list::ToplevelList,
     _virtual_pointer: GlobalId,
+    output_management: output_management::OutputManagement,
 }
 
 impl Protocols {
@@ -103,6 +105,7 @@ impl Protocols {
             toplevel_list: toplevel_list::ToplevelList::new(dh),
             // Moves and clicks anywhere, like the virtual keyboard types: trusted clients only.
             _virtual_pointer: virtual_pointer::global(dh),
+            output_management: output_management::OutputManagement::new(dh),
         }
     }
 }

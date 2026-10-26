@@ -3,9 +3,9 @@
 //! | Protocol | Offered to |
 //! |---|---|
 //! | `wlr-screencopy` (screenshots, recording, screen sharing) | trusted clients; any other unsandboxed app once the user allows it in the "would like to record this computer's screen" alert (remembered in `[privacy]`); never sandboxed apps |
-//! | `wlr-layer-shell`, `keyboard-shortcuts-inhibit`, `security-context`, `ext-foreign-toplevel-list` | unsandboxed clients (third-party bars, launchers, VMs) |
+//! | `wlr-layer-shell`, `keyboard-shortcuts-inhibit`, `security-context`, `ext-foreign-toplevel-list`, `wlr-output-management` | unsandboxed clients (third-party bars, launchers, VMs) |
 //! | `virtual-keyboard`, `virtual-pointer` (external on-screen keyboards, remote input) | trusted-socket clients |
-//! | `wlr-output-management`, `ext-workspace`, `ext-image-copy-capture` | not implemented, so nobody |
+//! | `ext-workspace`, `ext-image-copy-capture` | not implemented, so nobody |
 //!
 //! Trusted: clients of the `<WAYLAND_DISPLAY>-trusted` socket (what `noobsbot-desktop --trusted <command>` connects
 //! its command to, and our own `wf-recorder`), and the programs in `TRUSTED` by their path (root-owned, so an app
