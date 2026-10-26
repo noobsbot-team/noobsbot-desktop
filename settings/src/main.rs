@@ -271,6 +271,8 @@ pub enum Message {
     DeleteUser(Option<String>),
     /// The alert's choice: `true` deletes the home folder too.
     DeleteUserNow(bool),
+    /// A list key's new entries.
+    List(&'static str, Vec<String>),
     /// The file chooser opens for the path field with this `texts` key.
     OpenFile(&'static str),
     /// It answered: the path goes where that field's would; no portal shows the field.
@@ -375,6 +377,7 @@ impl App {
                 self.save(&key, value);
             }
             Message::Number(key, value) => self.save(key, value),
+            Message::List(key, items) => self.save(key, items.into_iter().collect::<toml_edit::Array>()),
             Message::NotifyApp(app) => self.notify_app = app,
             Message::AppRule(app, rule) => self.save(&format!("notification_apps.{app}"), rule.value()),
             Message::ClearRecent => self.error = config::clear_recent_files().err().map(|err| format!("Couldn't clear recent files: {err}")),
