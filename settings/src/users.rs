@@ -38,6 +38,8 @@ pub struct Users {
     pub me: Option<Account>,
     /// The other people's accounts (no system accounts), by name.
     pub others: Vec<Account>,
+    /// The camera "Take Photo…" uses; `None` without one or without `ffmpeg`.
+    pub camera: Option<PathBuf>,
 }
 
 pub async fn read() -> Users {
@@ -59,7 +61,7 @@ pub async fn read() -> Users {
         Some(path) => account(&bus, &path).await,
         None => None,
     };
-    Users { me, others }
+    Users { me, others, camera: camera() }
 }
 
 /// The full name field, as a text key.
@@ -98,6 +100,62 @@ fn face(file: &Path, home: &Path) -> Option<PathBuf> {
     let path = home.join(".face");
     std::fs::write(&path, bytes).ok()?;
     Some(path)
+}
+
+/// "Take Photo…"'s sheet: counting down, taking, the photo taken, or why it failed.
+#[derive(Clone, Debug)]
+pub enum Shot {
+    Count(u8),
+    Taking,
+    Taken(Handle),
+    Failed(String),
+}
+
+/// The camera: `/dev/videoN` of the first capture node (sysfs `index` 0; 1 is a camera's metadata node) that isn't
+/// an infrared one; `None` too when `ffmpeg` isn't on the PATH.
+fn camera() -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths).find(|dir| dir.join("ffmpeg").is_file())?;
+    let nodes = std::fs::read_dir("/sys/class/video4linux").ok()?.flatten().filter_map(|e| {
+        let dir = e.path();
+        let n = e.file_name().to_str()?.strip_prefix("video")?.parse().ok()?;
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap_or_default();
+        Some((n, read("index").trim().to_owned(), read("name")))
+    });
+    pick(nodes.collect()).map(|n| PathBuf::from(format!("/dev/video{n}")))
+}
+
+/// The lowest N of `(N, index, name)` with index 0 and no "IR" word in its name.
+fn pick(mut nodes: Vec<(u32, String, String)>) -> Option<u32> {
+    nodes.sort();
+    nodes.into_iter().find(|(_, index, name)| index == "0" && !name.split_whitespace().any(|w| w == "IR")).map(|(n, ..)| n)
+}
+
+/// Where a photo is kept until "Use Photo".
+pub fn photo_file() -> PathBuf {
+    std::env::var_os("XDG_RUNTIME_DIR").map_or_else(std::env::temp_dir, PathBuf::from).join("noobsbot-settings-photo.jpg")
+}
+
+/// One frame from `camera` into `photo_file()`, shown square; why not otherwise (no camera, busy).
+/// ponytail: one still through `ffmpeg`, no live preview; a v4l2 stream of our own if one is wanted.
+pub async fn take_photo(camera: PathBuf) -> Result<Handle, String> {
+    let file = photo_file();
+    let _ = std::fs::remove_file(&file);
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-hide_banner", "-loglevel", "error", "-f", "v4l2", "-video_size", "640x480", "-i"])
+        .arg(&camera)
+        // A second in: a camera's first frames are dark while its exposure settles.
+        .args(["-ss", "1", "-frames:v", "1", "-y"])
+        .arg(&file)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|err| format!("Couldn't run ffmpeg: {err}"))?;
+    if !out.status.success() {
+        let said = String::from_utf8_lossy(&out.stderr);
+        let why = if said.contains("busy") { "the camera is in use".to_owned() } else { said.lines().last().unwrap_or("no frame").trim().to_owned() };
+        return Err(format!("Couldn't take a photo: {why}"));
+    }
+    picture(&file).ok_or_else(|| "Couldn't take a photo: no frame".to_owned())
 }
 
 /// Change Password…'s fields (current, new, verify), as text keys; open while they are there.
@@ -316,6 +374,21 @@ fn picture(file: &Path) -> Option<Handle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camera_picked() {
+        let node = |n, index: &str, name: &str| (n, index.to_owned(), name.to_owned());
+        let hp = vec![
+            node(3, "1", "HP 5MP Camera: HP IR Camera\n"),
+            node(1, "1", "HP 5MP Camera: HP 5MP Camera\n"),
+            node(2, "0", "HP 5MP Camera: HP IR Camera\n"),
+            node(0, "0", "HP 5MP Camera: HP 5MP Camera\n"),
+        ];
+        assert_eq!(pick(hp), Some(0));
+        assert_eq!(pick(vec![node(0, "0", "Integrated IR Camera"), node(4, "0", "USB Camera")]), Some(4));
+        assert_eq!(pick(vec![node(0, "1", "meta")]), None);
+        assert_eq!(pick(Vec::new()), None);
+    }
 
     #[test]
     fn password_form_checks() {
