@@ -115,7 +115,7 @@ impl MenuPopover {
             self.scroll = (0, 0.0, Some((anchor, rows.len())));
         }
         let (rect, cells) = shell::menu_layout(anchor, output, width, rows, self.scroll.0);
-        let hovered = cells.iter().position(|c| c.to_f64().contains(hover)).filter(|&i| rows[i].as_ref().is_some_and(Row::live)).or(open);
+        let hovered = cells.iter().position(|c| c.to_f64().contains(hover)).filter(|&i| rows.get(i).and_then(Option::as_ref).is_some_and(Row::live)).or(open);
 
         let separators: Vec<Rect> = rows
             .iter()
@@ -133,7 +133,7 @@ impl MenuPopover {
             glass.extend(shaders.shadow(rect, spec.radius, spec.elevation, dark, scale, false));
             self.glass = Some((key, glass));
         }
-        match hovered.map(|i| cells[i]) {
+        match hovered.and_then(|i| cells.get(i).copied()) {
             Some(cell) => {
                 let key = (cell, accent, scale.to_bits());
                 if self.hover.as_ref().is_none_or(|(k, _)| *k != key) {

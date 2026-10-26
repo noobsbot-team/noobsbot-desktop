@@ -202,7 +202,7 @@ impl Row {
 /// Up (`down` false) or Down from row `from` (`None`: from outside the menu, so the first or last): the next live
 /// row, past separators and disabled rows; at either end it stays.
 pub fn menu_step(rows: &[Option<Row>], from: Option<usize>, down: bool) -> Option<usize> {
-    let live = |i: &usize| rows[*i].as_ref().is_some_and(Row::live);
+    let live = |i: &usize| rows.get(*i).and_then(Option::as_ref).is_some_and(Row::live);
     match (from, down) {
         (None, true) => (0..rows.len()).find(live),
         (None, false) => (0..rows.len()).rev().find(live),
