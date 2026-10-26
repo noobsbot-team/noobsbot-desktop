@@ -39,6 +39,8 @@ pub struct Mission {
     pub bar_hover: Option<usize>,
     /// A window pressed: where, and where the pointer is once it moved past the drag threshold.
     pub press: Option<Press>,
+    /// Every Space as a large tile with its windows inside (Ctrl+↑ or the button at the bar's left end).
+    pub all: bool,
 }
 
 /// The pressed window, where the press was, and the pointer once it dragged past the threshold.
@@ -49,6 +51,8 @@ pub type Press = (Window, Point<f64, Logical>, Option<Point<f64, Logical>>);
 pub struct Bar {
     pub cells: Vec<Rect>,
     pub plus: Option<Rect>,
+    /// The every-Space view's button, mirroring `+` at the left end.
+    pub all: Rect,
     pub expanded: bool,
 }
 
@@ -70,7 +74,9 @@ pub fn bar(output: Size<i32, Logical>, count: usize, expanded: bool, dynamic: bo
     let plus = dynamic.then(|| {
         Rectangle::new((output.w - 2 * BAR_GAP - side, BAR_TOP + (if expanded { THUMB_H } else { PILL.1 + 8 } - side) / 2).into(), (side, side).into())
     });
-    Bar { cells, plus, expanded }
+    let y = BAR_TOP + (if expanded { THUMB_H } else { PILL.1 + 8 } - side) / 2;
+    let all = Rectangle::new((2 * BAR_GAP, y).into(), (side, side).into());
+    Bar { cells, plus, all, expanded }
 }
 
 /// The ✕ that removes the Space in `cell`: over its top-left corner.
@@ -158,6 +164,18 @@ fn reading_order(rects: &[Rect]) -> Vec<usize> {
     order
 }
 
+/// The every-Space view: `count` tiles with the screen's shape, as large as fit in `area`, in rows, in order.
+pub fn tiles(output: Size<i32, Logical>, count: usize, area: Rect) -> Vec<Rect> {
+    grid(&vec![Rectangle::from_size(output); count], area, GAP)
+}
+
+/// Where a window with on-screen `frame` (output-relative) sits in `tile`, a shrunk `output`.
+pub fn in_tile(frame: Rect, output: Size<i32, Logical>, tile: Rect) -> Rect {
+    let f = f64::from(tile.size.w) / f64::from(output.w.max(1));
+    let s = |v: i32| (f64::from(v) * f).round() as i32;
+    Rectangle::new((tile.loc.x + s(frame.loc.x), tile.loc.y + s(frame.loc.y)).into(), (s(frame.size.w), s(frame.size.h)).into())
+}
+
 /// `a` → `b` at `t`.
 pub fn lerp(a: Rect, b: Rect, t: f64) -> Rect {
     let mix = |a: i32, b: i32| (f64::from(a) + f64::from(b - a) * t).round() as i32;
@@ -222,7 +240,7 @@ impl State {
             None => {
                 self.popup = None;
                 self.spaces.slide = None;
-                self.mission = Some(Mission { app, progress: Tween::new(0.0, 1.0), hover: None, expanded: false, bar_hover: None, press: None });
+                self.mission = Some(Mission { app, progress: Tween::new(0.0, 1.0), hover: None, expanded: false, bar_hover: None, press: None, all: false });
             }
         }
         self.schedule_redraw();
@@ -239,11 +257,14 @@ impl State {
     fn mission_layout(&mut self) -> Option<Layout> {
         let mission = self.mission.as_ref()?;
         let output = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?;
+        let all = mission.all;
+        let first = self.space.outputs().next().cloned();
         let windows: Vec<Window> = self
             .space
             .elements()
             .rev()
-            .filter(|w| self.on_current(w) && w.geometry().size.w > 0)
+            .filter(|w| if all { self.window_output(w).is_none_or(|o| Some(o) == first) } else { self.on_current(w) })
+            .filter(|w| w.geometry().size.w > 0 && self.frame(w).is_some())
             .filter(|w| mission.app.is_none() || self.app_key(w) == mission.app)
             .cloned()
             .collect();
@@ -251,9 +272,25 @@ impl State {
         let (expanded, dynamic) = (mission.expanded, self.config.windows.spaces == 0);
         let bottom = output.size.h - crate::shell::dock::reserve(&self.config.dock);
         let area = Rectangle::new((GAP, AREA_TOP).into(), (output.size.w - 2 * GAP, bottom - AREA_TOP - GAP / 2).into());
-        let targets = grid(&frames, area, GAP);
-        let count = self.desks().map_or(1, |d| d.list.len());
-        Some(Layout { windows, frames, targets, bar: bar(output.size, count, expanded, dynamic) })
+        let (count, current) = self.desks().map_or((1, 0), |d| (d.list.len(), d.current));
+        let mut bar = bar(output.size, count, expanded || all, dynamic);
+        let targets = if all {
+            // Below the bar's buttons, room for the last row's names.
+            let top = bar.all.loc.y + bar.all.size.h + BAR_GAP;
+            bar.cells = tiles(output.size, count, Rectangle::new((GAP, top).into(), (output.size.w - 2 * GAP, bottom - top - GAP / 2 - NAME_H - 4).into()));
+            windows
+                .iter()
+                .zip(&frames)
+                .map(|(w, f)| {
+                    let row = self.window_row(w);
+                    let tile = bar.cells[crate::spaces::desk_of(row, current).min(count - 1)];
+                    in_tile(Rectangle::new(f.loc - Point::from((0, row * crate::spaces::STRIDE)), f.size), output.size, tile)
+                })
+                .collect()
+        } else {
+            grid(&frames, area, GAP)
+        };
+        Some(Layout { windows, frames, targets, bar })
     }
 
     /// This frame's overview, or `None` when closed (clearing a finished close).
@@ -267,6 +304,7 @@ impl State {
         }
         let layout = self.mission_layout()?;
         let mission = self.mission.as_ref()?;
+        let all = mission.all;
         let dragged = mission.press.as_ref().and_then(|(w, at, to)| to.map(|to| (w.clone(), to - *at)));
         let mut thumbs: Vec<Thumb> = layout
             .windows
@@ -289,7 +327,7 @@ impl State {
         let bar_hover = mission.bar_hover;
         let hover = hover.map(|i| (i, crate::render::window_title(&thumbs[i].window)));
         let (names, current) = self.desk_names();
-        let others = if layout.bar.expanded {
+        let others = if layout.bar.expanded && !all {
             self.space
                 .elements()
                 .filter(|w| !self.on_current(w))
@@ -314,6 +352,9 @@ impl State {
         if bar.plus.is_some_and(|p| p.to_f64().contains(location)) {
             return Some(BarHit::Plus);
         }
+        if bar.all.to_f64().contains(location) {
+            return Some(BarHit::All);
+        }
         bar.cells.iter().position(|c| c.to_f64().contains(location)).map(BarHit::Space)
     }
 
@@ -330,14 +371,16 @@ impl State {
         match (self.bar_hit(&layout.bar, location), window) {
             (Some(BarHit::Plus), _) => self.add_space(),
             (Some(BarHit::Close(i)), _) => self.remove_space(i),
-            (Some(BarHit::Space(i)), _) => {
-                self.show_space(i);
-                self.close_mission();
-            }
-            (None, Some(window)) => {
+            (Some(BarHit::All), _) => self.mission_all(),
+            // Windows sit inside the every-Space view's tiles: they come first.
+            (_, Some(window)) => {
                 if let Some(m) = self.mission.as_mut() {
                     m.press = Some((window, location, None));
                 }
+            }
+            (Some(BarHit::Space(i)), None) => {
+                self.show_space(i);
+                self.close_mission();
             }
             // The empty desktop: back to it.
             (None, None) => self.close_mission(),
@@ -409,6 +452,7 @@ impl State {
                 }
                 self.switch_space(if key == Keysym::Left { -1 } else { 1 });
             }
+            Keysym::Up if mods.ctrl => self.mission_all(),
             _ if mods.ctrl || mods.alt || (mods.logo && key != Keysym::w) => return false,
             Keysym::w | Keysym::Delete => {
                 let Some(window) = self.mission.as_ref().and_then(|m| m.hover.clone()) else { return key == Keysym::Delete };
@@ -445,6 +489,15 @@ impl State {
         true
     }
 
+    /// Every Space as tiles, or back to the shown one's windows.
+    fn mission_all(&mut self) {
+        if let Some(m) = self.mission.as_mut() {
+            m.all = !m.all;
+            m.hover = None;
+            self.schedule_redraw();
+        }
+    }
+
     /// Moves the highlight: `pick` gets the grid's rects and the highlighted one's index.
     fn mission_step(&mut self, pick: impl Fn(&[Rect], Option<usize>) -> Option<usize>) {
         let Some(layout) = self.mission_layout().filter(|l| !l.windows.is_empty()) else { return };
@@ -459,6 +512,7 @@ enum BarHit {
     Space(usize),
     Close(usize),
     Plus,
+    All,
 }
 
 #[cfg(test)]
@@ -555,6 +609,29 @@ mod tests {
         assert_eq!(nearest(&r, 3, (1, 0)), Some(4), "same row beats a diagonal");
         assert_eq!(nearest(&r, 9, (1, 0)), None);
         assert_eq!(reading_order(&r), vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn tiles_fill_rows_in_order_with_the_screen_shape() {
+        let output = Size::from((1600, 1000));
+        let area = rect(32, 96, 1536, 760);
+        for count in 1..=9 {
+            let t = tiles(output, count, area);
+            assert_eq!(t.len(), count);
+            for (i, a) in t.iter().enumerate() {
+                assert!(area.contains_rect(*a), "{count}: {a:?}");
+                assert!((a.size.w * output.h - a.size.h * output.w).abs() <= output.w, "{count}: shape kept");
+                assert_eq!(a.size, t[0].size, "{count}: equal tiles");
+                for b in &t[i + 1..] {
+                    assert!(!a.overlaps(*b));
+                    assert!((b.loc.y, b.loc.x) > (a.loc.y, a.loc.x), "{count}: reading order");
+                }
+            }
+        }
+        assert_eq!(tiles(output, 4, area)[2].loc.y, tiles(output, 4, area)[3].loc.y, "four make two rows of two");
+        assert!(tiles(output, 4, area)[1].loc.y < tiles(output, 4, area)[2].loc.y);
+        // A window filling the left half fills the tile's left half.
+        assert_eq!(in_tile(rect(0, 0, 800, 1000), output, rect(100, 100, 400, 250)), rect(100, 100, 200, 250));
     }
 
     #[test]
