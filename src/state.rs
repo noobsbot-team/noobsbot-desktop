@@ -126,6 +126,8 @@ pub struct State {
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
     /// The pid of the `noobsbot --quake` the quake action started; its window gets `rules::QUAKE_ID`.
     pub quake: Option<u32>,
+    /// The pid of the Orca `[accessibility] screen_reader` started.
+    pub screen_reader: Option<u32>,
     /// xwayland-satellite's `DISPLAY` (E6.9), given to every program we start.
     pub x_display: Option<String>,
     /// A newer release, found by Software Update (E6.13).
@@ -439,6 +441,7 @@ impl State {
             key_repeat: None,
             hidden: Vec::new(),
             quake: None,
+            screen_reader: None,
             zones: Default::default(),
             compositor_state: CompositorState::new::<Self>(&dh),
             xdg_shell_state: XdgShellState::new::<Self>(&dh),
