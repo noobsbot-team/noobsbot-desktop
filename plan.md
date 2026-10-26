@@ -1685,7 +1685,8 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Optional: Super + right-drag resizes; focus follows mouse as a hidden `[windows] focus = "hover"`.
 
 ### E8.6 Accessibility
-- **Zoom** (full screen and picture-in-picture), with invert and greyscale filters; keys Super+Alt+8 / = / −.
+- **Zoom** (full screen and picture-in-picture), with invert and greyscale filters; keys Super+Alt+8 / = / −. Built
+  (`[accessibility] zoom_style`, `colour_filter`); following the text caret and keyboard focus is left.
 - **Keyboard:** sticky keys, slow keys, bounce keys, mouse keys (in `src/input.rs`).
 - **Pointer:** dwell click, hold for secondary click, pointer size, shake to find the pointer.
 - **Display:** increase contrast, larger text, reduce transparency (exists), reduce motion (exists).
