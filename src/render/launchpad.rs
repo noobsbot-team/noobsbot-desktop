@@ -132,9 +132,19 @@ impl LaunchpadView {
             && let Some(Tile::Folder(_, apps)) = tiles.get(open.index)
         {
             let (name, alpha) = (&open.name, alpha * faded.clamp(0.0, 1.0) as f32);
-            for (j, app) in apps.iter().enumerate().take(inner.per_page()).filter(|(j, _)| dragged_in != Some(*j)) {
-                top.push((icon_image(icons, &app.icon, px), inner.icon_rect(j), true, alpha));
-                top.push((text.label(&app.name, CALLOUT, inner.name_rect(j).size.w as u32, scale), inner.name_rect(j), false, alpha));
+            let (per, first) = (inner.per_page(), open.page * inner.per_page());
+            for (j, app) in apps.iter().enumerate().skip(first).take(per).filter(|(j, _)| dragged_in != Some(*j)) {
+                let k = j - first;
+                top.push((icon_image(icons, &app.icon, px), inner.icon_rect(k), true, alpha));
+                top.push((text.label(&app.name, CALLOUT, inner.name_rect(k).size.w as u32, scale), inner.name_rect(k), false, alpha));
+            }
+            let count = pages(apps.len(), per);
+            if count > 1 {
+                for (i, dot) in inner.dots(count).into_iter().enumerate() {
+                    // On the panel's glass: ink of the panel's text colour.
+                    let (c, a) = (if dark { 1.0 } else { 0.0 }, if i == open.page { 0.85 } else { 0.3 });
+                    front.push((dot, [c, c, c, a * alpha], f64::from(dot.size.w) / 2.0, false));
+                }
             }
             // The name, centred; once clicked, with the caret or the selection.
             let style = Style { size: 17, line_height: 22, weight: 600, ..CALLOUT };
