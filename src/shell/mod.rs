@@ -483,6 +483,7 @@ impl State {
         }
         self.notify_motion(to);
         self.drawer_motion(to);
+        self.launchpad_motion(to);
         let Some(open) = self.popup else { return };
         let Some(backend) = self.backend.as_ref() else { return };
         if let Some(next) = backend.menu_bar.hit(to).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(popup_for) {

@@ -552,6 +552,7 @@ impl State {
             self.mission_release(self.to_output(pointer.current_location()));
             self.shell_release();
             self.desktop_release();
+            self.launchpad_release();
             self.dock_release(self.to_output(pointer.current_location()));
         }
         pointer.button(self, &ButtonEvent { button, state, serial, time });
