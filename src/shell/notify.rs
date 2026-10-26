@@ -477,8 +477,9 @@ impl State {
     }
 
     /// A notification from an app: dropped if its app is off (`[notification_apps]`), else stored, and shown as a
-    /// banner unless its app's style is "none", Do Not Disturb is on, a fullscreen app has focus, or Notification Center
-    /// is open.
+    /// banner unless its app's style is "none", Do Not Disturb is on, a full-screen app has focus (unless
+    /// `[notifications] full_screen`), or Notification Center is open. A new one plays its app's sound unless Do Not
+    /// Disturb or the full-screen app keeps it quiet; an app kept out of Notification Center loses it with its banner.
     pub fn notify(&mut self, mut n: Notification) {
         n.body_lines = self.body_lines(&n.body);
         let id = n.id;
@@ -490,11 +491,19 @@ impl State {
         if style == AppStyle::Alert {
             n.expire = 0;
         }
+        if !rule.center {
+            n.transient = true;
+        }
         // Locked: no banner, only the count on the lock screen (privacy).
         if let Some(lock) = self.lock.as_mut() {
             lock.missed += 1;
         }
-        let quiet = style == AppStyle::None || self.config.notifications.dnd || self.locked() || self.menu_bar().is_none() || self.center_open();
+        let dnd = self.config.notifications.dnd;
+        let covered = !self.config.notifications.full_screen && self.menu_bar().is_none();
+        if rule.sound && !dnd && !covered && self.notifications.get(id).is_none() {
+            crate::bell::play("message-new-instant", "Notification");
+        }
+        let quiet = style == AppStyle::None || dnd || self.locked() || covered || self.center_open();
         let transient = n.transient;
         self.notifications.insert(n);
         self.notifications.banners.retain(|b| *b != id);
