@@ -16,8 +16,8 @@ use super::{
     titlebar::{Label, keep_buffers},
 };
 use crate::{
-    apps::{App, Icons},
-    shell::launchpad::{Grid, pages},
+    apps::Icons,
+    shell::launchpad::{Grid, Tile, pages},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text},
     ui::field::TextField,
@@ -34,7 +34,7 @@ const CALLOUT: Style = Style { size: 12, line_height: 15, weight: 400, color: WH
 
 /// What one frame shows.
 pub struct Frame<'a> {
-    pub apps: &'a [&'a App],
+    pub tiles: &'a [Tile<'a>],
     pub grid: &'a Grid,
     pub output: Size<i32, Logical>,
     /// Page position in view (1.5: halfway from the second page to the third).
@@ -48,9 +48,14 @@ pub struct Frame<'a> {
 /// Size, pages, page, shown, caret x, selection width, dark, opacity, accent, scale.
 type Key = (Size<i32, Logical>, usize, usize, u64, i32, i32, bool, u32, [u8; 3], u64);
 
+/// A glass shape: rect, fill, radius, effects.
+type Shape = (Rect, [f32; 4], f64, bool);
+
 #[derive(Default)]
 pub struct LaunchpadView {
     glass: Option<(Key, Vec<PixelShaderElement>)>,
+    /// Shapes that move with the pages (folder tiles), rebuilt only when one changes.
+    moving: Option<(Vec<Shape>, Vec<PixelShaderElement>)>,
     labels: Vec<Label>,
 }
 
@@ -77,9 +82,12 @@ impl LaunchpadView {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let Frame { apps, grid, output, position, page, shown, field } = *frame;
+        let Frame { tiles, grid, output, position, page, shown, field } = *frame;
         let per_page = grid.per_page();
-        let count = pages(apps.len(), per_page);
+        let count = pages(tiles.len(), per_page);
+        let spec = Material::Panel.spec(dark);
+        let [tr, tg, tb] = spec.tint.map(|c| f32::from(c) / 255.0);
+        let tint = |a: f32| [tr, tg, tb, spec.opacity * glass_opacity * a];
         let logical = |px: u32| (f64::from(px) / scale).round() as i32;
         let alpha = shown.clamp(0.0, 1.0) as f32;
         let centre = Point::from((f64::from(output.w) / 2.0, f64::from(output.h) / 2.0));
@@ -88,20 +96,33 @@ impl LaunchpadView {
         // (piece, rect it fills or is centred in, stretch to the rect, alpha)
         let mut pieces: Vec<(Arc<Rendered>, Rect, bool, f32)> = Vec::new();
         let px = (f64::from(grid.icon) * scale).ceil() as u32;
+        let mini_px = (f64::from(mini_grid(grid.icon_rect(0))[0].size.w) * scale).ceil() as u32;
+        let mut moving: Vec<Shape> = Vec::new();
         let first = position.floor().max(0.0) as usize;
         let last = (position.ceil().max(0.0) as usize).min(count - 1);
         for p in first..=last {
             let dx = ((p as f64 - position) * f64::from(output.w)).round() as i32;
-            for (i, app) in apps.iter().skip(p * per_page).take(per_page).enumerate() {
+            for (i, tile) in tiles.iter().skip(p * per_page).take(per_page).enumerate() {
                 let shift = |r: Rect| zoom(Rectangle::new((r.loc.x + dx, r.loc.y).into(), r.size), centre, s);
                 let icon = shift(grid.icon_rect(i));
                 if icon.loc.x + icon.size.w < 0 || icon.loc.x > output.w {
                     continue;
                 }
-                let image = icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| super::dock::placeholder(px));
-                pieces.push((image, icon, true, alpha));
+                let name = match tile {
+                    Tile::App(app) => {
+                        pieces.push((icon_image(icons, &app.icon, px), icon, true, alpha));
+                        &app.name
+                    }
+                    Tile::Folder(name, apps) => {
+                        moving.push((icon, tint(alpha), f64::from(icon.size.w) * 0.225, true));
+                        for (cell, app) in mini_grid(icon).into_iter().zip(apps.iter()) {
+                            pieces.push((icon_image(icons, &app.icon, mini_px), cell, true, alpha));
+                        }
+                        name
+                    }
+                };
                 let name_rect = shift(grid.name_rect(i));
-                let name = text.label(&app.name, CALLOUT, grid.name_rect(i).size.w as u32, scale);
+                let name = text.label(name, CALLOUT, grid.name_rect(i).size.w as u32, scale);
                 pieces.push((name, name_rect, false, alpha));
             }
         }
@@ -149,9 +170,7 @@ impl LaunchpadView {
                     scale,
                 ));
             }
-            let spec = Material::Panel.spec(dark);
-            let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
-            glass.push(shaders.glass_shape(f, [r, g, b, spec.opacity * glass_opacity * alpha], f64::from(f.size.h) / 2.0, true, dark, scale));
+            glass.push(shaders.glass_shape(f, tint(alpha), f64::from(f.size.h) / 2.0, true, dark, scale));
             if count > 1 {
                 for (i, dot) in grid.dots(count).into_iter().enumerate() {
                     let a = if i == page { 0.9 } else { 0.35 };
@@ -178,11 +197,27 @@ impl LaunchpadView {
                 Err(err) => tracing::warn!("launchpad: {err}"),
             }
         }
-        if let Some((_, glass)) = &self.glass {
-            out.extend(glass.iter().cloned().map(SceneElement::Shader));
+        if self.moving.as_ref().is_none_or(|(k, _)| *k != moving) {
+            let built = moving.iter().map(|&(rect, fill, radius, effects)| shaders.glass_shape(rect, fill, radius, effects, dark, scale)).collect();
+            self.moving = Some((moving, built));
         }
+        let moving = self.moving.iter().flat_map(|(_, g)| g);
+        out.extend(moving.chain(self.glass.iter().flat_map(|(_, g)| g)).cloned().map(SceneElement::Shader));
         out
     }
+}
+
+fn icon_image(icons: &mut Icons, name: &str, px: u32) -> Arc<Rendered> {
+    icons.get(name, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| super::dock::placeholder(px))
+}
+
+/// A folder tile's 3 × 3 mini icons, in reading order.
+fn mini_grid(tile: Rect) -> Vec<Rect> {
+    let pad = tile.size.w / 8;
+    let step = (tile.size.w - 2 * pad) / 3;
+    let icon = step * 5 / 6;
+    let at = |n: i32, o: i32| o + pad + n * step + (step - icon) / 2;
+    (0..9).map(|i| Rectangle::new((at(i % 3, tile.loc.x), at(i / 3, tile.loc.y)).into(), (icon, icon).into())).collect()
 }
 
 #[cfg(test)]
@@ -196,5 +231,13 @@ mod tests {
         assert_eq!(zoom(r, (0.0, 0.0).into(), 1.1), Rectangle::new((110, 110).into(), (88, 88).into()));
         let c = Rectangle::new((-40, -40).into(), (80, 80).into());
         assert_eq!(zoom(c, (0.0, 0.0).into(), 1.1), Rectangle::new((-44, -44).into(), (88, 88).into()), "a centred rect stays centred");
+    }
+
+    #[test]
+    fn mini_icons_fit_the_tile() {
+        let tile = Rectangle::new((100, 100).into(), (80, 80).into());
+        let cells = mini_grid(tile);
+        assert!(cells.iter().all(|c| tile.contains_rect(*c)));
+        assert!(!cells[0].overlaps(cells[1]) && !cells[0].overlaps(cells[3]));
     }
 }
