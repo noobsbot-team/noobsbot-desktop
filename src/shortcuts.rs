@@ -59,6 +59,8 @@ pub enum Action {
     MicMute,
     /// The display backlight by one step; `true`: up.
     Brightness(bool),
+    /// The keyboard backlight one step up or down, or (`None`) off and on.
+    KbdBacklight(Option<bool>),
     /// To the Now Playing player.
     Media(MediaAction),
     /// Ejects the last mounted removable drive.
@@ -195,6 +197,9 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("mic-mute", "") => Some(Action::MicMute),
         ("brightness", "up") => Some(Action::Brightness(true)),
         ("brightness", "down") => Some(Action::Brightness(false)),
+        ("keyboard-backlight", "up") => Some(Action::KbdBacklight(Some(true))),
+        ("keyboard-backlight", "down") => Some(Action::KbdBacklight(Some(false))),
+        ("keyboard-backlight", "toggle") => Some(Action::KbdBacklight(None)),
         ("media", "play-pause") => Some(Action::Media(MediaAction::PlayPause)),
         ("media", "next") => Some(Action::Media(MediaAction::Next)),
         ("media", "previous") => Some(Action::Media(MediaAction::Previous)),
@@ -395,6 +400,8 @@ impl State {
                 self.show_osd(osd);
             }
             Action::Eject => self.eject_last(),
+            // The OSD comes with UPower's answer (`Update::KbdBacklight`).
+            Action::KbdBacklight(change) => self.services.send(Command::KbdBacklight(change)),
             Action::SwitchSpace(delta) => self.switch_space(delta),
             Action::ShowSpace(n) => self.show_space(n),
             Action::MoveToSpace(delta) => self.move_to_space(delta),
@@ -609,6 +616,8 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_Eject, false), Some(&Action::Eject));
         let shift_alt = ModifiersState { alt: true, shift: true, ..Default::default() };
         assert_eq!(lookup(&table, &shift_alt, Keysym::XF86_AudioLowerVolume, false), Some(&Action::VolumeFine(false)));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_KbdBrightnessUp, false), Some(&Action::KbdBacklight(Some(true))));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_KbdLightOnOff, false), Some(&Action::KbdBacklight(None)));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
