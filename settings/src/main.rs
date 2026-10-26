@@ -113,6 +113,8 @@ pub struct App {
     picker: Option<String>,
     /// Apps in the notification history, read when Notifications opens.
     notifiers: Vec<String>,
+    /// Notifications ▸ Applications: the app whose options are open.
+    notify_app: Option<String>,
     /// Keyboard ▸ Keyboard Shortcuts…, open.
     shortcuts: Option<shortcuts::Editor>,
 }
@@ -188,6 +190,10 @@ pub enum Message {
     /// `keyboard.options` rewritten by a Modifier Keys dropdown.
     Options(String),
     Shortcuts(shortcuts::Msg),
+    /// Notifications ▸ Applications: open one app's options, or close them.
+    NotifyApp(Option<String>),
+    /// An app's new `[notification_apps]` rule.
+    AppRule(String, pages::AppRule),
 }
 
 impl App {
@@ -212,6 +218,7 @@ impl App {
             installed: Vec::new(),
             picker: None,
             notifiers: config::notifying_apps(),
+            notify_app: None,
             shortcuts: None,
         };
         app.retheme();
@@ -263,6 +270,8 @@ impl App {
                 self.save(&key, value);
             }
             Message::Number(key, value) => self.save(key, value),
+            Message::NotifyApp(app) => self.notify_app = app,
+            Message::AppRule(app, rule) => self.save(&format!("notification_apps.{app}"), rule.value()),
             Message::ClearRecent => self.error = config::clear_recent_files().err().map(|err| format!("Couldn't clear recent files: {err}")),
             Message::Slide(key, value) => {
                 self.drafts.insert(key, value);

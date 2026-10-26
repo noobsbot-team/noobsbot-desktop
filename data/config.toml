@@ -303,11 +303,22 @@ recent_days = 30
 [notifications]
 # Do Not Disturb (the Control Center tile): banners stay quiet; Notification Center still collects them.
 dnd = false
+# Do Not Disturb turns on at dnd_from and off at dnd_until (whole hours, local; 22 → 7 runs across midnight).
+dnd_scheduled = false
+dnd_from = 22
+dnd_until = 7
+# Banners while a full-screen window has focus (off: they wait in Notification Center).
+full_screen = false
+# Show a notification's body in banners and Notification Center: "always", "unlocked" (not while locked) or "never".
+previews = "always"
 
 [notification_apps]
 # Per app, by the name it sends: "banner" (goes after a few seconds), "alert" (stays until dismissed), "none" (only in
-# Notification Center) or "off" (dropped). Apps not listed show banners. System Settings ▸ Notifications sets these.
+# Notification Center) or "off" (dropped). Apps not listed show banners. Or a table with switches as well, each on
+# unless set: sound (a sound as it arrives), badge (the count on its dock icon), center (kept in Notification Center;
+# off, it goes with its banner). System Settings ▸ Notifications sets these.
 # "Firefox" = "alert"
+# "Thunderbird" = { style = "banner", sound = false, badge = true, center = true }
 
 [app_drawer]
 # The app drawer (Super+A, or the "app-drawer" dock item): apps by category, search, Favorites and Recent.

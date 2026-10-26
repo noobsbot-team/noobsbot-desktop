@@ -245,10 +245,12 @@ fn card_pieces(
     }
     pieces.put(text.label(&n.app, ink.subheadline(), width(card.app), scale), card.app, Align::Left);
     pieces.put(text.label(&when(n, banner, hour24), ink.caption(), width(card.time), scale), card.time, Align::Right);
+    // Previews off: no body, so a body alone leaves the title row empty.
+    let shown = if card.preview { n.body.as_str() } else { "" };
     let (title, body) = match n.summary.is_empty() {
         // A body alone takes the title row.
-        true => (n.body.as_str(), ""),
-        false => (n.summary.as_str(), n.body.as_str()),
+        true => (shown, ""),
+        false => (n.summary.as_str(), shown),
     };
     pieces.put(text.label(title, ink.headline(), width(card.title), scale), card.title, Align::Left);
     if !body.is_empty() && card.body.size.h > 0 {
