@@ -196,7 +196,11 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
                 udev.configure_inputs(&config.touchpad, &config.mouse);
             }
             let idle = config.idle != state.config.idle;
+            let reader = config.accessibility != state.config.accessibility;
             state.config = config;
+            if reader {
+                state.apply_screen_reader();
+            }
             if displays {
                 state.apply_displays();
             }
@@ -525,6 +529,9 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         command.clear();
     } else {
         state.x_display = xwayland::spawn(&state.socket_name, backend::cursor::size(state.config.appearance.pointer_size));
+        if state.config.accessibility.screen_reader {
+            state.apply_screen_reader();
+        }
     }
     if !command.is_empty() {
         state.spawn(&command);

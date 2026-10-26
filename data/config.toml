@@ -276,6 +276,7 @@ super_tap = true
 # host may keep Alt+Tab for itself: bind another key here, e.g. "Super+Ctrl+Tab" = "switcher".
 "Super+Tab" = "switcher"
 "Super+Alt+Escape" = "force-quit"
+"Super+Alt+F5" = "screen-reader"
 "Super+Ctrl+Q" = "lock"
 "Super+N" = "notification-center"
 "Super+Space" = "spotlight"
