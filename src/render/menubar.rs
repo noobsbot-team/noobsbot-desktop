@@ -12,6 +12,7 @@ use smithay::{
 use super::{
     Material, SceneElement, Shaders,
     titlebar::{Label, keep_buffers, label_element},
+    ui,
 };
 use crate::{
     apps::Icons,
@@ -256,9 +257,8 @@ impl MenuBar {
             self.glass = Some((key, glass));
         }
 
-        // label (D2): 85% black or white.
-        let color = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
-        let body = Style { size: 13, line_height: 16, weight: 400, color, tabular: true };
+        let color = ui::label(dark);
+        let body = Style { color, tabular: true, ..ui::BODY };
         let symbol = |symbols: &mut Symbols, s: Symbol| symbols.get(s, Weight::Regular, SYMBOL, scale, color);
         // (piece, gap after it, item); left pieces then right ones, each list in reading order. The right group is
         // laid out first: the app's name takes what is left of the bar, or goes when that is too little.
@@ -295,7 +295,7 @@ impl MenuBar {
         let mut left = vec![(logo, LOGO_GAP, BarItem::Logo)];
         if let Some(app) = content.app.as_ref().filter(|_| room >= ts(MIN_APP)) {
             let name = self.names.entry(app.clone()).or_insert_with(|| app_name(app));
-            left.push((text.label(name, Style { weight: 600, tabular: false, ..body }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
+            left.push((text.label(name, Style { color, ..ui::HEADLINE }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
         }
         let mut rects = Vec::new();
         let mut x = EDGE;
@@ -327,7 +327,8 @@ impl MenuBar {
             Some(rect) => {
                 let key = (rect, dark, scale.to_bits());
                 if self.pill.as_ref().is_none_or(|(k, _)| *k != key) {
-                    let fill = if dark { [1.0, 1.0, 1.0, 0.15] } else { [0.0, 0.0, 0.0, 0.10] };
+                    // The open item is held down: the D7 pressed overlay.
+                    let fill = ui::overlay(ui::State::Pressed, dark).unwrap_or_default();
                     self.pill = Some((key, shaders.glass_shape(rect, fill, 4.0, false, dark, scale)));
                 }
                 out.extend(self.pill.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));

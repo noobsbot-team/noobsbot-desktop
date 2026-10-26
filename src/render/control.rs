@@ -10,6 +10,7 @@ use smithay::{
 use super::{
     Material, SceneElement, Shaders,
     titlebar::{Label, keep_buffers, label_element},
+    ui,
 };
 use crate::{
     apps::Icons,
@@ -113,15 +114,13 @@ impl ControlCenter {
             self.glass = Some((key, elements));
         }
 
-        // label, label-secondary (Part D).
-        let ink = |alpha: u8| if dark { [255, 255, 255, alpha] } else { [0, 0, 0, alpha] };
-        let (label, secondary) = (ink(217), ink(if dark { 140 } else { 128 }));
+        let (label, secondary) = (ui::label(dark), ui::secondary(dark));
         let white = [255, 255, 255, 255];
         // On the slider fill: white in light mode (the fill is dark), dark in dark mode.
         let on_fill = if dark { [0, 0, 0, 191] } else { white };
-        let title = Style { size: 13, line_height: 16, weight: 600, color: label, tabular: false };
-        let body = Style { weight: 400, ..title };
-        let small = Style { size: 11, line_height: 14, weight: 400, color: secondary, tabular: false };
+        let title = Style { color: label, ..ui::HEADLINE };
+        let body = Style { color: label, ..ui::BODY };
+        let small = Style { color: secondary, ..ui::SUBHEADLINE };
 
         // (piece, rect, left-aligned); a left-aligned piece's rect shrinks to its width.
         let mut pieces: Vec<(std::sync::Arc<Rendered>, Rect, bool)> = Vec::new();
@@ -376,11 +375,11 @@ fn glass(shaders: &Shaders, layout: &Layout, status: &Status, dark: bool, accent
     let card = Material::Card.spec(dark);
     let [r, g, b] = card.tint.map(|c| f32::from(c) / 255.0);
     for rect in &layout.cards {
-        out.push(shaders.glass_shape(*rect, [r, g, b, card.opacity * glass_opacity], 12.0, true, dark, scale));
+        out.push(shaders.glass_shape(*rect, [r, g, b, card.opacity * glass_opacity], card.radius, true, dark, scale));
     }
     let panel = Material::Panel.spec(dark);
     let [r, g, b] = panel.tint.map(|c| f32::from(c) / 255.0);
-    out.push(shaders.glass_shape(layout.rect, [r, g, b, panel.opacity * glass_opacity], 16.0, true, dark, scale));
-    out.extend(shaders.shadow(layout.rect, 16.0, panel.elevation, dark, scale, false));
+    out.push(shaders.glass_shape(layout.rect, [r, g, b, panel.opacity * glass_opacity], panel.radius, true, dark, scale));
+    out.extend(shaders.shadow(layout.rect, panel.radius, panel.elevation, dark, scale, false));
     out
 }

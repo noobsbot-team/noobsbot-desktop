@@ -9,6 +9,7 @@ use smithay::{
 use super::{
     Material, SceneElement, Shaders,
     titlebar::{Label, keep_buffers, label_element},
+    ui,
 };
 use crate::{
     shell::{self, Row, menu::*},
@@ -16,7 +17,6 @@ use crate::{
     wm::Rect,
 };
 
-const RADIUS: f64 = 8.0;
 /// Between a label and its shortcut.
 const SHORTCUT_GAP: i32 = 24;
 
@@ -96,10 +96,10 @@ impl MenuPopover {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        // label, label-secondary (Part D); disabled = label at 40%.
-        let ink = |alpha: u8| if dark { [255, 255, 255, alpha] } else { [0, 0, 0, alpha] };
-        let (label, secondary, disabled) = (ink(217), ink(if dark { 140 } else { 128 }), ink(87));
-        let body = Style { size: 13, line_height: 16, weight: 400, color: label, tabular: false };
+        // Disabled = label at 40%.
+        let (label, secondary) = (ui::label(dark), ui::secondary(dark));
+        let disabled = ui::fade(label, 0.4);
+        let body = Style { color: label, ..ui::BODY };
         let logical = |w: u32| (f64::from(w) / scale).round() as i32;
 
         // Sized to the widest label plus its shortcut.
@@ -127,10 +127,10 @@ impl MenuPopover {
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             let spec = Material::Popover.spec(dark);
             let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
-            let line = if dark { [1.0, 1.0, 1.0, 0.10] } else { [0.0, 0.0, 0.0, 0.10] };
+            let line = ui::separator(dark);
             let mut glass: Vec<_> = separators.iter().map(|s| shaders.glass_shape(*s, line, 0.0, false, dark, scale)).collect();
-            glass.push(shaders.glass_shape(rect, [r, g, b, spec.opacity * glass_opacity], RADIUS, true, dark, scale));
-            glass.extend(shaders.shadow(rect, RADIUS, spec.elevation, dark, scale, false));
+            glass.push(shaders.glass_shape(rect, [r, g, b, spec.opacity * glass_opacity], spec.radius, true, dark, scale));
+            glass.extend(shaders.shadow(rect, spec.radius, spec.elevation, dark, scale, false));
             self.glass = Some((key, glass));
         }
         match hovered.map(|i| cells[i]) {
