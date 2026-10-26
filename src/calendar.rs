@@ -27,6 +27,25 @@ pub fn week_number(row: &[NaiveDate; 7]) -> u32 {
     row.iter().find(|d| d.weekday() == Weekday::Mon).unwrap_or(&row[0]).iso_week().week()
 }
 
+/// The locale's first weekday (LC_TIME), from `locale week-1stday first_weekday`; Sunday when it can't be read.
+/// ponytail: read once per run; a locale change shows after a restart.
+pub fn locale_week_start() -> Weekday {
+    static START: std::sync::OnceLock<Weekday> = std::sync::OnceLock::new();
+    *START.get_or_init(|| {
+        let out = std::process::Command::new("locale").args(["week-1stday", "first_weekday"]).output();
+        out.ok().and_then(|o| parse_first_weekday(&String::from_utf8_lossy(&o.stdout))).unwrap_or(Weekday::Sun)
+    })
+}
+
+/// `week-1stday` is a date whose weekday is day 1 (19971130, a Sunday, in most locales); `first_weekday` counts from
+/// it, starting at 1.
+fn parse_first_weekday(out: &str) -> Option<Weekday> {
+    let mut lines = out.lines().map(str::trim);
+    let base = NaiveDate::parse_from_str(lines.next()?, "%Y%m%d").ok()?.weekday();
+    let n: u8 = lines.next()?.parse().ok()?;
+    (1..=7).contains(&n).then(|| (1..n).fold(base, |day, _| day.succ()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -104,6 +123,19 @@ mod tests {
         // 2020 (leap year from a Wednesday) also has 53 weeks; 2021 has 52.
         assert_eq!(week_number(&month_grid(2020, 12, Weekday::Mon).unwrap()[4]), 53);
         assert_eq!(week_number(&month_grid(2021, 12, Weekday::Mon).unwrap()[4]), 52);
+    }
+
+    #[test]
+    fn locale_first_weekday() {
+        // en_US: Sunday; de_DE: Monday (19971130 + 2 − 1); ar_EG-style: Saturday; a Monday-based base date.
+        assert_eq!(parse_first_weekday("19971130\n1\n"), Some(Weekday::Sun));
+        assert_eq!(parse_first_weekday("19971130\n2\n"), Some(Weekday::Mon));
+        assert_eq!(parse_first_weekday("19971130\n7\n"), Some(Weekday::Sat));
+        assert_eq!(parse_first_weekday("19971201\n1\n"), Some(Weekday::Mon));
+        assert_eq!(parse_first_weekday(""), None);
+        assert_eq!(parse_first_weekday("19971130\n"), None);
+        assert_eq!(parse_first_weekday("19971130\n8\n"), None);
+        assert_eq!(parse_first_weekday("garbage\n1\n"), None);
     }
 
     #[test]
