@@ -115,6 +115,9 @@ impl State {
     /// draw with it. Zoom and colour filters (E8.6) take the frame, then Night Light goes in front of everything
     /// (capture.rs leaves both out: `zoom.plain` and no tint).
     pub fn frame_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
+        if let Some(views) = self.backend.as_mut() {
+            views.shaders.contrast = self.config.accessibility.increase_contrast;
+        }
         let (elements, animating) = self.scene_elements(renderer, output)?;
         let geo = self.space.output_geometry(output)?;
         let scale = output.current_scale().fractional_scale();
