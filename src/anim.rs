@@ -20,6 +20,8 @@ pub struct Spring {
 pub const SNAPPY: Spring = Spring { response: 0.25, damping: 0.90 };
 /// Windows, panels sliding, Spaces.
 pub const SMOOTH: Spring = Spring { response: 0.40, damping: 1.00 };
+/// Touchpad gestures let go: a spring from the fingers' position and speed (`Spring::release`).
+pub const GESTURE: Spring = Spring { response: 0.40, damping: 0.85 };
 /// Small UI bounces.
 #[cfg_attr(not(test), expect(dead_code, reason = "D10 preset, for the first small UI bounce"))]
 pub const BOUNCY: Spring = Spring { response: 0.35, damping: 0.70 };
@@ -534,7 +536,7 @@ mod tests {
 
     #[test]
     fn released_springs_start_where_let_go_and_settle() {
-        for s in [SNAPPY, SMOOTH, BOUNCY] {
+        for s in [SNAPPY, SMOOTH, BOUNCY, GESTURE] {
             for (x, v) in [(-0.6, 0.0), (-0.6, 3.0), (0.2, -2.0), (0.0, 1.0)] {
                 assert!((s.release(x, v, 0.0) - x).abs() < 1e-9);
                 // Its starting speed is `v`.

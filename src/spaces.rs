@@ -19,7 +19,12 @@ use smithay::{
     utils::{Logical, Point, SERIAL_COUNTER},
 };
 
-use crate::{anim::SMOOTH, rules, state::State, wm::Rect};
+use crate::{
+    anim::{GESTURE, SMOOTH, Spring},
+    rules,
+    state::State,
+    wm::Rect,
+};
 
 /// Rows between Spaces: far more than any window can hang off a screen edge.
 pub const STRIDE: i32 = 1 << 16;
@@ -40,35 +45,39 @@ impl Desks {
     }
 }
 
-/// A value springing (D10 `smooth`) from `from` to `to`, or held where the fingers put it.
+/// A value springing from `from` to `to` (D10 `smooth`, or `gesture` once flung), or held where the fingers put it.
 #[derive(Debug, Clone, Copy)]
 pub struct Tween {
     from: f64,
     to: f64,
     /// Speed when let go, per second.
     v: f64,
+    spring: Spring,
     start: Instant,
     /// Until it settles; `None`: held at `from`.
     settle: Option<Duration>,
 }
 
-/// The fastest a fling starts (per second): bounds the overshoot of a critically damped spring to `v / (ωe)`, about 7%.
+/// The fastest a fling starts (per second): bounds its overshoot to under 8%.
 const MAX_SPEED: f64 = 3.0;
 
 impl Tween {
     pub fn new(from: f64, to: f64) -> Self {
-        Self::fling(from, to, 0.0)
+        Self::spring(from, to, 0.0, SMOOTH)
     }
 
     /// Let go at `from` moving at `v` per second.
     pub fn fling(from: f64, to: f64, v: f64) -> Self {
-        let v = v.clamp(-MAX_SPEED, MAX_SPEED);
-        Self { from, to, v, start: Instant::now(), settle: Some(SMOOTH.settle_release(from - to, v)) }
+        Self::spring(from, to, v.clamp(-MAX_SPEED, MAX_SPEED), GESTURE)
+    }
+
+    fn spring(from: f64, to: f64, v: f64, spring: Spring) -> Self {
+        Self { from, to, v, spring, start: Instant::now(), settle: Some(spring.settle_release(from - to, v)) }
     }
 
     /// Held at `at` until let go: never done.
     pub fn hold(at: f64) -> Self {
-        Self { from: at, to: at, v: 0.0, start: Instant::now(), settle: None }
+        Self { from: at, to: at, v: 0.0, spring: SMOOTH, start: Instant::now(), settle: None }
     }
 
     pub fn value(&self, now: Instant) -> f64 {
@@ -78,7 +87,7 @@ impl Tween {
         if self.done(now) {
             return self.to;
         }
-        self.to + SMOOTH.release(self.from - self.to, self.v, now.saturating_duration_since(self.start).as_secs_f64())
+        self.to + self.spring.release(self.from - self.to, self.v, now.saturating_duration_since(self.start).as_secs_f64())
     }
 
     pub fn done(&self, now: Instant) -> bool {
@@ -852,7 +861,7 @@ mod tests {
             for v in [0.0, 2.0, 10.0, 100.0] {
                 let tween = Tween { start: t0, ..Tween::fling(from, 1.0, v) };
                 let peak = (0..2000).map(|ms| tween.value(t0 + Duration::from_millis(ms))).fold(0.0, f64::max);
-                assert!(peak <= 1.075, "{from} at {v}/s peaks at {peak}");
+                assert!(peak <= 1.08, "{from} at {v}/s peaks at {peak}");
                 assert!(tween.done(t0 + Duration::from_secs(2)) && tween.value(t0 + Duration::from_secs(2)) == 1.0);
             }
         }
