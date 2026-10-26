@@ -23,7 +23,7 @@ Arch Linux system.
 - **Part B** — Glossary
 - **Part C** — Core technology choices (what, why, what we rejected)
 - **Part D** — Design system: the glassy macOS look shared by every element
-- **Part E** — Milestones M1–M7: every element in detail (what, design, built with, why, done when)
+- **Part E** — Milestones M1–M8: every element in detail (what, design, built with, why, done when)
 - **Part F** — Apps that ship with Noobsbot Desktop
 - **Part G** — System layer: hardware, drivers, services, package list
 - **Part H** — Fonts, icons, themes
@@ -1592,6 +1592,136 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Emoji picker (done) | Super+Ctrl+E / Super+. popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
 | Own screen recorder | Super+Shift+5 ▸ Record without `wf-recorder` | compositor frames → PipeWire → `ffmpeg`/`gst` encoder |
 | Own Finder-style file manager | replace Dolphin | big project; only if wanted |
+
+---
+
+## M8 — Feature parity with a full traditional desktop — size L
+
+An audit on 2026-10-26 compared Noobsbot Desktop with a mature traditional Linux desktop, one setting, applet and key
+at a time (about 30 settings modules, 36 panel applets, 880 settings keys). This milestone lists every gap that has a
+sensible macOS form, as Noobsbot Desktop would draw it: same glass, same Part D tokens, same behaviour rules. A feature
+with no macOS form is either given one or listed under "Not cloned" with the reason.
+
+Order of work: **E8.1 first** (things that look done but aren't), then **Settings pages, the dock's per-window
+features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own mini-plan as usual.
+
+### E8.1 Settings that do nothing today (fix first, S each)
+| Gap | Where | Fix |
+|---|---|---|
+| `[windows] double_click_title` is shown in Settings but ignored | `src/decorations.rs` always zooms | honour Zoom / Minimize / Nothing |
+| `[windows] snapping` is on by default, has a toggle and a README line, but nothing reads it | `src/config.rs` | build E8.5 tiling, or hide the toggle until then |
+| `[keyboard] mac_keys` toggle is parsed but never applied | `src/config.rs` only | implement the E1.6 swap or hide the toggle |
+| Window rule `opacity` is documented but not drawn | `src/state.rs` ponytail note | apply it in the renderer or drop it from the docs |
+| Minimise from apps that draw their own title bar (GTK4, libadwaita) does nothing | no `minimize_request` handler | route it to `minimise` |
+| Trackpad tap-to-click and natural scroll apply only when the device is re-plugged | `src/backend/udev.rs` | re-configure devices on config reload |
+| Green traffic light zooms; E5.1 says full screen (Alt = zoom) | `src/decorations.rs` | decide, then fix code or plan |
+| Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow | `src/gestures.rs` | drive the transitions from the gesture progress |
+| Logo menu "System Settings…" and "About This Computer" rows are disabled | `src/shell/mod.rs` | open the Settings app (at About) |
+| Do Not Disturb is lost on restart | `src/shell/control.rs` | save it in `config.toml` |
+| Menu bar, dock, Spaces, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
+| `show-desktop` has no default key | `data/config.toml` | Super+F11 (macOS F11) |
+
+### E8.2 System Settings pages (priority 1)
+Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers (later)**. Every row writes `config.toml` or
+calls the system service, and applies live.
+| Page | Add |
+|---|---|
+| Appearance | wallpaper gallery (thumbnails of `/usr/share/backgrounds`, `~/Pictures`, "+ Add Folder") instead of the path field; Fill / Fit / Centre / Stretch / Tile; slideshow with interval and crossfade; Auto-dark hours or sunset (today fixed 19–07 in `src/render/mod.rs`); Reduce motion and Desktop icons rows; text size; pointer size; minimise effect Scale / Genie; also write the app font, monospace font and scrollbar keys for GTK and Qt apps |
+| Displays | mirroring ("Use as: Mirror for …"); identify (name label on each screen while the page is open); "Reset"; brightness slider; Night Light (designed in E6.2, not built); layouts remembered per set of monitors; clamshell (lid closed + external monitor keeps running); underscan for TVs (later) |
+| Sound | output and input device pickers; live input level meter; balance; alert sound and alert volume; "Play user interface sound effects", startup sound, volume-change feedback; per-app volume in the Control Center Sound expansion |
+| Network (new; Wi-Fi page grows into it) | network list, Known Networks with Forget and Auto-Join; Details sheet (IP, DNS, router, MAC); "Other…" for hidden and WPA-Enterprise networks; Ethernet details and static IP; VPN and WireGuard connect; proxy; captive-portal "!" icon that opens the login page; "Advanced…" opens `nm-connection-editor` until the native sheets exist. VPN stays out of the Control Center card (E2.3) |
+| Bluetooth | Nearby Devices (discovery) with Connect; per-device ⓘ ▸ Forget, Rename (the pairing agent and alerts already exist) |
+| Battery (new) | show percentage; time remaining and power source in the battery menu; Low Power Mode; dim on battery; display off and sleep times for battery and for power adapter (today `[idle]` in the config file only); keyboard backlight; low-battery warnings for wireless mouse and keyboard |
+| Keyboard | key repeat delay and rate sliders with an Off stop (now constants in `src/input.rs`, sent live with `set_repeat_info`); Input Sources list with a searchable picker, reorder, IMEs; "previous" and "n-th source" actions; remember the source per window; Modifier Keys dropdowns (Caps Lock, Compose, Ctrl/Alt swap) plus a raw options field; Keyboard Viewer; Keyboard Shortcuts dialog (E8.7) |
+| Mouse (new, `[mouse]`) | tracking speed; acceleration on/off; primary button left/right; natural scroll (separate from the trackpad); double-click speed (also used by our own title-bar double-click); middle-click emulation; middle-click paste on/off |
+| Trackpad | tracking speed; secondary click (two fingers / bottom corners / off); tap to drag with drag lock; ignore trackpad while a mouse is plugged in; disable while typing; scroll method; each gesture with on/off; hot corners |
+| Desktop & Dock | dock click, middle-click and scroll actions (E8.3); double-click title bar action; minimise effect; **default apps** (browser, mail, music, video, photos, text, PDF, file manager) written to `mimeapps.list`, and Super+B / Super+E follow them |
+| Date & Time | "Set time and date automatically" (timedated `SetNTP`); manual date and time; searchable time-zone list instead of the text field; week numbers; first weekday from the locale |
+| Notifications | per-app allow, banner or alert, sound, show on lock screen; previews Always / When Unlocked / Never; DND schedule; show while full screen |
+| Lock Screen | the `[idle]` timers and lock toggle; password delay (immediately … 1 h); message on the lock screen |
+| Privacy & Security | recent files: remember, how long, Clear; connectivity check; camera and microphone per app; empty Trash after 30 days |
+| General | **Login Items** (`~/.config/autostart` and system entries, toggle with `Hidden=true`, + app or command, −); Storage (low-disk warning, Trash and thumbnail cleanup); About ▸ copy System Report |
+| Users | name, picture (stock, file, camera) and password through AccountsService and our polkit agent |
+| Accessibility (new) | everything in E8.6 |
+| Printers (later) | CUPS, printer list, queue, Add Printer; print-queue icon in the dock while printing |
+
+### E8.3 Dock: the per-window jobs of a window list (priority 1)
+The dock stays per app, as on macOS. Every per-window job a taskbar does gets a macOS surface instead:
+- **Window previews:** hover (or long-press) an icon with several windows → a glass strip of live thumbnails above it,
+  click to focus, × or middle-click to close, hovering a thumbnail fades the other windows. Reuses Mission Control's
+  thumbnails and `close_button`.
+- **Minimised windows** as thumbnail tiles after a separator at the dock's right end (E3); the minimise animation
+  lands on the tile.
+- **One dock per display** with its own filtering (D13, E3).
+- **Super+1…9** focuses, cycles or opens the n-th dock app, Super+Shift+n opens a new window, and holding Super shows
+  number pills over the icons. Space keys move to Ctrl+1…9 (macOS). Decided in the E8.3 mini-plan with E1.6.
+- **Right-click menu:** Options ▸ Assign To (All Spaces / This Space / None), Move to Display, Open at Login; Close
+  Others; recent files of the app (`recently-used.xbel`); ◆ next to minimised windows.
+- **Spring-loading:** a file dragged over an icon brings that app's window up (App Exposé when it has several).
+- **Config:** `[dock] click = "toggle" | "cycle"`, `middle = "new" | "close"`, scroll on / off / reverse, Shift-click
+  new window, cycle across apps.
+- **Later, if asked:** `[dock] mode = "windows"`, one icon per window with the title as tooltip.
+
+### E8.4 Appearance and themes (priority 1)
+Rows live on the Appearance page (E8.2). Behind them:
+- Wallpaper: gallery, fit modes, slideshow and crossfade in the wallpaper renderer (today `cover` only).
+- Auto-dark from configurable hours or sunset (needs the location the user typed for weather; no geoclue, E2.6).
+- Night Light as an output colour-temperature shader with schedule, as designed in E6.2.
+- Text size and pointer size applied to the shell and exported to apps and XWayland (`XCURSOR_SIZE` today).
+- Genie minimise as the alternative to Scale (E5.5).
+- Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow.
+
+### E8.5 Window management
+- **Tiling, macOS 15 style:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
+  300 ms hold; dragging out restores the old size (E1.2). Keyboard: Super+Ctrl+arrows tile (replaces the unbuilt
+  nudge keys in E1.2).
+- **Window menu:** right-click the title bar, or the app asks (`show_window_menu`): Minimize, Zoom, Fill, Center,
+  Move & Resize ▸ halves and quarters, Full Screen, Keep on Top, Move to ▸ Space n / Display, Close.
+- **Sheets:** modal dialogs attach under the parent's title bar and move with it (E1.2 stacking).
+- **Actions** for bindings: `zoom`, `fullscreen` (Super+Ctrl+F), `keep-on-top`, `center`, `move-to-display`,
+  `move-to-space <n>`, `move-to-new-space`, `cycle-app-windows` (Super+`, E4.5).
+- Each app's window frame remembered (E1.2).
+- Switcher: pick with hover and click; H hides the selected app; centred on the active display.
+- Optional: Super + right-drag resizes; focus follows mouse as a hidden `[windows] focus = "hover"`.
+
+### E8.6 Accessibility
+- **Zoom** (full screen and picture-in-picture), with invert and greyscale filters; keys Super+Alt+8 / = / −.
+- **Keyboard:** sticky keys, slow keys, bounce keys, mouse keys (in `src/input.rs`).
+- **Pointer:** dwell click, hold for secondary click, pointer size, shake to find the pointer.
+- **Display:** increase contrast, larger text, reduce transparency (exists), reduce motion (exists).
+- **Alerts:** visual and audible bell (`xdg_system_bell`), Caps Lock indicator.
+- **On-screen keyboard** (`virtual_keyboard` protocol), also on the lock screen.
+- **Screen reader** path: AT-SPI for our shell widgets and an Orca key monitor. Size L.
+
+### E8.7 Spaces, gestures, keys and shortcuts
+- Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
+  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space.
+- Keyboard Shortcuts dialog in macOS form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
+  ⚠ on conflicts (today the first match wins silently).
+- Default keys still missing: log out (Super+Shift+Q), sleep key, keyboard backlight, touchpad toggle, display switch,
+  calculator / mail / browser / search keys (to the default apps), media stop / seek / eject, fine volume steps,
+  window screenshot and screen recording.
+- Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout.
+
+### E8.8 Menu bar, tray, widgets and session
+- Tray: real submenus and an overflow "»" menu.
+- Menu bar on every display; auto-hide option; a Recent Items menu with Clear.
+- Trash at the dock's right end; Launchpad folders and drag to rearrange.
+- Widgets for Notification Center and the desktop as separate processes over D-Bus (no plugins in the compositor).
+- Keep-awake Control Center tile with the list of apps blocking sleep.
+- Reopen windows at login (checkbox in the Log Out alert).
+- Thunderbolt "Allow accessory to connect?" alert through `boltd` (G2).
+- Desktop icons for mounted drives with Eject.
+- Housekeeping: low-disk notification, Trash and thumbnail cleanup, recent-files age.
+
+### Not cloned (no macOS form, or not worth it)
+Window shading; title-bar scroll opacity; button-layout and title-bar font choices (fixed by D2, D4); notifications at
+the bottom; free-form clock and lock-screen formats; a sound file per event; several switcher styles; pointer warping;
+volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add-on store for applets and desklets
+(widgets over D-Bus instead, E8.8); X11-only options; "turn all networking off".
+
+- **Done when:** every row above is built, or moved to "Not cloned" with its reason, and each new page matches its
+  mockup (D12).
 
 ---
 
