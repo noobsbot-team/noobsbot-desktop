@@ -197,6 +197,11 @@ impl State {
             let (locked, idle_shade, animating) = (self.lock.is_some(), self.idle_shade(), self.animating());
             let hidden = self.bar_hidden();
             let content = self.bar_content(output).filter(|_| hidden < 1.0);
+            // Its own Mission Control, Space slide and indicator (E8.7).
+            let overview = self.mission_frame(output);
+            let slide = if overview.is_none() { self.slide_frame(output) } else { None };
+            let indicator = self.space_indicator(output);
+            let animating = animating || overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
             let views = self.backend.as_mut()?;
             // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
             let mut elements = if locked {
@@ -220,6 +225,20 @@ impl State {
                     }
                 };
                 front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
+                let appearance = &self.config.appearance;
+                let mission = views.missions.entry(output.name()).or_default();
+                if let Some((count, current)) = indicator {
+                    front.extend(mission.indicator(&views.shaders, count, current, geo.size.w, dark, appearance.glass_opacity, scale));
+                }
+                let windows = match (&overview, &slide) {
+                    (Some(overview), _) => {
+                        let accent = render::accent(appearance.accent, dark);
+                        let (glass, text) = (appearance.glass_opacity, &mut self.text);
+                        Some(mission.windows(renderer, &views.shaders, text, &self.space, overview, geo, dark, accent, glass, scale))
+                    }
+                    (None, Some(slide)) => Some(render::sliding(renderer, &views.shaders, &mut self.text, &self.space, slide, scale, dark)),
+                    (None, None) => None,
+                };
                 render::scene(
                     renderer,
                     &views.shaders,
@@ -229,7 +248,7 @@ impl State {
                     output,
                     &self.config.appearance,
                     front,
-                    None,
+                    windows,
                     self.frame_time,
                 )
             };
@@ -291,9 +310,9 @@ impl State {
         let window_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Window)))
             .then(|| self.window_menu_rows())
             .and_then(|rows| Some((self.window_menu_anchor()?, rows)));
-        let overview = self.mission_frame();
-        let slide = if overview.is_none() { self.slide_frame() } else { None };
-        let indicator = self.spaces.hud.is_some().then(|| self.desk_names()).map(|(names, current)| (names.len(), current));
+        let overview = self.mission_frame(output);
+        let slide = if overview.is_none() { self.slide_frame(output) } else { None };
+        let indicator = self.space_indicator(output);
         let output_size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size);
         let ripple = output_size.and_then(|size| self.ripple_frame(size));
         let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some() || ripple.is_some();
@@ -322,6 +341,7 @@ impl State {
             launchpad: pad_view,
             drawer: drawer_view,
             mission,
+            missions: _,
             ghosts,
             tiles,
             entrances,

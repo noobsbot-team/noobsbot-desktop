@@ -302,8 +302,9 @@ impl State {
         let full = window.toplevel().is_some_and(|t| t.with_pending_state(|s| s.states.contains(xdg_toplevel::State::Fullscreen)));
         let on_top = crate::state::on_top(&window);
         let here = self.desk_of_window(&window);
-        let list = self.desks().map(|d| d.list.clone()).unwrap_or_default();
-        let (names, _) = self.desk_names();
+        let key = self.window_key(&window);
+        let list = self.desks_at(&key).list.clone();
+        let (names, _) = self.desk_names_at(&key);
         // Not its own Space, nor another window's full-screen Space.
         let spaces: Vec<_> = names.into_iter().enumerate().map(|(i, n)| (n, i != here && list.get(i).is_none_or(Option::is_none))).collect();
         menu_rows(full, on_top, &spaces, self.space.outputs().count())

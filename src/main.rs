@@ -204,6 +204,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             }
             let bar = config.menu_bar != state.config.menu_bar;
             let idle = config.idle != state.config.idle;
+            let spaces = config.spaces != state.config.spaces;
             let reader = config.accessibility.screen_reader != state.config.accessibility.screen_reader;
             state.config = config;
             if reader {
@@ -214,6 +215,9 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             }
             if displays {
                 state.apply_displays();
+            }
+            if spaces {
+                state.regroup_spaces();
             }
             if idle {
                 // New times count from the last input, not from the next one.

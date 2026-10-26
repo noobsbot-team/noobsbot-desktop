@@ -34,7 +34,7 @@ pub struct Entry {
     pub desktop: Option<String>,
     #[serde(default)]
     pub command: Vec<String>,
-    /// The n-th Space that isn't a fullscreen app's (from 0), on the first display.
+    /// The n-th Space that isn't a fullscreen app's (from 0), among its display's Spaces.
     #[serde(default)]
     pub space: usize,
     pub display: String,
@@ -119,9 +119,7 @@ impl State {
 
     /// Every app window, bottom to top (minimised ones too), but not dialogs or the quake terminal.
     fn session_entries(&mut self) -> Vec<Entry> {
-        let first = self.space.outputs().next().cloned();
-        let top = first.as_ref().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.loc.y);
-        let (list, current) = self.desks().map(|d| (d.list.clone(), d.current)).unwrap_or_default();
+        let top = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.loc.y);
         let shown = self.space.elements().map(|w| (w.clone(), None));
         let windows: Vec<(Window, Option<smithay::utils::Point<i32, smithay::utils::Logical>>)> =
             shown.chain(self.hidden.iter().map(|(w, loc)| (w.clone(), Some(*loc)))).collect();
@@ -145,7 +143,10 @@ impl State {
             frame.loc.y -= spaces::row_at(frame.loc.y, top) * spaces::STRIDE;
             let outputs = self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.clone())));
             let Some(output) = crate::displays::mostly_on(frame, outputs) else { continue };
-            let space = if Some(&output) == first.as_ref() { plain_index(&list, spaces::desk_of(spaces::row_at(now.loc.y, top), current)) } else { 0 };
+            // Its index among its display's Spaces.
+            let key = self.output_key(&output);
+            let desks = self.desks_at(&key);
+            let space = plain_index(&desks.list, spaces::desk_of(spaces::row_at(now.loc.y, top), desks.current));
             let desktop = self.apps.find(&app).map(|a| a.id.clone());
             let command = match desktop {
                 Some(_) => Vec::new(),
@@ -244,12 +245,13 @@ impl State {
         if entry.maximized {
             self.fill(&toplevel, xdg_toplevel::State::Maximized);
         }
-        let first = self.space.outputs().next().map(|o| o.name());
-        if entry.space == 0 || first.as_deref() != Some(entry.display.as_str()) {
+        if entry.space == 0 {
             return;
         }
+        // The Spaces of the display it went back to.
         let dynamic = self.config.windows.spaces == 0;
-        let Some(desks) = self.desks() else { return };
+        let key = self.window_key(window);
+        let desks = self.desks_at(&key);
         while dynamic && plain_desk(&desks.list, entry.space).is_none() && desks.list.len() < 16 {
             desks.list.push(None);
         }

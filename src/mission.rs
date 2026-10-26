@@ -1,4 +1,4 @@
-//! Mission Control & App Exposé (E5.2): the shown Space's windows spread into a grid without overlap, the Spaces
+//! Mission Control & App Exposé (E5.2): on every display at once (E8.7), the shown Space's windows spread into a grid without overlap, the Spaces
 //! bar on top. Windows are drawn from the textures the apps already gave us, scaled, so nothing extra is rendered
 //! while it is closed (see render/mission.rs).
 
@@ -7,6 +7,7 @@ use std::time::Instant;
 use smithay::{
     desktop::Window,
     input::keyboard::{Keysym, ModifiersState},
+    output::Output,
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
 };
 
@@ -41,6 +42,8 @@ pub struct Mission {
     /// 0 closed → 1 open.
     pub progress: Tween,
     pub hover: Option<Window>,
+    /// The display under the pointer: the one whose bar expands and is hovered.
+    pub output: String,
     /// The Spaces bar shows thumbnails (the pointer is at the top).
     pub expanded: bool,
     /// The Space under the pointer.
@@ -257,10 +260,12 @@ impl State {
             None => {
                 self.popup = None;
                 self.spaces.slide = None;
+                let output = self.pointer_output().map(|o| o.name()).unwrap_or_default();
                 self.mission = Some(Mission {
                     app,
                     progress: Tween::new(0.0, 1.0),
                     hover: None,
+                    output,
                     expanded: false,
                     bar_hover: None,
                     press: None,
@@ -281,26 +286,33 @@ impl State {
         }
     }
 
-    fn mission_layout(&mut self) -> Option<Layout> {
+    /// `output`'s overview: its shown windows and its Spaces bar.
+    fn mission_layout(&mut self, on: &Output) -> Option<Layout> {
         let mission = self.mission.as_ref()?;
-        let output = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?;
+        let output = self.space.output_geometry(on)?;
         let all = mission.all;
-        let first = self.space.outputs().next().cloned();
+        let first = self.space.outputs().next() == Some(on);
         let windows: Vec<Window> = self
             .space
             .elements()
             .rev()
-            .filter(|w| if all { self.window_output(w).is_none_or(|o| Some(o) == first) } else { self.on_current(w) })
+            .filter(|w| self.window_output(w).as_ref().unwrap_or(on) == on)
+            .filter(|w| all || self.on_current(w))
             .filter(|w| w.geometry().size.w > 0 && self.frame(w).is_some())
             .filter(|w| mission.app.is_none() || self.app_key(w) == mission.app)
             .cloned()
             .collect();
         let frames: Vec<Rect> = windows.iter().filter_map(|w| self.frame(w)).map(|f| Rectangle::new(f.loc - output.loc, f.size)).collect();
-        let (expanded, dynamic) = (mission.expanded, self.config.windows.spaces == 0);
-        let bottom = output.size.h - crate::shell::dock::reserve(&self.config.dock);
+        let (expanded, dynamic) = (mission.expanded && mission.output == on.name(), self.config.windows.spaces == 0);
+        // The dock is on the first display only.
+        let bottom = output.size.h - if first { crate::shell::dock::reserve(&self.config.dock) } else { 0 };
         let top = area_top();
         let area = Rectangle::new((GAP, top).into(), (output.size.w - 2 * GAP, bottom - top - GAP / 2).into());
-        let (count, current) = self.desks().map_or((1, 0), |d| (d.list.len(), d.current));
+        let key = self.output_key(on);
+        let (count, current) = {
+            let d = self.desks_at(&key);
+            (d.list.len(), d.current)
+        };
         let mut bar = bar(output.size, count, expanded || all, dynamic);
         let targets = if all {
             // Below the bar's buttons, room for the last row's names.
@@ -321,8 +333,8 @@ impl State {
         Some(Layout { windows, frames, targets, bar })
     }
 
-    /// This frame's overview, or `None` when closed (clearing a finished close).
-    pub fn mission_frame(&mut self) -> Option<Overview> {
+    /// This frame's overview on `output`, or `None` when closed (clearing a finished close).
+    pub fn mission_frame(&mut self, output: &Output) -> Option<Overview> {
         let now = Instant::now();
         let mission = self.mission.as_ref()?;
         let (progress, done) = (mission.progress.value(now), mission.progress.done(now));
@@ -330,8 +342,9 @@ impl State {
             self.mission = None;
             return None;
         }
-        let layout = self.mission_layout()?;
+        let layout = self.mission_layout(output)?;
         let mission = self.mission.as_ref()?;
+        let here = mission.output == output.name();
         let all = mission.all;
         let dragged = mission.press.as_ref().and_then(|(w, at, to)| to.map(|to| (w.clone(), to - *at)));
         let mut thumbs: Vec<Thumb> = layout
@@ -352,16 +365,17 @@ impl State {
             thumbs.insert(0, thumb);
         }
         let hover = mission.hover.as_ref().filter(|_| done).and_then(|h| thumbs.iter().position(|t| t.window == *h));
-        let bar_hover = mission.bar_hover;
+        let bar_hover = mission.bar_hover.filter(|_| here);
         let hover = hover.map(|i| (i, crate::render::window_title(&thumbs[i].window)));
-        let (names, current) = self.desk_names();
+        let key = self.output_key(output);
+        let (names, current) = self.desk_names_at(&key);
         let others = if layout.bar.expanded && !all {
             self.space
                 .elements()
-                .filter(|w| !self.on_current(w))
+                .filter(|w| !self.on_current(w) && self.window_output(w).as_ref().unwrap_or(output) == output)
                 .map(|w| {
                     let row = self.window_row(w);
-                    (crate::spaces::desk_of(row, current), w.clone(), self.row_origin(row))
+                    (crate::spaces::desk_of(row, current), w.clone(), self.row_origin(output, row))
                 })
                 .collect()
         } else {
@@ -386,12 +400,20 @@ impl State {
         bar.cells.iter().position(|c| c.to_f64().contains(location)).map(BarHit::Space)
     }
 
-    /// A press at `location` (output-relative). `true`: Mission Control is open and took it.
-    pub fn mission_press(&mut self, location: Point<f64, Logical>, button: u32) -> bool {
+    /// The display under global `at`, and `at` relative to it.
+    fn mission_local(&self, at: Point<f64, Logical>) -> Option<(Output, Point<f64, Logical>)> {
+        let output = self.space.output_under(at).next()?.clone();
+        let origin = self.space.output_geometry(&output)?.loc.to_f64();
+        Some((output, at - origin))
+    }
+
+    /// A press at global `at`. `true`: Mission Control is open and took it.
+    pub fn mission_press(&mut self, at: Point<f64, Logical>, button: u32) -> bool {
         if !self.mission_open() {
             return false;
         }
-        let Some(layout) = self.mission_layout() else { return true };
+        let Some((output, location)) = self.mission_local(at) else { return true };
+        let Some(layout) = self.mission_layout(&output) else { return true };
         if button != 0x110 {
             return true;
         }
@@ -418,12 +440,18 @@ impl State {
         true
     }
 
-    /// The pointer moved to `to` (output-relative): hover, bar expansion and window drags.
-    pub fn mission_motion(&mut self, to: Point<f64, Logical>) {
+    /// The pointer moved to global `at`: hover, bar expansion and window drags.
+    pub fn mission_motion(&mut self, at: Point<f64, Logical>) {
         if !self.mission_open() {
             return;
         }
-        let Some(layout) = self.mission_layout() else { return };
+        let Some((output, to)) = self.mission_local(at) else { return };
+        if let Some(m) = self.mission.as_mut().filter(|m| m.output != output.name()) {
+            m.output = output.name();
+            m.expanded = false;
+            (m.press, m.space_press) = (None, None);
+        }
+        let Some(layout) = self.mission_layout(&output) else { return };
         let hover = layout.windows.iter().zip(&layout.targets).find(|(_, t)| t.to_f64().contains(to)).map(|(w, _)| w.clone());
         let bar_hover = layout.bar.cells.iter().position(|c| c.to_f64().contains(to));
         let Some(m) = self.mission.as_mut() else { return };
@@ -455,7 +483,7 @@ impl State {
 
     /// The left button went up at `location`: a click focuses the window and closes; a drag onto a Space moves the
     /// window there.
-    pub fn mission_release(&mut self, location: Point<f64, Logical>) {
+    pub fn mission_release(&mut self, at: Point<f64, Logical>) {
         if let Some((i, _, dragged)) = self.mission.as_mut().and_then(|m| m.space_press.take()) {
             if !dragged {
                 self.show_space(i);
@@ -464,13 +492,15 @@ impl State {
             return;
         }
         let Some((window, _, dragged)) = self.mission.as_mut().and_then(|m| m.press.take()) else { return };
+        let Some((output, location)) = self.mission_local(at) else { return };
         match dragged {
             None => {
                 self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
                 self.close_mission();
             }
             Some(_) => {
-                let target = self.mission_layout().and_then(|l| l.bar.cells.iter().position(|c| c.to_f64().contains(location)));
+                // ponytail: a drag stays on its display (the press is dropped when the pointer leaves it).
+                let target = self.mission_layout(&output).and_then(|l| l.bar.cells.iter().position(|c| c.to_f64().contains(location)));
                 if let Some(desk) = target {
                     self.send_to_space(&window, desk);
                 }
@@ -548,9 +578,10 @@ impl State {
         }
     }
 
-    /// Moves the highlight: `pick` gets the grid's rects and the highlighted one's index.
+    /// Moves the highlight on the pointer's display: `pick` gets the grid's rects and the highlighted one's index.
     fn mission_step(&mut self, pick: impl Fn(&[Rect], Option<usize>) -> Option<usize>) {
-        let Some(layout) = self.mission_layout().filter(|l| !l.windows.is_empty()) else { return };
+        let Some(output) = self.pointer_output() else { return };
+        let Some(layout) = self.mission_layout(&output).filter(|l| !l.windows.is_empty()) else { return };
         let Some(m) = self.mission.as_mut() else { return };
         let at = m.hover.as_ref().and_then(|h| layout.windows.iter().position(|w| w == h));
         m.hover = pick(&layout.targets, at).and_then(|i| layout.windows.get(i).cloned());

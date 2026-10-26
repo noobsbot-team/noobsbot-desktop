@@ -443,6 +443,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Choice(&[("sunday", "Sunday"), ("monday", "Monday"), ("saturday", "Saturday")]),
     ),
     s(Page::Spaces, "", "windows.spaces", "Spaces", "Dynamic: + in Mission Control adds more", Kind::Slider { min: 0.0, max: 16.0, step: 1.0 }),
+    s(Page::Spaces, "", "spaces.per_display", "Displays have separate Spaces", "Off: every display switches Spaces together", Kind::Toggle),
     s(Page::Notifications, "", "notifications.dnd", "Do Not Disturb", "Banners stay quiet; Notification Center still collects them", Kind::Toggle),
     s(Page::Notifications, "Weather", "weather.enabled", "Weather widget", "Forecast from Open-Meteo every 30 minutes; sends only the place", Kind::Toggle),
     s(Page::Notifications, "Weather", "weather.city", "City", "Looked up once; never located by IP", Kind::Text("Kathmandu")),
