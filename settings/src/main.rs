@@ -192,6 +192,8 @@ pub enum Message {
     Revert,
     /// Half a second of "Keep these display settings?" went by.
     Tick,
+    /// Every display shows its name for 2 s.
+    Identify,
     /// A call to the desktop came back: what went wrong, if anything.
     Called(Option<String>),
     Thumbs(Vec<(std::path::PathBuf, iced::widget::image::Handle)>),
@@ -455,6 +457,7 @@ impl App {
                     self.save("terminal", command.clone());
                 }
             }
+            Message::Identify => return Task::perform(system::displays_call("Identify", ()), Message::Called),
             Message::Called(error) => self.error = error,
             Message::Keep => self.keep(),
             Message::Revert => self.revert(),

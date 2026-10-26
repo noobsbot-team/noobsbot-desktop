@@ -19,8 +19,9 @@ use smithay::{
 
 use crate::{
     render::{
-        self, AlertSheet, Components, ControlCenter, DesktopView, DockView, DrawerView, EmojiPicker, ForceQuitWindow, Gallery, LaunchpadView, LockView,
-        MenuBar, MenuPopover, MissionView, NotificationViews, OnScreenKeyboard, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel, Wallpaper,
+        self, AlertSheet, Components, ControlCenter, DesktopView, DockView, DrawerView, EmojiPicker, ForceQuitWindow, Gallery, IdentifyLabels, LaunchpadView,
+        LockView, MenuBar, MenuPopover, MissionView, NotificationViews, OnScreenKeyboard, OsdPopover, ScreenshotView, Shaders, SpotlightPanel, SwitcherPanel,
+        Wallpaper,
     },
     state::State,
 };
@@ -43,6 +44,8 @@ pub struct Views {
     /// The open menu's submenu.
     pub submenu: MenuPopover,
     pub osd: OsdPopover,
+    /// Displays ▸ Identify's names, one per display.
+    pub identify: IdentifyLabels,
     pub control: ControlCenter,
     pub alert: AlertSheet,
     pub dock: DockView,
@@ -83,6 +86,7 @@ impl Views {
             menu: MenuPopover::default(),
             submenu: MenuPopover::default(),
             osd: OsdPopover::default(),
+            identify: IdentifyLabels::default(),
             control: ControlCenter::default(),
             alert: AlertSheet::default(),
             dock: DockView::default(),

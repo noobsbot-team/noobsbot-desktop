@@ -1422,6 +1422,8 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
             "The white bar marks the main display: it has the menu bar and the Dock."
         },
     ));
+    let identify = button(text("Identify").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::Identify);
+    parts.push(row![space().width(Length::Fill), identify].spacing(8).into());
     // Displays that are off aren't in the arrangement: pick any one here.
     if app.displays.len() > 1 {
         let items =

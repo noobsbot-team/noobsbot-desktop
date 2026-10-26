@@ -226,6 +226,8 @@ pub struct State {
     pub caps_lock: bool,
     /// Puts the display settings back unless they are kept in time (`arm_display_revert`).
     pub display_revert: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// Displays ▸ Identify shows each display's name until this timer ends it.
+    pub identify: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Installed apps (E2.1); empty until the first scan lands.
     pub apps: crate::apps::Apps,
     /// Bumped with every `apps` load, so what windows cached against the last one (`dock_key`) is looked up again.
@@ -430,6 +432,7 @@ impl State {
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                     crate::services::Update::Widgets(widgets) => state.widgets = widgets,
                     crate::services::Update::SetBrightness(percent) => state.services.send(crate::services::Command::Brightness(percent)),
+                    crate::services::Update::Identify => state.identify_displays(),
                     crate::services::Update::Record(on) => {
                         let focus = state.focused_window();
                         state.recording.set(on, focus, std::time::Instant::now());
@@ -561,6 +564,7 @@ impl State {
             bell: None,
             caps_lock: false,
             display_revert: None,
+            identify: None,
             apps: Default::default(),
             reopen: Vec::new(),
             apps_epoch: 0,

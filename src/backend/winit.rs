@@ -128,6 +128,13 @@ impl State {
         let size = geo.size.to_physical_precise_round(scale);
         let (tint, fading) = self.night_light.element(&self.config.night_light, self.frame_time, size);
         elements.splice(0..0, self.osk_elements(renderer, output));
+        // Displays ▸ Identify, in front of all but the keyboard.
+        let title = self.identify.is_some().then(|| crate::decorations::display_name(&output.name(), &output.physical_properties().model));
+        let (dark, glass) = (render::is_dark(&self.config.appearance), self.config.appearance.glass_opacity);
+        if let Some(views) = self.backend.as_mut() {
+            let named = views.identify.elements(renderer, &views.shaders, &mut self.text, &output.name(), title.as_deref(), geo.size, dark, glass, scale);
+            elements.splice(0..0, named);
+        }
         elements.splice(0..0, tint.map(SceneElement::Tint));
         // The bell's flash (E8.6), in front of everything.
         let flash = self.bell_flash();
@@ -489,6 +496,7 @@ impl State {
             menu: _,
             submenu: _,
             osd,
+            identify: _,
             control: _,
             alert: sheet,
             dock,

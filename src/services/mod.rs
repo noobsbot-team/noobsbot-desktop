@@ -92,6 +92,8 @@ pub enum Update {
     Record(bool),
     /// Settings' Displays page moved the brightness slider (`org.noobsbot.Desktop.Displays.SetBrightness`), in percent.
     SetBrightness(u8),
+    /// Settings' Displays ▸ Identify (`org.noobsbot.Desktop.Displays.Identify`).
+    Identify,
     /// The keyboard backlight after a key changed it, in percent.
     KbdBacklight(u8),
     /// Thunderbolt devices waiting to be allowed; `None`: boltd isn't running.
