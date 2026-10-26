@@ -100,6 +100,11 @@ impl Grid {
         (0..pages as i32).map(|i| Rectangle::new((x0 + i * DOT_STEP, self.dots_y - DOT / 2).into(), (DOT, DOT).into())).collect()
     }
 
+    /// The cell `p` is in, icon or not.
+    pub fn cell_at(&self, p: Point<f64, Logical>) -> Option<usize> {
+        self.cells.iter().position(|c| c.to_f64().contains(p))
+    }
+
     /// The cell whose icon or name is at `p`, on the page in view.
     pub fn hit(&self, p: Point<f64, Logical>) -> Option<usize> {
         (0..self.cells.len()).find(|&i| self.icon_rect(i).to_f64().contains(p) || self.name_rect(i).to_f64().contains(p))
@@ -196,6 +201,14 @@ pub fn tiles<'a>(apps: &'a [App], order: &[Entry], query: &str) -> Vec<Tile<'a>>
         .collect()
 }
 
+/// `v` with item `from` moved to `to` (at most the end).
+pub fn move_to<T>(v: &mut Vec<T>, from: usize, to: usize) {
+    if from < v.len() {
+        let item = v.remove(from);
+        v.insert(to.min(v.len()), item);
+    }
+}
+
 fn order_file() -> std::path::PathBuf {
     super::drawer::state_file("launchpad.json")
 }
@@ -203,6 +216,35 @@ fn order_file() -> std::path::PathBuf {
 /// The saved order; empty when there is none (or it doesn't parse).
 fn load_order() -> Vec<Entry> {
     std::fs::read(order_file()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+fn save_order(order: &[Entry]) {
+    let text = serde_json::to_string_pretty(order).unwrap_or_default();
+    crate::config::save_later(order_file(), move |_| text);
+}
+
+/// Movement that lifts a pressed icon.
+const DRAG_START: f64 = 8.0;
+/// A press held this long lifts the icon too, and clicks nothing.
+const HOLD: Duration = Duration::from_millis(500);
+
+/// A press on a tile, until the button comes up.
+pub struct Press {
+    /// The tile's place in `tiles` (and in the order, which is arranged first while not searching).
+    pub index: usize,
+    pub start: Point<f64, Logical>,
+    pub at: Point<f64, Logical>,
+    /// From the icon's corner to the press.
+    pub grab: Point<f64, Logical>,
+    pub since: Instant,
+    /// Dragged past `DRAG_START`.
+    pub moved: bool,
+}
+
+impl Press {
+    pub fn lifted(&self, now: Instant) -> bool {
+        self.moved || now.saturating_duration_since(self.since) >= HOLD
+    }
 }
 
 /// D10 `smooth`: a critically damped spring with a 0.4 s response.
@@ -259,6 +301,7 @@ pub struct Launchpad {
     pub drag: f64,
     /// Ends the swipe after `SWIPE_END` without events.
     swipe_end: Option<RegistrationToken>,
+    pub press: Option<Press>,
 }
 
 impl Launchpad {
@@ -271,7 +314,18 @@ impl Launchpad {
             slide: Spring::new(0.0, 0.0, now),
             drag: 0.0,
             swipe_end: None,
+            press: None,
         }
+    }
+
+    pub fn searching(&self) -> bool {
+        !self.field.text.trim().is_empty()
+    }
+
+    /// The tile being dragged and where its icon is drawn (output-relative), while not searching.
+    pub fn lifted(&self, grid: &Grid, now: Instant) -> Option<(usize, Rect)> {
+        let p = self.press.as_ref().filter(|p| p.lifted(now) && !self.searching())?;
+        Some((p.index, Rectangle::new((p.at - p.grab).to_i32_round(), (grid.icon, grid.icon).into())))
     }
 
     pub fn closing(&self) -> bool {
@@ -326,6 +380,7 @@ impl State {
     pub fn close_launchpad(&mut self) -> bool {
         let Some(l) = self.launchpad.as_mut().filter(|l| !l.closing()) else { return false };
         l.shown.go(0.0, Instant::now());
+        l.press = None;
         if let Some(token) = l.swipe_end.take() {
             self.loop_handle.remove(token);
         }
@@ -425,18 +480,77 @@ impl State {
             self.launchpad_turn(dot);
             return true;
         }
-        // ponytail: a folder click does nothing until folders open (E8.8).
-        let app = grid.hit(location).and_then(|i| tiles.get(page * grid.per_page() + i)).and_then(|t| match t {
-            Tile::App(a) => Some((*a).clone()),
-            Tile::Folder(..) => None,
+        let hit = grid.hit(location).filter(|i| page * grid.per_page() + i < tiles.len());
+        drop(tiles);
+        let Some(i) = hit else {
+            self.close_launchpad();
+            return true;
+        };
+        // It acts on release, unless it became a drag or a long press (`launchpad_release`).
+        let apps = self.apps.list();
+        let Some(l) = self.launchpad.as_mut() else { return true };
+        if !l.searching() {
+            l.order = arrange(&l.order, apps);
+        }
+        let grab = location - grid.icon_rect(i).loc.to_f64();
+        l.press = Some(Press { index: page * grid.per_page() + i, start: location, at: location, grab, since: Instant::now(), moved: false });
+        // The icon lifts after `HOLD` without moving: draw it then.
+        let lift = self.loop_handle.insert_source(Timer::from_duration(HOLD), |_, _, state| {
+            state.schedule_redraw();
+            TimeoutAction::Drop
         });
-        match app {
-            Some(app) => self.launchpad_launch(Some(app)),
-            None => {
-                self.close_launchpad();
+        lift.inspect_err(|err| tracing::warn!("launchpad hold timer: {err}")).ok();
+        true
+    }
+
+    /// The pointer moved to `to` (output-relative): a lifted icon follows it, and takes the place under it.
+    pub fn launchpad_motion(&mut self, to: Point<f64, Logical>) {
+        let Some(grid) = self.launchpad_grid() else { return };
+        let Some(l) = self.launchpad.as_mut() else { return };
+        let searching = l.searching();
+        let Some(p) = l.press.as_mut() else { return };
+        p.at = to;
+        p.moved |= (to.x - p.start.x).hypot(to.y - p.start.y) >= DRAG_START;
+        if !p.moved || searching {
+            return;
+        }
+        if let Some(i) = grid.cell_at(to) {
+            let slot = (l.page * grid.per_page() + i).min(l.order.len().saturating_sub(1));
+            if slot != p.index {
+                move_to(&mut l.order, p.index, slot);
+                p.index = slot;
             }
         }
-        true
+        self.schedule_redraw();
+    }
+
+    /// The button came up: a drag keeps its new order; a short press without moving opens what it pressed.
+    pub fn launchpad_release(&mut self) {
+        let Some(l) = self.launchpad.as_mut() else { return };
+        let Some(p) = l.press.take() else { return };
+        if p.moved && !l.searching() {
+            save_order(&l.order);
+        }
+        let page = l.page;
+        self.schedule_redraw();
+        if p.moved {
+            return;
+        }
+        if p.lifted(Instant::now()) {
+            return;
+        }
+        let Some(grid) = self.launchpad_grid() else { return };
+        if grid.hit(p.at).map(|i| page * grid.per_page() + i) != Some(p.index) {
+            return;
+        }
+        // ponytail: a folder click does nothing until folders open (E8.8).
+        let app = self.launchpad_tiles().into_iter().nth(p.index).and_then(|t| match t {
+            Tile::App(a) => Some(a.clone()),
+            Tile::Folder(..) => None,
+        });
+        if app.is_some() {
+            self.launchpad_launch(app);
+        }
     }
 
     /// Scrolling while open: a wheel step turns one page; a finger swipe drags the pages 1:1 and turns one when let go
@@ -543,6 +657,19 @@ mod tests {
         assert_eq!(g.hit(g.icon_rect(8).loc.to_f64() + Point::from((1.0, 1.0))), Some(8));
         assert_eq!(g.hit(g.name_rect(3).loc.to_f64() + Point::from((1.0, 1.0))), Some(3));
         assert_eq!(g.hit((5.0, 5.0).into()), None);
+    }
+
+    #[test]
+    fn reorders() {
+        let mut v = vec!['a', 'b', 'c', 'd'];
+        move_to(&mut v, 0, 2);
+        assert_eq!(v, ['b', 'c', 'a', 'd']);
+        move_to(&mut v, 3, 0);
+        assert_eq!(v, ['d', 'b', 'c', 'a']);
+        move_to(&mut v, 1, 99);
+        assert_eq!(v, ['d', 'c', 'a', 'b'], "past the end: last");
+        move_to(&mut v, 9, 0);
+        assert_eq!(v, ['d', 'c', 'a', 'b'], "nothing there: no change");
     }
 
     #[test]
