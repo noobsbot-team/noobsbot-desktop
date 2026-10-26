@@ -918,7 +918,7 @@ impl State {
             Some(Entry::App(id)) if p.moved && !l.searching() => Some(id.clone()),
             _ => None,
         };
-        if let Some(id) = app.filter(|_| self.dock_covers(p.at)) {
+        if let Some(id) = app.filter(|_| self.dock_covers(self.to_dock(p.at))) {
             if let Some((l, before)) = self.launchpad.as_mut().zip(p.before.take()) {
                 l.order = before;
                 save_order(&l.order);
@@ -956,7 +956,8 @@ impl State {
         if self.config.dock.lock_items || pinned.iter().any(|(_, key)| key == id) {
             return self.schedule_redraw();
         }
-        let to = self.dock_layout(&self.dock_items()).map_or(pinned.len(), |layout| super::dock::slot(&layout, at.x, pinned.len()));
+        let x = self.to_dock(at).x;
+        let to = self.dock_layout(&self.dock_items()).map_or(pinned.len(), |layout| super::dock::slot(&layout, x, pinned.len()));
         tracing::info!(app = id, to, "launchpad: pin to the dock");
         self.dock_repin(id, Some(to));
     }

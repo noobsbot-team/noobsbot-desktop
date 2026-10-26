@@ -379,8 +379,82 @@ impl State {
         (strip, popups)
     }
 
-    // ponytail: the shell (dock, alerts, banners) is on the first output only, since its caches and hit tests are for
-    // one output; the other displays get a menu bar of their own and the popups opened from it (`bar_elements`).
+    /// `output`'s dock, when it has one (`[dock] displays`), front to back: the window previews, the dock, the glows of
+    /// a hidden one, then the previewed window over a dim of the others; and whether it animates. The hover, previews
+    /// and a dragged icon show on `dock_output`'s alone.
+    fn dock_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> (Vec<SceneElement>, bool) {
+        if !self.dock_outputs().contains(output) {
+            return (Vec::new(), false);
+        }
+        let here = self.dock_output().as_ref() == Some(output);
+        let dock_items = self.dock_items();
+        let dock_frame = self.dock_frame(output, &dock_items);
+        let peek = self.dock_peek().filter(|_| here);
+        let peek_hover = self.dock_ui.peek.as_ref().and_then(|p| p.hover);
+        let held_at = self.dock_ui.dragged().filter(|_| here).and(self.seat.get_pointer()).map(|p| self.to_dock(self.to_output(p.current_location())));
+        let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
+        let output_rect = self.space.output_geometry(output).unwrap_or_default();
+        let scale = output.current_scale().fractional_scale();
+        let appearance = &self.config.appearance;
+        let dark = render::is_dark(appearance);
+        let accent = render::accent(appearance.accent, dark);
+        let zoom = if self.config.dock.zoom { f64::from(self.config.dock.zoom_percent) / 100.0 } else { 1.0 };
+        let Some(Views { shaders, docks, tiles, .. }) = self.backend.as_mut() else { return (Vec::new(), false) };
+        let dock = docks.entry(output.name()).or_default();
+        let mut bar = Vec::new();
+        // Its window previews in front of it, the window hovered there (over a dim of the others) behind it.
+        let (peek_front, peek_behind) =
+            dock.peek(renderer, shaders, &mut self.text, &self.space, peek.as_ref(), peek_hover, output_rect, dark, accent, appearance.glass_opacity, scale);
+        bar.extend(peek_front);
+        if let Some(layout) = &dock_frame.layout {
+            let mut icons: Vec<DockIcon> = dock_items
+                .iter()
+                .zip(&dock_frame.shades)
+                .enumerate()
+                .map(|(i, (item, shade))| {
+                    let windows = if item.is_tile() { 0 } else { item.windows.len() };
+                    DockIcon { name: item.icon(), windows, focused: focused_item == Some(i), shade: *shade }
+                })
+                .collect();
+            let px = (layout.icon * zoom * scale).ceil() as u32;
+            // The dragged icon follows the pointer: one more icon, without a column (so without dots).
+            let mut layout = layout.clone();
+            // Minimised windows' tiles: the window's last frame, the app's icon small in the corner.
+            tiles.retain(|g| self.hidden.iter().any(|(w, _)| *w == g.window));
+            let mut thumbs = Vec::new();
+            for (i, item) in dock_items.iter().enumerate().filter(|(_, i)| i.is_tile()) {
+                let Some(ghost) = tiles.iter().find(|g| item.windows.contains(&g.window)) else { continue };
+                let (thumb, badge) = crate::shell::dock::tile_rects(layout.icons[i], ghost.frame().size);
+                layout.icons[i] = badge;
+                let alpha = f64::from(dock_frame.shades[i].alpha);
+                thumbs.push(ghost.drawn(renderer, crate::anim::Look { rect: thumb, alpha }, scale));
+            }
+            let held = self.dock_ui.dragged().and_then(|key| dock_items.iter().find(|i| i.key == key));
+            if let Some((item, at)) = held.zip(held_at) {
+                let s = layout.icon;
+                layout.icons.push(smithay::utils::Rectangle::new((at.x - s / 2.0, at.y - s / 2.0).into(), (s, s).into()));
+                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0 };
+                icons.push(DockIcon { name: item.icon(), windows: 0, focused: false, shade });
+            }
+            let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
+            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &dock_frame.tips, dark, scale));
+            bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
+            let mut elements = dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, scale);
+            // In front of the bar (the last element), behind badges and dots.
+            let back = elements.pop();
+            bar.extend(elements.into_iter().chain(thumbs).chain(back));
+            bar.extend(DockView::poofs(shaders, &dock_frame.poofs, layout.icon, scale));
+        } else {
+            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &[], dark, scale));
+        }
+        bar.extend(DockView::glows(shaders, &dock_frame.glows, scale));
+        bar.extend(peek_behind);
+        (bar, dock_frame.animating)
+    }
+
+    // ponytail: most of the shell (alerts, banners, Launchpad) is on the first output only, since its caches and hit
+    // tests are for one output; the other displays get a menu bar and a dock of their own and the popups opened from
+    // the bar (`bar_elements`).
     fn scene_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
         let switcher_elements = self.switcher_elements(renderer, output);
         if self.space.outputs().next() != Some(output) {
@@ -395,6 +469,9 @@ impl State {
             let animating = animating || overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
             // Its own menu bar and the popups opened from it.
             let (strip, popups) = self.bar_elements(renderer, output, locked);
+            // Its own dock, in front of the windows.
+            let (dock, dock_animating) = if locked { Default::default() } else { self.dock_elements(renderer, output) };
+            let animating = animating || dock_animating;
             let views = self.backend.as_mut()?;
             // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
             let mut elements = if locked {
@@ -405,6 +482,7 @@ impl State {
                 views.ghosts.retain(|g| !g.anim.done(now));
                 let mut front = popups;
                 front.extend(strip);
+                front.extend(dock);
                 front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
                 let appearance = &self.config.appearance;
                 let mission = views.missions.entry(output.name()).or_default();
@@ -454,13 +532,7 @@ impl State {
             Some((self.spotlight_layout(hits.len())?, hits, s))
         });
         let (cards, more) = self.banner_layout();
-        let dock_items = self.dock_items();
-        let dock_frame = self.dock_frame(&dock_items);
-        let dock_layout = dock_frame.layout.clone();
-        let peek = self.dock_peek();
-        let peek_hover = self.dock_ui.peek.as_ref().and_then(|p| p.hover);
-        let held_at = self.dock_ui.dragged().and(self.seat.get_pointer()).map(|p| self.to_output(p.current_location()));
-        let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
+        let (dock_elements, dock_animating) = self.dock_elements(renderer, output);
         let now = self.frame_time;
         self.launchpad_frame(now);
         let pad = self.launchpad.as_ref().map(|l| (l.position(now), l.shown.at(now), l.field.clone(), l.page)).zip(self.launchpad_grid());
@@ -495,7 +567,7 @@ impl State {
             identify: _,
             control: _,
             alert: sheet,
-            dock,
+            docks: _,
             switcher: _,
             force_quit,
             spotlight,
@@ -506,7 +578,7 @@ impl State {
             mission,
             missions: _,
             ghosts,
-            tiles,
+            tiles: _,
             entrances,
             lock: lock_view,
             screenshot,
@@ -667,56 +739,8 @@ impl State {
         }
         drawer_view.motion(renderer, &mut bar, mark, drawer_frame.is_some(), reduce, scale, now, &mut self.anim_until);
         bar.extend(strip);
-        // The dock: behind the bar and popups, above windows; its window previews in front of it, the window hovered
-        // there (over a dim of the others) behind it.
-        let output_rect = self.space.output_geometry(output).unwrap_or_default();
-        let (peek_front, peek_behind) =
-            dock.peek(renderer, shaders, &mut self.text, &self.space, peek.as_ref(), peek_hover, output_rect, dark, accent, appearance.glass_opacity, scale);
-        bar.extend(peek_front);
-        if let Some(layout) = &dock_layout {
-            let mut icons: Vec<DockIcon> = dock_items
-                .iter()
-                .zip(&dock_frame.shades)
-                .enumerate()
-                .map(|(i, (item, shade))| {
-                    let windows = if item.is_tile() { 0 } else { item.windows.len() };
-                    DockIcon { name: item.icon(), windows, focused: focused_item == Some(i), shade: *shade }
-                })
-                .collect();
-            let zoom = if self.config.dock.zoom { f64::from(self.config.dock.zoom_percent) / 100.0 } else { 1.0 };
-            let px = (layout.icon * zoom * scale).ceil() as u32;
-            // The dragged icon follows the pointer: one more icon, without a column (so without dots).
-            let mut layout = layout.clone();
-            // Minimised windows' tiles: the window's last frame, the app's icon small in the corner.
-            tiles.retain(|g| self.hidden.iter().any(|(w, _)| *w == g.window));
-            let mut thumbs = Vec::new();
-            for (i, item) in dock_items.iter().enumerate().filter(|(_, i)| i.is_tile()) {
-                let Some(ghost) = tiles.iter().find(|g| item.windows.contains(&g.window)) else { continue };
-                let (thumb, badge) = crate::shell::dock::tile_rects(layout.icons[i], ghost.frame().size);
-                layout.icons[i] = badge;
-                let alpha = f64::from(dock_frame.shades[i].alpha);
-                thumbs.push(ghost.drawn(renderer, crate::anim::Look { rect: thumb, alpha }, scale));
-            }
-            let held = self.dock_ui.dragged().and_then(|key| dock_items.iter().find(|i| i.key == key));
-            if let Some((item, at)) = held.zip(held_at) {
-                let s = layout.icon;
-                layout.icons.push(smithay::utils::Rectangle::new((at.x - s / 2.0, at.y - s / 2.0).into(), (s, s).into()));
-                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0 };
-                icons.push(DockIcon { name: item.icon(), windows: 0, focused: false, shade });
-            }
-            let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
-            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &dock_frame.tips, dark, scale));
-            bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
-            let mut elements = dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, scale);
-            // In front of the bar (the last element), behind badges and dots.
-            let back = elements.pop();
-            bar.extend(elements.into_iter().chain(thumbs).chain(back));
-            bar.extend(DockView::poofs(shaders, &dock_frame.poofs, layout.icon, scale));
-        } else {
-            bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &[], dark, scale));
-        }
-        bar.extend(DockView::glows(shaders, &dock_frame.glows, scale));
-        bar.extend(peek_behind);
+        // The dock: behind the bar and popups, above windows.
+        bar.extend(dock_elements);
         // Launchpad: in front of the windows (hidden) and the bar, behind the dock and alerts.
         if let (Some(((position, shown, field, page), grid)), Some(l)) = (&pad, self.launchpad.as_ref()) {
             let tiles = crate::shell::launchpad::tiles(self.apps.list(), &l.order, &field.text);
@@ -846,7 +870,7 @@ impl State {
         if let (Some(alpha), Some(geo)) = (idle_shade, self.space.output_geometry(output)) {
             elements.insert(0, SceneElement::Shader(lock_view.shade(shaders, geo.size, alpha, scale)));
         }
-        let animating = gallery.is_some() || dock_frame.animating || animating || wallpaper.fading();
+        let animating = gallery.is_some() || dock_animating || animating || wallpaper.fading();
         Some((elements, animating || self.animating()))
     }
 

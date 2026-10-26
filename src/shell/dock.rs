@@ -16,6 +16,7 @@ use std::{
 
 use smithay::{
     desktop::Window,
+    output::Output,
     reexports::{
         calloop::timer::{TimeoutAction, Timer},
         wayland_server::protocol::wl_data_source::WlDataSource,
@@ -26,7 +27,7 @@ use smithay::{
 
 use crate::{
     apps::App,
-    config::{self, Dock, DockClick, DockMiddle, DockScroll},
+    config::{self, Dock, DockClick, DockDisplays, DockMiddle, DockScroll},
     shell::{Row, dock_fx::CLICK_TIME, drawer, launchpad},
     shortcuts::Action,
     spaces::Assign,
@@ -78,6 +79,16 @@ pub fn fit(n: usize, width: i32, icon: i32) -> f64 {
 pub fn reserve(dock: &Dock) -> i32 {
     let icon = f64::from(dock.icon_size);
     (icon + bottom_pad(icon)) as i32
+}
+
+/// Which of `n` displays (the main one first) have a dock under `mode`; `pointer`: the index of the one the pointer
+/// is on.
+pub fn dock_displays(mode: DockDisplays, n: usize, pointer: Option<usize>) -> Vec<usize> {
+    match mode {
+        DockDisplays::All => (0..n).collect(),
+        DockDisplays::Main => (0..n.min(1)).collect(),
+        DockDisplays::Pointer => pointer.filter(|i| *i < n).or((n > 0).then_some(0)).into_iter().collect(),
+    }
 }
 
 /// The dock of `n` items on an `output`-sized screen, the last `tiles` of them minimised windows after a separator gap,
@@ -476,27 +487,76 @@ impl State {
         self.dock_ui.preview(items)
     }
 
-    /// The dock's layout for `items`, zoomed around the pointer (or `--show dock-zoom`'s fake one).
+    /// The displays with a dock (`[dock] displays`), the main one first.
+    pub fn dock_outputs(&self) -> Vec<Output> {
+        let outputs: Vec<Output> = self.space.outputs().cloned().collect();
+        let pointer = self.pointer_output().and_then(|p| outputs.iter().position(|o| *o == p));
+        dock_displays(self.config.dock.displays, outputs.len(), pointer).into_iter().map(|i| outputs[i].clone()).collect()
+    }
+
+    /// The dock the pointer last moved onto (`dock_follow`), else the first: hit tests, the hover, menus and drags are
+    /// its. Every dock's coordinates are relative to its own display.
+    pub fn dock_output(&self) -> Option<Output> {
+        let docks = self.dock_outputs();
+        self.dock_ui.output.clone().filter(|o| docks.contains(o)).or_else(|| docks.into_iter().next())
+    }
+
+    /// `location` (first-output-relative, as the shell gets it) relative to `dock_output`'s display.
+    pub fn to_dock(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
+        let origin = |o: Option<Output>| o.and_then(|o| self.space.output_geometry(&o)).map_or((0, 0).into(), |g| g.loc);
+        location + origin(self.space.outputs().next().cloned()).to_f64() - origin(self.dock_output()).to_f64()
+    }
+
+    /// The pointer moved to `location` (first-output-relative): onto another display's dock, that one becomes
+    /// `dock_output`, and the one it left stops zooming and hovering.
+    pub fn dock_follow(&mut self, location: Point<f64, Logical>) {
+        let Some(first) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
+        let at = location + first.loc.to_f64();
+        let docks = self.dock_outputs();
+        let Some(output) = docks.into_iter().find(|o| self.space.output_geometry(o).is_some_and(|g| g.to_f64().contains(at))) else { return };
+        let Some(left) = self.dock_output().filter(|o| *o != output) else {
+            self.dock_ui.output = Some(output);
+            return;
+        };
+        self.dock_fx.side_mut(&left.name()).zoom.set(false, Instant::now());
+        self.dock_ui.output = Some(output);
+        self.dock_reveal = false;
+        self.dock_fx.hovered(None);
+        self.dock_ui.peek = None;
+        self.schedule_redraw();
+    }
+
+    /// The layout of the dock on `dock_output` for `items`.
     pub fn dock_layout(&self, items: &[Item]) -> Option<Layout> {
-        let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?.size;
+        self.dock_layout_on(&self.dock_output()?, items)
+    }
+
+    /// `output`'s dock's layout for `items`, zoomed around the pointer (or `--show dock-zoom`'s fake one).
+    pub fn dock_layout_on(&self, output: &Output, items: &[Item]) -> Option<Layout> {
+        let size = self.space.output_geometry(output)?.size;
         let dock = &self.config.dock;
         let now = Instant::now();
+        let side = self.dock_fx.side(&output.name());
         // The zoom eases in and out around the last position over the dock, and goes as the dock hides (Plank).
-        let eased = if self.dock_pointer.is_some() { 1.0 } else { self.dock_fx.zoom.value(now) * (1.0 - self.dock_fx.hide.value(now)) };
+        let eased = if self.dock_pointer.is_some() { 1.0 } else { side.zoom.value(now) * (1.0 - side.hide.value(now)) };
         let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
-        let pointer = self.dock_pointer.or(self.dock_fx.zoom_at);
+        let pointer = self.dock_pointer.or(side.zoom_at);
         let tiles = items.iter().filter(|i| i.is_tile() || i.key == TRASH_KEY).count();
         Some(layout(items.len(), tiles, size, i32::from(dock.icon_size), zoom, eased, pointer))
     }
 
-    /// Shown (or showing): the hide modes' state as of the last update.
+    /// `dock_output`'s dock is shown (or showing): the hide modes' state as of the last update.
     pub fn dock_shown(&self) -> bool {
-        !self.dock_fx.hider.hidden
+        self.dock_output().is_some_and(|o| self.dock_shown_on(&o))
+    }
+
+    pub fn dock_shown_on(&self, output: &Output) -> bool {
+        !self.dock_fx.side(&output.name()).hider.hidden
     }
 
     /// A cheap first check for every pointer motion: is `location` low enough to be on the dock, zoomed, at all?
     fn near_dock(&self, location: Point<f64, Logical>) -> bool {
-        let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(0, |g| g.size.h);
+        let height = self.dock_output().and_then(|o| self.space.output_geometry(&o)).map_or(0, |g| g.size.h);
         let dock = &self.config.dock;
         let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
         let icon = f64::from(dock.icon_size);
@@ -515,7 +575,7 @@ impl State {
         if self.popup.is_some() || self.mission_open() || self.launchpad.is_some() || self.dock_ui.dragging() || !self.dock_shown() {
             return None;
         }
-        let output = self.space.outputs().next().and_then(|o| self.space.output_geometry(o))?;
+        let output = self.space.output_geometry(&self.dock_output()?)?;
         let windows: Vec<(Window, Rect)> = self
             .dock_item(&peek.key)?
             .windows
@@ -825,13 +885,13 @@ impl State {
             return;
         }
         let items = self.dock_items();
-        let (Some(layout), Some(size)) = (self.dock_layout(&items), self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size))
-        else {
+        let Some(output) = self.dock_output() else { return };
+        let (Some(layout), Some(size)) = (self.dock_layout(&items), self.space.output_geometry(&output).map(|g| g.size)) else {
             return;
         };
         let now = Instant::now();
         let zone = layout.zone.to_f64();
-        let strip = (zone.size.h * (1.0 - self.dock_fx.hide.value(now))).max(1.0);
+        let strip = (zone.size.h * (1.0 - self.dock_fx.side(&output.name()).hide.value(now))).max(1.0);
         let h = f64::from(size.h);
         let in_region = !items.is_empty() && to.x >= zone.loc.x && to.x < zone.loc.x + zone.size.w && to.y >= h - strip && to.y < h;
         let over = hit(&layout, to).filter(|_| self.dock_shown() && (in_region || self.dock_reveal));
@@ -839,14 +899,15 @@ impl State {
         let before = self.dock_fx.hovered_key().map(str::to_owned);
         self.dock_fx.hovered(over.map(|i| items[i].key.as_str()));
         self.dock_peek_track(over.map(|i| (&items[i], i)), &layout);
-        self.dock_fx.zoom.set(hovered, now);
+        let side = self.dock_fx.side_mut(&output.name());
+        side.zoom.set(hovered, now);
         if hovered {
-            self.dock_fx.zoom_at = Some(to);
+            side.zoom_at = Some(to);
         }
         let changed = hovered != self.dock_reveal;
         self.dock_reveal = hovered;
         if changed {
-            self.dock_update_hide(&layout);
+            self.dock_update_hide(&output, &layout);
         }
         if changed || (hovered && self.config.dock.zoom) || before.as_deref() != self.dock_fx.hovered_key() {
             self.schedule_redraw();
@@ -857,6 +918,8 @@ impl State {
 /// The dock's interactions: the right-click menu, dragging an icon, files dragged in from an app.
 #[derive(Default)]
 pub struct Ui {
+    /// The display whose dock the pointer last moved onto (`State::dock_output`).
+    pub output: Option<Output>,
     /// The item key the open menu is for, and the point (output-relative) it stands centred over.
     pub menu: Option<(String, Point<i32, Logical>)>,
     drag: Option<Drag>,
@@ -1496,7 +1559,7 @@ impl State {
     /// are pinned where they land (not while items are locked), other files open with the app they land on.
     // ponytail: only `.desktop` files of installed apps (in an `applications/` dir) pin; others are ignored.
     pub fn dock_drop(&mut self) {
-        let Some(location) = self.seat.get_pointer().map(|p| self.to_output(p.current_location())) else { return };
+        let Some(location) = self.seat.get_pointer().map(|p| self.to_dock(self.to_output(p.current_location()))) else { return };
         let text = self.dock_ui.uris.lock().unwrap_or_else(|e| e.into_inner()).take();
         let uris = uri_list(&text.unwrap_or_default());
         if uris.is_empty() || !self.dock_covers(location) {
@@ -1938,6 +2001,16 @@ mod tests {
         let exe = std::env::current_exe().unwrap().file_name().unwrap().to_str().unwrap().to_owned();
         assert_eq!(crate::state::program_name(std::process::id() as i32).as_deref(), Some(exe.as_str()));
         assert_eq!(crate::state::program_name(i32::MAX), None);
+    }
+
+    #[test]
+    fn docks_go_on_every_display_the_main_one_or_the_pointers() {
+        assert_eq!(dock_displays(DockDisplays::All, 3, Some(2)), [0, 1, 2]);
+        assert_eq!(dock_displays(DockDisplays::Main, 3, Some(2)), [0]);
+        assert_eq!(dock_displays(DockDisplays::Pointer, 3, Some(2)), [2]);
+        assert_eq!(dock_displays(DockDisplays::Pointer, 3, None), [0], "nowhere: the main one");
+        assert_eq!(dock_displays(DockDisplays::Pointer, 2, Some(5)), [0], "a display that went");
+        assert!(dock_displays(DockDisplays::All, 0, None).is_empty() && dock_displays(DockDisplays::Pointer, 0, None).is_empty());
     }
 
     #[test]
