@@ -258,7 +258,7 @@ super_tap = true
 # "brightness up|down", "keyboard-backlight up|down|toggle", "touchpad toggle|on|off", "media play-pause|next|previous|stop|forward|rewind", eject, "space left|right|1…9", "move-to-space left|right|1…16",
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
 # fill, center, keep-on-top, cycle-app-windows,
-# mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
+# mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-window (the focused one), screenshot-toolbar, emoji,
 # app-drawer, "dock-app 1…9", "dock-app-new 1…9".
 [bindings]
 "Super+Return" = "terminal"
@@ -331,6 +331,8 @@ super_tap = true
 "Super+Shift+5" = "screenshot-toolbar"
 "Print" = "screenshot-toolbar"
 "Shift+Print" = "screenshot-region"
+# The focused window; Super+Shift+4 then Space picks one with the pointer.
+"Alt+Print" = "screenshot-window"
 "F12" = "quake"
 # Launchpad also opens from its dock icon; F4 is free for apps unless you bind it.
 # "F4" = "launchpad"
