@@ -101,6 +101,13 @@ impl State {
         }
     }
 
+    /// Displays off now, as if idle had got there; the next input wakes them, and locking follows its usual delay.
+    pub fn display_off(&mut self) {
+        self.idle.stage = self.idle.stage.max(Stage::Off);
+        self.schedule_redraw();
+        self.idle_arm();
+    }
+
     /// Arms the timer for the next step, if there is one.
     pub fn idle_arm(&mut self) {
         if let Some(token) = self.idle.timer.take() {
