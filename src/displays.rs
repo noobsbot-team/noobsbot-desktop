@@ -265,6 +265,9 @@ pub(crate) fn set_outputs(text: &str, outputs: &[OutputSettings]) -> String {
         if !o.mirror.is_empty() {
             tables += &format!("mirror = {:?}\n", o.mirror);
         }
+        if o.vrr {
+            tables += "vrr = true\n";
+        }
         tables += "\n";
     }
     let (mut out, mut skip, mut placed) = (String::new(), false, false);
@@ -867,9 +870,9 @@ mod tests {
         assert_eq!(parsed.display.outputs, outputs);
         assert_eq!(set_outputs("[display]\nscale = 0.0\n", &outputs[1..]), "[display]\nscale = 0.0\n\n[[display.outputs]]\nname = \"DP-1\"\nenabled = false\n");
         assert_eq!(set_outputs(text, &[]), "[display]\n# mine\nscale = 0.0\n\n[windows]\nspaces = 0\n");
-        let mirrored = [OutputSettings { mirror: "eDP-1".into(), ..output("HDMI-A-1") }];
+        let mirrored = [OutputSettings { mirror: "eDP-1".into(), vrr: true, ..output("HDMI-A-1") }];
         let new = set_outputs("", &mirrored);
-        assert_eq!(new, "[[display.outputs]]\nname = \"HDMI-A-1\"\nmirror = \"eDP-1\"\n");
+        assert_eq!(new, "[[display.outputs]]\nname = \"HDMI-A-1\"\nmirror = \"eDP-1\"\nvrr = true\n");
         assert_eq!(toml::from_str::<crate::config::Config>(&new).unwrap().display.outputs, mirrored);
     }
 
