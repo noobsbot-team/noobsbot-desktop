@@ -1,6 +1,13 @@
 //! Text labels (C8, E1.3): cosmic-text shaping + swash rasterising into premultiplied RGBA, with an LRU cache.
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+    time::Instant,
+};
 
 use cosmic_text::{
     Align, Attrs, Buffer, Color, Ellipsize, EllipsizeHeightLimit, Family, FeatureTag, FontFeatures, FontSystem, Metrics, Shaping, SwashCache, Weight, Wrap,
@@ -35,6 +42,20 @@ pub struct Rendered {
     pub baseline: u32,
     /// The text did not fit `max_width` and ends in "…".
     pub truncated: bool,
+}
+
+/// `[appearance] text_scale` as f32 bits; every label goes through it (E8.4).
+static SCALE: AtomicU32 = AtomicU32::new(0x3f80_0000);
+
+/// Sets the text size multiplier for every shell label.
+pub fn set_scale(k: f32) {
+    SCALE.store(k.to_bits(), Ordering::Relaxed);
+}
+
+/// `style` with its size and line height times `k`, rounded to whole px.
+fn scaled(style: Style, k: f32) -> Style {
+    let px = |v: u16| (f32::from(v) * k).round() as u16;
+    Style { size: px(style.size), line_height: px(style.line_height), ..style }
 }
 
 /// Text, style, width, scale, wrapping (see `cached`), in the emoji font.
@@ -138,6 +159,7 @@ impl Text {
 
     /// `wrap`: `None` one line, else (at most n lines, 0 = any; centred).
     fn cached(&mut self, text: &str, style: Style, max_width: u32, scale: f64, wrap: Option<(u8, bool)>, emoji: bool) -> Arc<Rendered> {
+        let style = scaled(style, f32::from_bits(SCALE.load(Ordering::Relaxed)));
         // A one-line label that fits is the same pixels whatever the limit was: it lives under one key (C19), so a
         // dock tooltip or menu title isn't rendered again for every width it is asked at.
         let fits = (text.to_owned(), style, u32::MAX, scale.to_bits(), wrap, emoji);
@@ -349,6 +371,14 @@ mod tests {
         let Some(mut text) = text() else { return };
         let label = text.label("Window", HEADLINE, 200, 1.25);
         assert_eq!((label.width % 5, label.height), (0, 20), "{} x {}", label.width, label.height);
+    }
+
+    #[test]
+    fn text_scale_rounds_to_whole_px() {
+        assert_eq!(scaled(HEADLINE, 1.0), HEADLINE);
+        let big = scaled(HEADLINE, 1.25);
+        assert_eq!((big.size, big.line_height, big.weight), (16, 20, 600));
+        assert_eq!((scaled(HEADLINE, 0.8).size, scaled(HEADLINE, 0.8).line_height), (10, 13));
     }
 
     #[test]

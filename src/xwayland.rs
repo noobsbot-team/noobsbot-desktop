@@ -15,11 +15,12 @@ const TRIES: u32 = 5;
 
 /// Starts xwayland-satellite on the first free display, for the compositor on `socket`; its `DISPLAY` (`:1`), or
 /// `None` when it isn't installed. A thread waits on it (no polling) and starts it again when it dies.
-pub fn spawn(socket: &OsStr) -> Option<String> {
+/// `cursor_size` goes to it as `XCURSOR_SIZE`.
+pub fn spawn(socket: &OsStr, cursor_size: u32) -> Option<String> {
     let name = format!(":{}", free_display(|n| Path::new(&format!("/tmp/.X11-unix/X{n}")).exists() || Path::new(&format!("/tmp/.X{n}-lock")).exists()));
     let start = {
         let (name, socket) = (name.clone(), socket.to_owned());
-        move || Command::new("xwayland-satellite").arg(&name).env("WAYLAND_DISPLAY", &socket).spawn()
+        move || Command::new("xwayland-satellite").arg(&name).env("WAYLAND_DISPLAY", &socket).env("XCURSOR_SIZE", cursor_size.to_string()).spawn()
     };
     let child = start().inspect_err(|err| tracing::info!("X11 apps off: xwayland-satellite: {err}")).ok()?;
     let spawned = std::thread::Builder::new().name("xwayland".into()).spawn(move || supervise(child, start));
