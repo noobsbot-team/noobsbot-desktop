@@ -62,6 +62,8 @@ pub enum Kind {
         exe: String,
         client: ClientId,
     },
+    /// The Trash's Empty Trash (E8.8).
+    EmptyTrash,
     /// An admin password for polkit (E7.2): `user` indexes `auth.users` (Tab picks the next); `checking` while
     /// polkit's helper has it; `wrong` since the last wrong one (the field shakes, the body says so).
     Polkit {
@@ -102,6 +104,7 @@ impl Alert {
             Kind::Pin { device, .. } => format!("Pair with “{device}”"),
             Kind::ScreenRecording { app, .. } => format!("“{app}” would like to record this computer's screen."),
             Kind::Polkit { auth, .. } => auth.message.clone(),
+            Kind::EmptyTrash => "Are you sure you want to permanently erase the items in the Trash?".into(),
         }
     }
 
@@ -119,6 +122,7 @@ impl Alert {
             Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
             Kind::ScreenRecording { .. } => "It will see everything on the screen, including other apps' windows. The answer is kept in config.toml.".into(),
+            Kind::EmptyTrash => "You can't undo this action.".into(),
             Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
             Kind::Polkit { auth, user, .. } => {
                 let name = auth.users.get(*user).map_or("", String::as_str);
@@ -147,6 +151,7 @@ impl Alert {
             Kind::Wifi { .. } => "Join",
             Kind::Pin { .. } => "Pair",
             Kind::ScreenRecording { .. } => "Allow",
+            Kind::EmptyTrash => "Empty Trash",
             Kind::Polkit { .. } => "OK",
         }
     }
@@ -347,6 +352,12 @@ impl State {
                 return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
             }
             Kind::ScreenRecording { exe, client, .. } => return self.recording_answer(client, exe, button == Button::Confirm),
+            Kind::EmptyTrash if button == Button::Cancel => return,
+            Kind::EmptyTrash => {
+                // Off the frame thread: a big trash takes a while; the watcher turns the icon empty.
+                let _ = std::thread::Builder::new().name("empty-trash".into()).spawn(|| crate::shell::trash::empty(&crate::shell::trash::dir()));
+                return;
+            }
             Kind::Polkit { .. } => return,
         };
         self.power_now(power);

@@ -862,6 +862,10 @@ pub enum Command {
     Close,
     /// The app's n-th desktop action.
     Action(usize),
+    /// The Trash's Open: what a click does.
+    Open,
+    /// Asks, then erases everything in the Trash.
+    EmptyTrash,
 }
 
 /// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
@@ -1002,6 +1006,11 @@ impl State {
     /// The open dock menu's rows (empty without one).
     pub fn dock_menu_rows(&self) -> Vec<Option<Row>> {
         let Some(item) = self.dock_ui.menu.as_ref().and_then(|(key, _)| self.dock_item(key)) else { return Vec::new() };
+        if item.key == TRASH_KEY {
+            let row = |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Dock) });
+            let full = super::trash::is_full(&super::trash::dir());
+            return vec![row("Open", Some(Command::Open)), None, row("Empty Trash", full.then_some(Command::EmptyTrash))];
+        }
         let name = item.title().to_owned();
         let titles: Vec<String> = item
             .windows
@@ -1102,6 +1111,8 @@ impl State {
                 self.spawn(&["sh", "-c", script, "sh", &uri, &dir].map(String::from));
             }
             Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
+            Command::Open => self.dock_click(item, false),
+            Command::EmptyTrash => self.open_ask(crate::shell::alert::Kind::EmptyTrash),
             Command::Action(i) => {
                 let Some(app) = item.app else { return };
                 let Some((_, exec)) = crate::apps::actions(&app.id).into_iter().nth(i) else { return };
