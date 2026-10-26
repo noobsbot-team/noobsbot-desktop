@@ -699,7 +699,7 @@ impl State {
                 if self.dock_ui.peek.as_ref().is_some_and(|p| p.key == item.key) {
                     self.dock_wake(since + PEEK_DELAY);
                 }
-                self.dock_ui.drag = Some(Drag { key: item.key, start: location, since, moved: false, slot: None });
+                self.dock_ui.drag = Some(Drag { key: item.key, from: self.dock_output(), start: location, since, moved: false, slot: None });
             }
             BTN_MIDDLE if self.config.dock.middle == DockMiddle::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             BTN_MIDDLE => self.dock_click(item, true),
@@ -977,6 +977,8 @@ fn long_press_peek(held: Duration, moved: bool) -> bool {
 /// An icon held down by the left button.
 struct Drag {
     key: String,
+    /// The display whose dock it was picked up from: dropped off every dock, it is unpinned there.
+    from: Option<Output>,
     start: Point<f64, Logical>,
     since: Instant,
     /// Past the threshold: a drag, not a click.
@@ -1563,7 +1565,7 @@ impl State {
             return self.schedule_redraw();
         }
         let Some(drag) = self.dock_ui.drag.take() else { return };
-        let Some(item) = self.dock_item(&drag.key) else { return };
+        let Some(item) = self.dock_items_on(drag.from.as_ref()).into_iter().find(|i| i.key == drag.key) else { return };
         if !drag.moved {
             let items = self.dock_items();
             let same = self.dock_layout(&items).and_then(|l| hit(&l, location)).is_some_and(|i| items[i].key == item.key);
@@ -1573,13 +1575,17 @@ impl State {
             }
             return self.schedule_redraw();
         }
-        let pinned = self.dock_pinned().iter().any(|(_, id)| *id == item.key);
+        let pinned = self.dock_pinned_on(drag.from.as_ref()).iter().any(|(_, id)| *id == item.key);
         let builtin = Builtin::of(&item.key).is_some();
-        if let Some(to) = dropped(drag.slot, pinned, item.app.is_some() || builtin, builtin) {
-            self.dock_repin(&item.key, to);
-            if to.is_none() {
+        // Dropped on a dock (another display's too) it is pinned on that dock's list; off every dock, unpinned from
+        // the one it came from.
+        match dropped(drag.slot, pinned, item.app.is_some() || builtin, builtin) {
+            Some(Some(to)) => self.dock_repin(&item.key, Some(to)),
+            Some(None) => {
+                self.dock_repin_on(drag.from, &item.key, None);
                 self.dock_fx.poof(location);
             }
+            None => {}
         }
         self.schedule_redraw();
     }
@@ -2107,7 +2113,7 @@ mod tests {
     #[test]
     fn preview_moves_the_dragged_icon() {
         let item = |k: &str| Item { key: k.into(), app: None, windows: Vec::new() };
-        let drag = Drag { key: "a".into(), start: (0.0, 0.0).into(), since: Instant::now(), moved: true, slot: Some(2) };
+        let drag = Drag { key: "a".into(), from: None, start: (0.0, 0.0).into(), since: Instant::now(), moved: true, slot: Some(2) };
         let mut ui = Ui { drag: Some(drag), ..Default::default() };
         let keys: Vec<String> = ui.preview(vec![item("a"), item("b"), item("c")]).into_iter().map(|i| i.key).collect();
         assert_eq!(keys, ["b", "c", "a"]);
