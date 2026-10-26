@@ -12,8 +12,8 @@
 set -euo pipefail
 
 REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-DESKTOP_REPO=${NOOBSBOT_DESKTOP_REPO:-anil0403/noobsbot-desktop}
-TERMINAL_REPO=anil0403/noobsbot-terminal
+DESKTOP_REPO=${NOOBSBOT_DESKTOP_REPO:-noobsbot-team/noobsbot-desktop}
+TERMINAL_REPO=noobsbot-team/noobsbot-terminal
 # --from-source builds these tags (override with the environment for testing a newer one).
 DESKTOP_TAG=${NOOBSBOT_DESKTOP_TAG:-v0.1.0}
 # v0.5.1, by commit: its installer runs here with curl | bash, and a tag can be moved while a commit can't.

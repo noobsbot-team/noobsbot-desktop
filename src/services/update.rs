@@ -23,8 +23,8 @@ use semver::Version;
 
 use super::verify;
 
-const REPO: &str = "https://github.com/anil0403/noobsbot-desktop";
-const API: &str = "https://api.github.com/repos/anil0403/noobsbot-desktop";
+const REPO: &str = "https://github.com/noobsbot-team/noobsbot-desktop";
+const API: &str = "https://api.github.com/repos/noobsbot-team/noobsbot-desktop";
 const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// The privileged helper, at the path the polkit action `org.noobsbot.desktop.update` names.
 pub const HELPER: &str = "/usr/lib/noobsbot-desktop/noobsbot-desktop-update";
@@ -245,8 +245,8 @@ impl crate::state::State {
 mod tests {
     use super::*;
 
-    const JSON: &str = r#"{"url":"https://api.github.com/repos/anil0403/noobsbot-desktop/releases/1",
-        "html_url": "https://github.com/anil0403/noobsbot-desktop/releases/tag/v1.3.0",
+    const JSON: &str = r#"{"url":"https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/1",
+        "html_url": "https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/v1.3.0",
         "author": {"html_url": "https://github.com/anil0403"},
         "tag_name": "v1.3.0", "draft": false, "prerelease": false,
         "body": "notes quoting \"tag_name\": \"v9.0.0\""}"#;
@@ -262,7 +262,7 @@ mod tests {
     fn newer_release() {
         let release = newer(JSON, &v("1.2.4"), Channel::Stable).unwrap();
         assert_eq!((release.version, release.tag.as_str()), (v("1.3.0"), "v1.3.0"));
-        assert_eq!(release.url, "https://github.com/anil0403/noobsbot-desktop/releases/tag/v1.3.0");
+        assert_eq!(release.url, "https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/v1.3.0");
         assert_eq!(release.download, Download::None);
     }
 
@@ -296,7 +296,7 @@ mod tests {
     #[test]
     fn notice_names_major_minor() {
         let release = newer(r#"{"tag_name":"1.3.2"}"#, &v("1.0.0"), Channel::Stable).unwrap();
-        assert_eq!(release.url, "https://github.com/anil0403/noobsbot-desktop/releases/tag/1.3.2");
+        assert_eq!(release.url, "https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/1.3.2");
         let n = notice(&release);
         assert_eq!((n.id, n.summary.as_str(), n.body.as_str()), (NOTICE_ID, "Noobsbot Desktop 1.3 is available", "Version 1.3.2 is ready to install."));
         assert_eq!(n.actions.len(), 2);
