@@ -362,6 +362,30 @@ impl State {
         location - origin.to_f64()
     }
 
+    /// The display the open popup shows on: a bar popup on its bar's (`bar_output`), the others on the first.
+    pub fn popup_output(&self) -> Option<smithay::output::Output> {
+        let first = self.space.outputs().next();
+        let bar = self.bar_output.as_ref().filter(|o| self.space.outputs().any(|x| x == *o));
+        if self.popup.is_some_and(|p| p.item().is_none()) { first } else { bar.or(first) }.cloned()
+    }
+
+    /// The size of the popup's display, which Notification Center and Control Center are laid out in.
+    pub fn popup_size(&self) -> Size<i32, Logical> {
+        self.popup_output().and_then(|o| self.space.output_geometry(&o)).map_or_else(Default::default, |g| g.size)
+    }
+
+    /// `location` relative to the first output (as the shell gets it) made relative to the popup's display.
+    pub fn to_popup(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
+        let origin = |o: Option<&smithay::output::Output>| o.and_then(|o| self.space.output_geometry(o)).map_or((0, 0).into(), |g| g.loc);
+        location + origin(self.space.outputs().next()).to_f64() - origin(self.popup_output().as_ref()).to_f64()
+    }
+
+    /// `output`'s menu bar view: the first display's is `menu_bar`, the others' are in `bars`.
+    pub fn bar_view(&self, output: &smithay::output::Output) -> Option<&menubar::MenuBar> {
+        let b = self.backend.as_ref()?;
+        if self.space.outputs().next() == Some(output) { Some(&b.menu_bar) } else { b.bars.get(&output.name()) }
+    }
+
     /// The wheel over an open menu scrolls it when it is taller than the screen. `true`: the menu took it.
     pub fn menu_scroll(&mut self, location: Point<f64, Logical>, dy: f64) -> bool {
         if !matches!(self.popup, Some(Popup::Menu(_))) || !self.popup_rect().is_some_and(|r| r.to_f64().contains(location)) {

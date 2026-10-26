@@ -453,7 +453,7 @@ impl State {
         let up_next = self.calendar_view(year, month, self.config.clock.week_start.into()).1.len();
         let widgets: Vec<bool> = self.shown_widgets(false).iter().map(|w| w.medium).collect();
         let (dnd, batteries, weather) = (self.config.notifications.dnd, self.batteries().len(), self.weather.is_some());
-        Some(center(&self.notifications, self.output_size(), dnd, rows, up_next, batteries, weather, &widgets))
+        Some(center(&self.notifications, self.popup_size(), dnd, rows, up_next, batteries, weather, &widgets))
     }
 
     /// A notification from an app: dropped if its app is off (`[notification_apps]`), else stored, and shown as a
