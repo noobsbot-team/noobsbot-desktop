@@ -114,6 +114,8 @@ pub enum Action {
     Layout(Option<usize>),
     /// An fcitx5 input method, by unique name (the input menu).
     InputMethod(String),
+    /// Screen Zoom on or off (None, Super+Alt+8), in (true, Super+Alt+=) or out (Super+Alt+-) (E8.6).
+    ScreenZoom(Option<bool>),
     /// Super+Shift+3 / 4 / 5 (E6.8).
     Screenshot(crate::shell::screenshot::Start),
 }
@@ -213,6 +215,9 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("app-expose", "") => Some(Action::AppExpose),
         ("show-desktop", "") => Some(Action::ShowDesktop),
         ("input-source", "") => Some(Action::Layout(None)),
+        ("screen-zoom", "") => Some(Action::ScreenZoom(None)),
+        ("screen-zoom", "in") => Some(Action::ScreenZoom(Some(true))),
+        ("screen-zoom", "out") => Some(Action::ScreenZoom(Some(false))),
         ("screenshot", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Screen)),
         ("screenshot-region", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Region)),
         ("screenshot-toolbar", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Toolbar)),
@@ -315,6 +320,13 @@ impl State {
                 self.schedule_redraw();
             }
             Action::Lock => self.lock_screen(),
+            Action::ScreenZoom(step) => {
+                match step {
+                    None => self.zoom.toggle(),
+                    Some(zoom_in) => self.zoom.step(zoom_in),
+                }
+                self.schedule_redraw();
+            }
             Action::Sleep => self.sleep(),
             Action::TrayMenu(id) => {
                 if let Some((service, menu, _)) = &self.tray_menu {
@@ -562,6 +574,8 @@ mod tests {
         assert_eq!(a("tile left-right"), None);
         assert_eq!(a("tile"), None);
         assert_eq!(a("tile middle"), None);
+        assert_eq!(a("screen-zoom out"), Some(Action::ScreenZoom(Some(false))));
+        assert!(parse("Super+Alt+equal").is_some_and(|b| b.alt && b.key == Keysym::equal));
         assert_eq!(a("move-to-space 16"), Some(Action::SendToSpace(15)));
         assert_eq!(a("move-to-space 17"), None);
         assert_eq!(a("move-to-space left"), Some(Action::MoveToSpace(-1)));

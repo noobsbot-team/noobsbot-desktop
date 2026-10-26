@@ -265,7 +265,7 @@ super_tap = true
 # Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "volume up|down", mute, mic-mute,
 # "brightness up|down", "media play-pause|next|previous", "space left|right|1…9", "move-to-space left|right|1…16",
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
-# fill, center, keep-on-top, cycle-app-windows,
+# fill, center, keep-on-top, cycle-app-windows, "screen-zoom [in|out]",
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-toolbar, emoji,
 # app-drawer, "dock-app 1…9", "dock-app-new 1…9".
 [bindings]
@@ -282,6 +282,10 @@ super_tap = true
 # host may keep Alt+Tab for itself: bind another key here, e.g. "Super+Ctrl+Tab" = "switcher".
 "Super+Tab" = "switcher"
 "Super+Alt+Escape" = "force-quit"
+# Zoom ([accessibility] zoom_style): on/off, in, out.
+"Super+Alt+8" = "screen-zoom"
+"Super+Alt+equal" = "screen-zoom in"
+"Super+Alt+minus" = "screen-zoom out"
 "Super+Ctrl+Q" = "lock"
 "Super+N" = "notification-center"
 "Super+Space" = "spotlight"
