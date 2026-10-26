@@ -20,6 +20,10 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Spawn(String),
+    /// Opens an app by desktop-file id (Recent Items).
+    Launch(String),
+    /// Empties `recently-used.xbel` (Recent Items › Clear Menu).
+    ClearRecent,
     /// Opens the default app for a MIME type (`x-scheme-handler/https`), or the first app in a category (`Calculator`).
     DefaultApp(String),
     /// Close every window of the focused app (Super+Q).
@@ -71,6 +75,8 @@ pub enum Action {
     Eject,
     /// A row of the open tray menu, by dbusmenu id.
     TrayMenu(i32),
+    /// A click on tray item `i` from the "»" menu.
+    TrayItem(usize),
     /// Opens or closes Notification Center (Super+N).
     NotificationCenter,
     /// Opens or closes Spotlight (Super+Space, E4.3).
@@ -138,7 +144,7 @@ pub enum Action {
     Screenshot(crate::shell::screenshot::Start),
 }
 
-/// A volume or brightness key press, in percent (about macOS's 1/16 steps).
+/// A volume or brightness key press, in percent (about 1/16 steps).
 const STEP: u8 = 6;
 /// About a quarter of `STEP`.
 const FINE_STEP: u8 = 2;
@@ -351,6 +357,18 @@ impl State {
                 self.spawn(&command.split_whitespace().map(String::from).collect::<Vec<_>>());
             }
             Action::Quake => self.toggle_quake(),
+            Action::Launch(id) => {
+                let app = self.apps.find(&id).cloned();
+                if !self.launch(app.as_ref()) {
+                    tracing::warn!("no app {id}");
+                }
+            }
+            Action::ClearRecent => {
+                let path = crate::shell::dock::recent_path();
+                if let Some(empty) = std::fs::read_to_string(&path).ok().as_deref().and_then(crate::shell::dock::cleared) {
+                    let _ = std::fs::write(&path, empty).inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
+                }
+            }
             Action::DefaultApp(kind) => {
                 let app = if kind.contains('/') {
                     // ponytail: xdg-mime runs on the frame loop (tens of ms, once per key press); a worker thread if it shows.
@@ -412,6 +430,10 @@ impl State {
                     self.services.send(Command::TrayClicked { service: service.clone(), menu: menu.clone(), id });
                 }
             }
+            Action::TrayItem(i) => {
+                let at = self.seat.get_pointer().map(|p| self.to_output(p.current_location())).unwrap_or_default();
+                self.tray_press(i, at, false);
+            }
             Action::Power(power) => self.open_alert(power),
             Action::Switcher { back, held } => self.switcher_start(back, held),
             Action::ForceQuit => self.open_force_quit(),
@@ -428,7 +450,7 @@ impl State {
             Action::Volume(up) | Action::VolumeFine(up) => {
                 let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
                 if up && output.muted {
-                    // As on macOS: turning it up unmutes.
+                    // Turning it up unmutes.
                     output.muted = false;
                     self.services.send(Command::Mute { output: true, muted: false });
                 }

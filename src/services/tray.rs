@@ -83,6 +83,8 @@ pub struct MenuRow {
     pub id: i32,
     pub label: String,
     pub enabled: bool,
+    /// A submenu's rows, empty until the app fills it in.
+    pub submenu: Option<Vec<Option<MenuRow>>>,
 }
 
 /// The watcher we host: item ids are `<bus name><object path>`, as the spec's.
@@ -398,23 +400,20 @@ pub async fn activate(bus: &Connection, service: &str, path: &str, x: i32, y: i3
     }
 }
 
-/// Fetches `menu`'s rows and sends them as `Update::TrayMenu`.
-pub async fn menu(bus: &Connection, service: String, menu: String, updates: &Sender<Update>) {
+/// Fetches the rows under `menu`'s node `parent` (0: the whole menu) and sends them as `Update::TrayMenu`.
+pub async fn menu(bus: &Connection, service: String, menu: String, parent: i32, updates: &Sender<Update>) {
     // Lets the app fill the menu in; many don't implement it.
-    let _ = bus.call_method(Some(service.as_str()), menu.as_str(), Some(MENU), "AboutToShow", &(0i32,)).await;
-    let reply = match bus.call_method(Some(service.as_str()), menu.as_str(), Some(MENU), "GetLayout", &(0i32, -1i32, Vec::<&str>::new())).await {
+    let _ = bus.call_method(Some(service.as_str()), menu.as_str(), Some(MENU), "AboutToShow", &(parent,)).await;
+    let reply = match bus.call_method(Some(service.as_str()), menu.as_str(), Some(MENU), "GetLayout", &(parent, -1i32, Vec::<&str>::new())).await {
         Ok(reply) => reply,
         Err(err) => return tracing::warn!("tray {service} menu: {err}"),
     };
     let body = reply.body();
     let mut rows = Vec::new();
     if let Some(root) = body.deserialize::<Structure>().ok().as_ref().and_then(|l| l.fields().get(1)) {
-        children(root, 0, &mut rows);
+        rows = children(root);
     }
-    while rows.last().is_some_and(Option::is_none) {
-        rows.pop();
-    }
-    let _ = updates.send(Update::TrayMenu { service, menu, rows });
+    let _ = updates.send(Update::TrayMenu { service, menu, parent, rows });
 }
 
 pub async fn clicked(bus: &Connection, service: &str, menu: &str, id: i32) {
@@ -423,13 +422,11 @@ pub async fn clicked(bus: &Connection, service: &str, menu: &str, id: i32) {
     }
 }
 
-/// The rows under a dbusmenu node `(ia{sv}av)`. Submenus are flattened: the parent shows disabled, its rows follow,
-/// indented.
-// ponytail: flattened, and filled from the one GetLayout; real submenus (and AboutToShow per submenu, which some Qt
-// apps need) come with nested menus in the popover.
-fn children(node: &Value, depth: usize, rows: &mut Vec<Option<MenuRow>>) {
-    let Value::Structure(node) = unwrap(node) else { return };
-    let Some(Value::Array(kids)) = node.fields().get(2).map(unwrap) else { return };
+/// The rows under a dbusmenu node `(ia{sv}av)`, submenus nested.
+fn children(node: &Value) -> Vec<Option<MenuRow>> {
+    let mut rows = Vec::new();
+    let Value::Structure(node) = unwrap(node) else { return rows };
+    let Some(Value::Array(kids)) = node.fields().get(2).map(unwrap) else { return rows };
     for value in kids.inner() {
         let Value::Structure(child) = unwrap(value) else { continue };
         let (Some(Value::I32(id)), Some(Value::Dict(props))) = (child.fields().first().map(unwrap), child.fields().get(1).map(unwrap)) else { continue };
@@ -450,13 +447,14 @@ fn children(node: &Value, depth: usize, rows: &mut Vec<Option<MenuRow>>) {
         // "_File" underlines F; "__" is a literal underscore.
         let label = text("label").replace("__", "\0").replace('_', "").replace('\0', "_");
         let check = if matches!(prop("toggle-state"), Some(Value::I32(1))) { "✓ " } else { "" };
-        let submenu = text("children-display") == "submenu";
-        let enabled = !submenu && !matches!(prop("enabled"), Some(Value::Bool(false)));
-        rows.push(Some(MenuRow { id: *id, label: format!("{}{check}{label}", "    ".repeat(depth)), enabled }));
-        if submenu {
-            children(value, depth + 1, rows);
-        }
+        let submenu = (text("children-display") == "submenu").then(|| children(value));
+        let enabled = !matches!(prop("enabled"), Some(Value::Bool(false)));
+        rows.push(Some(MenuRow { id: *id, label: format!("{check}{label}"), enabled, submenu }));
     }
+    while rows.last().is_some_and(Option::is_none) {
+        rows.pop();
+    }
+    rows
 }
 
 /// The value inside any variants.
@@ -531,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn menu_layout_flattens() {
+    fn menu_layout_nests() {
         let node = |id: i32, props: &[(&'static str, Value<'static>)], kids: Vec<Value<'static>>| {
             let mut dict = Dict::new(<&str>::SIGNATURE, Value::SIGNATURE);
             for (k, v) in props {
@@ -558,9 +556,8 @@ mod tests {
                 ),
             ],
         );
-        let mut rows = Vec::new();
-        children(&root, 0, &mut rows);
-        let row = |id, label: &str, enabled| Some(MenuRow { id, label: label.into(), enabled });
-        assert_eq!(rows, vec![row(1, "Open", true), None, row(3, "✓ Mute", true), row(5, "More", false), row(6, "    A_B", false)]);
+        let row = |id, label: &str, enabled| Some(MenuRow { id, label: label.into(), enabled, submenu: None });
+        let more = Some(MenuRow { submenu: Some(vec![row(6, "A_B", false)]), ..row(5, "More", true).unwrap() });
+        assert_eq!(children(&root), vec![row(1, "Open", true), None, row(3, "✓ Mute", true), more]);
     }
 }

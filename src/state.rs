@@ -130,6 +130,8 @@ pub struct State {
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
     /// The pid of the `noobsbot --quake` the quake action started; its window gets `rules::QUAKE_ID`.
     pub quake: Option<u32>,
+    /// Saved windows waiting for their app's window to map (E8.8, session.rs).
+    pub reopen: Vec<crate::session::Entry>,
     /// The pid of the Orca `[accessibility] screen_reader` started.
     pub screen_reader: Option<u32>,
     /// Our widgets on the accessibility bus while the screen reader is on.
@@ -140,6 +142,8 @@ pub struct State {
     pub update: Option<crate::services::update::Release>,
     /// The Weather widget's forecast (E7.2); `None` while it is off.
     pub weather: Option<crate::services::weather::Weather>,
+    /// Widgets other processes set over D-Bus (E8.8).
+    pub widgets: Vec<crate::services::widgets::Widget>,
     /// Every changed `[weather]` goes to the weather thread.
     pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
     pub zones: crate::input::Zones,
@@ -187,11 +191,19 @@ pub struct State {
     pub symbols: crate::symbols::Symbols,
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
+    /// The open menu's row whose submenu is open, while that menu is the popup.
+    pub submenu: Option<(crate::shell::Popup, usize)>,
+    /// The logo menu's Recent Items while it is open (`refresh_recent`).
+    pub recent_menu: Option<Vec<Option<crate::shell::Row>>>,
     pub osd: Option<crate::shell::Osd>,
     /// The power alert that is up.
     pub alert: Option<crate::shell::alert::Alert>,
     /// Its once-a-second countdown.
     pub alert_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// logind's sleep blockers, read when Control Center opens.
+    pub sleep_blockers: Vec<crate::services::login::Inhibitor>,
+    /// Keep Awake is on: no idle dim, screen-off or sleep. Not saved: it ends with the session.
+    pub keep_awake: bool,
     /// The Control Center module showing its list.
     pub expanded: Option<crate::shell::control::Module>,
     /// How far that list is scrolled, in logical px.
@@ -213,6 +225,10 @@ pub struct State {
     pub icons: crate::apps::Icons,
     /// The pointer touched the bottom edge: the dock shows over the focused window until the pointer leaves it.
     pub dock_reveal: bool,
+    /// The pointer is at the top edge (or on the bar it revealed): an auto-hiding menu bar shows.
+    pub bar_pointer: bool,
+    /// An auto-hiding menu bar sliding out of sight (on) and back.
+    pub bar_hide: crate::shell::dock_fx::Ease,
     /// `--show dock-zoom`: a fake pointer position the dock zooms around.
     pub dock_pointer: Option<Point<f64, Logical>>,
     /// The dock's bounces, glow, slide, zoom easing and badges.
@@ -389,7 +405,7 @@ impl State {
                     crate::services::Update::PinEntry { device, passkey } => state.show_pin_entry(device, passkey),
                     crate::services::Update::Polkit(event) => state.polkit_event(event),
                     crate::services::Update::Tray(tray) => state.tray = tray,
-                    crate::services::Update::TrayMenu { service, menu, rows } => state.show_tray_menu(service, menu, rows),
+                    crate::services::Update::TrayMenu { service, menu, parent, rows } => state.show_tray_menu(service, menu, parent, rows),
                     crate::services::Update::Notify(n) => state.notify(*n),
                     crate::services::Update::CloseNotification(id) => state.close_notification(id, crate::shell::notify::Reason::Closed),
                     crate::services::Update::History(list) => state.restore_notifications(list),
@@ -401,7 +417,9 @@ impl State {
                     crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
                     crate::services::Update::Resumed => state.idle_activity(),
+                    crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
+                    crate::services::Update::Widgets(widgets) => state.widgets = widgets,
                     crate::services::Update::Record(on) => {
                         let focus = state.focused_window();
                         state.recording.set(on, focus, std::time::Instant::now());
@@ -422,6 +440,10 @@ impl State {
                 state.schedule_redraw();
             }
         })?;
+        // The dock's Trash turns full or empty as files come and go (E8.8).
+        let (trash_tx, trash_rx) = channel::channel();
+        crate::shell::trash::watch(move || trash_tx.send(()).is_ok());
+        handle.insert_source(trash_rx, |_, _, state| state.schedule_redraw())?;
         // The menu-bar clock (E2.4): one redraw per minute (second, with seconds on), on the boundary.
         let tick = |state: &Self| crate::clock::until_next_tick(&chrono::Local::now(), state.config.clock.format.seconds);
         // It also moves `auto` dark mode between day and night, apps included.
@@ -459,6 +481,7 @@ impl State {
             x_display: None,
             update: None,
             weather: None,
+            widgets: Vec::new(),
             weather_settings,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
@@ -499,12 +522,16 @@ impl State {
             media: None,
             tray: Vec::new(),
             tray_menu: None,
+            submenu: None,
+            recent_menu: None,
             disks: Default::default(),
             symbols: Default::default(),
             popup: None,
             osd: None,
             alert: None,
             alert_timer: None,
+            sleep_blockers: Vec::new(),
+            keep_awake: false,
             expanded: None,
             control_scroll: 0.0,
             shell_drag: None,
@@ -513,9 +540,12 @@ impl State {
             caps_lock: false,
             display_revert: None,
             apps: Default::default(),
+            reopen: Vec::new(),
             apps_epoch: 0,
             icons: crate::apps::Icons::new(icons_tx),
             dock_reveal: false,
+            bar_pointer: false,
+            bar_hide: crate::shell::dock_fx::Ease::new(crate::shell::dock_fx::HIDE_TIME, true),
             dock_pointer: None,
             dock_fx: Default::default(),
             dock_ui: Default::default(),
@@ -576,7 +606,7 @@ impl State {
         }
     }
 
-    /// What the menu bar shows; `None` while a fullscreen window has focus (it covers the bar, as on macOS).
+    /// What the menu bar shows; `None` while a fullscreen window has focus (it covers the bar).
     pub fn menu_bar(&self) -> Option<crate::render::menubar::Content> {
         use crate::render::menubar::{self, Item};
         let focused = self.focused_window();
@@ -602,6 +632,22 @@ impl State {
         })
     }
 
+    /// The bar on `output`: the focused app's name only on its window's display, tray icons only on the first one.
+    // ponytail: the other displays' bars are drawn but take no clicks, as popups and hit tests live on the first
+    // output; per-display popups need the shell's caches per output.
+    pub fn bar_content(&self, output: &smithay::output::Output) -> Option<crate::render::menubar::Content> {
+        let mut content = self.menu_bar()?;
+        let first = self.space.outputs().next() == Some(output);
+        let on = self.focused_window().and_then(|w| self.window_output(&w));
+        if on.as_ref().map_or(!first, |o| o != output) {
+            content.app = None;
+        }
+        if !first {
+            content.tray.clear();
+        }
+        Some(content)
+    }
+
     /// The window's app id; noobsbot and others set none, so then its program's name, read once per window.
     pub fn app_id(&self, window: &Window) -> Option<String> {
         let t = window.toplevel()?;
@@ -617,11 +663,19 @@ impl State {
     /// Where windows may go: the first output minus the menu bar and what layer surfaces (bars, docks) reserve.
     /// ponytail: a zoomed window keeps its size when a bar appears later; refitting comes with output changes (M6).
     pub fn work_area(&self) -> Option<Rect> {
-        let output = self.space.outputs().next()?;
-        let mut zone = crate::render::menubar::below(layer_map_for_output(output).non_exclusive_zone());
+        self.output_area(self.space.outputs().next()?)
+    }
+
+    /// The work area of `output`: below its menu bar and its layer surfaces, above the dock on the first output.
+    pub fn output_area(&self, output: &smithay::output::Output) -> Option<Rect> {
+        let mut zone = layer_map_for_output(output).non_exclusive_zone();
+        if !self.config.menu_bar.auto_hide {
+            zone = crate::render::menubar::below(zone);
+        }
         // Above the dock (E1.2: zoom fills the screen between the menu bar and the dock), when it never hides: Plank
-        // sets struts in that mode alone, and a hiding dock gets overlapped.
-        let never = self.config.dock.hide == crate::config::DockHide::Never;
+        // sets struts in that mode alone, and a hiding dock gets overlapped. The dock is on the first output only.
+        let first = self.space.outputs().next() == Some(output);
+        let never = first && self.config.dock.hide == crate::config::DockHide::Never;
         let bottom = self.space.output_geometry(output)?.size.h - if never { crate::shell::dock::reserve(&self.config.dock) } else { 0 };
         zone.size.h = zone.size.h.min(bottom - zone.loc.y).max(0);
         zone.loc += self.space.output_geometry(output)?.loc;
@@ -748,8 +802,7 @@ impl State {
         let outputs: Vec<_> = self.space.outputs().cloned().collect();
         let Some(from) = self.window_output(window).and_then(|o| outputs.iter().position(|x| *x == o)) else { return };
         let to = (from as i32 + delta).rem_euclid(outputs.len() as i32) as usize;
-        // The first display's area is below the menu bar; the others are whole.
-        let area = |i: usize| if i == 0 { self.work_area() } else { self.space.output_geometry(&outputs[i]) };
+        let area = |i: usize| self.output_area(&outputs[i]);
         let (Some(a), Some(b), Some(frame)) = (area(from), area(to), self.frame(window)) else { return };
         if to == from {
             return;
@@ -761,7 +814,9 @@ impl State {
     /// Zoom (fill the work area) or fullscreen (fill the output), remembering where the window was.
     /// ponytail: one output and no menu bar or dock yet, so both fill the same area; refitting on output resize comes with udev (M6).
     pub fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
-        let (Some(window), Some(area)) = (self.window_for(surface.wl_surface()).cloned(), self.work_area()) else { return };
+        let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
+        // The display the window is on, so zoom fills that one.
+        let Some(area) = self.window_output(&window).map_or_else(|| self.work_area(), |o| self.output_area(&o)) else { return };
         self.window_reframing(&window);
         let restore = window.user_data().get_or_insert(|| Restore(std::sync::Mutex::new(None)));
         if let (Ok(mut saved), Some(frame)) = (restore.0.lock(), self.frame(&window)) {
@@ -977,7 +1032,9 @@ impl CompositorHandler for State {
                     toplevel.with_pending_state(|s| s.bounds = Some(bounds));
                 }
                 self.apply_rules(&toplevel);
-                if let Some(window) = self.window_for(surface).cloned() {
+                if let Some(window) = self.window_for(surface).cloned()
+                    && !self.session_claim(&window)
+                {
                     self.recall_frame(&window);
                 }
                 toplevel.send_configure();
@@ -1012,6 +1069,7 @@ impl CompositorHandler for State {
                         tracing::debug!(?size, ?loc, ?position, "placed");
                         self.set_visible_loc(&window, loc);
                         self.apply_space_rule(&window);
+                        self.session_place(&window);
                         self.window_opened(&window);
                     }
                 }
@@ -1131,7 +1189,7 @@ impl XdgShellHandler for State {
             return;
         }
         let (Some(start_data), Some(window)) = (pointer.grab_start_data(), self.window_for(surface.wl_surface()).cloned()) else { return };
-        // Dragging a zoomed window un-zooms it first, centred under the pointer (macOS).
+        // Dragging a zoomed window un-zooms it first, centred under the pointer.
         if let Some(restore) = self.unfill(&surface, xdg_toplevel::State::Maximized) {
             let at = start_data.location.to_i32_round::<i32>();
             self.set_visible_loc(&window, (at.x - restore.size.w / 2, at.y - crate::decorations::BAR / 2).into());

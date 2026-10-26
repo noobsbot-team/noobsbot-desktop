@@ -152,7 +152,7 @@ pub fn dark_at(appearance: &Appearance, hour: u32) -> bool {
     }
 }
 
-/// The accent colour (Part D's macOS set) in light or dark mode.
+/// The accent colour (Part D's set) in light or dark mode.
 pub fn accent(accent: Accent, dark: bool) -> [u8; 3] {
     let (light, dark_rgb) = match accent {
         Accent::Blue => (0x007AFF, 0x0A84FF),

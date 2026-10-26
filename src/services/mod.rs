@@ -22,6 +22,7 @@ pub mod tray;
 pub mod update;
 pub mod verify;
 pub mod weather;
+pub mod widgets;
 
 use std::{
     fmt::Debug,
@@ -66,7 +67,7 @@ pub enum Update {
     /// Shown tray items, left to right.
     Tray(Vec<tray::TrayItem>),
     /// The rows of a tray item's menu, after `Command::TrayMenu`.
-    TrayMenu { service: String, menu: String, rows: Vec<Option<tray::MenuRow>> },
+    TrayMenu { service: String, menu: String, parent: i32, rows: Vec<Option<tray::MenuRow>> },
     /// A new notification, or one replacing the notification with its id.
     Notify(Box<notifications::Notification>),
     /// An app's `CloseNotification`.
@@ -91,6 +92,10 @@ pub enum Update {
     KbdBacklight(u8),
     /// Thunderbolt devices waiting to be allowed; `None`: boltd isn't running.
     Thunderbolt(Option<Vec<bolt::Accessory>>),
+    /// logind's sleep blockers, after `Command::Inhibitors`.
+    Inhibitors(Vec<login::Inhibitor>),
+    /// Every widget other processes set (`org.noobsbot.Desktop.Widgets`), in the order they came.
+    Widgets(Vec<widgets::Widget>),
 }
 
 /// Requests from the frame loop.
@@ -150,10 +155,11 @@ pub enum Command {
         x: i32,
         y: i32,
     },
-    /// Fetch a tray item's dbusmenu.
+    /// Fetch a tray item's dbusmenu, or (`parent` ≠ 0) one of its submenus.
     TrayMenu {
         service: String,
         menu: String,
+        parent: i32,
     },
     /// A row of that menu was clicked.
     TrayClicked {
@@ -198,8 +204,15 @@ pub enum Command {
     InputMethod(String),
     /// The Thunderbolt alert's Allow: enroll this boltd uid.
     Thunderbolt(String),
+    /// Control Center opened: ask logind who blocks sleep.
+    Inhibitors,
     /// A screen reader started or stopped: apps expose their accessibility trees while one runs.
     ScreenReader(bool),
+    /// A widget was clicked: tell its owner.
+    WidgetActivated {
+        owner: String,
+        id: String,
+    },
 }
 
 pub struct Services {
@@ -269,7 +282,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
     let session_clients = async {
         if let Some(bus) = &session {
             let ours = future::zip(future::zip(notifications::serve(bus, &updates), launcher::watch(bus, &updates)), fcitx::watch(bus, &updates));
-            let ours = future::zip(ours, shortcuts::serve(bus, &updates));
+            let ours = future::zip(ours, future::zip(widgets::serve(bus, &updates), shortcuts::serve(bus, &updates)));
             let ours = future::zip(ours, a11y::serve(bus, monitor, keys));
             future::zip(future::zip(media::watch(bus, &updates), tray::watch(bus, &updates)), ours).await;
         }
@@ -368,7 +381,7 @@ async fn handle(
             (Command::KbdBacklight(change), Some(bus), _) => power::kbd_backlight(bus, change, updates).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
             (Command::TrayActivate { service, path, x, y }, _, Some(bus)) => tray::activate(bus, &service, &path, x, y).await,
-            (Command::TrayMenu { service, menu }, _, Some(bus)) => tray::menu(bus, service, menu, updates).await,
+            (Command::TrayMenu { service, menu, parent }, _, Some(bus)) => tray::menu(bus, service, menu, parent, updates).await,
             (Command::TrayClicked { service, menu, id }, _, Some(bus)) => tray::clicked(bus, &service, &menu, id).await,
             (Command::Suspend | Command::Reboot | Command::PowerOff, Some(bus), _) => power(bus, &name).await,
             (Command::Wifi(on), Some(bus), _) => network::set_wifi(bus, on).await,
@@ -395,7 +408,11 @@ async fn handle(
                 let _ = updates.send(Update::Fcitx(fcitx::read(bus).await));
             }
             (Command::InputMethod(name), _, Some(bus)) => fcitx::set(bus, &name, updates).await,
+            (Command::Inhibitors, Some(bus), _) => {
+                let _ = updates.send(Update::Inhibitors(login::inhibitors(bus).await));
+            }
             (Command::ScreenReader(on), _, Some(bus)) => a11y::set_status(bus, on).await,
+            (Command::WidgetActivated { owner, id }, _, Some(bus)) => widgets::activated(bus, &owner, &id).await,
             // Its bus is down, which `run` has logged.
             _ => {}
         }

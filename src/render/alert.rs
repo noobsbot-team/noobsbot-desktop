@@ -1,6 +1,6 @@
 //! Alerts (D8): `sheet` glass, 260 px wide, radius 12, centred on the output; the system icon at 64 px, Title 2 and
 //! Body centred, a text field when it asks for one (Wi-Fi password), then Cancel and the default (accent) button
-//! side by side.
+//! side by side. A power alert has a checkbox above the buttons: reopen windows at the next login (E8.8).
 
 use std::{sync::Arc, time::Instant};
 
@@ -32,6 +32,9 @@ const RADIUS: f64 = 12.0;
 const FIELD_H: i32 = 22;
 const TITLE_LINES: u8 = 2;
 const BODY_LINE: i32 = 16;
+/// The checkbox, and the gap between it and its label.
+const CHECK: i32 = 14;
+const CHECK_GAP: i32 = 6;
 /// The sheet keeps this far from the screen's top and bottom.
 const MARGIN: i32 = 40;
 
@@ -42,8 +45,8 @@ fn body_lines(output_h: i32, title_h: i32, field_h: i32) -> u8 {
     ((output_h - fixed) / BODY_LINE).clamp(1, i32::from(u8::MAX)) as u8
 }
 
-/// What the glass depends on: sheet and confirm-button rects, dark, accent, opacity, scale.
-type Key = (Rect, Rect, bool, [u8; 3], u32, u64);
+/// What the glass depends on: sheet and confirm-button rects, the checkbox's state, dark, accent, opacity, scale.
+type Key = (Rect, Rect, Option<bool>, bool, [u8; 3], u32, u64);
 /// The field drawn (its state, rect, dark, accent, scale): glass front to back, and its text pieces.
 type FieldDrawn = ((TextField, Rect, bool, [u8; 3], u64), Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>);
 
@@ -53,8 +56,8 @@ pub struct AlertSheet {
     labels: Vec<Label>,
     field: Option<FieldDrawn>,
     field_labels: Vec<Label>,
-    /// The sheet and its (cancel, confirm) buttons as last drawn, output-relative.
-    layout: Option<(Rect, [Rect; 2])>,
+    /// The sheet, its (cancel, confirm) buttons and its checkbox row as last drawn, output-relative.
+    layout: Option<(Rect, [Rect; 3])>,
 }
 
 impl AlertSheet {
@@ -63,8 +66,11 @@ impl AlertSheet {
     }
 
     pub fn button_at(&self, location: Point<f64, Logical>) -> Option<Button> {
-        let (_, [cancel, confirm]) = self.layout?;
-        [(cancel, Button::Cancel), (confirm, Button::Confirm)].into_iter().find(|(r, _)| r.to_f64().contains(location)).map(|(_, b)| b)
+        let (_, [cancel, confirm, reopen]) = self.layout?;
+        [(cancel, Button::Cancel), (confirm, Button::Confirm), (reopen, Button::Reopen)]
+            .into_iter()
+            .find(|(r, _)| r.to_f64().contains(location))
+            .map(|(_, b)| b)
     }
 
     /// The alert is gone: no more clicks land on it.
@@ -72,7 +78,8 @@ impl AlertSheet {
         self.layout = None;
     }
 
-    /// Front to back: icon, text and button labels, the buttons, the sheet, its shadow.
+    /// Front to back: icon, text and button labels, the buttons, the sheet, its shadow. `reopen`: the checkbox's
+    /// state, shown on a power alert.
     #[allow(clippy::too_many_arguments)]
     pub fn elements(
         &mut self,
@@ -86,6 +93,7 @@ impl AlertSheet {
         accent: [u8; 3],
         glass_opacity: f32,
         scale: f64,
+        reopen: bool,
     ) -> Vec<SceneElement> {
         let label = if dark { [255, 255, 255, 217] } else { [0, 0, 0, 217] };
         let title2 = Style { size: 17, line_height: 22, weight: 600, color: label, tabular: false };
@@ -96,8 +104,13 @@ impl AlertSheet {
         let title_h = logical(title.height);
         let words = text.centred(&alert.body(Instant::now()), body, INNER as u32, body_lines(output.h, title_h, field_h), scale);
         let body_h = logical(words.height);
+        let reopen = matches!(alert.kind, Kind::Power(_)).then_some(reopen);
+        let small = Style { size: 11, line_height: 14, ..body };
+        let check_label =
+            text.wrapped(if reopen.is_some() { "Reopen windows when logging back in" } else { "" }, small, (INNER - CHECK - CHECK_GAP) as u32, 2, scale);
+        let check_h = if reopen.is_some() { 12 + logical(check_label.height).max(CHECK) } else { 0 };
 
-        let height = PAD + ICON + 12 + title_h + 8 + body_h + field_h + PAD + BUTTON_H + PAD;
+        let height = PAD + ICON + 12 + title_h + 8 + body_h + field_h + check_h + PAD + BUTTON_H + PAD;
         let x = (output.w - WIDTH) / 2;
         let y = ((output.h - height) / 2).max(0);
         let rect = Rectangle::new((x, y).into(), (WIDTH, height).into());
@@ -107,11 +120,17 @@ impl AlertSheet {
         let button_w = if alert.cancellable() { (INNER - BUTTON_GAP) / 2 } else { INNER };
         // Shaken sideways after a wrong password (polkit).
         let field_rect = Rectangle::new((x + PAD + alert.shake().unwrap_or(0), body_rect.loc.y + body_h + 12).into(), (INNER, FIELD_H).into());
-        let button_y = body_rect.loc.y + body_h + field_h + PAD;
+        let check_row = Rectangle::new((x + PAD, body_rect.loc.y + body_h + field_h + 12).into(), (INNER, check_h - 12).into());
+        let check = Rectangle::new((check_row.loc.x, check_row.loc.y + (check_row.size.h - CHECK) / 2).into(), (CHECK, CHECK).into());
+        let check_text = Rectangle::new(
+            (check.loc.x + CHECK + CHECK_GAP, check_row.loc.y + (check_row.size.h - logical(check_label.height)) / 2).into(),
+            (logical(check_label.width), logical(check_label.height)).into(),
+        );
+        let button_y = body_rect.loc.y + body_h + field_h + check_h + PAD;
         let cancel = Rectangle::new((x + PAD, button_y).into(), (button_w, BUTTON_H).into());
         let confirm = Rectangle::new((x + PAD + INNER - button_w, button_y).into(), (button_w, BUTTON_H).into());
 
-        let key = (rect, confirm, dark, accent, glass_opacity.to_bits(), scale.to_bits());
+        let key = (rect, confirm, reopen, dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             let [r, g, b] = accent.map(|c| f32::from(c) / 255.0);
             // D8 secondary button: `fill` (at 2×, so it shows on the sheet).
@@ -119,6 +138,11 @@ impl AlertSheet {
             let spec = Material::Sheet.spec(dark);
             let [sr, sg, sb] = spec.tint.map(|c| f32::from(c) / 255.0);
             let mut glass = vec![shaders.glass_shape(confirm, [r, g, b, 1.0], 6.0, false, dark, scale)];
+            match reopen {
+                Some(true) => glass.push(shaders.glass_shape(check, [r, g, b, 1.0], 4.0, false, dark, scale)),
+                Some(false) => glass.push(shaders.glass_shape(check, fill, 4.0, false, dark, scale)),
+                None => {}
+            }
             if cancel != confirm {
                 glass.push(shaders.glass_shape(cancel, fill, 6.0, false, dark, scale));
             }
@@ -134,15 +158,17 @@ impl AlertSheet {
                 Kind::Polkit { .. } => symbols.get(Symbol::Lock, Weight::Regular, ICON as u16, scale, label),
                 Kind::ScreenRecording { .. } => symbols.get(Symbol::Record, Weight::Regular, ICON as u16, scale, label),
                 Kind::Thunderbolt(_) => symbols.get(Symbol::Lightning, Weight::Regular, ICON as u16, scale, label),
-                Kind::Power(_) | Kind::NotResponding { .. } => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
+                Kind::Power(_) | Kind::NotResponding { .. } | Kind::EmptyTrash => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
             },
             title,
             words,
             text.label(if cancel == confirm { "" } else { alert.cancel() }, body, button_w as u32, scale),
             text.label(alert.confirm(), Style { color: [255, 255, 255, 255], ..body }, button_w as u32, scale),
+            symbols.get(Symbol::Check, Weight::Regular, (CHECK - 4) as u16, scale, if reopen == Some(true) { [255, 255, 255, 255] } else { [0; 4] }),
+            check_label,
         ];
         self.labels = keep_buffers(&self.labels, pieces);
-        let rects = [icon, title_rect, body_rect, cancel, confirm];
+        let rects = [icon, title_rect, body_rect, cancel, confirm, check, check_text];
         let mut out: Vec<SceneElement> = self.labels.iter().zip(rects).filter_map(|(label, rect)| label_element(renderer, label, rect, scale)).collect();
         match alert.field() {
             Some(field) => {
@@ -165,7 +191,7 @@ impl AlertSheet {
         if let Some((_, glass)) = &self.glass {
             out.extend(glass.iter().cloned().map(SceneElement::Shader));
         }
-        self.layout = Some((rect, [cancel, confirm]));
+        self.layout = Some((rect, [cancel, confirm, check_row]));
         out
     }
 }

@@ -175,6 +175,8 @@ spaces = 0
 # Advanced: "hover" gives the keyboard to the window under the pointer after a moment, without raising it;
 # "click" (the default) needs a click.
 focus = "click"
+# Log Out / Restart / Shut Down reopen the running apps' windows at the next login (the alert's checkbox sets it).
+reopen_at_login = true
 
 [clock]
 # Time zone, like "Asia/Kathmandu"; empty = keep the system's. Changing it sets the system zone (may ask for your password).
@@ -185,6 +187,11 @@ date = true
 seconds = false
 # The calendar's first day: "sunday", "monday" or "saturday".
 week_start = "sunday"
+
+[menu_bar]
+# Hide the menu bar until the pointer touches the top of the screen (or a menu is open); zoomed windows then use the
+# full height.
+auto_hide = false
 
 [dock]
 # Pinned apps, left to right: desktop-file names (kate), app ids or commands. Apps that aren't installed are
@@ -224,6 +231,8 @@ minimise_into_icon = false
 # How windows minimise: "scale" (shrink and slide) or "genie" (narrow into the dock, bottom first).
 # Reduce motion makes either a crossfade.
 minimise_effect = "scale"
+# The Trash at the dock's right end, after a separator: click opens it, drop files on it to trash them.
+show_trash = true
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.
@@ -257,6 +266,11 @@ latitude = 0.0
 longitude = 0.0
 # "celsius" or "fahrenheit".
 units = "celsius"
+[widgets]
+# Widgets other apps show over D-Bus (org.noobsbot.Desktop.Widgets), by id. Notification Center shows them in this
+# order, then any not listed anywhere; ids in `desktop` show on the desktop instead.
+center = []
+desktop = []
 [calendar]
 # Events for Notification Center's Up Next, the calendar's dots and reminders: .ics files, folders, or "dir/*.ics".
 # Saved changes show at once. (CalDAV and Google calendars: later.)
@@ -271,6 +285,9 @@ channel = "stable"
 # The files in your Desktop folder (XDG_DESKTOP_DIR, usually ~/Desktop) as icons on the wallpaper. Drag them to
 # arrange; right-click for Open, Rename, Move to Trash and New Folder.
 icons = true
+# Mounted USB drives, SD cards and other disks as icons too, at the top right above the files. Double-click opens one;
+# right-click for Open and Eject.
+show_drives = true
 
 [notifications]
 # Do Not Disturb (the Control Center tile): banners stay quiet; Notification Center still collects them.
