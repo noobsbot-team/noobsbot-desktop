@@ -282,6 +282,20 @@ pub fn stranded(frame: Rectangle<i32, Logical>, screens: &[Rectangle<i32, Logica
 }
 
 impl State {
+    /// Displays ▸ Identify: each display's name in its middle for `SHOWN_FOR` (again from the start if asked again).
+    pub fn identify_displays(&mut self) {
+        if let Some(token) = self.identify.take() {
+            self.loop_handle.remove(token);
+        }
+        let timer = self.loop_handle.insert_source(Timer::from_duration(crate::render::identify::SHOWN_FOR), |_, _, state| {
+            state.identify = None;
+            state.schedule_redraw();
+            TimeoutAction::Drop
+        });
+        self.identify = timer.inspect_err(|err| tracing::warn!("identify timer: {err}")).ok();
+        self.schedule_redraw();
+    }
+
     /// The settings file was written: with a `display.previous` set aside by System Settings, the `[display]` from
     /// before goes back in `KEEP_FOR` unless Settings deletes it first ("Keep Changes"). Here rather than in
     /// Settings, so a mode the user cannot see is undone even when Settings is gone by then.

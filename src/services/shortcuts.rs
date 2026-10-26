@@ -1,5 +1,5 @@
 //! The desktop's own bus name (`org.noobsbot.Desktop`): `Shortcuts.Record` lets Settings capture keys the desktop
-//! would otherwise take (E8.7); `Displays` lets the Displays page set the brightness.
+//! would otherwise take (E8.7); `Displays` lets the Displays page set the brightness and identify the screens.
 
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
@@ -33,6 +33,11 @@ impl Displays {
     /// The built-in panel's brightness, in percent (through logind, as the brightness keys do).
     fn set_brightness(&self, percent: u8) {
         let _ = self.updates.send(Update::SetBrightness(percent));
+    }
+
+    /// Every display shows its name for 2 s.
+    fn identify(&self) {
+        let _ = self.updates.send(Update::Identify);
     }
 }
 
