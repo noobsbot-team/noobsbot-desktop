@@ -292,6 +292,7 @@ doesn't understand is skipped and reported in the journal.
 |---|---|
 | `[appearance]` | light / dark / auto (set hours, or sunset to sunrise at the weather place), accent colour, glass opacity, wallpapers and slideshow, theming Qt apps to match, reduce motion, text size and pointer size (exported to apps) |
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
+| `[accessibility]` | shake to find the pointer, dwell click, hold for secondary click |
 | `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
 | `[touchpad]` | tap to click, natural scrolling, three or four-finger swipes, gesture sensitivity |
 | `[hot_corners]` | an action for each screen corner (off by default) |
