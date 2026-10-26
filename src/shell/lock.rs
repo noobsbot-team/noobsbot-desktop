@@ -370,7 +370,7 @@ impl State {
         }
     }
 
-    /// A press while locked: Sleep, Restart or Shut Down when it hits one.
+    /// A press while locked: Sleep, Restart, Shut Down or a Now Playing button when it hits one.
     pub fn lock_press(&mut self, location: Point<f64, Logical>) {
         if self.lock.as_ref().is_some_and(|l| l.client_surface().is_some()) {
             return;
@@ -378,6 +378,13 @@ impl State {
         let Some(layout) = self.lock_layout() else { return };
         if self.greeter_press(&layout, location) {
             return;
+        }
+        // Now Playing's buttons (never on the login screen: no session player there).
+        if self.greeter().is_none()
+            && let (Some(media), Some(card)) = (self.media.as_ref(), layout.media)
+            && let Some(action) = media_hit(card, location)
+        {
+            return self.services.send(crate::services::Command::Media { player: media.player.clone(), action });
         }
         let hit = Button::ALL.into_iter().zip(layout.buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(b, _)| b);
         match hit {
