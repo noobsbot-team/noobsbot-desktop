@@ -239,6 +239,8 @@ pub struct Center {
     pub weather: Option<Rect>,
     /// Other apps' widgets, in `State::shown_widgets` order.
     pub widgets: Vec<Rect>,
+    /// "Edit Widgets…" under them: Settings ▸ Notifications, like the ⚙.
+    pub edit: Rect,
     pub max_scroll: i32,
 }
 
@@ -334,9 +336,24 @@ pub fn center(
         (card, (0..batteries.min(3) as i32).map(|i| row(inner_x + 12 + i * each, card.loc.y + ts(36), each, ts(20))).collect())
     });
     let (widgets, bottom) = tiles(widgets, inner_x, y, inner_w);
-    y = bottom;
+    let edit = row(inner_x + (inner_w - ts(110)) / 2, bottom, ts(110), ts(BUTTON_H));
+    y = bottom + edit.size.h;
     let content = y - start + 8;
-    Center { rect, date, settings, dnd, header, groups, up_next, calendar, batteries, weather, widgets, max_scroll: (content - (rect.size.h - 16)).max(0) }
+    Center {
+        rect,
+        date,
+        settings,
+        dnd,
+        header,
+        groups,
+        up_next,
+        calendar,
+        batteries,
+        weather,
+        widgets,
+        edit,
+        max_scroll: (content - (rect.size.h - 16)).max(0),
+    }
 }
 
 /// Widget cards from `y` down in a `w`-wide column: medium ones full width, small ones two to a row; and the y
@@ -385,7 +402,7 @@ enum Hit {
 
 fn center_hit(center: &Center, location: Point<f64, Logical>) -> Option<Hit> {
     let on = |r: Rect| center.visible(r) && r.to_f64().contains(location);
-    if on(center.settings) {
+    if on(center.settings) || on(center.edit) {
         return Some(Hit::Settings);
     }
     if center.header.is_some_and(|(_, clear)| on(clear)) {
@@ -951,6 +968,8 @@ mod tests {
         assert_eq!(center.widgets[0].loc.y, center.batteries.as_ref().unwrap().0.loc.y + 68 + GAP);
         let tall = super::center(&store, Size::from((1280, 2000)), true, (5, false), 0, 1, true, &[true], true);
         assert_eq!(center_hit(&tall, at(tall.widgets[0])), Some(Hit::Widget(0)));
+        assert_eq!(center_hit(&tall, at(tall.edit)), Some(Hit::Settings), "Edit Widgets… opens Settings too");
+        assert_eq!(tall.edit.loc.y, tall.widgets[0].loc.y + ts(WIDGET_H) + GAP);
         assert_eq!(center_hit(&center, at(center.groups[0].cards[0].rect)), Some(Hit::Expand("A".into())));
         assert_eq!(center_hit(&center, at(center.groups[1].cards[0].rect)), Some(Hit::Card(2)));
         assert_eq!(center_hit(&center, at(center.header.unwrap().1)), Some(Hit::ClearAll));

@@ -654,6 +654,8 @@ pub struct Widgets {
     pub center: Vec<String>,
     /// On the desktop instead, top to bottom.
     pub desktop: Vec<String>,
+    /// Shown nowhere unless also in `center` or `desktop`.
+    pub hidden: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
