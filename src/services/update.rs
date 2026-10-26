@@ -67,13 +67,8 @@ pub enum Download {
 /// Its own thread: the check and download block on the network, and between checks it only sleeps (no wakeups).
 pub fn spawn(found: Sender<Release>, channel: Channel) {
     let thread = std::thread::Builder::new().name("update".into()).spawn(move || {
-        let running = Version::parse(env!("CARGO_PKG_VERSION")).expect("Cargo.toml has a SemVer version");
-        let url = match channel {
-            Channel::Stable => format!("{API}/releases/latest"),
-            Channel::Beta => format!("{API}/releases?per_page=20"),
-        };
         loop {
-            if let Some(mut release) = fetch(&url).and_then(|json| newer(&json, &running, channel)) {
+            if let Some(mut release) = latest(channel) {
                 release.download = download(&release);
                 tracing::info!("Noobsbot Desktop {} is available ({:?}): {}", release.version, release.download, release.url);
                 if found.send(release).is_err() {
@@ -85,6 +80,51 @@ pub fn spawn(found: Sender<Release>, channel: Channel) {
     });
     if let Err(err) = thread {
         tracing::warn!("update check off: {err}");
+    }
+}
+
+/// The newest release on `channel` if it is newer than this build, or `None` (up to date or offline).
+fn latest(channel: Channel) -> Option<Release> {
+    let running = Version::parse(env!("CARGO_PKG_VERSION")).expect("Cargo.toml has a SemVer version");
+    let url = match channel {
+        Channel::Stable => format!("{API}/releases/latest"),
+        Channel::Beta => format!("{API}/releases?per_page=20"),
+    };
+    fetch(&url).and_then(|json| newer(&json, &running, channel))
+}
+
+/// `noobsbot-desktop --update`: the same check, download and helper as "Restart to Update", from a terminal.
+/// pkexec asks for the admin password; the new version starts at the next login.
+pub fn cli(channel: Channel) -> i32 {
+    println!("Checking for updates…");
+    let Some(release) = latest(channel) else {
+        println!("Noobsbot Desktop {} is up to date (or GitHub can't be reached).", env!("CARGO_PKG_VERSION"));
+        return 0;
+    };
+    println!("Downloading Noobsbot Desktop {}…", release.version);
+    match download(&release) {
+        Download::Ready(dir) => match Command::new("pkexec").arg(HELPER).arg(&dir).status() {
+            Ok(status) if status.success() => {
+                println!("Log out and back in to start {}.", release.version);
+                0
+            }
+            Ok(_) => 1,
+            Err(err) => {
+                eprintln!("pkexec: {err}");
+                1
+            }
+        },
+        Download::Refused => {
+            eprintln!("The download of {} failed its signature check and was deleted.", release.version);
+            1
+        }
+        Download::None => {
+            eprintln!(
+                "{} is available ({}), but this install can't update itself (not installed by install.sh, or offline); use ./install.sh --update or your package manager.",
+                release.version, release.url
+            );
+            1
+        }
     }
 }
 
