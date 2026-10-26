@@ -11,6 +11,8 @@ publish = false
 # Software rendering only: a settings window needs no GPU, and it starts faster without wgpu (E7.1, Open-2).
 iced = { version = "0.14.0", default-features = false, features = ["tiny-skia", "crisp", "wayland", "x11", "svg", "thread-pool", "advanced", "canvas"] }
 toml_edit = "0.25.17"
+# The hour, for Appearance ▸ Auto (same as the desktop).
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 zbus = "5.19.0"
 futures-lite = "2.6.1"
 notify = "8.2.0"
