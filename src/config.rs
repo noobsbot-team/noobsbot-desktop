@@ -1026,11 +1026,13 @@ pub struct Sound {
     pub alert_volume: u8,
     /// Screenshots, emptying the Trash and the volume keys make their sounds.
     pub ui_sounds: bool,
+    /// A sound as the session starts (once per login).
+    pub startup_sound: bool,
 }
 
 impl Default for Sound {
     fn default() -> Self {
-        Self { alert: "bell".into(), alert_volume: 100, ui_sounds: true }
+        Self { alert: "bell".into(), alert_volume: 100, ui_sounds: true, startup_sound: false }
     }
 }
 
