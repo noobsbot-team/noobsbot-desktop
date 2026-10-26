@@ -122,7 +122,8 @@ detect_distro() {
 }
 
 preflight() {
-    [[ $EUID -ne 0 ]] || die "run this as your user, not root (it asks for sudo itself)."
+    # A staged run (DESTDIR) changes nothing on the system, so CI can run it as root.
+    ! real || [[ $EUID -ne 0 ]] || die "run this as your user, not root (it asks for sudo itself)."
     if real && ((!DRY)); then
         if debian; then
             { has sudo && sudo -v; } ||
