@@ -1121,7 +1121,12 @@ impl CompositorHandler for State {
                 let size = window.geometry().size + Size::from((0, crate::decorations::bar_height(&window)));
                 if size.w > 0 && window.user_data().get::<Placed>().is_none() {
                     window.user_data().insert_if_missing(|| Placed);
-                    if let Some(area) = self.window_area(&window) {
+                    // Where it lands: its remembered frame's display or its parent's, else where it is.
+                    let goes =
+                        window.user_data().get::<crate::sheets::Recalled>().map(|r| r.0).or_else(|| self.sheet_parent(&window).and_then(|p| self.frame(&p)));
+                    let screens = self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.clone())));
+                    let output = goes.and_then(|frame| crate::displays::mostly_on(frame, screens));
+                    if let Some(area) = output.map_or_else(|| self.window_area(&window), |o| self.output_area(&o)) {
                         // A window bigger than the work area (the app ignored the bounds) is shrunk to fit.
                         let fitted = Size::from((size.w.min(area.size.w), size.h.min(area.size.h)));
                         if fitted != size
