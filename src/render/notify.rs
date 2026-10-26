@@ -73,7 +73,7 @@ fn updated(ago: i64) -> String {
     }
 }
 
-/// The Weather widget (E7.2), like macOS's medium one: place, temperature and condition with today's high and low,
+/// The Weather widget (E7.2), medium size: place, temperature and condition with today's high and low,
 /// then the next hours.
 #[expect(clippy::too_many_arguments, reason = "the widget's pieces in one place")]
 fn weather_pieces(pieces: &mut Pieces, text: &mut Text, symbols: &mut Symbols, ink: &Ink, w: &Weather, card: Rect, hour24: bool, scale: f64) {
@@ -429,7 +429,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn times_read_like_macos() {
+    fn times_read_naturally() {
         let now = chrono::Local::now().timestamp();
         let n = |ago: i64| Notification { time: now - ago, ..Default::default() };
         assert_eq!(when(&n(5), true, false), "now");
