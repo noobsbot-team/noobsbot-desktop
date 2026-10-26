@@ -129,6 +129,11 @@ pub fn battery(battery: &Battery, percent: bool) -> Item {
     Item { symbol, text: percent.then(|| format!("{}%", battery.percent)) }
 }
 
+/// `symbol` is the battery's: its item opens the battery menu.
+pub fn is_battery(symbol: Symbol) -> bool {
+    matches!(symbol, Symbol::BatteryFull | Symbol::BatteryHigh | Symbol::BatteryMedium | Symbol::BatteryLow | Symbol::BatteryEmpty | Symbol::BatteryCharging)
+}
+
 pub fn volume(sound: &Sound) -> Symbol {
     match sound.output.volume {
         _ if sound.output.muted => Symbol::SpeakerMuted,
