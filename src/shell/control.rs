@@ -52,7 +52,7 @@ pub struct Status {
     pub expanded: Option<Module>,
 }
 
-/// A module that opens a list in place (one at a time, as on macOS).
+/// A module that opens a list in place (one at a time).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Module {
     Wifi,
@@ -279,7 +279,7 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     }
 }
 
-/// The percent a slider shows with the pointer at `x`: the knob end follows the pointer, as on macOS.
+/// The percent a slider shows with the pointer at `x`: the knob end follows the pointer.
 pub fn slider_value(track: Rect, x: f64) -> u8 {
     let span = f64::from(track.size.w - TOGGLE).max(1.0);
     ((x - f64::from(track.loc.x) - f64::from(TOGGLE) / 2.0) / span * 100.0).round().clamp(0.0, 100.0) as u8

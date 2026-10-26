@@ -849,7 +849,7 @@ pub enum Command {
     Action(usize),
 }
 
-/// The menu in macOS's order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
+/// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
 /// actions, the Options section (Keep in Dock, `pinned` `None` when it can't be pinned; Open at Login, `login` `None`
 /// without a desktop file, which also hides Show in Files), then Close (Close All with several windows).
 // ponytail: Options is an inline section, since dock menu rows have no submenus yet.
@@ -861,7 +861,8 @@ pub fn menu_rows(
     pinned: Option<bool>,
     login: Option<bool>,
 ) -> Vec<Option<Row>> {
-    let row = |label: &str, shortcut, command: Option<Command>| Some(Row { label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
+    let row =
+        |label: &str, shortcut, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
     let tick = |on: bool| if on { "✓" } else { "" };
     let windows = titles.iter().enumerate().map(|(i, t)| row(t, "", (active != Some(i)).then_some(Command::Window(i)))).collect();
     let recent = recent.iter().enumerate().map(|(i, r)| row(r, "", Some(Command::Recent(i)))).collect();

@@ -140,6 +140,8 @@ pub struct State {
     pub update: Option<crate::services::update::Release>,
     /// The Weather widget's forecast (E7.2); `None` while it is off.
     pub weather: Option<crate::services::weather::Weather>,
+    /// Widgets other processes set over D-Bus (E8.8).
+    pub widgets: Vec<crate::services::widgets::Widget>,
     /// Every changed `[weather]` goes to the weather thread.
     pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
     pub zones: crate::input::Zones,
@@ -187,6 +189,8 @@ pub struct State {
     pub symbols: crate::symbols::Symbols,
     /// The menu-bar popup that is open (E2.2).
     pub popup: Option<crate::shell::Popup>,
+    /// The open menu's row whose submenu is open, while that menu is the popup.
+    pub submenu: Option<(crate::shell::Popup, usize)>,
     pub osd: Option<crate::shell::Osd>,
     /// The power alert that is up.
     pub alert: Option<crate::shell::alert::Alert>,
@@ -390,7 +394,7 @@ impl State {
                     crate::services::Update::PinEntry { device, passkey } => state.show_pin_entry(device, passkey),
                     crate::services::Update::Polkit(event) => state.polkit_event(event),
                     crate::services::Update::Tray(tray) => state.tray = tray,
-                    crate::services::Update::TrayMenu { service, menu, rows } => state.show_tray_menu(service, menu, rows),
+                    crate::services::Update::TrayMenu { service, menu, parent, rows } => state.show_tray_menu(service, menu, parent, rows),
                     crate::services::Update::Notify(n) => state.notify(*n),
                     crate::services::Update::CloseNotification(id) => state.close_notification(id, crate::shell::notify::Reason::Closed),
                     crate::services::Update::History(list) => state.restore_notifications(list),
@@ -403,6 +407,7 @@ impl State {
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
                     crate::services::Update::Resumed => state.idle_activity(),
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
+                    crate::services::Update::Widgets(widgets) => state.widgets = widgets,
                     crate::services::Update::Record(on) => {
                         let focus = state.focused_window();
                         state.recording.set(on, focus, std::time::Instant::now());
@@ -460,6 +465,7 @@ impl State {
             x_display: None,
             update: None,
             weather: None,
+            widgets: Vec::new(),
             weather_settings,
             rules: rules::compile(&config.rules),
             bindings: shortcuts::from_config(&config),
@@ -500,6 +506,7 @@ impl State {
             media: None,
             tray: Vec::new(),
             tray_menu: None,
+            submenu: None,
             disks: Default::default(),
             symbols: Default::default(),
             popup: None,
@@ -578,7 +585,7 @@ impl State {
         }
     }
 
-    /// What the menu bar shows; `None` while a fullscreen window has focus (it covers the bar, as on macOS).
+    /// What the menu bar shows; `None` while a fullscreen window has focus (it covers the bar).
     pub fn menu_bar(&self) -> Option<crate::render::menubar::Content> {
         use crate::render::menubar::{self, Item};
         let focused = self.focused_window();
@@ -1158,7 +1165,7 @@ impl XdgShellHandler for State {
             return;
         }
         let (Some(start_data), Some(window)) = (pointer.grab_start_data(), self.window_for(surface.wl_surface()).cloned()) else { return };
-        // Dragging a zoomed window un-zooms it first, centred under the pointer (macOS).
+        // Dragging a zoomed window un-zooms it first, centred under the pointer.
         if let Some(restore) = self.unfill(&surface, xdg_toplevel::State::Maximized) {
             let at = start_data.location.to_i32_round::<i32>();
             self.set_visible_loc(&window, (at.x - restore.size.w / 2, at.y - crate::decorations::BAR / 2).into());

@@ -49,6 +49,7 @@ pub struct Config {
     pub idle: Idle,
     pub privacy: Privacy,
     pub weather: Weather,
+    pub widgets: Widgets,
     pub calendar: Calendar,
     pub update: Update,
     pub desktop: Desktop,
@@ -238,7 +239,7 @@ impl From<WeekStart> for chrono::Weekday {
     }
 }
 
-/// Wallpaper fit (macOS: Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen).
+/// Wallpaper fit (Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WallpaperFit {
@@ -260,7 +261,7 @@ pub enum Mode {
     Auto,
 }
 
-/// The macOS accent set (Part D); theme.rs maps each to its light and dark colour.
+/// Part D's accent set; theme.rs maps each to its light and dark colour.
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Accent {
@@ -368,7 +369,7 @@ pub struct Touchpad {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SecondaryClick {
-    /// Click with two fingers (macOS).
+    /// Click with two fingers.
     TwoFingers,
     /// Click in the bottom-right corner.
     Corner,
@@ -511,6 +512,7 @@ impl Default for Config {
             idle: Idle::default(),
             privacy: Privacy::default(),
             weather: Weather::default(),
+            widgets: Widgets::default(),
             calendar: Calendar::default(),
             update: Update::default(),
             desktop: Desktop::default(),
@@ -551,6 +553,16 @@ pub struct Weather {
     pub latitude: f64,
     pub longitude: f64,
     pub units: Units,
+}
+
+/// Where widgets from other processes show (E8.8), by id, in order.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Widgets {
+    /// Notification Center's order; widgets in neither list follow these.
+    pub center: Vec<String>,
+    /// On the desktop instead, top to bottom.
+    pub desktop: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
