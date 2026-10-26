@@ -451,6 +451,18 @@ impl State {
         if self.popup.is_some_and(|p| p.item().is_none()) { first } else { bar.or(first) }.cloned()
     }
 
+    /// The display the alert shows on: the focused window's, else the pointer's (D13).
+    pub fn alert_output(&self) -> Option<smithay::output::Output> {
+        let window = self.focused_window().and_then(|w| self.space.element_geometry(&w));
+        self.display_with(window.map(|g| g.loc + Point::from((g.size.w / 2, g.size.h / 2))))
+    }
+
+    /// `location` (first-output-relative) relative to the alert's display.
+    fn to_alert(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
+        let origin = |o: Option<smithay::output::Output>| o.and_then(|o| self.space.output_geometry(&o)).map_or((0, 0).into(), |g| g.loc);
+        location + origin(self.space.outputs().next().cloned()).to_f64() - origin(self.alert_output()).to_f64()
+    }
+
     /// The size of the popup's display, which Notification Center and Control Center are laid out in.
     pub fn popup_size(&self) -> Size<i32, Logical> {
         self.popup_output().and_then(|o| self.space.output_geometry(&o)).map_or_else(Default::default, |g| g.size)
@@ -506,7 +518,7 @@ impl State {
 
     /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar, an open popup or the dock.
     pub fn shell_covers(&self, location: Point<f64, Logical>) -> bool {
-        let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(location));
+        let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(self.to_alert(location)));
         if on_alert || self.on_banner(location) || self.mission_open() || self.osk_panel().is_some_and(|r| r.to_f64().contains(location)) {
             return true;
         }
@@ -529,7 +541,7 @@ impl State {
     /// window gets focus or the click.
     pub fn shell_press(&mut self, location: Point<f64, Logical>, secondary: bool) -> bool {
         // The alert is above everything else.
-        if self.alert.is_some() && self.alert_press(location) {
+        if self.alert.is_some() && self.alert_press(self.to_alert(location)) {
             return true;
         }
         if self.banner_press(location)

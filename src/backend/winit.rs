@@ -452,6 +452,27 @@ impl State {
         (bar, dock_frame.animating)
     }
 
+    /// The alert, on `output` when it shows there (`alert_output`).
+    fn alert_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Vec<SceneElement> {
+        let shown = self.alert.is_some() && self.alert_output().as_ref() == Some(output);
+        let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
+        let (scale, reopen) = (output.current_scale().fractional_scale(), self.config.windows.reopen_at_login);
+        let appearance = &self.config.appearance;
+        let (dark, glass) = (render::is_dark(appearance), appearance.glass_opacity);
+        let accent = render::accent(appearance.accent, dark);
+        let Some(views) = self.backend.as_mut() else { return Vec::new() };
+        match &self.alert {
+            Some(alert) if shown => {
+                views.alert.elements(renderer, &views.shaders, &mut self.text, &mut self.symbols, alert, size, dark, accent, glass, scale, reopen)
+            }
+            Some(_) => Vec::new(),
+            None => {
+                views.alert.hide();
+                Vec::new()
+            }
+        }
+    }
+
     /// The hot-corner ripple (E5.4) on `output`, if its corner is there: a faint glass disc with a light rim, growing
     /// out of the corner and fading.
     fn ripple_elements(&mut self, output: &Output) -> Vec<SceneElement> {
@@ -486,7 +507,8 @@ impl State {
             let animating = animating || overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
             // Its own menu bar and the popups opened from it.
             let (strip, popups) = self.bar_elements(renderer, output, locked);
-            let ripple = self.ripple_elements(output);
+            let mut ripple = self.alert_elements(renderer, output);
+            ripple.extend(self.ripple_elements(output));
             let animating = animating || !ripple.is_empty();
             // Its own dock, in front of the windows.
             let (dock, dock_animating) = if locked { Default::default() } else { self.dock_elements(renderer, output) };
@@ -563,6 +585,7 @@ impl State {
         let slide = if overview.is_none() { self.slide_frame(output) } else { None };
         let indicator = self.space_indicator(output);
         let ripple = self.ripple_elements(output);
+        let alert = self.alert_elements(renderer, output);
         let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some() || !ripple.is_empty();
         let idle_shade = self.idle_shade();
         let banner = cards.iter().map(|c| c.id).max();
@@ -585,7 +608,7 @@ impl State {
             osd,
             identify: _,
             control: _,
-            alert: sheet,
+            alert: _,
             docks: _,
             switcher: _,
             force_quit,
@@ -613,25 +636,7 @@ impl State {
         // The alert in front of the switcher and the Force Quit window, those in front of the OSD, the OSD in front of popups, popups in front of the bar, the bar in
         // front of windows.
         let mut bar = Vec::new();
-        match &self.alert {
-            Some(shown) => {
-                let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
-                bar.extend(sheet.elements(
-                    renderer,
-                    shaders,
-                    &mut self.text,
-                    &mut self.symbols,
-                    shown,
-                    size,
-                    dark,
-                    accent,
-                    appearance.glass_opacity,
-                    scale,
-                    self.config.windows.reopen_at_login,
-                ));
-            }
-            None => sheet.hide(),
-        }
+        bar.extend(alert);
         // The screenshot overlay and its thumbnail: in front of all but the alert.
         if let Some(shot) = &self.screenshots.shot {
             let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
