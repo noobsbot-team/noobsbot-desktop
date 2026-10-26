@@ -105,6 +105,8 @@ pub enum Message {
     Toggle(&'static str, bool),
     Choose(String, &'static str),
     Number(&'static str, i64),
+    /// General ▸ Privacy: empty every app's recent files.
+    ClearRecent,
     Slide(String, f64),
     Release(String),
     Type(String, String),
@@ -196,6 +198,7 @@ impl App {
             Message::Toggle(key, on) => self.save(key, on),
             Message::Choose(key, value) => self.save(&key, value),
             Message::Number(key, value) => self.save(key, value),
+            Message::ClearRecent => self.error = config::clear_recent_files().err().map(|err| format!("Couldn't clear recent files: {err}")),
             Message::Slide(key, value) => {
                 self.drafts.insert(key, value);
             }

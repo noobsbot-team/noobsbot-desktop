@@ -210,6 +210,17 @@ fn apps_in(history: &str) -> Vec<String> {
     apps.into_iter().map(str::to_owned).collect()
 }
 
+/// Empties `$XDG_DATA_HOME/recently-used.xbel` (every app's recent files) to a valid, empty bookmark file.
+pub fn clear_recent_files() -> io::Result<()> {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share"));
+    save_atomic(&data.join("recently-used.xbel"), EMPTY_XBEL)
+}
+
+const EMPTY_XBEL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbel version=\"1.0\"\n      xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\"\n      xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>\n</xbel>\n";
+
 fn lookup<'a>(doc: &'a DocumentMut, key: &str) -> Option<&'a Value> {
     let (table, name) = key.split_once('.').map_or((None, key), |(t, k)| (Some(t), k));
     let parent = match table {
