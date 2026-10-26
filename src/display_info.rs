@@ -45,6 +45,8 @@ pub struct Display {
     pub width: i32,
     pub height: i32,
     pub primary: bool,
+    /// The connector it shows the picture of (mirroring); empty = part of the arrangement.
+    pub mirror: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
