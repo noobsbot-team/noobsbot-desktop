@@ -23,6 +23,8 @@ pub const STRIDE: i32 = 1 << 16;
 const HUD_TIME: std::time::Duration = std::time::Duration::from_millis(800);
 /// D10 `smooth`.
 const SMOOTH: f64 = 0.4;
+/// A window held against a side this long during a move goes to the neighbouring Space (E8.7).
+pub const EDGE_HOLD: std::time::Duration = std::time::Duration::from_millis(700);
 
 /// One output's Spaces: `Some(window)` is a fullscreen app's own Space.
 pub struct Desks {
@@ -79,6 +81,61 @@ pub struct Spaces {
     pub slide: Option<Slide>,
     /// The indicator pill is up; its hide timer.
     pub hud: Option<RegistrationToken>,
+    /// A moved window held against a side edge, with the timer that switches Spaces.
+    pub edge: Option<(EdgeHold, Window, RegistrationToken)>,
+}
+
+/// The pointer of a window move against a side edge (-1 left, 1 right).
+/// The rule with edge tiles: the tile preview shows on arrival and dropping there tiles; held for `EDGE_HOLD` the
+/// Space switches instead, and the side tile stays off until the pointer leaves that edge. Holding on goes on.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeHold {
+    pub side: Option<i32>,
+    since: Instant,
+    /// A switch happened since the pointer reached this edge.
+    pub switched: bool,
+}
+
+impl EdgeHold {
+    pub fn new(side: Option<i32>, now: Instant) -> Self {
+        Self { side, since: now, switched: false }
+    }
+
+    /// The pointer is at `side` at `now`: the Space step due, if any. A new side restarts the hold; so does each step.
+    pub fn update(&mut self, side: Option<i32>, now: Instant) -> Option<i32> {
+        if side != self.side {
+            *self = Self::new(side, now);
+            return None;
+        }
+        let side = self.side?;
+        (now.saturating_duration_since(self.since) >= EDGE_HOLD).then(|| {
+            (self.since, self.switched) = (now, true);
+            side
+        })
+    }
+
+    /// Until the next step is due.
+    pub fn left(&self, now: Instant) -> std::time::Duration {
+        EDGE_HOLD.saturating_sub(now.saturating_duration_since(self.since))
+    }
+}
+
+/// The side edge of `screen` the pointer at `p` presses against (-1 left, 1 right), unless another display lies
+/// beyond it: then the pointer crosses over instead.
+pub fn edge_side(p: Point<f64, Logical>, screen: Rect, others: &[Rect]) -> Option<i32> {
+    if !screen.to_f64().contains(p) {
+        return None;
+    }
+    let (x, w) = (f64::from(screen.loc.x), f64::from(screen.size.w));
+    let side = if p.x <= x + crate::wm::TILE_EDGE {
+        -1
+    } else if p.x >= x + w - 1.0 - crate::wm::TILE_EDGE {
+        1
+    } else {
+        return None;
+    };
+    let beyond = Point::from((if side < 0 { screen.loc.x - 1 } else { screen.loc.x + screen.size.w }, p.y.floor() as i32));
+    (!others.iter().any(|o| o.contains(beyond))).then_some(side)
 }
 
 /// The row Space `desk` sits in while `current` is shown.
@@ -352,6 +409,64 @@ impl State {
         self.send_to_space(window, desk);
     }
 
+    /// A window being moved has its pointer at `p`: held against a side edge with a Space beyond it, it goes there
+    /// after `EDGE_HOLD` (E8.7). Returns whether edge tiles may show (not after a switch at this edge).
+    pub fn edge_hold(&mut self, window: &Window, p: Point<f64, Logical>) -> bool {
+        let mut outputs = self.space.outputs().filter_map(|o| self.space.output_geometry(o));
+        let Some(screen) = outputs.next() else { return true };
+        let others: Vec<Rect> = outputs.collect();
+        let side = edge_side(p, screen, &others).filter(|&d| self.desks().is_some_and(|k| step(k.current, d, k.list.len()).is_some()));
+        let now = Instant::now();
+        match self.spaces.edge.as_mut() {
+            Some((hold, ..)) if hold.side == side => {
+                if let Some(delta) = hold.update(side, now) {
+                    self.edge_step(delta);
+                }
+            }
+            _ => {
+                self.edge_end();
+                if side.is_some() {
+                    let timer = self.loop_handle.insert_source(Timer::from_duration(EDGE_HOLD), |_, _, state| state.edge_tick());
+                    match timer {
+                        Ok(token) => self.spaces.edge = Some((EdgeHold::new(side, now), window.clone(), token)),
+                        Err(err) => tracing::warn!("edge hold timer: {err}"),
+                    }
+                }
+            }
+        }
+        self.spaces.edge.as_ref().is_none_or(|(hold, ..)| !hold.switched)
+    }
+
+    fn edge_tick(&mut self) -> TimeoutAction {
+        let now = Instant::now();
+        let Some((hold, ..)) = self.spaces.edge.as_mut() else { return TimeoutAction::Drop };
+        if let Some(delta) = hold.update(hold.side, now) {
+            self.edge_step(delta);
+        }
+        match self.spaces.edge.as_ref() {
+            Some((hold, ..)) => TimeoutAction::ToDuration(hold.left(now).max(std::time::Duration::from_millis(1))),
+            None => TimeoutAction::Drop,
+        }
+    }
+
+    /// The held window goes one Space towards `delta`, staying under the pointer.
+    fn edge_step(&mut self, delta: i32) {
+        let Some(window) = self.spaces.edge.as_ref().map(|(_, w, _)| w.clone()) else { return };
+        if let Some(to) = self.desks().and_then(|d| step(d.current, delta, d.list.len())) {
+            self.go_to(to, Some(&window));
+        }
+        if self.tile_preview.take().is_some() {
+            self.schedule_redraw();
+        }
+    }
+
+    /// The move ended or left the edge. Returns whether edge tiles may apply (no switch at this edge).
+    pub fn edge_end(&mut self) -> bool {
+        let Some((hold, _, token)) = self.spaces.edge.take() else { return true };
+        self.loop_handle.remove(token);
+        !hold.switched
+    }
+
     /// The slide's progress this frame (0 → 1), clearing it once done.
     pub fn slide_progress(&mut self) -> Option<(Slide, f64)> {
         let now = Instant::now();
@@ -371,6 +486,7 @@ impl State {
         let dir = if slide.to > slide.from { 1 } else { -1 };
         let shift = (f64::from(width) * (1.0 - p)).round() as i32 * dir;
         let old = row_of(slide.from, slide.to);
+        let held = self.spaces.edge.as_ref().map(|(_, w, _)| w.clone());
         let windows = self
             .space
             .elements()
@@ -379,7 +495,7 @@ impl State {
             .filter_map(|w| {
                 let row = self.window_row(w);
                 let by = match row {
-                    0 if self.sticky(w) => 0,
+                    0 if self.sticky(w) || held.as_ref() == Some(w) => 0,
                     0 => shift,
                     r if r == old => shift - dir * width,
                     _ => return None,
@@ -400,6 +516,40 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edge_hold_switches_after_the_hold_and_goes_on() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + std::time::Duration::from_millis(n);
+        let mut hold = EdgeHold::new(None, t0);
+        assert_eq!(hold.update(Some(1), ms(0)), None, "arriving starts the hold");
+        assert!(!hold.switched, "on arrival the tile preview may show");
+        assert_eq!(hold.update(Some(1), ms(699)), None);
+        assert_eq!(hold.left(ms(600)), std::time::Duration::from_millis(100));
+        assert_eq!(hold.update(Some(1), ms(700)), Some(1));
+        assert!(hold.switched, "after a switch the side tile is off");
+        assert_eq!(hold.update(Some(1), ms(1000)), None, "each step restarts the hold");
+        assert_eq!(hold.update(Some(1), ms(1400)), Some(1), "holding on goes on");
+        assert_eq!(hold.update(None, ms(1500)), None);
+        assert!(!hold.switched, "leaving the edge brings tiles back");
+        hold.update(Some(-1), ms(1600));
+        assert_eq!(hold.update(Some(1), ms(2400)), None, "a new side restarts the hold");
+        assert_eq!(hold.update(Some(1), ms(3100)), Some(1));
+    }
+
+    #[test]
+    fn edge_side_yields_to_a_neighbouring_display() {
+        let screen = Rect::new((0, 0).into(), (1000, 800).into());
+        let right = Rect::new((1000, 0).into(), (800, 600).into());
+        let p = |x: f64, y: f64| Point::from((x, y));
+        assert_eq!(edge_side(p(0.0, 400.0), screen, &[]), Some(-1));
+        assert_eq!(edge_side(p(999.0, 400.0), screen, &[]), Some(1));
+        assert_eq!(edge_side(p(500.0, 400.0), screen, &[]), None);
+        assert_eq!(edge_side(p(999.0, 400.0), screen, &[right]), None, "crossing over wins");
+        assert_eq!(edge_side(p(999.0, 700.0), screen, &[right]), Some(1), "below the neighbour the edge is free");
+        assert_eq!(edge_side(p(0.0, 400.0), screen, &[right]), Some(-1));
+        assert_eq!(edge_side(p(1000.0, 400.0), screen, &[right]), None, "on the other display");
+    }
 
     #[test]
     fn rows_and_spaces_round_trip() {
