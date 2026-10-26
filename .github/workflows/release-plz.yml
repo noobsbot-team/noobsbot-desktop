@@ -3,9 +3,11 @@
 # the GitHub Release, and then the signed tarball is built (release.yml).
 name: Release-plz
 
+# A push of only docs or trail files proposes no release; the next code push picks its commits up anyway.
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md', '.trail/**', '.claude/**']
 
 permissions:
   contents: write
