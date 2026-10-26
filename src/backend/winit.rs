@@ -452,6 +452,23 @@ impl State {
         (bar, dock_frame.animating)
     }
 
+    /// The hot-corner ripple (E5.4) on `output`, if its corner is there: a faint glass disc with a light rim, growing
+    /// out of the corner and fading.
+    fn ripple_elements(&mut self, output: &Output) -> Vec<SceneElement> {
+        let Some((rect, alpha)) = self.ripple_frame(output) else { return Vec::new() };
+        let (dark, glass, scale) = (render::is_dark(&self.config.appearance), self.config.appearance.glass_opacity, output.current_scale().fractional_scale());
+        let Some(views) = self.backend.as_ref() else { return Vec::new() };
+        let spec = render::Material::Hud.spec(dark);
+        let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
+        let radius = f64::from(rect.size.w) / 2.0;
+        let rim = if dark { [1.0, 1.0, 1.0, 0.5 * alpha] } else { [0.0, 0.0, 0.0, 0.22 * alpha] };
+        let fill = [r, g, b, spec.opacity * glass * alpha * 0.8];
+        vec![
+            SceneElement::Shader(views.shaders.ring(rect, radius, 1, rim, scale)),
+            SceneElement::Shader(views.shaders.glass_shape(rect, fill, radius, false, dark, scale)),
+        ]
+    }
+
     // ponytail: most of the shell (alerts, banners, Launchpad) is on the first output only, since its caches and hit
     // tests are for one output; the other displays get a menu bar and a dock of their own and the popups opened from
     // the bar (`bar_elements`).
@@ -469,6 +486,8 @@ impl State {
             let animating = animating || overview.as_ref().is_some_and(|o| o.animating) || slide.is_some();
             // Its own menu bar and the popups opened from it.
             let (strip, popups) = self.bar_elements(renderer, output, locked);
+            let ripple = self.ripple_elements(output);
+            let animating = animating || !ripple.is_empty();
             // Its own dock, in front of the windows.
             let (dock, dock_animating) = if locked { Default::default() } else { self.dock_elements(renderer, output) };
             let animating = animating || dock_animating;
@@ -480,7 +499,8 @@ impl State {
                 // Its popups and menu bar, and ghosts of closing and minimising windows, in front of the windows.
                 let now = self.frame_time;
                 views.ghosts.retain(|g| !g.anim.done(now));
-                let mut front = popups;
+                let mut front = ripple;
+                front.extend(popups);
                 front.extend(strip);
                 front.extend(dock);
                 front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
@@ -542,9 +562,8 @@ impl State {
         let overview = self.mission_frame(output);
         let slide = if overview.is_none() { self.slide_frame(output) } else { None };
         let indicator = self.space_indicator(output);
-        let output_size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.size);
-        let ripple = output_size.and_then(|size| self.ripple_frame(size));
-        let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some() || ripple.is_some();
+        let ripple = self.ripple_elements(output);
+        let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some() || !ripple.is_empty();
         let idle_shade = self.idle_shade();
         let banner = cards.iter().map(|c| c.id).max();
         if let Some(views) = self.backend.as_mut() {
@@ -663,16 +682,7 @@ impl State {
         if let Some((count, current)) = indicator {
             bar.extend(mission.indicator(shaders, count, current, width, dark, appearance.glass_opacity, scale));
         }
-        // The hot-corner ripple (E5.4): a faint glass disc with a light rim, growing out of the corner and fading.
-        if let Some((rect, alpha)) = ripple {
-            let spec = render::Material::Hud.spec(dark);
-            let [r, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
-            let radius = f64::from(rect.size.w) / 2.0;
-            let rim = if dark { [1.0, 1.0, 1.0, 0.5 * alpha] } else { [0.0, 0.0, 0.0, 0.22 * alpha] };
-            bar.push(render::SceneElement::Shader(shaders.ring(rect, radius, 1, rim, scale)));
-            let fill = [r, g, b, spec.opacity * appearance.glass_opacity * alpha * 0.8];
-            bar.push(render::SceneElement::Shader(shaders.glass_shape(rect, fill, radius, false, dark, scale)));
-        }
+        bar.extend(ripple);
         let mark = bar.len();
         if let Some(shown) = &self.osd {
             bar.extend(osd.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, width, dark, accent, appearance.glass_opacity, scale));
