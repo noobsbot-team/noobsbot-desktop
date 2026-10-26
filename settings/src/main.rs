@@ -9,6 +9,7 @@ mod gallery;
 mod pages;
 mod style;
 mod system;
+mod xkb;
 
 use std::{collections::HashMap, sync::OnceLock, time::Instant};
 
@@ -94,6 +95,8 @@ pub struct App {
     keep: Option<arrange::Keep>,
     /// Appearance's wallpaper gallery, loaded on start.
     thumbs: Vec<(std::path::PathBuf, iced::widget::image::Handle)>,
+    /// Keyboard ▸ Input Sources' picker, open, with what is typed in its search field.
+    picker: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +134,10 @@ pub enum Message {
     Thumbs(Vec<(std::path::PathBuf, iced::widget::image::Handle)>),
     /// A gallery picture (empty: the built-in opal), for light and dark mode alike.
     Wallpaper(String),
+    /// The chosen input sources, as (layout, variant), in order.
+    Sources(Vec<(String, String)>),
+    /// Open (or filter) the input source picker; `None` closes it.
+    Picker(Option<String>),
 }
 
 impl App {
@@ -151,6 +158,7 @@ impl App {
             selected: None,
             keep: None,
             thumbs: Vec::new(),
+            picker: None,
         };
         app.retheme();
         // Typing searches at once, as in macOS (see `type_ahead`).
@@ -221,6 +229,13 @@ impl App {
                 self.save("appearance.wallpaper", path.as_str());
                 self.save("appearance.wallpaper_dark", path);
             }
+            Message::Sources(sources) => {
+                let (layouts, variants) = xkb::lists(&sources);
+                self.picker = None;
+                self.save("keyboard.variant", variants);
+                self.save("keyboard.layout", layouts);
+            }
+            Message::Picker(query) => self.picker = query,
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
