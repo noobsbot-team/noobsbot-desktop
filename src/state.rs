@@ -704,6 +704,19 @@ impl State {
         self.window_output(window).map_or_else(|| self.work_area(), |o| self.output_area(&o))
     }
 
+    /// The work area a window opens in, until it is placed (`displays::opens_on`): its remembered frame's display,
+    /// else its parent's, else the pointer's; `window_area` once placed.
+    pub fn opening_area(&self, window: &Window) -> Option<Rect> {
+        if window.user_data().get::<Placed>().is_some() {
+            return self.window_area(window);
+        }
+        let remembered = window.user_data().get::<crate::sheets::Recalled>().map(|r| r.0);
+        let parent = window.toplevel().and_then(|t| t.parent()).and_then(|p| self.window_for(&p).cloned()).and_then(|p| self.frame(&p));
+        let pointer = self.seat.get_pointer().map(|p| p.current_location().to_i32_round()).unwrap_or_default();
+        let screens = self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.clone())));
+        crate::displays::opens_on(remembered, parent, pointer, screens).map_or_else(|| self.window_area(window), |o| self.output_area(&o))
+    }
+
     /// The work area of `output`: below its menu bar and its layer surfaces, above its dock.
     pub fn output_area(&self, output: &smithay::output::Output) -> Option<Rect> {
         let mut zone = layer_map_for_output(output).non_exclusive_zone();
@@ -976,7 +989,7 @@ impl State {
     fn apply_rules(&mut self, surface: &ToplevelSurface) {
         let actions = self.resolve_rules(surface);
         let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
-        let Some(area) = self.window_area(&window) else { return };
+        let Some(area) = self.opening_area(&window) else { return };
         if let Some([w, h]) = actions.size {
             // A ruled size is the frame's, title bar included.
             let size = self.content_size(&window, (w.to_px(area.size.w), h.to_px(area.size.h)).into());
@@ -1083,7 +1096,7 @@ impl CompositorHandler for State {
             if !sent {
                 // Apps that size themselves should fit the work area (xdg_toplevel bounds).
                 if let Some(window) = self.window_for(surface).cloned()
-                    && let Some(area) = self.window_area(&window)
+                    && let Some(area) = self.opening_area(&window)
                 {
                     let bounds = self.content_size(&window, area.size);
                     toplevel.with_pending_state(|s| s.bounds = Some(bounds));
@@ -1107,13 +1120,9 @@ impl CompositorHandler for State {
                 window.on_commit();
                 let size = window.geometry().size + Size::from((0, crate::decorations::bar_height(&window)));
                 if size.w > 0 && window.user_data().get::<Placed>().is_none() {
+                    let area = self.opening_area(&window);
                     window.user_data().insert_if_missing(|| Placed);
-                    // Where it lands: its remembered frame's display or its parent's, else where it is.
-                    let goes =
-                        window.user_data().get::<crate::sheets::Recalled>().map(|r| r.0).or_else(|| self.sheet_parent(&window).and_then(|p| self.frame(&p)));
-                    let screens = self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.clone())));
-                    let output = goes.and_then(|frame| crate::displays::mostly_on(frame, screens));
-                    if let Some(area) = output.map_or_else(|| self.window_area(&window), |o| self.output_area(&o)) {
+                    if let Some(area) = area {
                         // A window bigger than the work area (the app ignored the bounds) is shrunk to fit.
                         let fitted = Size::from((size.w.min(area.size.w), size.h.min(area.size.h)));
                         if fitted != size
