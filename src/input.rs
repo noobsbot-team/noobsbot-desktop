@@ -650,51 +650,8 @@ impl State {
             }
             InputEvent::PointerButton { event } => self.assisted_button(event.button_code(), event.state(), event.time_msec()),
             InputEvent::PointerAxis { event } => {
-                let Some(pointer) = self.seat.get_pointer() else { return };
-                let source = event.source();
-                if self.lock.as_ref().is_some_and(|l| l.client_surface().is_none()) {
-                    return;
-                }
-                // A client's lock surface (E6.4) gets the scroll as it is: none of the shell's handlers below.
-                let shell = !self.locked();
-                // Notification Center scrolls; a banner swipes away.
-                let amount = |axis| event.amount(axis).unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0);
-                let pos = self.to_output(pointer.current_location());
-                // Over the dock, a wheel step cycles the app's windows; touchpad scrolling there is just swallowed.
-                let wheel = event.amount_v120(Axis::Vertical).unwrap_or(0.0);
-                // Launchpad pages: a wheel step either way, or a finger swipe sideways.
-                let page_wheel = if wheel != 0.0 { wheel } else { event.amount_v120(Axis::Horizontal).unwrap_or(0.0) };
-                let lifted = source == AxisSource::Finger && event.amount(Axis::Horizontal) == Some(0.0);
-                let swipe = if page_wheel == 0.0 { amount(Axis::Horizontal) } else { 0.0 };
-                if shell && self.launchpad_scroll(swipe, amount(Axis::Vertical), page_wheel, lifted) {
-                    return;
-                }
-                if shell
-                    && (self.emoji_scroll(pos, amount(Axis::Vertical))
-                        || self.drawer_scroll(pos, amount(Axis::Vertical), wheel)
-                        || self.control_scroll(pos, amount(Axis::Vertical))
-                        || self.menu_scroll(pos, amount(Axis::Vertical)))
-                {
-                    return;
-                }
-                if shell && (self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(self.to_dock(pos), page_wheel)) {
-                    return;
-                }
-                let mut frame = AxisFrame::new(event.time_msec()).source(source);
-                for axis in [Axis::Horizontal, Axis::Vertical] {
-                    let v120 = event.amount_v120(axis);
-                    let amount = event.amount(axis).unwrap_or_else(|| v120.unwrap_or(0.0) * 15.0 / 120.0);
-                    if amount != 0.0 {
-                        frame = frame.value(axis, amount);
-                        if let Some(v120) = v120 {
-                            frame = frame.v120(axis, v120 as i32);
-                        }
-                    } else if source == AxisSource::Finger && event.amount(axis) == Some(0.0) {
-                        frame = frame.stop(axis);
-                    }
-                }
-                pointer.axis(self, frame);
-                pointer.frame(self);
+                let axes = [Axis::Horizontal, Axis::Vertical];
+                self.pointer_axis(event.source(), event.time_msec(), axes.map(|a| event.amount(a)), axes.map(|a| event.amount_v120(a)));
             }
             // System gestures (E5.3) are ours; the rest (2-finger pinch, holds) go to the app (pointer-gestures).
             InputEvent::GestureSwipeBegin { event } => {
@@ -759,6 +716,53 @@ impl State {
             }
             _ => {}
         }
+    }
+
+    /// A scroll from a device or a virtual pointer: `amount` and `v120` per axis (horizontal, vertical); a finger's
+    /// `Some(0.0)` is a stop. The shell's scrollers first, then the app under the pointer.
+    pub fn pointer_axis(&mut self, source: AxisSource, time: u32, amount: [Option<f64>; 2], v120: [Option<f64>; 2]) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        if self.lock.as_ref().is_some_and(|l| l.client_surface().is_none()) {
+            return;
+        }
+        // A client's lock surface (E6.4) gets the scroll as it is: none of the shell's handlers below.
+        let shell = !self.locked();
+        // Notification Center scrolls; a banner swipes away.
+        let step: [f64; 2] = std::array::from_fn(|i| amount[i].unwrap_or_else(|| v120[i].unwrap_or(0.0) * 15.0 / 120.0));
+        let pos = self.to_output(pointer.current_location());
+        // Over the dock, a wheel step cycles the app's windows; touchpad scrolling there is just swallowed.
+        let wheel = v120[1].unwrap_or(0.0);
+        // Launchpad pages: a wheel step either way, or a finger swipe sideways.
+        let page_wheel = if wheel != 0.0 { wheel } else { v120[0].unwrap_or(0.0) };
+        let lifted = source == AxisSource::Finger && amount[0] == Some(0.0);
+        let swipe = if page_wheel == 0.0 { step[0] } else { 0.0 };
+        if shell && self.launchpad_scroll(swipe, step[1], page_wheel, lifted) {
+            return;
+        }
+        if shell
+            && (self.emoji_scroll(pos, step[1])
+                || self.drawer_scroll(pos, step[1], wheel)
+                || self.control_scroll(pos, step[1])
+                || self.menu_scroll(pos, step[1]))
+        {
+            return;
+        }
+        if shell && (self.notify_scroll(pos, step[0], step[1]) || self.dock_scroll(self.to_dock(pos), page_wheel)) {
+            return;
+        }
+        let mut frame = AxisFrame::new(time).source(source);
+        for (i, axis) in [Axis::Horizontal, Axis::Vertical].into_iter().enumerate() {
+            if step[i] != 0.0 {
+                frame = frame.value(axis, step[i]);
+                if let Some(v120) = v120[i] {
+                    frame = frame.v120(axis, v120 as i32);
+                }
+            } else if source == AxisSource::Finger && amount[i] == Some(0.0) {
+                frame = frame.stop(axis);
+            }
+        }
+        pointer.axis(self, frame);
+        pointer.frame(self);
     }
 
     /// `focus = "hover"`: the window under `location` gets the keyboard once the pointer rests there, unraised.
