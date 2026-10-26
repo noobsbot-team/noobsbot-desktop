@@ -1,6 +1,9 @@
-# Builds, signs and attaches the release tarball (E6.13). Called by release-plz.yml right after release-plz tags a
-# version (tags pushed with the default GITHUB_TOKEN start no workflows, so the call is how it runs), or on a `v*` tag
-# pushed with any other token.
+# Builds, checks, signs and attaches the release tarball (E6.13). Called by release-plz.yml right after release-plz
+# tags a version (tags pushed with the default GITHUB_TOKEN start no workflows, so the call is how it runs), or on a
+# `v*` tag pushed with any other token.
+#
+# One tarball for Arch and Debian: it is built on Debian 13, the oldest system supported (glibc 2.41; Arch's is
+# newer, and a program built against an older glibc runs on a newer one). Before it is signed, it must start on both.
 #
 # Secrets (repository settings): MINISIGN_SECRET_KEY = the whole minisign secret key file; MINISIGN_PASSWORD = its
 # password (leave unset for a key made with `minisign -G -W`). The matching public key is compiled into the updater.
@@ -23,15 +26,23 @@ on:
 permissions:
   contents: write
 
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    container: archlinux:latest
-    env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+    container: debian:13
     steps:
       - name: System packages
-        run: pacman -Syu --noconfirm --needed rust gcc pkgconf libxkbcommon seatd libinput systemd-libs libdrm mesa libdisplay-info git zstd minisign github-cli
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git zstd build-essential pkgconf clang rustup \
+            libxkbcommon-dev libseat-dev libinput-dev libudev-dev libsystemd-dev libdrm-dev libgbm-dev libegl-dev \
+            libgles-dev libdisplay-info-dev libpam0g-dev libwayland-dev libxcb1-dev libxcb-cursor-dev
+          # Debian's own Rust is too old for the dependencies.
+          rustup toolchain install stable --profile minimal
+          rustup default stable
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
@@ -40,17 +51,68 @@ jobs:
           export NOOBSBOT_COMMIT="$(git -c safe.directory='*' rev-parse --short HEAD)"
           export NOOBSBOT_DATE="$(git -c safe.directory='*' log -1 --format=%cs)"
           cargo build --workspace --release --locked
+      - name: Build xwayland-satellite
+        run: |
+          # Debian has no package for it (X11 apps, E6.9); install.sh puts this one in /usr/local/bin. Arch uses its own.
+          rev="$(sed -n 's/^XWS_REV=//p' install.sh)"
+          cargo install --locked --git https://github.com/Supreeeme/xwayland-satellite --rev "$rev" --root "$RUNNER_TEMP/xws"
       - name: Package
         run: |
           version="${TAG#v}"
           name="noobsbot-desktop-$version-x86_64"
           mkdir -p "dist/$name"
-          cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings target/release/noobsbot-desktop-update LICENSE README.md "dist/$name/"
+          cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings target/release/noobsbot-desktop-update \
+            "$RUNNER_TEMP/xws/bin/xwayland-satellite" LICENSE README.md "dist/$name/"
           cp -r data "dist/$name/"
           cd dist
           tar --zstd -cf "$name.tar.zst" "$name"
           sha256sum "$name.tar.zst" > SHA256SUMS
-          echo "ASSETS=$name.tar.zst SHA256SUMS" >> "$GITHUB_ENV"
+          rm -r "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  # The tarball must load on both systems: every library found, none too old (`--version` only runs once they load).
+  smoke:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        system: ["archlinux:latest", "debian:13"]
+    container: ${{ matrix.system }}
+    steps:
+      - name: Runtime libraries
+        run: |
+          if command -v pacman > /dev/null; then
+            pacman -Syu --noconfirm --needed zstd libxkbcommon seatd libinput systemd-libs pam mesa libxcb xcb-util-cursor
+          else
+            apt-get update
+            apt-get install -y --no-install-recommends zstd libinput10 libxkbcommon0 libseat1 libpam0g libgbm1 libudev1 \
+              libegl1 libgles2 libxcb1 libxcb-cursor0
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Load test
+        run: |
+          mkdir x
+          tar --zstd -xf dist/*.tar.zst -C x --strip-components=1
+          for bin in noobsbot-desktop noobsbot-desktop-settings noobsbot-desktop-update xwayland-satellite; do
+            if ldd "x/$bin" | grep 'not found'; then echo "$bin: missing libraries on ${{ matrix.system }}"; exit 1; fi
+          done
+          x/noobsbot-desktop --version
+
+  publish:
+    needs: smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
       - name: Sign
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
@@ -58,20 +120,22 @@ jobs:
         run: |
           # Never publish unsigned: the updater refuses anything without a valid signature.
           test -n "$MINISIGN_SECRET_KEY" || { echo "MINISIGN_SECRET_KEY is not set"; exit 1; }
+          sudo apt-get update
+          sudo apt-get install -y minisign
           key="$RUNNER_TEMP/minisign.key"
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
           cd dist
-          for file in $ASSETS; do
+          for file in *.tar.zst SHA256SUMS; do
             printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m "$file" -t "noobsbot-desktop $TAG"
           done
           rm -f "$key"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          git config --global --add safe.directory '*'
           cd dist
           # release-plz has already made the release with the changelog as notes; a hand-pushed tag has none yet.
           case "$TAG" in *-*) pre=--prerelease ;; *) pre= ;; esac
           gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes $pre
-          gh release upload "$TAG" --clobber $ASSETS *.minisig
+          gh release upload "$TAG" --clobber *.tar.zst SHA256SUMS *.minisig

@@ -1,0 +1,4 @@
+#%PAM-1.0
+# Lock screen password check (plan.md E6.4), Debian version: Debian has no system-auth, its login stack is common-*.
+@include common-auth
+@include common-account

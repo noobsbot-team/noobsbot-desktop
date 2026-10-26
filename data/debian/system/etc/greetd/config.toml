@@ -1,0 +1,13 @@
+# Login screen (plan.md E6.6), written by install.sh. Debian version: greetd runs as `_greetd`, and on VT 7, because
+# Debian's greetd.service replaces getty@tty7 (tty1 keeps its text login).
+[terminal]
+vt = 7
+
+[default_session]
+command = "tuigreet --time --remember --cmd noobsbot-desktop-session"
+user = "_greetd"
+
+# Auto-login skips the password: only for a computer nobody else touches.
+# [initial_session]
+# user = "<you>"
+# command = "noobsbot-desktop-session"

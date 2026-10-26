@@ -4,8 +4,11 @@
 # ponytail: plain shell; the Rust wrapper (src/bin/session.rs, E6.13) replaces it to add the heartbeat watchdog
 # (E6.4), keeping this environment, the rollback rule and the session target.
 
+# KDE apps read the app menu named by XDG_MENU_PREFIX: Arch's archlinux-xdg-menu, or on Debian the one install.sh writes.
+menu=noobsbot-
+[ -f /etc/xdg/menus/arch-applications.menu ] && menu=arch-
 export XDG_CURRENT_DESKTOP=noobsbot-desktop XDG_SESSION_DESKTOP=noobsbot-desktop XDG_SESSION_TYPE=wayland \
-    XDG_MENU_PREFIX=arch- QT_QPA_PLATFORMTHEME=qt6ct QT_STYLE_OVERRIDE=kvantum TERMINAL=noobsbot \
+    XDG_MENU_PREFIX=$menu QT_QPA_PLATFORMTHEME=qt6ct QT_STYLE_OVERRIDE=kvantum TERMINAL=noobsbot \
     XCURSOR_THEME=WhiteSur-cursors XCURSOR_SIZE=24 MOZ_ENABLE_WAYLAND=1 _JAVA_AWT_WM_NONREPARENTING=1
 vars="XDG_CURRENT_DESKTOP XDG_SESSION_DESKTOP XDG_SESSION_TYPE XDG_MENU_PREFIX QT_QPA_PLATFORMTHEME QT_STYLE_OVERRIDE
     TERMINAL XCURSOR_THEME XCURSOR_SIZE MOZ_ENABLE_WAYLAND _JAVA_AWT_WM_NONREPARENTING"

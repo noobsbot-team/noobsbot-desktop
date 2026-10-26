@@ -1,7 +1,7 @@
 # Noobsbot Desktop
 
 A complete macOS-style desktop for Linux, with a glassy theme, written in Rust on Wayland.
-It turns a fresh Arch Linux install into a full desktop: windows with traffic lights, a menu bar, a dock, Spotlight,
+It turns a fresh Arch Linux or Debian 13 install into a full desktop: windows with traffic lights, a menu bar, a dock, Spotlight,
 Launchpad, Notification Center, Control Center, Spaces, Mission Control, touchpad gestures, a lock screen, a login
 screen and System Settings.
 
@@ -49,7 +49,7 @@ itself. Apps (the terminal, browser, file manager, editor) are ordinary separate
   the eight macOS accent colours. No blur keeps it sharp and fast.
 - **Fast and light:** it aims for 0% CPU when nothing changes, under 100 MB of memory for the whole desktop and
   under half a second to start. Measurements are in [`PERF.md`](PERF.md).
-- **Self-contained:** it installs on a fresh Arch system and needs no other desktop. Nothing from GNOME, KDE
+- **Self-contained:** it installs on a fresh Arch or Debian 13 system and needs no other desktop. Nothing from GNOME, KDE
   Plasma or Cinnamon is installed (Dolphin and Kate bring some KDE libraries, which load only when they're open).
 
 ## How it is different
@@ -58,7 +58,7 @@ itself. Apps (the terminal, browser, file manager, editor) are ordinary separate
 | Look | macOS, designed as one system (Part D of `plan.md`) | their own | minimal, you build the bar and launcher yourself | a skin over a different layout and behaviour |
 | Shell | built into the compositor: one process | many processes (shell, panels, daemons) | compositor plus separate bars and launchers | the host desktop's |
 | Behaviour | macOS: menu bar, dock, Spotlight, Spaces, Mission Control, gestures, hot corners | their own | tiling, keyboard first | the host desktop's |
-| Setup | one script on a fresh Arch install | distro packages | hand-written configs | theme packs and extensions |
+| Setup | one script on a fresh Arch or Debian install | distro packages | hand-written configs | theme packs and extensions |
 | Config | one commented TOML file, applied as you save, plus a Settings app | GUI settings and dconf/KConfig | text files | several places |
 | Updates | signed releases, installed with "Restart to Update", automatic rollback | distro packages | distro packages | — |
 
@@ -86,7 +86,7 @@ Things it does on purpose:
  │  SERVICES: PipeWire · NetworkManager · BlueZ · UPower · udisks2 ·     │  standard Linux
  │            logind · polkit · portals                                  │  background services
  ├──────────────────────────────────────────────────────────────────────┤
- │  KERNEL + DRIVERS + FIRMWARE (linux, linux-firmware, mesa)            │  from Arch
+ │  KERNEL + DRIVERS + FIRMWARE (linux, linux-firmware, mesa)            │  from Arch or Debian
  └──────────────────────────────────────────────────────────────────────┘
 ```
 - **Compositor:** built on [Smithay](https://github.com/Smithay/smithay). On a real screen it drives the GPU directly
@@ -107,11 +107,14 @@ Things it does on purpose:
 The full design, with the reasoning behind every choice, is in [`plan.md`](plan.md).
 
 ## Requirements
-- **Arch Linux**, x86_64, freshly installed or existing. Other distributions aren't supported by the installer.
-- A normal user account in the `wheel` group with `sudo`. Don't run the installer as root.
+- **Arch Linux** or **Debian 13 (trixie)**, freshly installed or existing. Other distributions (and other Debian
+  versions) aren't supported by the installer. The prebuilt release is for x86_64; on other CPUs (arm64) the
+  installer builds it from source.
+- A normal user account with `sudo` (in the `wheel` group on Arch, `sudo` on Debian). Don't run the installer as root.
 - An internet connection during install.
 - A GPU with OpenGL ES 3: Intel, AMD, or NVIDIA with `nvidia-open` (driver 555 or newer). Virtual machines with
-  virtio-gpu work too, with or without 3D.
+  virtio-gpu work too, with or without 3D. On Debian, NVIDIA cards use the open nouveau driver unless you choose
+  NVIDIA's driver (550, older than the 555 the desktop is tested with) in an Advanced install.
 - About 2–3 GB of disk for the desktop, apps, fonts and themes.
 
 ## Install
@@ -122,26 +125,55 @@ git clone https://github.com/anil0403/noobsbot-desktop.git
 cd noobsbot-desktop
 ./install.sh
 ```
+On a fresh Debian 13 install, logged in as your user, it is the same with `sudo apt install git` first. Tip: in the
+Debian installer's "Software selection" step, choose only **standard system utilities** (no desktop); the script
+installs everything else. If you set a root password there, your user has no `sudo` yet: run
+`su -c "apt install sudo && usermod -aG sudo $USER"`, then log out and in again.
+
 Then reboot.
 
+At the start, the script asks how to install:
+- **Auto** (recommended): the recommended choices below, no more questions. This is also what runs without a
+  terminal, with `--update`, and with `--auto`.
+- **Advanced**: asks each question first, shows a summary to confirm, then runs by itself. Your answers are kept in
+  `~/.config/noobsbot-desktop/installer.conf`, so later repairs and updates keep them.
+
+| Question | Auto's answer | Other answers |
+|---|---|---|
+| Debian's non-free firmware sources (Debian, only if missing) | add them | free software only |
+| Another login manager is enabled (GDM, SDDM, …) | keep it (pick Noobsbot Desktop in its session menu) | switch to greetd |
+| Login screen | text (tuigreet) | graphical (`--greeter`) |
+| Browser | Helium | Firefox (ESR on Debian), Chromium, none |
+| NVIDIA driver | Arch: `nvidia-open`; Debian: nouveau | Arch: nouveau; Debian: NVIDIA 550 |
+| Prebuilt or source | signed prebuilt | build from source (`--from-source`) |
+| Network set up by the Debian installer (DHCP) | move it to NetworkManager at the next boot, so the menu bar can manage it; Wi-Fi is kept | leave `/etc/network/interfaces` |
+
+Sound is always PipeWire: the volume and sound menus talk to it. On Debian, PulseAudio (if an earlier desktop
+installed it) is masked, not removed.
+
 What `install.sh` does:
-1. Checks this is Arch, you're not root, and `sudo` works.
+1. Checks this is Arch or Debian 13, you're not root, and `sudo` works.
 2. Installs the packages the desktop needs (the list is in `plan.md` G4), with only the GPU, CPU-microcode and
    video drivers your machine needs.
-3. Installs `paru` and a few AUR packages: the Helium browser and the WhiteSur icons, cursors and themes. If one of
-   them fails to build upstream, it warns and carries on; the desktop works without it.
+3. Arch: installs `paru` and a few AUR packages: the Helium browser and the WhiteSur icons, cursors and themes.
+   Debian: adds Helium's own signed apt repository, and installs the WhiteSur themes from their git repositories
+   (pinned versions). If a theme fails to build upstream, it warns and carries on; the desktop works without it.
 4. Downloads the latest **signed prebuilt release** from GitHub, checks its signature and checksum against the key
    built into the script, and installs it into `/usr/lib/noobsbot-desktop/versions/<version>/`. Nothing is compiled
-   on your machine.
+   on your machine. If there is no prebuilt for your CPU, or it doesn't fit your system's libraries, it builds that
+   release from source instead (and installs Rust for it).
 5. Installs noobsbot-terminal, the system files (session, greetd, PAM, polkit, portals), enables the services and
-   writes your default settings, keeping any settings you already have.
+   writes your default settings, keeping any settings you already have. On Debian it also installs
+   `xwayland-satellite` (for X11 apps; Debian has no package) to `/usr/local/bin`.
 
 Running it again is safe: it only redoes what is missing or changed, so it also repairs an install.
 
 Options:
 | Command | What it does |
 |---|---|
-| `./install.sh` | install or repair, using the signed prebuilt release |
+| `./install.sh` | install or repair, using the signed prebuilt release; asks Auto or Advanced |
+| `./install.sh --auto` | install or repair with the recommended choices, no questions |
+| `./install.sh --advanced` | answer the questions above first |
 | `./install.sh --greeter` | also use Noobsbot Desktop's graphical login screen instead of the text one (tuigreet) |
 | `./install.sh --from-source` | build Noobsbot Desktop and noobsbot-terminal from pinned git tags instead (needs Rust; slower) |
 | `./install.sh --update` | only update Noobsbot Desktop, noobsbot-terminal and the system files |
@@ -345,7 +377,9 @@ There is no uninstaller yet. To remove it by hand:
    `/usr/share/wayland-sessions/noobsbot-desktop.desktop`.
 3. Optionally remove your settings in `~/.config/noobsbot-desktop` and state in `~/.local/state/noobsbot-desktop`.
 
-The packages it installed are ordinary Arch packages; remove the ones you don't want with pacman.
+The packages it installed are ordinary Arch or Debian packages; remove the ones you don't want with pacman or apt.
+On Debian, also remove `/usr/local/bin/xwayland-satellite`, `/usr/local/bin/helium-browser` and
+`/usr/local/share/applications/helium.desktop`.
 
 ## Building and developing
 You need Rust (edition 2024) and the system libraries listed in `.github/workflows/ci.yml`.

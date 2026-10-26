@@ -26,8 +26,15 @@ use crate::{
     state::{ClientState, State},
 };
 
-/// The screen-sharing portal, the X11 bridge and the Settings app (M7) never ask.
-const TRUSTED: &[&str] = &["/usr/lib/xdg-desktop-portal-wlr", "/usr/bin/xwayland-satellite", "/usr/bin/noobsbot-settings"];
+/// The screen-sharing portal, the X11 bridge and the Settings app (M7) never ask. Arch paths first, then Debian's
+/// (its portal lives in `/usr/libexec`, and install.sh puts xwayland-satellite in `/usr/local/bin`).
+const TRUSTED: &[&str] = &[
+    "/usr/lib/xdg-desktop-portal-wlr",
+    "/usr/bin/xwayland-satellite",
+    "/usr/bin/noobsbot-settings",
+    "/usr/libexec/xdg-desktop-portal-wlr",
+    "/usr/local/bin/xwayland-satellite",
+];
 
 /// The trusted socket next to `socket` (`wayland-1` → `wayland-1-trusted`).
 pub fn trusted_socket(socket: &OsStr) -> OsString {
@@ -137,6 +144,7 @@ mod tests {
         let privacy = config::Privacy { screen_recording: vec!["/usr/bin/grim".into()], screen_recording_denied: vec!["/usr/bin/evil".into()] };
         assert_eq!(verdict(true, Some("/usr/bin/evil"), &privacy), Some(true), "the trusted socket wins");
         assert_eq!(verdict(false, Some("/usr/lib/xdg-desktop-portal-wlr"), &privacy), Some(true));
+        assert_eq!(verdict(false, Some("/usr/libexec/xdg-desktop-portal-wlr"), &privacy), Some(true), "Debian's path");
         assert_eq!(verdict(false, Some("/usr/bin/grim"), &privacy), Some(true));
         assert_eq!(verdict(false, Some("/usr/bin/evil"), &privacy), Some(false));
         assert_eq!(verdict(false, Some("/usr/bin/wf-recorder"), &privacy), None);
