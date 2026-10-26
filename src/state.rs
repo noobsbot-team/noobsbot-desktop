@@ -634,7 +634,10 @@ impl State {
 
     /// The work area of `output`: below its menu bar and its layer surfaces, above the dock on the first output.
     pub fn output_area(&self, output: &smithay::output::Output) -> Option<Rect> {
-        let mut zone = crate::render::menubar::below(layer_map_for_output(output).non_exclusive_zone());
+        let mut zone = layer_map_for_output(output).non_exclusive_zone();
+        if !self.config.menu_bar.auto_hide {
+            zone = crate::render::menubar::below(zone);
+        }
         // Above the dock (E1.2: zoom fills the screen between the menu bar and the dock), when it never hides: Plank
         // sets struts in that mode alone, and a hiding dock gets overlapped. The dock is on the first output only.
         let first = self.space.outputs().next() == Some(output);

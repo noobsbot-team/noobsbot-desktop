@@ -375,6 +375,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Dock, "Dock", "dock.middle", "Middle-click an app to", "", Kind::Choice(&[("new", "Open a new window"), ("close", "Close its windows")])),
     s(Page::Dock, "Dock", "dock.scroll", "Scroll on an app to cycle its windows", "", Kind::Choice(&[("on", "On"), ("reverse", "Reversed"), ("off", "Off")])),
+    s(Page::Dock, "Menu Bar", "menu_bar.auto_hide", "Automatically hide and show the menu bar", "Shows when the pointer touches the top edge", Kind::Toggle),
     s(
         Page::Dock,
         "Windows",

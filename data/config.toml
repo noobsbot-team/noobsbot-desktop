@@ -186,6 +186,11 @@ seconds = false
 # The calendar's first day: "sunday", "monday" or "saturday".
 week_start = "sunday"
 
+[menu_bar]
+# Hide the menu bar until the pointer touches the top of the screen (or a menu is open); zoomed windows then use the
+# full height.
+auto_hide = false
+
 [dock]
 # Pinned apps, left to right: desktop-file names (kate), app ids or commands. Apps that aren't installed are
 # skipped, so they appear in their place once installed. "launchpad" is the Launchpad icon, "app-drawer" the app

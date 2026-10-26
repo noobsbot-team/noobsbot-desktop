@@ -44,6 +44,7 @@ pub struct Config {
     pub display: Displays,
     pub windows: Windows,
     pub clock: Clock,
+    pub menu_bar: MenuBar,
     pub dock: Dock,
     pub idle: Idle,
     pub privacy: Privacy,
@@ -196,6 +197,14 @@ pub enum ColourFilter {
     /// Light and dark swap, colours keep their hue.
     InvertHue,
     Greyscale,
+}
+
+/// The menu bar (E8.8).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct MenuBar {
+    /// Slides away until the pointer touches the top edge or a menu opens; zoomed windows get the full height.
+    pub auto_hide: bool,
 }
 
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
@@ -497,6 +506,7 @@ impl Default for Config {
             display: Displays::default(),
             windows: Windows::default(),
             clock: Clock::default(),
+            menu_bar: MenuBar::default(),
             dock: Dock::default(),
             idle: Idle::default(),
             privacy: Privacy::default(),
