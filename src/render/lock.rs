@@ -30,6 +30,8 @@ pub struct Content<'a> {
     pub battery: Option<Battery>,
     /// The keyboard layout's short name ("EN").
     pub keyboard: &'a str,
+    /// The layout pill's label, with more than one layout (`lock::layout_pill`).
+    pub layout: Option<String>,
     /// `[idle] lock_message`; empty: none.
     pub message: &'a str,
     pub hour24: bool,
@@ -37,7 +39,7 @@ pub struct Content<'a> {
     pub caps_lock: bool,
 }
 
-/// Date, time, missed count, hover, wrong, battery, (keyboard, message), size, dark, opacity, scale, greeter (user, session,
+/// Date, time, missed count, hover, wrong, battery, (keyboard, message, layout pill), size, dark, opacity, scale, greeter (user, session,
 /// error).
 type PageKey = (
     String,
@@ -46,7 +48,7 @@ type PageKey = (
     Option<Button>,
     bool,
     Option<(u8, bool)>,
-    (String, String),
+    (String, String, Option<String>),
     Size<i32, Logical>,
     bool,
     u32,
@@ -127,7 +129,7 @@ impl LockView {
             lock.hover,
             lock.wrong.is_some(),
             battery,
-            (content.keyboard.to_owned(), content.message.to_owned()),
+            (content.keyboard.to_owned(), content.message.to_owned(), content.layout.clone()),
             size,
             dark,
             glass_opacity.to_bits(),
@@ -187,7 +189,19 @@ impl LockView {
                 }
                 ui.text(button.label(), Style { color: WHITE85, ..CALLOUT }, rect, Align::Centre);
             }
-            status(&mut ui, layout.status, content.keyboard, content.battery);
+            // More than one layout: the pill beside the field says which, so the corner doesn't.
+            match &content.layout {
+                Some(code) => {
+                    let r = layout.layouts;
+                    let spec = super::Material::Sheet.spec(dark);
+                    let [red, g, b] = spec.tint.map(|c| f32::from(c) / 255.0);
+                    ui.glass.push(shaders.glass_shape(r, [red, g, b, spec.opacity * glass_opacity], f64::from(r.size.h) / 2.0, true, dark, scale));
+                    let color = ui.ink(0.85);
+                    ui.text(code, Style { color, ..CALLOUT }, r, Align::Centre);
+                    status(&mut ui, layout.status, "", content.battery);
+                }
+                None => status(&mut ui, layout.status, content.keyboard, content.battery),
+            }
             self.page = Some((key, std::mem::take(&mut ui.glass), std::mem::take(&mut ui.pieces)));
         }
 
