@@ -15,6 +15,7 @@ mod network;
 #[path = "../../src/pactl.rs"]
 mod pactl;
 mod pages;
+mod printers;
 mod shortcuts;
 mod style;
 mod system;
@@ -59,6 +60,10 @@ fn main() -> iced::Result {
             // The microphone's live level, only while Sound shows it.
             if app.page == Page::Sound && app.status.input.is_some() {
                 all.push(iced::Subscription::run(system::level).map(Message::Level));
+            }
+            // The queues and jobs, re-read every 3 s while Printers shows.
+            if app.page == Page::Printers {
+                all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::ReadPrinters));
             }
             if app.shortcuts.as_ref().is_some_and(|e| e.recording.is_some()) {
                 all.push(iced::event::listen_with(shortcuts::key_pressed));
@@ -148,6 +153,12 @@ pub struct App {
     users: Option<users::Users>,
     /// Users ▸ Take Photo…'s sheet, open.
     shot: Option<users::Shot>,
+    /// The Printers page's queues and jobs: `None` until read, `Some(None)` without CUPS.
+    printers: Option<Option<printers::Printers>>,
+    /// The printer whose options are open.
+    printer: Option<String>,
+    /// Add Printer…, open: `Some(None)` while `lpinfo` looks, then the devices it found.
+    devices: Option<Option<Vec<String>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -294,6 +305,17 @@ pub enum Message {
     WidgetIds(Vec<String>),
     /// A widget editor's new `[widgets]`.
     Widgets(pages::Widgets),
+    Printers(Option<printers::Printers>),
+    ReadPrinters,
+    /// Printers ▸ Options…: this printer's open; `None` closes it.
+    SelectPrinter(Option<String>),
+    PrinterAct(printers::Act),
+    /// A printer action finished: the printers again and what went wrong.
+    PrintersActed((Option<printers::Printers>, Option<String>)),
+    /// Add Printer… opens (and looks for devices) or closes.
+    AddPrinter(bool),
+    /// `lpinfo -v` answered.
+    Devices(Result<Vec<String>, String>),
     /// The file chooser opens for the path field with this `texts` key.
     OpenFile(&'static str),
     /// It answered: the path goes where that field's would; no portal shows the field.
@@ -332,6 +354,9 @@ impl App {
             level: 0.0,
             users: None,
             shot: None,
+            printers: None,
+            printer: None,
+            devices: None,
         };
         app.retheme();
         if page == Page::General {
@@ -342,6 +367,7 @@ impl App {
         }
         let users = match page {
             Page::Users => Task::perform(users::read(), Message::Users),
+            Page::Printers => Task::perform(printers::read(), Message::Printers),
             Page::Keyboard => app.read_methods(),
             Page::Notifications => Task::perform(system::widget_ids(), Message::WidgetIds),
             _ => Task::none(),
@@ -396,6 +422,9 @@ impl App {
                 }
                 if page == Page::Keyboard {
                     return self.read_methods();
+                }
+                if page == Page::Printers {
+                    return Task::perform(printers::read(), Message::Printers);
                 }
                 if page.is_system() {
                     return Task::perform(system::read(), Message::Status);
@@ -510,6 +539,32 @@ impl App {
             }
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Users(users) => self.users = Some(users),
+            Message::Printers(found) => self.printers = Some(found),
+            Message::ReadPrinters => return Task::perform(printers::read(), Message::Printers),
+            Message::SelectPrinter(name) => self.printer = name,
+            Message::PrinterAct(act) => {
+                if let printers::Act::Add(..) = act {
+                    self.texts.remove(printers::URI);
+                    self.devices = None;
+                }
+                return Task::perform(printers::act(act), Message::PrintersActed);
+            }
+            Message::PrintersActed((found, error)) => {
+                self.printers = Some(found);
+                self.error = error;
+            }
+            Message::AddPrinter(open) => {
+                self.devices = open.then_some(None);
+                if open {
+                    return Task::perform(printers::devices(), Message::Devices);
+                }
+            }
+            // Only while Add Printer… is still open.
+            Message::Devices(found) => match found {
+                Ok(found) if self.devices.is_some() => self.devices = Some(Some(found)),
+                Ok(_) => {}
+                Err(error) => self.error = Some(error),
+            },
             Message::PictureChooser => {
                 self.texts.remove(users::PICTURE_FILE);
                 if self.texts.remove(users::PICTURES).is_none() {

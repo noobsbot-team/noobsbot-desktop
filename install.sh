@@ -329,7 +329,7 @@ arch_packages() {
         libinput libxkbcommon seatd
         wayland xorg-xwayland xwayland-satellite mesa
         greetd greetd-tuigreet
-        upower power-profiles-daemon udisks2 polkit polkit-kde-agent gnome-keyring openssl plocate ddcutil
+        upower power-profiles-daemon udisks2 polkit polkit-kde-agent gnome-keyring openssl plocate ddcutil cups
         xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr xdg-utils xdg-user-dirs xdg-terminal-exec slurp
         dolphin kio-extras kdegraphics-thumbnailers ffmpegthumbs kimageformats qt6-imageformats kio-admin ark
         archlinux-xdg-menu kconfig kate nano partitionmanager filelight plasma-systemmonitor btop
@@ -369,7 +369,7 @@ debian_packages() {
         libinput10 libxkbcommon0 seatd libseat1 libpam0g libgbm1 libudev1 libegl1 libgles2 libgl1-mesa-dri
         xwayland libxcb1 libxcb-cursor0
         greetd tuigreet dbus-user-session systemd-timesyncd
-        upower power-profiles-daemon udisks2 polkitd pkexec polkit-kde-agent-1 gnome-keyring libpam-gnome-keyring openssl plocate ddcutil
+        upower power-profiles-daemon udisks2 polkitd pkexec polkit-kde-agent-1 gnome-keyring libpam-gnome-keyring openssl plocate ddcutil cups
         xdg-desktop-portal xdg-desktop-portal-gtk xdg-desktop-portal-wlr xdg-utils xdg-user-dirs xdg-terminal-exec slurp
         libglib2.0-bin dolphin kio-extras kdegraphics-thumbnailers ffmpegthumbs kimageformat6-plugins
         qt6-image-formats-plugins kio-admin ark libkf6config-bin kate nano partitionmanager filelight
@@ -762,6 +762,8 @@ enable_services() {
     # Spotlight's file results come from plocate; build its index now, then daily.
     { as_root systemctl enable --now plocate-updatedb.timer && as_root systemctl start --no-block plocate-updatedb.service; } ||
         warn "plocate's index timer could not be enabled; Spotlight shows recent files only"
+    # Printing (Settings › Printers): cupsd starts on demand from its socket.
+    as_root systemctl enable --now cups.socket || warn "cups.socket could not be enabled; printing waits for cupsd to be started"
     # Monitors' brightness goes over DDC/CI (ddcutil), which needs i2c-dev; ddcutil's udev rule gives the seat user
     # the monitors' buses. Arch's package loads it at boot, Debian's may not.
     { grep -qsx i2c-dev /usr/lib/modules-load.d/*.conf /etc/modules-load.d/*.conf || install_text 644 /etc/modules-load.d/i2c-dev.conf i2c-dev; } &&

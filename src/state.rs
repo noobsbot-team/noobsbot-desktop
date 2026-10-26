@@ -467,6 +467,10 @@ impl State {
         let (trash_tx, trash_rx) = channel::channel();
         crate::shell::trash::watch(move || trash_tx.send(()).is_ok());
         handle.insert_source(trash_rx, |_, _, state| state.schedule_redraw())?;
+        // The dock's print-queue icon comes and goes with the jobs.
+        let (print_tx, print_rx) = channel::channel();
+        crate::shell::dock::watch_print_queue(move || print_tx.send(()).is_ok());
+        handle.insert_source(print_rx, |_, _, state| state.schedule_redraw())?;
         // The menu-bar clock (E2.4): one redraw per minute (second, with seconds on), on the boundary.
         let tick = |state: &Self| crate::clock::until_next_tick(&chrono::Local::now(), state.config.clock.format.seconds);
         // It also moves `auto` dark mode between day and night, apps included.
