@@ -403,7 +403,7 @@ impl State {
             return (Vec::new(), false);
         }
         let here = self.dock_output().as_ref() == Some(output);
-        let dock_items = self.dock_items();
+        let dock_items = self.dock_items_on(Some(output));
         let dock_frame = self.dock_frame(output, &dock_items);
         let peek = self.dock_peek().filter(|_| here);
         let peek_hover = self.dock_ui.peek.as_ref().and_then(|p| p.hover);
