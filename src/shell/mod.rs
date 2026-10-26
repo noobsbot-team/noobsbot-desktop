@@ -822,6 +822,22 @@ mod tests {
     }
 
     #[test]
+    fn popups_fit_a_second_display_at_its_right_edge() {
+        // Laid out in the second display's own size and coordinates, whatever its place in the layout.
+        let rows = menu_rows(Menu::Logo, "", &[], false, &[]);
+        let second = Size::from((1920, 1080));
+        let (rect, cells) = menu_layout(Anchor::Below(1900), second, 240, &rows, 0);
+        assert_eq!((rect.loc.x, rect.loc.y), (1920 - 8 - 240, menubar::height() + DROP));
+        assert!(cells.iter().all(|c| rect.contains_rect(*c)));
+        // Its submenu flips left of the menu rather than off the display.
+        let row = Rectangle::new((rect.loc.x, 60).into(), (240, 22).into());
+        assert_eq!(menu_layout(Anchor::Beside(row), second, 200, &rows, 0).0.loc.x, rect.loc.x - 200);
+        let panel = control::layout(second, &control::Status::default()).rect;
+        assert_eq!(panel.loc.x + panel.size.w, 1920 - MARGIN);
+        assert_eq!(osd_rect(second.w).loc.x + 280, 1920 - MARGIN);
+    }
+
+    #[test]
     fn menu_rows_grow_with_the_text_size() {
         let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
         let output = Size::from((1280, 1200));

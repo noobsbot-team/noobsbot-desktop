@@ -371,6 +371,26 @@ mod tests {
     }
 
     #[test]
+    fn a_second_displays_bar_hits_in_its_own_coordinates() {
+        // The second display sits right of a 1280 px first one; its clock is at its right edge.
+        let second = Rectangle::new((1280, 0).into(), (1920, 1080).into());
+        let bar = MenuBar {
+            hits: vec![
+                (BarItem::Logo, Rectangle::new((0, 0).into(), (40, height()).into())),
+                (BarItem::Clock, Rectangle::new((1800, 0).into(), (120, height()).into())),
+            ],
+            ..Default::default()
+        };
+        let hit = |x: f64, y: f64| on_bar(second, (x, y).into()).and_then(|at| bar.hit(at));
+        assert_eq!(hit(1280.0 + 1900.0, 10.0), Some(BarItem::Clock));
+        assert_eq!(hit(1290.0, 5.0), Some(BarItem::Logo));
+        assert_eq!(on_bar(second, (1290.0, 5.0).into()), Some((10.0, 5.0).into()));
+        // Below its bar, or on the first display: not this bar.
+        assert_eq!(on_bar(second, (1290.0, f64::from(height()) + 1.0).into()), None);
+        assert_eq!(on_bar(second, (20.0, 5.0).into()), None);
+    }
+
+    #[test]
     fn app_names() {
         assert_eq!(app_name("org.example.no-such-app"), "No-such-app");
     }
