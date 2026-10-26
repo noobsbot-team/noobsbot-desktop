@@ -1654,7 +1654,7 @@ The dock stays per app, as on macOS. Every per-window job a taskbar does gets a 
   lands on the tile. Built; `[dock] minimise_into_icon` turns them off.
 - **One dock per display** with its own filtering (D13, E3).
 - **Super+1…9** focuses, cycles or opens the n-th dock app, Super+Shift+n opens a new window, and holding Super shows
-  number pills over the icons. Space keys move to Ctrl+1…9 (macOS). Decided in the E8.3 mini-plan with E1.6.
+  number pills over the icons. Space keys move to Super+Ctrl+1…9, so Ctrl+1…9 stays with apps (browser tabs).
 - **Right-click menu:** Options ▸ Assign To (All Spaces / This Space / None), Move to Display, Open at Login; Close
   Others; recent files of the app (`recently-used.xbel`); ◆ next to minimised windows.
 - **Spring-loading:** a file dragged over an icon brings that app's window up (App Exposé when it has several).
