@@ -43,8 +43,8 @@ pub struct WifiNetwork {
     pub ssid: String,
     /// 1–3, as in [`Link::Wifi`].
     pub bars: u8,
-    /// Needs a password (WEP/WPA/WPA2/WPA3).
-    pub secure: bool,
+    /// How it is secured, from its access point's flags.
+    pub security: Security,
     /// A saved connection exists, so joining asks for nothing.
     pub known: bool,
     /// NetworkManager paths of the strongest access point and its Wi-Fi device, for joining.
@@ -189,7 +189,7 @@ pub async fn join(bus: &Connection, ssid: &str, ap: &str, device: &str, password
             }
             Join::Add(password) => {
                 let point = AccessPointProxy::builder(bus).path(&ap)?.cache_properties(CacheProperties::No).build().await?;
-                let key_mgmt = key_mgmt(point.flags().await?, point.wpa_flags().await?, point.rsn_flags().await?);
+                let key_mgmt = Security::of(point.flags().await?, point.wpa_flags().await?, point.rsn_flags().await?).key_mgmt();
                 manager.add_and_activate_connection(new_settings(key_mgmt, password)?, &device, &ap).await?;
             }
         }
@@ -216,22 +216,60 @@ fn plan(saved: Option<OwnedObjectPath>, password: Option<&str>) -> Join<'_> {
     }
 }
 
-/// A new connection's `key-mgmt` from its access point's Flags, WpaFlags and RsnFlags, when they say it plainly:
-/// a pre-shared key (wpa-psk), SAE alone (sae), or privacy with no WPA at all (WEP, "none"). 802.1X, OWE and anything
-/// else: `None`, left to NetworkManager and our secret agent.
-fn key_mgmt(flags: u32, wpa: u32, rsn: u32) -> Option<&'static str> {
-    // NM80211ApFlags PRIVACY; NM80211ApSecurityFlags KEY_MGMT_PSK, KEY_MGMT_802_1X, KEY_MGMT_SAE.
-    const PRIVACY: u32 = 0x1;
-    const PSK: u32 = 0x100;
-    const EAP: u32 = 0x200;
-    const SAE: u32 = 0x400;
-    let any = wpa | rsn;
-    match any {
-        0 if flags & PRIVACY != 0 => Some("none"),
-        _ if any & EAP != 0 => None,
-        _ if any & PSK != 0 => Some("wpa-psk"),
-        _ if any & SAE != 0 => Some("sae"),
-        _ => None,
+/// How an access point is secured, from its Flags, WpaFlags and RsnFlags.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Security {
+    Open,
+    Wep,
+    /// WPA/WPA2 personal (also WPA3 transition).
+    Psk,
+    /// WPA3 personal alone.
+    Sae,
+    /// 802.1X: our secret agent asks for the login.
+    Enterprise,
+    /// OWE and anything else: no password, left to NetworkManager.
+    Other,
+}
+
+impl Security {
+    fn of(flags: u32, wpa: u32, rsn: u32) -> Self {
+        // NM80211ApFlags PRIVACY; NM80211ApSecurityFlags KEY_MGMT_PSK, KEY_MGMT_802_1X, KEY_MGMT_SAE.
+        const PRIVACY: u32 = 0x1;
+        const PSK: u32 = 0x100;
+        const EAP: u32 = 0x200;
+        const SAE: u32 = 0x400;
+        match wpa | rsn {
+            0 if flags & PRIVACY != 0 => Security::Wep,
+            0 => Security::Open,
+            any if any & EAP != 0 => Security::Enterprise,
+            any if any & PSK != 0 => Security::Psk,
+            any if any & SAE != 0 => Security::Sae,
+            _ => Security::Other,
+        }
+    }
+
+    /// A new connection's `key-mgmt` when the flags say it plainly: a pre-shared key (wpa-psk), SAE alone (sae), or
+    /// WEP ("none"). Otherwise `None`, left to NetworkManager and our secret agent.
+    fn key_mgmt(self) -> Option<&'static str> {
+        match self {
+            Security::Wep => Some("none"),
+            Security::Psk => Some("wpa-psk"),
+            Security::Sae => Some("sae"),
+            _ => None,
+        }
+    }
+
+    /// What Control Center asks for before joining it unsaved; `None`: join directly (open, or the agent asks).
+    pub fn asks(self) -> Option<Secret> {
+        match self {
+            Security::Wep => Some(Secret::Wep),
+            Security::Psk | Security::Sae => Some(Secret::Psk),
+            _ => None,
+        }
+    }
+
+    pub fn secure(self) -> bool {
+        self != Security::Open
     }
 }
 
@@ -329,8 +367,7 @@ fn networks(objects: &ManagedObjects, known: &[Vec<u8>]) -> Vec<WifiNetwork> {
                     known: known.contains(&ssid),
                     ssid: String::from_utf8_lossy(&ssid).into_owned(),
                     bars: bars(strength),
-                    // Flags bit 0 = privacy (WEP); any WPA/RSN flag = WPA.
-                    secure: number("Flags") & 1 != 0 || number("WpaFlags") != 0 || number("RsnFlags") != 0,
+                    security: Security::of(number("Flags"), number("WpaFlags"), number("RsnFlags")),
                     ap: ap.to_string(),
                     device: device.to_string(),
                 },
@@ -498,6 +535,7 @@ mod tests {
 
     #[test]
     fn new_networks_are_secured_as_the_access_point_says() {
+        let key_mgmt = |f, w, r| Security::of(f, w, r).key_mgmt();
         assert_eq!(key_mgmt(0, 0, 0), None, "open");
         assert_eq!(key_mgmt(1, 0, 0), Some("none"), "WEP");
         assert_eq!(key_mgmt(1, 0, 0x188), Some("wpa-psk"), "WPA2 personal");
@@ -514,6 +552,19 @@ mod tests {
         let sae = new_settings(Some("sae"), Some("hunter22")).unwrap();
         assert_eq!((text(&sae, "key-mgmt"), text(&sae, "psk")), ("sae".into(), "hunter22".into()));
         assert!(!new_settings(Some("wpa-psk"), None).unwrap()["802-11-wireless-security"].contains_key("psk"));
+    }
+
+    #[test]
+    fn only_wep_and_personal_networks_are_asked_for_before_joining() {
+        let asks = |f, w, r| Security::of(f, w, r).asks();
+        assert_eq!(asks(0, 0, 0), None, "open");
+        assert_eq!(asks(1, 0, 0), Some(Secret::Wep), "WEP: its key");
+        assert_eq!(asks(1, 0, 0x188), Some(Secret::Psk), "WPA2 personal");
+        assert_eq!(asks(1, 0, 0x488), Some(Secret::Psk), "WPA3 personal");
+        assert_eq!(asks(1, 0, 0x288), None, "enterprise: the agent asks for the login");
+        assert_eq!(asks(1, 0x388, 0x388), None, "mixed personal/enterprise: the agent asks");
+        assert_eq!(asks(1, 0, 0x888), None, "OWE");
+        assert!(Security::Other.secure() && !Security::Open.secure());
     }
 
     #[test]
@@ -552,7 +603,7 @@ mod tests {
             (path("/ap/4"), ap(b"", 99, 0)),
         ]);
         let found = networks(&objects, &[b"Home".to_vec()]);
-        let summary: Vec<_> = found.iter().map(|n| (n.ssid.as_str(), n.bars, n.secure, n.known, n.ap.as_str())).collect();
+        let summary: Vec<_> = found.iter().map(|n| (n.ssid.as_str(), n.bars, n.security.secure(), n.known, n.ap.as_str())).collect();
         // Hidden networks (no name) are left out; each name keeps its strongest access point.
         assert_eq!(summary, [("Home", 3, true, true, "/ap/2"), ("Cafe", 3, false, false, "/ap/3")]);
         assert_eq!(found[0].device, "/dev/2");

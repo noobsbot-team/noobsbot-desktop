@@ -547,7 +547,7 @@ impl State {
                         symbol: wifi_symbol(w.bars),
                         name: w.ssid.clone(),
                         detail: None,
-                        lock: w.secure,
+                        lock: w.security.secure(),
                         on: current == Some(w.ssid.as_str()),
                     });
                     // The VPNs follow the networks; a click brings one up or down.
@@ -688,14 +688,9 @@ impl State {
                         let joined = matches!(&self.network.as_ref().map(|n| &n.link), Some(Link::Wifi { ssid, .. }) if *ssid == network.ssid);
                         let (ssid, ap, device) = (network.ssid.clone(), network.ap.clone(), network.device.clone());
                         if joined {
-                        } else if network.secure && !network.known {
+                        } else if let Some(secret) = network.security.asks().filter(|_| !network.known) {
                             let field = crate::ui::field::TextField::secure();
-                            self.open_ask(crate::shell::alert::Kind::Wifi {
-                                ssid,
-                                join: Some((ap, device)),
-                                field,
-                                secret: crate::services::network::Secret::Psk,
-                            });
+                            self.open_ask(crate::shell::alert::Kind::Wifi { ssid, join: Some((ap, device)), field, secret });
                         } else {
                             self.services.send(Command::WifiJoin { ssid, ap, device, password: None });
                         }
