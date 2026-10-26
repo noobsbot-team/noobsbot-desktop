@@ -96,6 +96,8 @@ pub enum Action {
     Drawer(crate::shell::drawer::Command),
     /// Installs the downloaded update, then logs out (logo menu / notification ▸ Restart to Update, E6.13).
     InstallUpdate,
+    /// Orca on or off (Super+Alt+F5).
+    ScreenReader,
     /// The Space to the left (-1) or right (+1) (E5.1).
     SwitchSpace(i32),
     /// Space n, from 0.
@@ -250,6 +252,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("screen-zoom", "") => Some(Action::ScreenZoom(None)),
         ("screen-zoom", "in") => Some(Action::ScreenZoom(Some(true))),
         ("screen-zoom", "out") => Some(Action::ScreenZoom(Some(false))),
+        ("screen-reader", "") => Some(Action::ScreenReader),
         ("screenshot", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Screen)),
         ("screen-record", "") => Some(Action::ScreenRecord),
         ("screenshot-window", "") => Some(Action::Screenshot(crate::shell::screenshot::Start::Window)),
@@ -553,6 +556,12 @@ impl State {
                 self.show_osd(Osd { symbol, level: None, text: Some(text.into()) });
             }
             Action::InstallUpdate => self.install_update(),
+            Action::ScreenReader => {
+                let on = !self.config.accessibility.screen_reader;
+                self.config.accessibility.screen_reader = on;
+                crate::config::save_key("accessibility", "screen_reader", if on { "true" } else { "false" });
+                self.apply_screen_reader();
+            }
         }
     }
 
@@ -587,6 +596,24 @@ impl State {
                 None
             }
         }
+    }
+
+    /// Starts or stops Orca as `[accessibility] screen_reader` says, and tells apps whether one runs.
+    pub fn apply_screen_reader(&mut self) {
+        let on = self.config.accessibility.screen_reader;
+        // Still ours: a pid of a dead Orca may have been reused.
+        let running = self.screen_reader.filter(|pid| std::fs::read_to_string(format!("/proc/{pid}/comm")).is_ok_and(|c| c.trim() == "orca"));
+        match (on, running) {
+            (true, None) => self.screen_reader = self.spawn(&["orca".into(), "--replace".into()]),
+            (false, Some(pid)) => {
+                // SAFETY: kill(2) on a pid just checked to be Orca.
+                unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+                self.screen_reader = None;
+            }
+            _ => {}
+        }
+        self.services.send(Command::ScreenReader(on));
+        self.access_enable(on);
     }
 
     /// Is `window` the quake terminal's (opened by the process the `quake` action started)?
