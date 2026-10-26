@@ -322,7 +322,8 @@ Once a day the desktop checks GitHub for a newer release (it sends nothing but t
    automatically and tells you.
 
 Set `channel = "beta"` in `[update]` to also get pre-releases. Installs made with `--from-source` or by hand only
-get the notification. You can always update from a terminal with `./install.sh --update`.
+get the notification. From a terminal in the desktop, `noobsbot-desktop --update` does the same check, download and
+install; you can also always update with `./install.sh --update`.
 
 Versions follow [semantic versioning](https://semver.org); every release's changes are in
 [`CHANGELOG.md`](CHANGELOG.md).
