@@ -97,6 +97,82 @@ fn face(file: &Path, home: &Path) -> Option<PathBuf> {
     Some(path)
 }
 
+/// Change Password…'s fields (current, new, verify), as text keys; open while they are there.
+pub const PASSWORD: [&str; 3] = ["users.password.old", "users.password.new", "users.password.verify"];
+
+/// What is wrong with the Change Password fields, if anything.
+pub fn check(old: &str, new: &str, verify: &str) -> Result<(), &'static str> {
+    if old.is_empty() {
+        Err("Enter your current password")
+    } else if new.is_empty() {
+        Err("Enter a new password")
+    } else if new != verify {
+        Err("The new passwords don't match")
+    } else if new == old {
+        Err("The new password is the same as the current one")
+    } else if [old, new].iter().any(|p| p.contains(['\n', '\r'])) {
+        Err("A password can't have a line break")
+    } else {
+        Ok(())
+    }
+}
+
+/// Changes the user's own password with `passwd`, the current one and the new one twice fed through a pipe (not
+/// AccountsService's `SetPassword`, which takes a hash and an administrator); what went wrong, if anything. The
+/// passwords are wiped once written.
+/// ponytail: iced's fields and messages hold copies we can't wipe; they go when the form closes.
+pub async fn change_password(old: String, new: String) -> Option<String> {
+    // Sized up front: no reallocation leaves a copy behind.
+    let mut input = Vec::with_capacity(old.len() + 2 * new.len() + 3);
+    for p in [&old, &new, &new] {
+        input.extend_from_slice(p.as_bytes());
+        input.push(b'\n');
+    }
+    wipe(old);
+    wipe(new);
+    let result = passwd(&input);
+    input.fill(0);
+    std::hint::black_box(&input);
+    result.err()
+}
+
+/// Zeroes a password before it is dropped.
+pub fn wipe(password: String) {
+    let mut bytes = password.into_bytes();
+    bytes.fill(0);
+    std::hint::black_box(&bytes);
+}
+
+fn passwd(input: &[u8]) -> Result<(), String> {
+    use std::{io::Write, process::Stdio};
+    let mut child = std::process::Command::new("passwd")
+        .env("LC_ALL", "C")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|err| format!("Couldn't run passwd: {err}"))?;
+    // It may stop reading early (a wrong password); the exit status tells.
+    let _ = child.stdin.take().expect("piped").write_all(input);
+    let out = child.wait_with_output().map_err(|err| format!("Couldn't run passwd: {err}"))?;
+    if out.status.success() { Ok(()) } else { Err(passwd_error(&String::from_utf8_lossy(&out.stderr))) }
+}
+
+/// passwd's complaint in words: its prompts (`Current password: `) dropped, the usual ones put plainly.
+fn passwd_error(stderr: &str) -> String {
+    let said: Vec<&str> = stderr.lines().filter_map(|l| l.rsplit("password: ").next()).map(str::trim).filter(|l| !l.is_empty()).collect();
+    if let Some(bad) = said.iter().find_map(|l| l.strip_prefix("BAD PASSWORD: ")) {
+        return format!("The new password isn't allowed: {bad}");
+    }
+    if said.iter().any(|l| l.ends_with("Authentication token manipulation error") || l.ends_with("Authentication failure")) {
+        return "The current password isn't right".into();
+    }
+    match said.iter().find_map(|l| l.strip_prefix("passwd: ")).filter(|r| *r != "password unchanged") {
+        Some(reason) => format!("Couldn't change the password: {reason}"),
+        None => "Couldn't change the password".into(),
+    }
+}
+
 async fn text(bus: &Connection, path: &str, name: &str) -> String {
     crate::system::property(bus, ACCOUNTS, path, USER, name).await.ok().and_then(|v| String::try_from(v).ok()).unwrap_or_default()
 }
@@ -123,6 +199,29 @@ fn picture(file: &Path) -> Option<Handle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn password_form_checks() {
+        assert_eq!(check("", "new", "new"), Err("Enter your current password"));
+        assert_eq!(check("old", "", ""), Err("Enter a new password"));
+        assert_eq!(check("old", "new", "nwe"), Err("The new passwords don't match"));
+        assert_eq!(check("same", "same", "same"), Err("The new password is the same as the current one"));
+        assert_eq!(check("old", "a\nb", "a\nb"), Err("A password can't have a line break"));
+        assert_eq!(check("old", "new", "new"), Ok(()));
+    }
+
+    #[test]
+    fn passwd_errors_in_words() {
+        let wrong = "Changing password for me.\nCurrent password: passwd: Authentication token manipulation error\npasswd: password unchanged\n";
+        assert_eq!(passwd_error(wrong), "The current password isn't right");
+        let short = "Changing password for me.\nCurrent password: New password: BAD PASSWORD: The password is shorter than 8 characters\nNew password: \npasswd: Have exhausted maximum number of retries for service\npasswd: password unchanged\n";
+        assert_eq!(passwd_error(short), "The new password isn't allowed: The password is shorter than 8 characters");
+        assert_eq!(
+            passwd_error("passwd: Have exhausted maximum number of retries for service\npasswd: password unchanged\n"),
+            "Couldn't change the password: Have exhausted maximum number of retries for service"
+        );
+        assert_eq!(passwd_error(""), "Couldn't change the password");
+    }
 
     #[test]
     fn face_is_a_square_png() {
