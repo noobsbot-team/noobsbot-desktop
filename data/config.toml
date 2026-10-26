@@ -115,6 +115,8 @@ speed = 0.0
 # Right-click: "two-fingers" (click with two fingers), "corner" (click the bottom-right corner) or "off" (every
 # physical click is a left click).
 secondary_click = "two-fingers"
+# Scrolling: "two-fingers", "edge" (one finger along the right or bottom edge) or "none".
+scroll_method = "two-fingers"
 # Tap, then drag with the finger down; drag_lock keeps the drag going through a short lift.
 tap_to_drag = true
 drag_lock = false

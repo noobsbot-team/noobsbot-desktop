@@ -360,12 +360,25 @@ pub struct Touchpad {
     /// Tracking speed, -1 (slow) … 1 (fast).
     pub speed: f64,
     pub secondary_click: SecondaryClick,
+    pub scroll_method: ScrollMethod,
     /// Tap, then drag with the finger down; `drag_lock` keeps dragging through a short lift.
     pub tap_to_drag: bool,
     pub drag_lock: bool,
     pub disable_while_typing: bool,
     /// Off while a mouse is plugged in.
     pub ignore_with_mouse: bool,
+}
+
+/// How the trackpad scrolls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScrollMethod {
+    /// Two fingers anywhere.
+    TwoFingers,
+    /// One finger along the right or bottom edge.
+    Edge,
+    /// The trackpad doesn't scroll.
+    None,
 }
 
 /// How the trackpad right-clicks.
@@ -1011,6 +1024,7 @@ impl Default for Touchpad {
             gesture_sensitivity: 1.0,
             speed: 0.0,
             secondary_click: SecondaryClick::TwoFingers,
+            scroll_method: ScrollMethod::TwoFingers,
             tap_to_drag: true,
             drag_lock: false,
             disable_while_typing: true,
@@ -1616,6 +1630,14 @@ mod tests {
         assert_eq!(ms("[mouse]\ndouble_click_ms = 650"), 650);
         assert_eq!(ms("[mouse]\ndouble_click_ms = 0"), 150, "0 would make double-clicks impossible");
         assert_eq!(ms("[mouse]\ndouble_click_ms = 99999"), 1000);
+    }
+
+    #[test]
+    fn scroll_method_parses() {
+        let method = |v: &str| parse(&format!("[touchpad]\nscroll_method = \"{v}\"")).unwrap().touchpad.scroll_method;
+        assert_eq!(method("edge"), ScrollMethod::Edge);
+        assert_eq!(method("none"), ScrollMethod::None);
+        assert_eq!(parse("").unwrap().touchpad.scroll_method, ScrollMethod::TwoFingers);
     }
 
     #[test]

@@ -58,7 +58,7 @@ use smithay::{
 
 use super::{CLEAR, Device, Views, cursor};
 use crate::{
-    config::{Mouse, SecondaryClick, Touchpad},
+    config::{Mouse, ScrollMethod, SecondaryClick, Touchpad},
     display_info::{self, Display},
     displays,
     frame::FrameClock,
@@ -703,6 +703,7 @@ fn configure(device: &mut InputDevice, touchpad: &Touchpad, mouse: &Mouse) {
         let _ = device.config_accel_set_speed(touchpad.speed.clamp(-1.0, 1.0));
         let _ = device.config_dwt_set_enabled(touchpad.disable_while_typing);
         let _ = device.config_left_handed_set(mouse.left_handed);
+        let _ = device.config_scroll_set_method(scroll_method(touchpad.scroll_method));
         match click_method(touchpad.secondary_click) {
             Some(method) => {
                 let _ = device.config_click_set_method(method);
@@ -734,6 +735,15 @@ fn click_method(secondary: SecondaryClick) -> Option<ClickMethod> {
         SecondaryClick::TwoFingers => Some(ClickMethod::Clickfinger),
         SecondaryClick::Corner => Some(ClickMethod::ButtonAreas),
         SecondaryClick::Off => None,
+    }
+}
+
+fn scroll_method(method: ScrollMethod) -> smithay::reexports::input::ScrollMethod {
+    use smithay::reexports::input::ScrollMethod as Libinput;
+    match method {
+        ScrollMethod::TwoFingers => Libinput::TwoFinger,
+        ScrollMethod::Edge => Libinput::Edge,
+        ScrollMethod::None => Libinput::NoScroll,
     }
 }
 
@@ -846,6 +856,14 @@ mod tests {
         assert_eq!(click_method(SecondaryClick::TwoFingers), Some(ClickMethod::Clickfinger));
         assert_eq!(click_method(SecondaryClick::Corner), Some(ClickMethod::ButtonAreas));
         assert_eq!(click_method(SecondaryClick::Off), None);
+    }
+
+    #[test]
+    fn scroll_method_maps_to_libinput() {
+        use smithay::reexports::input::ScrollMethod as Libinput;
+        assert_eq!(scroll_method(ScrollMethod::TwoFingers), Libinput::TwoFinger);
+        assert_eq!(scroll_method(ScrollMethod::Edge), Libinput::Edge);
+        assert_eq!(scroll_method(ScrollMethod::None), Libinput::NoScroll);
     }
 
     #[test]
