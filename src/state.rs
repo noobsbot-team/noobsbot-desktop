@@ -181,7 +181,7 @@ pub struct State {
     pub bluetooth: Option<crate::services::bluetooth::Bluetooth>,
     /// `None`: power-profiles-daemon isn't running.
     pub profiles: Option<crate::services::profiles::Profiles>,
-    /// Percent; `None` without a backlight.
+    /// Percent; `None` without a backlight or DDC/CI monitor.
     pub brightness: Option<u8>,
     /// `None`: no output device, or PipeWire isn't running.
     pub sound: Option<crate::services::sound::Sound>,
@@ -435,7 +435,13 @@ impl State {
                     crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                     crate::services::Update::Widgets(widgets) => state.widgets = widgets,
-                    crate::services::Update::SetBrightness(percent) => state.services.send(crate::services::Command::Brightness(percent)),
+                    crate::services::Update::SetBrightness(percent) => {
+                        // Set here, as the keys and slider do: DDC monitors don't report back.
+                        if state.brightness.is_some() {
+                            state.brightness = Some(percent);
+                        }
+                        state.services.send(crate::services::Command::Brightness(percent));
+                    }
                     crate::services::Update::Identify => state.identify_displays(),
                     crate::services::Update::Record(on) => {
                         let focus = state.focused_window();
