@@ -49,6 +49,9 @@ fn main() -> iced::Result {
                 all.push(iced::Subscription::run(system::discover).map(|()| Message::Rescan));
                 all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::Rescan));
             }
+            if app.shortcuts.as_ref().is_some_and(|e| e.recording.is_some()) {
+                all.push(iced::event::listen_with(shortcuts::key_pressed));
+            }
             iced::Subscription::batch(all)
         })
         .window(window)

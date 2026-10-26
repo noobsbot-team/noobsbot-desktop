@@ -12,6 +12,8 @@ use crate::{App, Message, font, style};
 /// The open "Keyboard Shortcuts…" sheet.
 pub struct Editor {
     pub category: &'static str,
+    /// The row (by combo) whose keys the next key press sets.
+    pub recording: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -21,6 +23,10 @@ pub enum Msg {
     Category(&'static str),
     /// A shipped binding, by combo: on (its default applies) or off ("none").
     Enable(String, bool),
+    /// Clicked a row's keys: the next key press replaces them.
+    Record(String),
+    /// A key pressed while recording.
+    Key(iced::keyboard::Key, iced::keyboard::Modifiers),
 }
 
 /// One row: the combo as written, the action it runs (the default's when switched off), and whether it is on.
@@ -49,16 +55,139 @@ pub fn rows(all: &[(String, String)], default: impl Fn(&str) -> Option<String>) 
     rows
 }
 
+/// Moving `action` from the keys `old` to `new` (`None`: no keys): the keys to remove and to set. A shipped binding
+/// is switched off rather than removed, or its default would come back.
+pub fn moves(old: &str, new: Option<&str>, action: &str, shipped: impl Fn(&str) -> bool) -> (Vec<String>, Vec<(String, String)>) {
+    let key = |combo: &str| format!("bindings.{combo}");
+    let mut set: Vec<_> = new.map(|new| (key(new), action.to_owned())).into_iter().collect();
+    let mut remove = Vec::new();
+    if new != Some(old) {
+        if shipped(old) {
+            set.push((key(old), "none".to_owned()));
+        } else {
+            remove.push(key(old));
+        }
+    }
+    (remove, set)
+}
+
+/// Asks the desktop to pass every key to us (`Record(true)`) while a shortcut is recorded, so Super+… reaches the
+/// sheet. Without it (desktop not running, or older), we still record whatever keys reach us.
+async fn record(on: bool) {
+    let call = async {
+        let bus = zbus::connection::Builder::session()?.method_timeout(std::time::Duration::from_secs(2)).build().await?;
+        bus.call_method(Some("org.noobsbot.Desktop"), "/org/noobsbot/Desktop", Some("org.noobsbot.Desktop.Shortcuts"), "Record", &(on,)).await?;
+        zbus::Result::Ok(())
+    };
+    if let Err(err) = call.await {
+        eprintln!("shortcut recording: {err}");
+    }
+}
+
+/// A key press while recording, as a `Message`.
+pub fn key_pressed(event: iced::Event, _: iced::event::Status, _: iced::window::Id) -> Option<Message> {
+    let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, repeat: false, .. }) = event else { return None };
+    Some(Message::Shortcuts(Msg::Key(key, modifiers)))
+}
+
+/// A key press as a binding: "Super+Ctrl+Alt+Shift+" and the xkb key name. None for a modifier on its own, or a key
+/// a binding can't name.
+pub fn combo(key: &iced::keyboard::Key, mods: iced::keyboard::Modifiers) -> Option<String> {
+    use iced::keyboard::{Key, key::Named as N};
+    let name = match key {
+        Key::Character(c) => match KEY_NAMES.iter().find(|k| k.1 == c.as_str() && k.0.len() > 1) {
+            Some(k) => k.0.to_owned(),
+            None if c.chars().count() == 1 => c.to_uppercase(),
+            None => return None,
+        },
+        Key::Named(named) => match named {
+            N::Enter => "Return",
+            N::Tab => "Tab",
+            N::Space => "space",
+            N::Escape => "Escape",
+            N::Backspace => "BackSpace",
+            N::Delete => "Delete",
+            N::Insert => "Insert",
+            N::Home => "Home",
+            N::End => "End",
+            N::PageUp => "Prior",
+            N::PageDown => "Next",
+            N::ArrowLeft => "Left",
+            N::ArrowRight => "Right",
+            N::ArrowUp => "Up",
+            N::ArrowDown => "Down",
+            N::PrintScreen => "Print",
+            N::AudioVolumeUp => "XF86AudioRaiseVolume",
+            N::AudioVolumeDown => "XF86AudioLowerVolume",
+            N::AudioVolumeMute => "XF86AudioMute",
+            N::MicrophoneVolumeMute => "XF86AudioMicMute",
+            N::BrightnessUp => "XF86MonBrightnessUp",
+            N::BrightnessDown => "XF86MonBrightnessDown",
+            N::MediaPlayPause | N::MediaPlay => "XF86AudioPlay",
+            N::MediaPause => "XF86AudioPause",
+            N::MediaTrackNext => "XF86AudioNext",
+            N::MediaTrackPrevious => "XF86AudioPrev",
+            N::Power => "XF86PowerOff",
+            // F1 … F35.
+            other => {
+                return Some(format!("{other:?}"))
+                    .filter(|n| n.len() > 1 && n.starts_with('F') && n[1..].bytes().all(|b| b.is_ascii_digit()))
+                    .map(|n| prefix(mods) + &n);
+            }
+        }
+        .to_owned(),
+        _ => return None,
+    };
+    Some(prefix(mods) + &name)
+}
+
+fn prefix(mods: iced::keyboard::Modifiers) -> String {
+    [(mods.logo(), "Super+"), (mods.control(), "Ctrl+"), (mods.alt(), "Alt+"), (mods.shift(), "Shift+")].iter().filter(|m| m.0).map(|m| m.1).collect()
+}
+
 pub fn update(app: &mut App, msg: Msg) -> Task<Message> {
     let key = |combo: &str| format!("bindings.{combo}");
     let done = match msg {
         Msg::Open => {
-            app.shortcuts = Some(Editor { category: CATEGORIES[0] });
+            app.shortcuts = Some(Editor { category: CATEGORIES[0], recording: None });
             Ok(())
         }
         Msg::Close => {
-            app.shortcuts = None;
-            Ok(())
+            let recording = app.shortcuts.take().is_some_and(|e| e.recording.is_some());
+            return if recording { Task::future(record(false)).discard() } else { Task::none() };
+        }
+        Msg::Record(combo) => {
+            let Some(editor) = &mut app.shortcuts else { return Task::none() };
+            let was = editor.recording.replace(combo).is_some();
+            return if was { Task::none() } else { Task::future(record(true)).discard() };
+        }
+        Msg::Key(pressed, mods) => {
+            use iced::keyboard::{Key, key::Named};
+            let Some(old) = app.shortcuts.as_mut().and_then(|e| e.recording.clone()) else { return Task::none() };
+            let new = match pressed {
+                Key::Named(Named::Escape) if mods.is_empty() => None,
+                Key::Named(Named::Backspace) if mods.is_empty() => Some(None),
+                _ => match combo(&pressed, mods) {
+                    Some(new) => Some(Some(new)),
+                    // A modifier on its own, or a key with no name in a binding: keep listening.
+                    None => return Task::none(),
+                },
+            };
+            if let Some(editor) = &mut app.shortcuts {
+                editor.recording = None;
+            }
+            let action = app.config.bindings().into_iter().find(|(c, _)| *c == old).map(|(_, a)| a).unwrap_or_default();
+            let action = if action.trim() == "none" { app.config.default_of(&key(&old)).unwrap_or_default().to_owned() } else { action };
+            let shipped = |c: &str| app.config.default_of(&key(c)).is_some();
+            let saved = match new {
+                Some(new) => {
+                    let (remove, set) = moves(&old, new.as_deref(), &action, shipped);
+                    app.config.change(&remove, set.iter().map(|(k, v)| (k.as_str(), v.as_str().into())))
+                }
+                None => Ok(()),
+            };
+            app.error = saved.err().map(|err| format!("Couldn't save the shortcut: {err}"));
+            return Task::future(record(false)).discard();
         }
         Msg::Category(category) => {
             if let Some(editor) = &mut app.shortcuts {
@@ -102,8 +231,10 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
             let tip = container(text(format!("Also bound to {}", label(other))).size(11)).padding([4, 8]).style(t.sheet());
             line = line.push(tooltip(text("⚠").size(13).color(style::rgb(0xFF9500)), tip, tooltip::Position::Top));
         }
-        let keys = text(format(&r.combo)).size(13).color(if r.on { t.label() } else { t.tertiary() });
-        line = line.push(keys);
+        let recording = editor.recording.as_ref() == Some(&r.combo);
+        let shown = if recording { "Type keys…".to_owned() } else { format(&r.combo) };
+        let keys = text(shown).size(13).color(if r.on || recording { t.label() } else { t.tertiary() });
+        line = line.push(button(keys).padding([2, 8]).style(t.segment(recording)).on_press(Message::Shortcuts(Msg::Record(r.combo.clone()))));
         list = list.push(container(line).padding([4, 8]));
     }
     let body = row![
@@ -352,6 +483,28 @@ mod tests {
         let shown: Vec<_> = rows(&all, shipped).into_iter().map(|r| (r.combo, r.action, r.on, r.custom)).collect();
         let row = |c: &str, a: &str, on, custom| (c.to_string(), a.to_string(), on, custom);
         assert_eq!(shown, [row("Super+K", "quit", true, true), row("Super+W", "close", false, false), row("Super+Y", "exec foot", true, true)]);
+    }
+
+    #[test]
+    fn moving_keys() {
+        let shipped = |c: &str| c == "Super+Q";
+        let set = |list: &[(&str, &str)]| list.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>();
+        assert_eq!(moves("Super+Q", Some("Super+K"), "quit", shipped), (vec![], set(&[("bindings.Super+K", "quit"), ("bindings.Super+Q", "none")])));
+        assert_eq!(moves("Super+K", Some("Super+J"), "quit", shipped), (vec!["bindings.Super+K".into()], set(&[("bindings.Super+J", "quit")])));
+        assert_eq!(moves("Super+K", None, "quit", shipped), (vec!["bindings.Super+K".into()], vec![]));
+        assert_eq!(moves("Super+Q", Some("Super+Q"), "quit", shipped), (vec![], set(&[("bindings.Super+Q", "quit")])));
+    }
+
+    #[test]
+    fn pressed_keys() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        let ch = |c: &str| Key::Character(c.into());
+        assert_eq!(combo(&ch("q"), Modifiers::LOGO | Modifiers::CTRL).as_deref(), Some("Super+Ctrl+Q"));
+        assert_eq!(combo(&ch("."), Modifiers::LOGO).as_deref(), Some("Super+period"));
+        assert_eq!(combo(&Key::Named(Named::ArrowLeft), Modifiers::LOGO | Modifiers::SHIFT).as_deref(), Some("Super+Shift+Left"));
+        assert_eq!(combo(&Key::Named(Named::F11), Modifiers::empty()).as_deref(), Some("F11"));
+        assert_eq!(combo(&Key::Named(Named::Shift), Modifiers::SHIFT), None);
+        assert_eq!(combo(&Key::Named(Named::Super), Modifiers::LOGO), None);
     }
 
     #[test]
