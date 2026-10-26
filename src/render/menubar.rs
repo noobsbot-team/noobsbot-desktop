@@ -116,7 +116,8 @@ pub fn bluetooth(bluetooth: &Bluetooth) -> Symbol {
     }
 }
 
-pub fn battery(battery: &Battery) -> Item {
+/// `percent`: the percentage beside the symbol (`[battery] show_percentage`).
+pub fn battery(battery: &Battery, percent: bool) -> Item {
     let symbol = match battery.percent {
         _ if battery.charging => Symbol::BatteryCharging,
         88.. => Symbol::BatteryFull,
@@ -125,7 +126,12 @@ pub fn battery(battery: &Battery) -> Item {
         13.. => Symbol::BatteryLow,
         _ => Symbol::BatteryEmpty,
     };
-    Item { symbol, text: Some(format!("{}%", battery.percent)) }
+    Item { symbol, text: percent.then(|| format!("{}%", battery.percent)) }
+}
+
+/// `symbol` is the battery's: its item opens the battery menu.
+pub fn is_battery(symbol: Symbol) -> bool {
+    matches!(symbol, Symbol::BatteryFull | Symbol::BatteryHigh | Symbol::BatteryMedium | Symbol::BatteryLow | Symbol::BatteryEmpty | Symbol::BatteryCharging)
 }
 
 pub fn volume(sound: &Sound) -> Symbol {
@@ -361,11 +367,12 @@ mod tests {
         assert_eq!(wifi_of(Link::None, false), Symbol::WifiSlash);
         assert_eq!(wifi_of(Link::Ethernet, false), Symbol::Ethernet);
 
-        let battery_of = |percent, charging| battery(&Battery { percent, charging, on_battery: !charging, minutes_left: None });
+        let battery_of = |percent, charging| battery(&Battery { percent, charging, on_battery: !charging, minutes_left: None }, true);
         assert_eq!(battery_of(85, false), Item { symbol: Symbol::BatteryHigh, text: Some("85%".into()) });
         assert_eq!(battery_of(100, false).symbol, Symbol::BatteryFull);
         assert_eq!(battery_of(5, false).symbol, Symbol::BatteryEmpty);
         assert_eq!(battery_of(40, true).symbol, Symbol::BatteryCharging);
+        assert_eq!(battery(&Battery { percent: 85, charging: false, on_battery: true, minutes_left: None }, false).text, None);
 
         let sound = |volume, muted| Sound { output: Device { name: String::new(), volume, muted }, input: None, outputs: Vec::new(), streams: Vec::new() };
         assert_eq!(volume(&sound(89, false)), Symbol::SpeakerHigh);

@@ -48,6 +48,7 @@ pub struct Config {
     pub menu_bar: MenuBar,
     pub dock: Dock,
     pub idle: Idle,
+    pub battery: Battery,
     pub sound: Sound,
     pub privacy: Privacy,
     pub weather: Weather,
@@ -518,6 +519,7 @@ impl Default for Config {
             menu_bar: MenuBar::default(),
             dock: Dock::default(),
             idle: Idle::default(),
+            battery: Battery::default(),
             sound: Sound::default(),
             privacy: Privacy::default(),
             weather: Weather::default(),
@@ -931,12 +933,32 @@ impl Default for Sound {
     }
 }
 
+/// Battery (E8.2).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Battery {
+    /// The percentage beside the menu bar's battery symbol.
+    pub show_percentage: bool,
+    /// Unplugging lowers the brightness a step (`idle::battery_dim`); plugging in gives it back.
+    pub dim_on_battery: bool,
+}
+
+impl Default for Battery {
+    fn default() -> Self {
+        Self { show_percentage: true, dim_on_battery: true }
+    }
+}
+
 /// Idle and sleep (E6.5): seconds without input before each step; 0 = never.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Idle {
     pub dim: u32,
+    /// The screen turns off: on the power adapter, and on battery.
     pub screen_off: u32,
+    pub screen_off_on_battery: u32,
+    /// The keyboard backlight goes off (back on at the next input); at the latest when the screen dims.
+    pub keyboard_backlight_off: u32,
     pub sleep_on_battery: u32,
     pub sleep_on_ac: u32,
     /// Lock when the screen turns off.
@@ -949,7 +971,17 @@ pub struct Idle {
 
 impl Default for Idle {
     fn default() -> Self {
-        Self { dim: 120, screen_off: 300, sleep_on_battery: 900, sleep_on_ac: 0, lock: true, lock_delay: 0, lock_message: String::new() }
+        Self {
+            dim: 120,
+            screen_off: 300,
+            keyboard_backlight_off: 30,
+            screen_off_on_battery: 180,
+            sleep_on_battery: 900,
+            sleep_on_ac: 0,
+            lock: true,
+            lock_delay: 0,
+            lock_message: String::new(),
+        }
     }
 }
 

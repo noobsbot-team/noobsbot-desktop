@@ -473,7 +473,14 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Notifications, "Weather", "weather.city", "City", "Looked up once; never located by IP", Kind::Text("Kathmandu")),
     s(Page::Notifications, "Weather", "weather.units", "Units", "", Kind::Choice(&[("celsius", "°C"), ("fahrenheit", "°F")])),
     s(Page::LockScreen, "", "idle.dim", "Dim the display when inactive", "", Kind::Slider { min: 0.0, max: 600.0, step: 30.0 }),
-    s(Page::LockScreen, "", "idle.screen_off", "Turn display off when inactive", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
+    s(
+        Page::LockScreen,
+        "",
+        "idle.screen_off",
+        "Turn display off when inactive",
+        "On the power adapter; on battery see Battery",
+        Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 },
+    ),
     s(Page::LockScreen, "", "idle.lock", "Lock when the display turns off", "It always locks before sleeping", Kind::Toggle),
     s(
         Page::LockScreen,
@@ -484,6 +491,17 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Steps(&[(0, "Immediately"), (5, "5 s"), (60, "1 min"), (300, "5 min"), (3600, "1 h")]),
     ),
     s(Page::LockScreen, "", "idle.lock_message", "Message on the lock screen", "Shown under the clock", Kind::Text("If found, please call …")),
+    s(Page::Battery, "", "battery.show_percentage", "Show percentage", "Beside the battery in the menu bar", Kind::Toggle),
+    s(Page::Battery, "Display", "battery.dim_on_battery", "Slightly dim the display on battery", "Brighter again when plugged in", Kind::Toggle),
+    s(Page::Battery, "Display", "idle.screen_off_on_battery", "On battery, turn display off after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
+    s(
+        Page::Battery,
+        "Keyboard backlight",
+        "idle.keyboard_backlight_off",
+        "Turn off after inactivity",
+        "Back on at the next key or move",
+        Kind::Slider { min: 0.0, max: 300.0, step: 5.0 },
+    ),
     s(Page::Battery, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
@@ -526,7 +544,7 @@ fn shown(key: &str, value: f64) -> String {
         "dock.icon_size" | "appearance.pointer_size" => format!("{value:.0} px"),
         "appearance.text_scale" => format!("{:.0}%", value * 100.0),
         "windows.spaces" if whole(key, value) == 0 => "Dynamic".into(),
-        "sound.output" | "sound.input" => format!("{value:.0}%"),
+        "sound.output" | "sound.input" | "keyboard.backlight" => format!("{value:.0}%"),
         "sound.balance" if value.abs() < 0.5 => "Centre".into(),
         "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
@@ -1010,7 +1028,12 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                 }
                 None => fact(t, "Power mode", "Needs power-profiles-daemon".into()),
             };
-            vec![group(t, "", rows), group(t, "", vec![mode])]
+            let mut parts = vec![group(t, "", rows), group(t, "", vec![mode])];
+            if let Some(level) = status.kbd_backlight {
+                let value = app.drafts.get("keyboard.backlight").copied().unwrap_or(f64::from(level));
+                parts.push(group(t, "", vec![line(t, "Keyboard brightness", "", slider_row(t, "keyboard.backlight", 0.0..=100.0, 1.0, value))]));
+            }
+            parts
         }
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
         Page::Appearance => vec![gallery(app)],
