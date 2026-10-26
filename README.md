@@ -260,6 +260,7 @@ settings file.
 | Super+` | next window of the same app |
 | Super+Shift+3 / 4 / 5 | screenshot: screen / region / toolbar |
 | Super+Ctrl+Q | lock screen |
+| Super+Alt+8, Super+Alt+= / - | Zoom on or off, in, out |
 | Super+Alt+Esc | Force Quit |
 | Super+Ctrl+Space | next keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
