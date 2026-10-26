@@ -325,7 +325,19 @@ impl State {
         match &self.alert {
             Some(shown) => {
                 let size = self.space.output_geometry(output).map_or_else(Default::default, |g| g.size);
-                bar.extend(sheet.elements(renderer, shaders, &mut self.text, &mut self.symbols, shown, size, dark, accent, appearance.glass_opacity, scale));
+                bar.extend(sheet.elements(
+                    renderer,
+                    shaders,
+                    &mut self.text,
+                    &mut self.symbols,
+                    shown,
+                    size,
+                    dark,
+                    accent,
+                    appearance.glass_opacity,
+                    scale,
+                    self.config.windows.reopen_at_login,
+                ));
             }
             None => sheet.hide(),
         }

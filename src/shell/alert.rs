@@ -179,6 +179,8 @@ impl Alert {
 pub enum Button {
     Cancel,
     Confirm,
+    /// A power alert's "Reopen windows when logging back in" row: toggles it.
+    Reopen,
 }
 
 impl State {
@@ -311,6 +313,9 @@ impl State {
     /// Cancel (Esc) or the default button (Return, or the countdown running out).
     pub fn alert_answer(&mut self, button: Button) {
         let Some(alert) = self.alert.clone() else { return };
+        if button == Button::Reopen {
+            return self.toggle_reopen();
+        }
         if let Kind::Polkit { auth, user, field, checking, .. } = &alert.kind {
             if button == Button::Confirm {
                 if !*checking && !field.text.is_empty() {
@@ -337,7 +342,10 @@ impl State {
                 return;
             }
             Kind::Power(_) if button == Button::Cancel => return,
-            Kind::Power(power) => power,
+            Kind::Power(power) => {
+                self.session_save(self.config.windows.reopen_at_login);
+                power
+            }
             Kind::NotResponding { .. } if button == Button::Cancel => return,
             Kind::NotResponding { pid, client, .. } => return self.kill(pid, client),
             Kind::Pin { field, .. } => return self.services.send(Command::PinEntry((button == Button::Confirm).then_some(field.text))),
@@ -350,6 +358,19 @@ impl State {
             Kind::Polkit { .. } => return,
         };
         self.power_now(power);
+    }
+
+    /// The checkbox: remembered in `[windows] reopen_at_login`.
+    fn toggle_reopen(&mut self) {
+        let on = !self.config.windows.reopen_at_login;
+        self.config.windows.reopen_at_login = on;
+        let path = crate::config::path();
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        if let Err(err) = crate::config::save_atomic(&path, &crate::config::set_key(&text, "windows", "reopen_at_login", &on.to_string())) {
+            tracing::warn!("{}: {err}", path.display());
+        }
+        self.schedule_redraw();
     }
 
     /// Restart, shut down or log out without asking (the alert asked, or the lock screen's buttons).
