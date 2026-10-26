@@ -1618,7 +1618,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 | Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow | `src/gestures.rs` | drive the transitions from the gesture progress |
 | ~~Logo menu "System Settings…" and "About This Computer" rows are disabled~~ | `src/shell/mod.rs` | Done: open Settings at Appearance / About |
 | ~~Do Not Disturb is lost on restart~~ | `src/shell/control.rs` | Done: saved as `[notifications] dnd` |
-| Menu bar, dock, Spaces, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
+| Menu bar clicks, dock, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
 | ~~`show-desktop` has no default key~~ | `data/config.toml` | Done: Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
@@ -1717,7 +1717,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
-  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space. Built: edge drag, reorder by dragging a Space in the bar, keyboard navigation, every-Space view; every display still in progress.
+  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space. Done: each display has its own Spaces (`[spaces] per_display`), keys and swipes act on the display under the pointer, Mission Control on every display. Left: dragging a window onto another display's Spaces bar.
 - ~~Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
   ⚠ on conflicts (today the first match wins silently).~~ Done: Settings ▸ Keyboard ▸ Keyboard Shortcuts…
   (`settings/src/shortcuts.rs`); recording asks the desktop to pass every key through; conflicts are also logged.
