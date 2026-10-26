@@ -246,7 +246,9 @@ assign = {}
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.
 # Videos and calls (apps holding idle-inhibit) keep all of it away.
 dim = 120
+# The screen turns off after screen_off on the power adapter, after screen_off_on_battery on battery.
 screen_off = 300
+screen_off_on_battery = 180
 sleep_on_battery = 900
 sleep_on_ac = 0
 # Lock the screen when it turns off. It always locks before sleeping.

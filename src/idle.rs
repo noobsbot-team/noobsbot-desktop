@@ -70,10 +70,10 @@ impl Idle {
 
 /// The step after `stage` and how long until it is due after `idle` without input; `None`: nothing more to do.
 pub fn next(config: &config::Idle, on_battery: bool, stage: Stage, idle: Duration) -> Option<(Stage, Duration)> {
-    let sleep = if on_battery { config.sleep_on_battery } else { config.sleep_on_ac };
-    let lock = if config.lock && config.screen_off > 0 { config.screen_off.saturating_add(config.lock_delay) } else { 0 };
+    let (off, sleep) = if on_battery { (config.screen_off_on_battery, config.sleep_on_battery) } else { (config.screen_off, config.sleep_on_ac) };
+    let lock = if config.lock && off > 0 { off.saturating_add(config.lock_delay) } else { 0 };
     // On a tie the earlier stage comes first (`min_by_key` keeps the first), so Off still precedes Locked.
-    [(Stage::Dim, config.dim), (Stage::Off, config.screen_off), (Stage::Locked, lock), (Stage::Asleep, sleep)]
+    [(Stage::Dim, config.dim), (Stage::Off, off), (Stage::Locked, lock), (Stage::Asleep, sleep)]
         .into_iter()
         .filter(|&(s, secs)| s > stage && secs > 0)
         .min_by_key(|&(_, secs)| secs)
@@ -179,7 +179,8 @@ impl State {
         }
     }
 
-    /// UPower's new battery state; warns once on the way down through 20% and 10%.
+    /// UPower's new battery state; warns once on the way down through 20% and 10%, re-times idleness on a change of power
+    /// source.
     pub fn battery_changed(&mut self, battery: Option<Battery>) {
         if let Some(level) = low_battery(self.battery.as_ref(), battery.as_ref()) {
             self.notify(Notification {
@@ -195,7 +196,12 @@ impl State {
                 ..Default::default()
             });
         }
+        let replugged = self.battery.map(|b| b.on_battery) != battery.map(|b| b.on_battery);
         self.battery = battery;
+        if replugged {
+            // The display-off and sleep times differ by power source.
+            self.idle_arm();
+        }
     }
 }
 
@@ -237,7 +243,7 @@ mod tests {
 
     #[test]
     fn steps_in_order_and_on_time() {
-        let c = config::Idle::default();
+        let c = config::Idle { screen_off_on_battery: 300, ..Default::default() };
         assert_eq!(next(&c, true, Stage::Active, secs(0)), Some((Stage::Dim, secs(120))));
         assert_eq!(next(&c, true, Stage::Active, secs(150)), Some((Stage::Dim, Duration::ZERO)));
         assert_eq!(next(&c, true, Stage::Dim, secs(150)), Some((Stage::Off, secs(150))));
@@ -252,8 +258,17 @@ mod tests {
     fn zero_is_never_and_order_follows_the_times() {
         let c = config::Idle { dim: 0, screen_off: 60, sleep_on_battery: 30, ..Default::default() };
         assert_eq!(next(&c, true, Stage::Active, secs(0)), Some((Stage::Asleep, secs(30))), "sleep first when it comes first");
-        let off = config::Idle { dim: 0, screen_off: 0, sleep_on_battery: 0, sleep_on_ac: 0, lock: true, ..Default::default() };
+        let off = config::Idle { dim: 0, screen_off: 0, screen_off_on_battery: 0, sleep_on_battery: 0, sleep_on_ac: 0, lock: true, ..Default::default() };
         assert_eq!(next(&off, true, Stage::Active, secs(0)), None);
+    }
+
+    #[test]
+    fn display_off_follows_the_power_source() {
+        let c = config::Idle { screen_off: 600, screen_off_on_battery: 180, ..Default::default() };
+        assert_eq!(next(&c, true, Stage::Dim, secs(120)), Some((Stage::Off, secs(60))));
+        assert_eq!(next(&c, false, Stage::Dim, secs(120)), Some((Stage::Off, secs(480))));
+        let never = config::Idle { screen_off_on_battery: 0, lock: true, sleep_on_battery: 0, ..c };
+        assert_eq!(next(&never, true, Stage::Dim, secs(120)), None, "0: never off, nor locked with it");
     }
 
     #[test]
