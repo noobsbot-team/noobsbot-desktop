@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use smithay::{
     desktop::Window,
-    input::keyboard::Keysym,
+    input::keyboard::{Keysym, ModifiersState},
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
 };
 
@@ -130,6 +130,32 @@ pub fn grid(frames: &[Rect], area: Rect, gap: i32) -> Vec<Rect> {
         y += height + gap;
     }
     out
+}
+
+/// The rect nearest `from` in direction `dir` (a unit step such as `(1, 0)`): its centre must lie that way; distance
+/// along `dir` counts once, sideways twice, so the next in the same row or column wins over a diagonal.
+pub fn nearest(rects: &[Rect], from: usize, dir: (i32, i32)) -> Option<usize> {
+    let centre = |r: &Rect| (r.loc.x * 2 + r.size.w, r.loc.y * 2 + r.size.h);
+    let (fx, fy) = centre(rects.get(from)?);
+    rects
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != from)
+        .filter_map(|(i, r)| {
+            let (dx, dy) = (centre(r).0 - fx, centre(r).1 - fy);
+            let along = dx * dir.0 + dy * dir.1;
+            let side = (dx * dir.1 - dy * dir.0).abs();
+            (along > 0).then_some((along + 2 * side, i))
+        })
+        .min()
+        .map(|(_, i)| i)
+}
+
+/// Reading order of `rects` (top to bottom, then left to right) for Tab.
+fn reading_order(rects: &[Rect]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..rects.len()).collect();
+    order.sort_by_key(|&i| (rects[i].loc.y, rects[i].loc.x));
+    order
 }
 
 /// `a` → `b` at `t`.
@@ -362,14 +388,52 @@ impl State {
         }
     }
 
-    /// Esc closes Mission Control; Return opens the hovered window. `true`: the key was taken.
-    pub fn mission_key(&mut self, key: Keysym) -> bool {
+    /// Esc closes Mission Control; arrows and Tab move the highlight (the hover ring), Return or Space opens it,
+    /// Delete or Super+W closes it; Ctrl+← / → show the next Space. `true`: the key was taken.
+    pub fn mission_key(&mut self, key: Keysym, mods: &ModifiersState) -> bool {
         if !self.mission_open() {
             return false;
         }
+        let dir = match key {
+            Keysym::Left => Some((-1, 0)),
+            Keysym::Right => Some((1, 0)),
+            Keysym::Up => Some((0, -1)),
+            Keysym::Down => Some((0, 1)),
+            _ => None,
+        };
         match key {
             Keysym::Escape => self.close_mission(),
-            Keysym::Return | Keysym::KP_Enter => {
+            Keysym::Left | Keysym::Right if mods.ctrl => {
+                if let Some(m) = self.mission.as_mut() {
+                    m.hover = None;
+                }
+                self.switch_space(if key == Keysym::Left { -1 } else { 1 });
+            }
+            _ if mods.ctrl || mods.alt || (mods.logo && key != Keysym::w) => return false,
+            Keysym::w | Keysym::Delete => {
+                let Some(window) = self.mission.as_ref().and_then(|m| m.hover.clone()) else { return key == Keysym::Delete };
+                self.close_window(&window);
+            }
+            Keysym::Tab | Keysym::ISO_Left_Tab => self.mission_step(|targets, at| {
+                let order = reading_order(targets);
+                let n = order.len();
+                let pos = at.and_then(|a| order.iter().position(|i| *i == a));
+                let next = match (pos, key == Keysym::Tab) {
+                    (None, true) => 0,
+                    (None, false) => n - 1,
+                    (Some(p), true) => (p + 1) % n,
+                    (Some(p), false) => (p + n - 1) % n,
+                };
+                Some(order[next])
+            }),
+            _ if dir.is_some() => {
+                let dir = dir.unwrap_or_default();
+                self.mission_step(|targets, at| match at {
+                    Some(at) => nearest(targets, at, dir).or(Some(at)),
+                    None => reading_order(targets).first().copied(),
+                });
+            }
+            Keysym::Return | Keysym::KP_Enter | Keysym::space => {
                 let hovered = self.mission.as_ref().and_then(|m| m.hover.clone());
                 if let Some(window) = hovered {
                     self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
@@ -379,6 +443,15 @@ impl State {
             _ => return false,
         }
         true
+    }
+
+    /// Moves the highlight: `pick` gets the grid's rects and the highlighted one's index.
+    fn mission_step(&mut self, pick: impl Fn(&[Rect], Option<usize>) -> Option<usize>) {
+        let Some(layout) = self.mission_layout().filter(|l| !l.windows.is_empty()) else { return };
+        let Some(m) = self.mission.as_mut() else { return };
+        let at = m.hover.as_ref().and_then(|h| layout.windows.iter().position(|w| w == h));
+        m.hover = pick(&layout.targets, at).and_then(|i| layout.windows.get(i).cloned());
+        self.schedule_redraw();
     }
 }
 
@@ -465,6 +538,23 @@ mod tests {
             }
         }
         assert_eq!(bar(Size::from((1280, 800)), 3, true, true).cells[0].size, Size::from((153, THUMB_H)), "roomy bars are unchanged");
+    }
+
+    #[test]
+    fn nearest_goes_the_way_asked() {
+        // 0 1 2
+        //  3 4
+        let r = [rect(0, 0, 100, 100), rect(200, 0, 100, 100), rect(400, 0, 100, 100), rect(100, 200, 100, 100), rect(300, 200, 100, 100)];
+        assert_eq!(nearest(&r, 0, (1, 0)), Some(1));
+        assert_eq!(nearest(&r, 1, (1, 0)), Some(2));
+        assert_eq!(nearest(&r, 2, (1, 0)), None, "nothing further right");
+        assert_eq!(nearest(&r, 0, (-1, 0)), None);
+        assert_eq!(nearest(&r, 0, (0, 1)), Some(3));
+        assert_eq!(nearest(&r, 2, (0, 1)), Some(4));
+        assert_eq!(nearest(&r, 4, (0, -1)), Some(1), "a tie goes to the first");
+        assert_eq!(nearest(&r, 3, (1, 0)), Some(4), "same row beats a diagonal");
+        assert_eq!(nearest(&r, 9, (1, 0)), None);
+        assert_eq!(reading_order(&r), vec![0, 1, 2, 3, 4]);
     }
 
     #[test]

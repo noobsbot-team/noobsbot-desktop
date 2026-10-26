@@ -252,7 +252,7 @@ impl State {
         if (self.screenshots.shot.is_some() && unbound && self.shot_key(sym))
             || self.switcher_key(raw, mods)
             || self.force_quit_key(sym)
-            || self.mission_key(sym)
+            || self.mission_key(sym, mods)
             || self.spotlight_key(sym, raw, mods)
             || self.emoji_key(sym, raw, mods)
             || self.menu_key(sym)
