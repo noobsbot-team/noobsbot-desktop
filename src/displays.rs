@@ -10,7 +10,7 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::protocol::wl_surface::WlSurface,
     },
-    utils::{Logical, Physical, Rectangle, Size, Transform},
+    utils::{Logical, Physical, Point, Rectangle, Size, Transform},
     wayland::{
         compositor::{SurfaceData, send_surface_state},
         fractional_scale::with_fractional_scale,
@@ -466,7 +466,21 @@ pub fn stranded(frame: Rectangle<i32, Logical>, screens: &[Rectangle<i32, Logica
     seen * 2 < area(frame)
 }
 
+/// The display (index into `screens`, the main one first) holding `wanted` (a text field's caret, a focused window),
+/// else the one under `pointer`, else the main one.
+pub fn display_for(screens: &[Rectangle<i32, Logical>], wanted: Option<Point<i32, Logical>>, pointer: Point<f64, Logical>) -> usize {
+    wanted.and_then(|p| screens.iter().position(|s| s.contains(p))).or_else(|| screens.iter().position(|s| s.to_f64().contains(pointer))).unwrap_or(0)
+}
+
 impl State {
+    /// `display_for` among the displays: the one holding `wanted`, else the pointer's, else the main one.
+    pub fn display_with(&self, wanted: Option<Point<i32, Logical>>) -> Option<Output> {
+        let outputs: Vec<Output> = self.space.outputs().cloned().collect();
+        let screens: Vec<Rectangle<i32, Logical>> = outputs.iter().map(|o| self.space.output_geometry(o).unwrap_or_default()).collect();
+        let pointer = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default();
+        outputs.get(display_for(&screens, wanted, pointer)).cloned()
+    }
+
     /// Displays ▸ Identify: each display's name in its middle for `SHOWN_FOR` (again from the start if asked again).
     pub fn identify_displays(&mut self) {
         if let Some(token) = self.identify.take() {
@@ -548,6 +562,16 @@ mod tests {
 
     fn output(name: &str) -> OutputSettings {
         OutputSettings { name: name.into(), ..Default::default() }
+    }
+
+    #[test]
+    fn the_keyboard_and_alerts_pick_their_display() {
+        let screens = [Rectangle::new((0, 0).into(), (1920, 1080).into()), Rectangle::new((1920, 0).into(), (2560, 1440).into())];
+        // The focused text field's (or window's) display, else the pointer's.
+        assert_eq!(display_for(&screens, Some((2000, 300).into()), (10.0, 10.0).into()), 1);
+        assert_eq!(display_for(&screens, None, (3000.0, 1200.0).into()), 1);
+        assert_eq!(display_for(&screens, Some((9000, 0).into()), (10.0, 10.0).into()), 0, "a caret off every display");
+        assert_eq!(display_for(&[], None, (0.0, 0.0).into()), 0);
     }
 
     #[test]

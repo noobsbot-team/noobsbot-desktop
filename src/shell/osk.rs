@@ -7,6 +7,7 @@
 use smithay::{
     backend::input::KeyState,
     input::keyboard::{Keycode, xkb},
+    output::Output,
     utils::{Logical, Point, Rectangle, Size},
 };
 
@@ -199,9 +200,17 @@ impl State {
         self.osk.latched.iter().chain(&self.osk.pressed).copied().collect()
     }
 
-    /// The panel on the shell's output, when shown.
+    /// The display the keyboard shows on: the focused text field's, else the pointer's.
+    pub fn osk_output(&self) -> Option<Output> {
+        self.display_with(self.text_cursor().map(|r| r.loc))
+    }
+
+    /// The panel when shown, first-output-relative (as the shell gets the pointer).
     pub fn osk_panel(&self) -> Option<Rect> {
-        (self.osk_shown() || self.osk.viewer).then(|| self.space.outputs().next().and_then(|o| self.space.output_geometry(o))).flatten().map(|g| panel(g.size))
+        let geo = self.space.output_geometry(&self.osk_output().filter(|_| self.osk_shown() || self.osk.viewer)?)?;
+        let first = self.space.output_geometry(self.space.outputs().next()?)?.loc;
+        let p = panel(geo.size);
+        Some(Rect::new(p.loc + geo.loc - first, p.size))
     }
 
     /// Each key's label in the active layout (`labels`), Shift's while Shift is latched or held.
@@ -215,12 +224,13 @@ impl State {
         })
     }
 
-    /// A press at `location` (output-relative): a key types (a modifier latches or lets go). `true`: on the panel.
+    /// A press at `location` (first-output-relative): a key types (a modifier latches or lets go). `true`: on the
+    /// panel.
     pub fn osk_press(&mut self, location: Point<f64, Logical>) -> bool {
-        let Some(output) = self.osk_panel().and_then(|_| self.space.outputs().next().and_then(|o| self.space.output_geometry(o))) else { return false };
-        if !panel(output.size).to_f64().contains(location) {
-            return false;
-        }
+        let Some(at) = self.osk_panel().filter(|r| r.to_f64().contains(location)) else { return false };
+        let Some(output) = self.osk_output().and_then(|o| self.space.output_geometry(&o)) else { return false };
+        // Relative to the keyboard's display.
+        let location = location - at.loc.to_f64() + panel(output.size).loc.to_f64();
         // The viewer only shows.
         let Some((code, ..)) = hit(output.size, location).and_then(|i| keys().nth(i)).filter(|_| self.osk_shown()) else { return true };
         if is_modifier(code) {
