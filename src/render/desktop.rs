@@ -86,15 +86,15 @@ impl DesktopView {
                     names.push((piece, Rectangle::new((x, y).into(), (w, LABEL_LINE).into()), false));
                 }
                 None => {
-                    let piece = text.centred(&entry.name, NAME, LABEL_W as u32, 2, scale);
+                    let piece = text.centred(entry.shown(), NAME, LABEL_W as u32, 2, scale);
                     let at = Rectangle::new(label.loc, (LABEL_W, logical(piece.height)).into());
                     if selected {
                         // Tight around a one-line name, the label's width for two.
-                        let w = logical(text.label(&entry.name, NAME, LABEL_W as u32, scale).width).min(LABEL_W) + 8;
+                        let w = logical(text.label(entry.shown(), NAME, LABEL_W as u32, scale).width).min(LABEL_W) + 8;
                         let pill = Rectangle::new((label.loc.x + (LABEL_W - w) / 2, label.loc.y - 1).into(), (w, logical(piece.height) + 2).into());
                         shapes.push((pill, [ar, ag, ab, 255], 4));
                     } else {
-                        let shadow = text.centred(&entry.name, Style { color: SHADOW, ..NAME }, LABEL_W as u32, 2, scale);
+                        let shadow = text.centred(entry.shown(), Style { color: SHADOW, ..NAME }, LABEL_W as u32, 2, scale);
                         shadows.push((shadow, Rectangle::new(at.loc + Point::from((0, 1)), at.size), false));
                     }
                     names.push((piece, at, false));

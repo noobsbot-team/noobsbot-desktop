@@ -1,6 +1,7 @@
 //! Desktop icons (E7.2, L12): the files in the Desktop folder on the wallpaper. A grid from the top right
 //! down each column, then leftwards; click selects, double-click opens (xdg-open), drag rearranges (saved), right-click
 //! menu: Open, Rename, Move to Trash (`gio trash`), New Folder. The folder is watched with inotify, so idle costs nothing.
+//! Mounted drives (E8.8) sit first, at the top right: double-click opens one in the file manager, its menu has Eject.
 
 use std::{
     collections::HashMap,
@@ -41,12 +42,26 @@ const FOLDER: &str = "folder";
 /// Drawn when the theme has no icon for a file's type.
 pub const FALLBACK_ICON: &str = "text-x-generic";
 
-/// A file on the desktop.
+/// A file on the desktop, or a mounted drive.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
+    /// The file name; a drive's mount point, which no file name can be (see `is_drive`).
     pub name: String,
     /// An icon-theme name (or path) for `apps::Icons`.
     pub icon: String,
+    /// A drive's label, shown instead of `name`.
+    pub label: Option<String>,
+}
+
+impl Entry {
+    pub fn shown(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.name)
+    }
+}
+
+/// A drive's key: file names never hold a '/'.
+fn is_drive(name: &str) -> bool {
+    name.starts_with('/')
 }
 
 /// A grid cell: column from the right edge, row from the top.
@@ -59,6 +74,8 @@ pub enum Command {
     Rename,
     Trash,
     NewFolder,
+    /// A drive's: unmount and power off.
+    Eject,
 }
 
 /// An icon being pressed or dragged.
@@ -267,7 +284,7 @@ fn scan(dir: &Path, mime: &Mime, found: &mut HashMap<String, bool>) -> Vec<Entry
             }
             let icon =
                 if e.path().is_dir() { FOLDER.to_owned() } else { mime.icons(&name).into_iter().find(|i| has(i)).unwrap_or_else(|| FALLBACK_ICON.into()) };
-            Some(Entry { name, icon })
+            Some(Entry { name, icon, label: None })
         })
         .collect();
     entries.sort_by_key(|e| e.name.to_lowercase());
@@ -360,14 +377,14 @@ impl State {
     fn desktop_update(&mut self, entries: Vec<Entry>) {
         // Icons on screen keep their cells; new files take free ones instead of reflowing the rest.
         if let Some((_, cells)) = self.desktop_cells() {
-            for (e, cell) in self.desktop.entries.iter().zip(cells) {
-                self.desktop.saved.entry(e.name.clone()).or_insert(cell);
+            for (e, cell) in self.desktop_icons().into_iter().zip(cells).filter(|(e, _)| !is_drive(&e.name)) {
+                self.desktop.saved.entry(e.name).or_insert(cell);
             }
         }
         let d = &mut self.desktop;
         d.entries = entries;
         let has = |name: &Option<String>, entries: &[Entry]| name.as_ref().is_none_or(|n| entries.iter().any(|e| e.name == *n));
-        if !has(&d.selected, &d.entries) {
+        if !d.selected.as_deref().is_some_and(is_drive) && !has(&d.selected, &d.entries) {
             d.selected = None;
         }
         if !has(&d.renaming.as_ref().map(|(n, _)| n.clone()), &d.entries) {
@@ -386,11 +403,23 @@ impl State {
         Some(Grid::new(size, i32::from(self.config.dock.icon_size) + 24))
     }
 
-    /// Every icon's cell, in `entries` order.
+    /// The mounted drives (with `show_drives`), then the files.
+    fn desktop_icons(&self) -> Vec<Entry> {
+        let drives = self.disks.mounted().filter(|_| self.config.desktop.show_drives).map(|v| Entry {
+            name: v.mounts[0].clone(),
+            icon: if v.auto { "drive-removable-media" } else { "drive-harddisk" }.into(),
+            label: Some(v.name.clone()),
+        });
+        drives.chain(self.desktop.entries.iter().cloned()).collect()
+    }
+
+    /// Every icon's cell, in `desktop_icons` order.
     fn desktop_cells(&self) -> Option<(Grid, Vec<Cell>)> {
         let grid = self.desktop_grid()?;
-        let names: Vec<&str> = self.desktop.entries.iter().map(|e| e.name.as_str()).collect();
-        Some((grid, place(0, &names, &self.desktop.saved, &grid)))
+        let icons = self.desktop_icons();
+        let names: Vec<&str> = icons.iter().map(|e| e.name.as_str()).collect();
+        let drives = names.iter().take_while(|n| is_drive(n)).count();
+        Some((grid, place(drives, &names, &self.desktop.saved, &grid)))
     }
 
     /// The icon (index) whose picture or name is under `p`, output-relative.
@@ -404,13 +433,13 @@ impl State {
 
     /// This frame's icons, or `None` when they are off.
     pub fn desktop_frame(&self) -> Option<Frame> {
-        if !self.desktop_shown() || self.desktop.entries.is_empty() {
+        let entries = self.desktop_icons();
+        if !self.desktop_shown() || entries.is_empty() {
             return None;
         }
         let (grid, cells) = self.desktop_cells()?;
         let d = &self.desktop;
-        let icons = d
-            .entries
+        let icons = entries
             .iter()
             .zip(cells)
             .map(|(e, c)| {
@@ -422,14 +451,14 @@ impl State {
                 (e.clone(), rect)
             })
             .collect();
-        let index = |name: &str| d.entries.iter().position(|e| e.name == name);
+        let index = |name: &str| entries.iter().position(|e| e.name == name);
         Some(Frame { icons, selected: d.selected.as_deref().and_then(index), renaming: d.renaming.as_ref().and_then(|(n, f)| Some((index(n)?, f.clone()))) })
     }
 
     /// Any press (output-relative): one outside the name being edited finishes the rename.
     pub fn desktop_blur(&mut self, location: Point<f64, Logical>) {
         let Some((name, _)) = &self.desktop.renaming else { return };
-        let on_it = self.desktop.entries.iter().position(|e| e.name == *name).is_some_and(|i| self.desktop_hit(location) == Some(i));
+        let on_it = self.desktop_icons().iter().position(|e| e.name == *name).is_some_and(|i| self.desktop_hit(location) == Some(i));
         if !on_it {
             self.desktop_rename_commit();
         }
@@ -453,7 +482,7 @@ impl State {
         if !self.desktop_shown() {
             return;
         }
-        let hit = self.desktop_hit(location).map(|i| self.desktop.entries[i].name.clone());
+        let hit = self.desktop_hit(location).map(|i| self.desktop_icons().swap_remove(i).name);
         let d = &mut self.desktop;
         d.selected = hit.clone();
         match (button, hit) {
@@ -465,7 +494,8 @@ impl State {
                     self.desktop_open(&name);
                 } else {
                     d.last_click = Some((name.clone(), now));
-                    d.drag = Some(Drag { name, start: location, at: location, moved: false });
+                    // Drives stay at the top right.
+                    d.drag = (!is_drive(&name)).then_some(Drag { name, start: location, at: location, moved: false });
                 }
             }
             (crate::input::BTN_RIGHT, name) => {
@@ -492,14 +522,18 @@ impl State {
     pub fn desktop_release(&mut self) {
         let Some(drag) = self.desktop.drag.take().filter(|d| d.moved) else { return };
         let Some((grid, cells)) = self.desktop_cells() else { return };
-        let names: Vec<String> = self.desktop.entries.iter().map(|e| e.name.clone()).collect();
+        let names: Vec<String> = self.desktop_icons().into_iter().map(|e| e.name).collect();
         let Some(from) = names.iter().position(|n| *n == drag.name) else { return };
         let centre = grid.rect(cells[from]).to_f64();
         let centre = centre.loc + centre.size.downscale(2.0).to_point() + (drag.at - drag.start);
         let target = grid.at(centre);
+        let other = cells.iter().position(|c| *c == target);
+        if other.is_some_and(|i| is_drive(&names[i])) {
+            return self.schedule_redraw();
+        }
         // Every icon keeps the cell it shows in now, so the rest stay put as files come and go.
-        self.desktop.saved = names.iter().cloned().zip(cells.iter().copied()).collect();
-        if let Some(other) = cells.iter().position(|c| *c == target) {
+        self.desktop.saved = names.iter().cloned().zip(cells.iter().copied()).filter(|(n, _)| !is_drive(n)).collect();
+        if let Some(other) = other {
             self.desktop.saved.insert(names[other].clone(), cells[from]);
         }
         self.desktop.saved.insert(drag.name, target);
@@ -530,7 +564,7 @@ impl State {
         }
         let unfocused = self.seat.get_keyboard().is_some_and(|k| k.current_focus().is_none());
         match (&self.desktop.selected, sym) {
-            (Some(name), Keysym::Return | Keysym::KP_Enter) if unfocused && self.desktop_shown() => {
+            (Some(name), Keysym::Return | Keysym::KP_Enter) if unfocused && self.desktop_shown() && !is_drive(name) => {
                 let name = name.clone();
                 self.desktop_rename(name);
                 true
@@ -570,9 +604,11 @@ impl State {
         }
     }
 
+    /// A file with its app; a drive in the file manager (as its "connected" notification does).
     fn desktop_open(&mut self, name: &str) {
-        let path = self.desktop.dir.join(name).to_string_lossy().into_owned();
-        self.spawn(&["xdg-open".into(), path]);
+        let command =
+            if is_drive(name) { ["dolphin".into(), name.into()] } else { ["xdg-open".into(), self.desktop.dir.join(name).to_string_lossy().into_owned()] };
+        self.spawn(&command);
     }
 
     /// The right-click menu's rows: an icon's, or the desktop's.
@@ -581,6 +617,7 @@ impl State {
         let row =
             |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Desktop) });
         match &self.desktop.menu {
+            Some((Some(name), _)) if is_drive(name) => vec![row("Open", Some(Command::Open)), None, row("Eject", Some(Command::Eject))],
             Some((Some(_), _)) => {
                 vec![row("Open", Some(Command::Open)), None, row("Rename", Some(Command::Rename)), row("Move to Trash", Some(Command::Trash))]
             }
@@ -603,6 +640,12 @@ impl State {
         match (command, target) {
             (Command::Open, Some(name)) => self.desktop_open(&name),
             (Command::Rename, Some(name)) => self.desktop_rename(name),
+            (Command::Eject, Some(mount)) => {
+                let v = self.disks.mounted().find(|v| v.mounts[0] == mount).cloned();
+                if let Some(v) = v {
+                    self.eject(v);
+                }
+            }
             (Command::Trash, Some(name)) => {
                 self.spawn(&["gio".into(), "trash".into(), dir.join(&name).to_string_lossy().into_owned()]);
             }
@@ -620,7 +663,7 @@ impl State {
                     }
                 }
                 if !self.desktop.entries.iter().any(|e| e.name == name) {
-                    self.desktop.entries.push(Entry { name: name.clone(), icon: FOLDER.into() });
+                    self.desktop.entries.push(Entry { name: name.clone(), icon: FOLDER.into(), label: None });
                 }
                 self.desktop.selected = Some(name.clone());
                 self.desktop_rename(name);
