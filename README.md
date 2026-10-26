@@ -404,7 +404,8 @@ Versions follow [semantic versioning](https://semver.org); every release's chang
 | Settings | Noobsbot Desktop's own System Settings |
 
 Qt apps such as Dolphin and Kate get the matching "Noobsbot Glass" theme (Kvantum and a Qt colour scheme), made
-from the desktop's own colours by `noobsbot-desktop theme --write` (add `--gsettings` for GTK apps). Set
+from the desktop's own colours by `noobsbot-desktop theme --write`, which also puts the accent colour in GTK's
+`gtk.css` (add `--gsettings` for the GTK theme, fonts and overlay scrollbars). Set
 `theme_apps = true` in `[appearance]` to have the Dark Mode toggle rewrite it, so apps follow light and dark mode.
 
 ## Troubleshooting
