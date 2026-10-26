@@ -71,6 +71,8 @@ pub enum Action {
     Eject,
     /// A row of the open tray menu, by dbusmenu id.
     TrayMenu(i32),
+    /// A click on tray item `i` from the "»" menu.
+    TrayItem(usize),
     /// Opens or closes Notification Center (Super+N).
     NotificationCenter,
     /// Opens or closes Spotlight (Super+Space, E4.3).
@@ -411,6 +413,10 @@ impl State {
                 if let Some((service, menu, _)) = &self.tray_menu {
                     self.services.send(Command::TrayClicked { service: service.clone(), menu: menu.clone(), id });
                 }
+            }
+            Action::TrayItem(i) => {
+                let at = self.seat.get_pointer().map(|p| self.to_output(p.current_location())).unwrap_or_default();
+                self.tray_press(i, at, false);
             }
             Action::Power(power) => self.open_alert(power),
             Action::Switcher { back, held } => self.switcher_start(back, held),
