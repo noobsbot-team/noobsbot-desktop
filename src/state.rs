@@ -636,7 +636,7 @@ impl State {
         let status = [
             self.network.as_ref().map(|n| simple(menubar::wifi(n))),
             self.bluetooth.as_ref().map(|b| simple(menubar::bluetooth(b))),
-            self.battery.as_ref().map(menubar::battery),
+            self.battery.as_ref().map(|b| menubar::battery(b, self.config.battery.show_percentage)),
             self.sound.as_ref().map(|s| simple(menubar::volume(s))),
         ];
         let tray = self.tray.iter().map(|t| t.icon.clone()).collect();

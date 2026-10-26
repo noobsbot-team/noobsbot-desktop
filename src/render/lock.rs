@@ -312,7 +312,7 @@ fn status(ui: &mut Ui, rect: Rect, keyboard: &str, battery: Option<Battery>) {
         right = icon.loc.x - 16;
     };
     if let Some(b) = battery {
-        item(ui, crate::render::menubar::battery(&b).symbol, &format!("{}%", b.percent));
+        item(ui, crate::render::menubar::battery(&b, true).symbol, &format!("{}%", b.percent));
     }
     if !keyboard.is_empty() {
         item(ui, Symbol::Keyboard, keyboard);
