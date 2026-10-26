@@ -1,6 +1,6 @@
 //! App theme generator (E2.9): `noobsbot-desktop theme --write` turns the Part D tokens the shell draws with into a
 //! Kvantum theme, a Qt colour scheme and the kdeglobals keys (plus gsettings on request), so Qt and GTK apps
-//! match the desktop in light and dark. Files the owner also edits (kdeglobals, kvantum.kvconfig) are merged: only
+//! match the desktop in light and dark. Files the owner also edits (kdeglobals, kvantum.kvconfig, gtk.css) are merged: only
 //! our keys change, every other line stays byte-for-byte.
 
 use std::{
@@ -31,13 +31,36 @@ fn icons(dark: bool) -> &'static str {
 }
 
 /// `org.gnome.desktop.interface` keys and values for GTK apps.
-fn gsettings(dark: bool) -> [[&'static str; 2]; 4] {
+fn gsettings(dark: bool) -> [[&'static str; 2]; 6] {
     [
         ["color-scheme", if dark { "prefer-dark" } else { "default" }],
         ["gtk-theme", if dark { "WhiteSur-Dark" } else { "WhiteSur-Light" }],
         ["icon-theme", icons(dark)],
         ["font-name", "Inter 10"],
+        ["monospace-font-name", "JetBrains Mono 10"],
+        ["overlay-scrolling", "true"],
     ]
+}
+
+const CSS_BEGIN: &str = "/* noobsbot-desktop theme: begin */";
+const CSS_END: &str = "/* noobsbot-desktop theme: end */";
+
+/// GTK's accent colours (libadwaita's named colours, which GTK 3 themes read too) for `gtk.css`.
+fn gtk_css(accent: Accent, dark: bool) -> String {
+    let a = hex(render::accent(accent, dark));
+    format!("{CSS_BEGIN}\n@define-color accent_color {a};\n@define-color accent_bg_color {a};\n@define-color accent_fg_color #FFFFFF;\n{CSS_END}\n")
+}
+
+/// `text` with our block (between the markers) replaced, or appended; everything else stays byte-for-byte.
+fn css_merge(text: &str, ours: &str) -> String {
+    match text.find(CSS_BEGIN).zip(text.find(CSS_END)).filter(|(b, e)| b < e) {
+        Some((begin, end)) => {
+            let end = text[end + CSS_END.len()..].strip_prefix('\n').map_or(text.len(), |rest| text.len() - rest.len());
+            format!("{}{ours}{}", &text[..begin], &text[end..])
+        }
+        None if text.is_empty() || text.ends_with('\n') => format!("{text}{ours}"),
+        None => format!("{text}\n{ours}"),
+    }
 }
 
 /// The text size and pointer size keys of `org.gnome.desktop.interface` (E8.4).
@@ -144,6 +167,8 @@ fn kvantum(appearance: &Appearance, dark: bool) -> Groups {
                 ("reduce_menu_opacity", reduce(Material::Popover)),
                 ("blurring", "false".into()),
                 ("popup_blurring", "false".into()),
+                // Overlay scrollbars, as the desktop's own.
+                ("transient_scrollbar", "true".into()),
             ],
         ),
         (
@@ -325,6 +350,12 @@ pub fn write(appearance: &Appearance, config_home: &Path, data_home: &Path) -> i
     ours.extend(colour_groups(dark, appearance.accent));
     let (path, text) = read(&config_home.join("kdeglobals"))?;
     save(path, merge(&text, &ours, |g| g.starts_with("Colors:")))?;
+
+    let css = gtk_css(appearance.accent, dark);
+    for gtk in ["gtk-3.0", "gtk-4.0"] {
+        let (path, text) = read(&config_home.join(gtk).join("gtk.css"))?;
+        save(path, css_merge(&text, &css))?;
+    }
     Ok(written)
 }
 
@@ -509,9 +540,23 @@ mod tests {
         assert_eq!(get(&kdeglobals, "General", "TerminalApplication"), Some("noobsbot"));
         assert_eq!(get(&kdeglobals, "General", "ColorScheme"), Some("NoobsbotGlassDark"));
         assert_eq!(get(&kdeglobals, "Colors:Selection", "BackgroundNormal"), Some("48,209,88"));
+        let css = fs::read_to_string(config_home.join("gtk-4.0").join("gtk.css")).unwrap();
+        assert!(css.contains("@define-color accent_color #30D158;"));
         let selected = fs::read_to_string(config_home.join("Kvantum").join("kvantum.kvconfig")).unwrap();
         assert_eq!(get(&selected, "General", "theme"), Some("NoobsbotGlassDark"));
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn gtk_css_keeps_the_owners_rules() {
+        let ours = gtk_css(Accent::Green, true);
+        assert!(ours.contains("@define-color accent_bg_color #30D158;"));
+        let theirs = "window { margin: 0; }";
+        let merged = css_merge(theirs, &ours);
+        assert_eq!(merged, format!("{theirs}\n{ours}"));
+        // Replaced in place, not added twice.
+        let again = css_merge(&format!("{merged}.x {{}}\n"), &gtk_css(Accent::Red, false));
+        assert_eq!(again, format!("{theirs}\n{}.x {{}}\n", gtk_css(Accent::Red, false)));
     }
 
     #[test]

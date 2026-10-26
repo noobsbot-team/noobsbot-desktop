@@ -35,11 +35,12 @@ pub enum Page {
     Battery,
     LockScreen,
     General,
+    Users,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 17] = [
+    pub const ALL: [Page; 18] = [
         Page::Wifi,
         Page::Bluetooth,
         Page::Sound,
@@ -56,6 +57,7 @@ impl Page {
         Page::Battery,
         Page::LockScreen,
         Page::General,
+        Page::Users,
         Page::About,
     ];
 
@@ -77,6 +79,7 @@ impl Page {
             Page::Battery => "Battery",
             Page::LockScreen => "Lock Screen",
             Page::General => "General",
+            Page::Users => "Users",
             Page::About => "About",
         }
     }
@@ -116,6 +119,7 @@ impl Page {
             Page::Battery => ("battery-high", 0x34C759),
             Page::LockScreen => ("lock-simple", 0x3A3A3C),
             Page::General => ("gear-six", 0x8E8E93),
+            Page::Users => ("user-circle", 0xFF9500),
             Page::About => ("info", 0x8E8E93),
         }
     }
@@ -250,8 +254,9 @@ pub const SETTINGS: &[Setting] = &[
         "appearance.wallpaper_fit",
         "Show picture",
         "",
-        Kind::Choice(&[("fill", "Fill"), ("fit", "Fit"), ("centre", "Centre"), ("stretch", "Stretch")]),
+        Kind::Choice(&[("fill", "Fill"), ("fit", "Fit"), ("centre", "Centre"), ("stretch", "Stretch"), ("tile", "Tile")]),
     ),
+    s(Page::Appearance, "Wallpaper", "appearance.gallery_folders", "Gallery folders", "Added with + Add Folder…; separate with :", Kind::Text("None")),
     s(Page::Appearance, "Wallpaper", "appearance.wallpaper_folder", "Slideshow folder", "Shows its pictures in turn; empty = off", Kind::Text("Off")),
     s(
         Page::Appearance,
@@ -295,6 +300,14 @@ pub const SETTINGS: &[Setting] = &[
         "Zoom style",
         "Super+Alt+8 turns Zoom on or off, Super+Alt+= and Super+Alt+- zoom in and out",
         Kind::Choice(&[("full", "Full Screen"), ("lens", "Picture-in-Picture")]),
+    ),
+    s(
+        Page::Accessibility,
+        "Zoom",
+        "accessibility.zoom_follows_focus",
+        "Follow keyboard focus",
+        "Zoom follows the text cursor and the focused window, not only the pointer",
+        Kind::Toggle,
     ),
     s(Page::Accessibility, "Keyboard", "accessibility.sticky_keys", "Sticky keys", "Tap a modifier for the next key; tap twice to keep it", Kind::Toggle),
     s(Page::Accessibility, "Keyboard", "accessibility.sticky_keys_shortcut", "Press Shift five times for sticky keys", "", Kind::Toggle),
@@ -965,15 +978,32 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
                     };
                     let (mine, nearby): (Vec<_>, Vec<_>) = bt.devices.iter().partition(|d| d.paired);
                     if !mine.is_empty() {
-                        let rows = mine
-                            .into_iter()
-                            .map(|d| {
-                                let (state, action) = if d.connected { ("Connected", "Disconnect") } else { ("Not connected", "Connect") };
-                                let buttons =
-                                    row![push(action, Message::Device(d.path.clone(), !d.connected)), push("Forget", Message::Forget(d.path.clone()))];
-                                line(t, &d.name, state, buttons.spacing(8).into())
-                            })
-                            .collect();
+                        let mut rows = Vec::new();
+                        for d in mine {
+                            let (state, action) = if d.connected { ("Connected", "Disconnect") } else { ("Not connected", "Connect") };
+                            let key = format!("{}{}", crate::system::RENAME, d.path);
+                            let buttons = row![
+                                push(action, Message::Device(d.path.clone(), !d.connected)),
+                                push("Rename", Message::Type(key.clone(), d.name.clone())),
+                                push("Forget", Message::Forget(d.path.clone()))
+                            ];
+                            rows.push(line(t, &d.name, state, buttons.spacing(8).into()));
+                            // Rename opens a field under the row; Return saves it.
+                            if let Some(name) = app.texts.get(&key) {
+                                let field = text_input(&d.name, name)
+                                    .on_input({
+                                        let key = key.clone();
+                                        move |v| Message::Type(key.clone(), v)
+                                    })
+                                    .on_submit(Message::Submit(key.clone()))
+                                    .size(13)
+                                    .padding([3, 8])
+                                    .width(180)
+                                    .style(t.input(false));
+                                let save = button(text("Save").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::Submit(key));
+                                rows.push(line(t, "Name", "", row![field, save].spacing(8).align_y(Alignment::Center).into()));
+                            }
+                        }
                         parts.push(group(t, "My Devices", rows));
                     }
                     let rows: Vec<_> = nearby.into_iter().map(|d| line(t, &d.name, "", push("Connect", Message::Device(d.path.clone(), true)))).collect();
@@ -1061,7 +1091,8 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             .spacing(6)
             .align_x(Alignment::Center);
             let rows = crate::system::about().into_iter().map(|(label, value)| fact(t, label, value)).collect();
-            vec![container(head).center_x(Length::Fill).into(), group(t, "", rows)]
+            let copy = button(text("Copy System Report").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::CopyReport);
+            vec![container(head).center_x(Length::Fill).into(), group(t, "", rows), container(copy).align_right(Length::Fill).into()]
         }
         Page::Battery => {
             let rows = match &status.battery {
@@ -1090,6 +1121,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         }
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
         Page::Appearance => vec![gallery(app)],
+        Page::Users => users_part(app),
         _ => Vec::new(),
     }
 }
@@ -1319,8 +1351,99 @@ fn gallery(app: &App) -> Element<'_, Message> {
         let picture = iced::widget::image(handle.clone()).width(w).height(h).border_radius(5.0);
         tiles.push(tile(picture.into(), path.to_string_lossy().into_owned()));
     }
+    // "+ Add Folder…" opens a path field under the pictures; its pictures join the gallery.
+    let add = container(text("+ Add Folder…").size(12)).center_x(w).center_y(h);
+    tiles.push(button(add).padding(3).style(t.tile(false)).on_press(Message::Type(crate::gallery::ADD.into(), String::new())).into());
     let grid = row(tiles).spacing(8).wrap().vertical_spacing(8);
-    group(t, "Wallpaper", vec![container(grid).padding(12).width(Length::Fill).into()])
+    let mut rows = vec![container(grid).padding(12).width(Length::Fill).into()];
+    if let Some(path) = app.texts.get(crate::gallery::ADD) {
+        let field = text_input("~/Pictures/Holiday", path)
+            .on_input(|v| Message::Type(crate::gallery::ADD.into(), v))
+            .on_submit(Message::Submit(crate::gallery::ADD.into()))
+            .size(13)
+            .padding([3, 8])
+            .width(220)
+            .style(t.input(false));
+        let save = button(text("Add").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::Submit(crate::gallery::ADD.into()));
+        rows.push(line(t, "Folder", "", row![field, save].spacing(8).align_y(Alignment::Center).into()));
+    }
+    group(t, "Wallpaper", rows)
+}
+
+/// Users: who is signed in, with their picture and names, then everyone else (read-only).
+fn users_part(app: &App) -> Vec<Element<'_, Message>> {
+    let t = app.tokens;
+    // Still reading.
+    let Some(users) = &app.users else { return Vec::new() };
+    let Some(me) = &users.me else { return vec![group(t, "", vec![fact(t, "AccountsService isn't running", String::new())])] };
+    let head =
+        row![picture(t, me, 64.0), column![text(me.shown()).size(17).font(font(Weight::Semibold)), text(&me.login).size(12).color(t.secondary())].spacing(2),]
+            .spacing(14)
+            .align_y(Alignment::Center);
+    let name = app.texts.get(crate::users::NAME).unwrap_or(&me.name);
+    let name = text_input(&me.login, name)
+        .on_input(|v| Message::Type(crate::users::NAME.into(), v))
+        .on_submit(Message::Submit(crate::users::NAME.into()))
+        .size(13)
+        .padding([3, 8])
+        .width(200)
+        .style(t.input(false));
+    let change = button(text("Change Picture…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::PictureChooser);
+    let password = button(text("Change Password…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::PasswordForm);
+    let mut rows =
+        vec![line(t, "Picture", "", change.into()), line(t, "Full name", "Press Return to save", name.into()), line(t, "Password", "", password.into())];
+    if app.texts.contains_key(crate::users::PASSWORD[0]) {
+        for (key, label) in crate::users::PASSWORD.into_iter().zip(["Current password", "New password", "Verify"]) {
+            let field = text_input("", app.texts.get(key).map_or("", String::as_str))
+                .secure(true)
+                .on_input(move |v| Message::Type(key.into(), v))
+                .on_submit(Message::ChangePassword)
+                .size(13)
+                .padding([3, 8])
+                .width(200)
+                .style(t.input(false));
+            rows.push(line(t, label, "", field.into()));
+        }
+        let go = button(text("Change Password").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::ChangePassword);
+        rows.push(line(t, "", "", go.into()));
+    }
+    if let Some(typed) = app.texts.get(crate::users::PICTURE_FILE) {
+        // The wallpaper gallery's pictures, then any file by its path.
+        let tiles = app.thumbs.iter().map(|(path, handle)| {
+            let tile = iced::widget::image(handle.clone()).width(48).height(48).content_fit(iced::ContentFit::Cover).border_radius(24.0);
+            button(tile).padding(2).style(t.tile(false)).on_press(Message::Picture(path.clone())).into()
+        });
+        rows.insert(1, container(row(tiles).spacing(8).wrap().vertical_spacing(8)).padding(12).into());
+        let file = text_input("/path/to/picture.png", typed)
+            .on_input(|v| Message::Type(crate::users::PICTURE_FILE.into(), v))
+            .on_submit(Message::Picture(typed.trim().into()))
+            .size(13)
+            .padding([3, 8])
+            .width(260)
+            .style(t.input(false));
+        rows.insert(2, line(t, "Other picture", "A PNG or JPEG file; press Return", file.into()));
+    }
+    let mut parts = vec![container(head).padding([0, 4]).into(), group(t, "", rows)];
+    if !users.others.is_empty() {
+        let rows = users
+            .others
+            .iter()
+            .map(|a| {
+                let words = column![text(a.shown()).size(13), text(&a.login).size(11).color(t.secondary())].spacing(2);
+                row![picture(t, a, 32.0), words].spacing(10).align_y(Alignment::Center).padding([6, 12]).into()
+            })
+            .collect();
+        parts.push(group(t, "Other Users", rows));
+    }
+    parts
+}
+
+/// An account's picture as a circle, or the person symbol without one.
+fn picture<'a>(t: Tokens, account: &crate::users::Account, size: f32) -> Element<'a, Message> {
+    match &account.picture {
+        Some(handle) => iced::widget::image(handle.clone()).width(size).height(size).border_radius(size / 2.0).into(),
+        None => svg(icon("user-circle")).width(size).height(size).style(Tokens::tint(t.secondary())).into(),
+    }
 }
 
 /// Rows below the config settings.
@@ -1648,7 +1771,7 @@ pub fn keep_sheet<'a>(t: Tokens, left: u64) -> Element<'a, Message> {
 }
 
 /// The desktop's version: the root package's, which release-plz bumps (this crate's own stays 0.1.0).
-fn version() -> &'static str {
+pub fn version() -> &'static str {
     let manifest = include_str!("../../Cargo.toml");
     manifest.lines().find_map(|l| l.strip_prefix("version = ")).map_or("", |v| v.trim_matches('"'))
 }
@@ -1687,7 +1810,15 @@ mod tests {
         assert_eq!(Page::parse("date-time"), Some(Page::DateTime));
         assert_eq!(Page::parse("wi-fi"), Some(Page::Wifi));
         assert_eq!(Page::parse("battery"), Some(Page::Battery));
+        assert_eq!(Page::parse("users"), Some(Page::Users));
         assert_eq!(Page::parse("nope"), None);
+    }
+
+    #[test]
+    fn users_sit_between_general_and_about() {
+        let at = |p| Page::ALL.iter().position(|&q| q == p).unwrap();
+        assert_eq!((at(Page::General) + 1, at(Page::Users) + 1), (at(Page::Users), at(Page::About)));
+        assert_eq!(Page::ALL.last(), Some(&Page::About));
     }
 
     #[test]

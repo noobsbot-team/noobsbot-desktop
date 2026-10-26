@@ -497,7 +497,7 @@ impl State {
     /// The hovered icon's window previews once shown (E8.3): their layout, and each window with its frame
     /// (output-relative). Only windows on screen or on another Space have a frame: minimised ones get no thumbnail.
     pub fn dock_peek(&self) -> Option<(Peek, Vec<(Window, Rect)>)> {
-        let peek = self.dock_ui.peek.as_ref().filter(|p| p.shown())?;
+        let peek = self.dock_ui.peek.as_ref().filter(|p| p.shown() || self.dock_ui.held_for_peek())?;
         if self.popup.is_some() || self.mission_open() || self.launchpad.is_some() || self.dock_ui.dragging() || !self.dock_shown() {
             return None;
         }
@@ -602,7 +602,14 @@ impl State {
         }
         match button {
             // A click acts on release, unless it became a drag or a long press (`dock_release`).
-            BTN_LEFT => self.dock_ui.drag = Some(Drag { key: item.key, start: location, since: Instant::now(), moved: false, slot: None }),
+            BTN_LEFT => {
+                let since = Instant::now();
+                // Held still on an icon with previews, they show (E8.3 long-press) instead of a drag starting.
+                if self.dock_ui.peek.as_ref().is_some_and(|p| p.key == item.key) {
+                    self.dock_wake(since + PEEK_DELAY);
+                }
+                self.dock_ui.drag = Some(Drag { key: item.key, start: location, since, moved: false, slot: None });
+            }
             BTN_MIDDLE if self.config.dock.middle == DockMiddle::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             BTN_MIDDLE => self.dock_click(item, true),
             BTN_RIGHT if ctrl => self.dock_settings(),
@@ -848,6 +855,11 @@ impl Peeking {
     }
 }
 
+/// A press held `held` shows the previews (long-press) unless the pointer `moved` into a drag first.
+fn long_press_peek(held: Duration, moved: bool) -> bool {
+    !moved && held >= PEEK_DELAY
+}
+
 /// An icon held down by the left button.
 struct Drag {
     key: String,
@@ -871,6 +883,12 @@ impl Ui {
             items.insert(slot.min(items.len()), item);
         }
         items
+    }
+
+    /// The held icon's previews show from a long press: no drag, no click.
+    fn held_for_peek(&self) -> bool {
+        let (Some(drag), Some(peek)) = (&self.drag, &self.peek) else { return false };
+        drag.key == peek.key && long_press_peek(drag.since.elapsed(), drag.moved)
     }
 
     /// An icon is being dragged (past the threshold).
@@ -1325,7 +1343,7 @@ impl State {
     /// The pointer moved to `to` with an icon held: past the threshold it drags (unless items are locked), the icon
     /// follows the pointer and the others make room.
     fn dock_drag_motion(&mut self, to: Point<f64, Logical>) {
-        let Some(drag) = self.dock_ui.drag.as_ref() else { return };
+        let Some(drag) = self.dock_ui.drag.as_ref().filter(|_| !self.dock_ui.held_for_peek()) else { return };
         let (start, key) = (drag.start, drag.key.clone());
         if self.config.dock.lock_items || key.starts_with(TILE) || key == TRASH_KEY || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
             return;
@@ -1348,6 +1366,14 @@ impl State {
     /// the end of its drag: reordered (which pins it, Plank's auto-pinning), or off the dock and pinned: removed in
     /// a poof.
     pub fn dock_release(&mut self, location: Point<f64, Logical>) {
+        // A long press's previews stay up, for a thumbnail to be picked.
+        if self.dock_ui.held_for_peek() {
+            self.dock_ui.drag = None;
+            if let Some(p) = self.dock_ui.peek.as_mut() {
+                p.off = false;
+            }
+            return self.schedule_redraw();
+        }
         let Some(drag) = self.dock_ui.drag.take() else { return };
         let Some(item) = self.dock_item(&drag.key) else { return };
         if !drag.moved {
@@ -1479,6 +1505,13 @@ mod tests {
     use super::*;
 
     const SCREEN: (i32, i32) = (1920, 1200);
+
+    #[test]
+    fn a_long_still_press_peeks() {
+        assert!(!long_press_peek(Duration::from_millis(300), false));
+        assert!(long_press_peek(Duration::from_millis(500), false));
+        assert!(!long_press_peek(Duration::from_secs(2), true), "moved first: a drag");
+    }
 
     #[test]
     fn icons_shrink_to_fit() {

@@ -2,8 +2,8 @@
 //! (the whole screen, or a lens) and through a colour filter. Visual only: input lands where the pointer really is,
 //! and full-screen zoom keeps the pointer drawn there too. Screenshots get `plain`, the frame as it was.
 // ponytail: a fresh full-output texture and a full redraw every frame while on; keep one per output with its damage if
-// that shows in the frame budget. The hardware cursor is neither magnified nor filtered. Follows the pointer only,
-// not the text caret or keyboard focus.
+// that shows in the frame budget. The hardware cursor is neither magnified nor filtered. The view follows whichever
+// moved last: the pointer, the text caret (text-input-v3) or keyboard focus (`[accessibility] zoom_follows_focus`).
 
 use std::{
     collections::HashMap,
@@ -34,19 +34,35 @@ pub struct Zoom {
     level: f64,
     factor: f64,
     last: Instant,
-    /// Where the pointer last was on each output (by name): the others stay put while it is elsewhere.
-    pointer: HashMap<String, Point<f64, Logical>>,
+    /// What each output's view follows (by name): the others stay put while the pointer is elsewhere.
+    follow: HashMap<String, Follow>,
+    /// Bumped when keyboard focus moves to another window.
+    focus_serial: u64,
     /// The last frame without zoom and filter, for a screenshot of it; none when neither is on.
     pub plain: Option<SceneElement>,
 }
 
 impl Default for Zoom {
     fn default() -> Self {
-        Self { on: false, level: 2.0, factor: 1.0, last: Instant::now(), pointer: HashMap::new(), plain: None }
+        Self { on: false, level: 2.0, factor: 1.0, last: Instant::now(), follow: HashMap::new(), focus_serial: 0, plain: None }
     }
 }
 
+/// One output's followed point, and the pointer, caret and focus seen last: only a change moves the view.
+#[derive(Default)]
+struct Follow {
+    at: Point<f64, Logical>,
+    pointer: Option<Point<f64, Logical>>,
+    caret: Option<Rectangle<f64, Logical>>,
+    focus_serial: u64,
+}
+
 impl Zoom {
+    /// Keyboard focus moved to another window: the view goes to it on the next frame.
+    pub fn refocus(&mut self) {
+        self.focus_serial += 1;
+    }
+
     pub fn toggle(&mut self) {
         self.on = !self.on;
     }
@@ -80,8 +96,8 @@ impl Zoom {
         self.factor != target
     }
 
-    /// `elements` (an output of logical `size`, front to back) magnified and filtered as `settings` say. `pointer`
-    /// is output-relative, `None` while it is on another output.
+    /// `elements` (an output of logical `size`, front to back) magnified and filtered as `settings` say. `pointer`,
+    /// the focused text field's `caret` and the focused `window` are output-relative, `None` while elsewhere.
     #[expect(clippy::too_many_arguments, reason = "the frame, where it is shown and how")]
     pub fn apply(
         &mut self,
@@ -91,10 +107,30 @@ impl Zoom {
         output: &str,
         size: Size<f64, Logical>,
         pointer: Option<Point<f64, Logical>>,
+        caret: Option<Rectangle<f64, Logical>>,
+        window: Option<Rectangle<f64, Logical>>,
         settings: &Accessibility,
         scale: f64,
     ) -> Vec<SceneElement> {
         self.plain = None;
+        // Kept up while off too, so turning Zoom on shows what moved last.
+        let f = self.follow.entry(output.into()).or_insert_with(|| Follow { at: (size.w / 2.0, size.h / 2.0).into(), ..Follow::default() });
+        if let Some(p) = pointer.filter(|p| f.pointer != Some(*p)) {
+            f.at = p;
+        }
+        let target = match (caret, window) {
+            (Some(c), _) if f.caret != Some(c) => Some(c),
+            (_, Some(w)) if f.focus_serial != self.focus_serial => Some(w),
+            _ => None,
+        };
+        if let Some(rect) = target {
+            f.at = match settings.zoom_style {
+                ZoomStyle::Lens => rect.loc + Point::from((rect.size.w / 2.0, rect.size.h / 2.0)),
+                ZoomStyle::Full => towards(size, f.at, rect, if self.on { self.level } else { 1.0 }),
+            };
+        }
+        (f.pointer, f.caret, f.focus_serial) = (pointer, caret, self.focus_serial);
+        let pointer = f.at;
         let filter = match settings.colour_filter {
             ColourFilter::None => 0.0,
             ColourFilter::Invert => 1.0,
@@ -104,10 +140,6 @@ impl Zoom {
         if self.factor <= 1.0 && filter == 0.0 {
             return elements;
         }
-        let pointer = match pointer {
-            Some(p) => *self.pointer.entry(output.into()).insert_entry(p).get(),
-            None => *self.pointer.get(output).unwrap_or(&Point::from((size.w / 2.0, size.h / 2.0))),
-        };
         let area = Rectangle::from_size(size.to_physical_precise_round(scale));
         let Some(shot) = motion::snapshot(renderer, &elements, area, scale) else { return elements };
         let (whole, context) = (Rectangle::from_size(size), renderer.context_id());
@@ -162,6 +194,29 @@ fn clamp(p: Point<f64, Logical>, size: Size<f64, Logical>) -> Point<f64, Logical
 pub fn viewport(size: Size<f64, Logical>, pointer: Point<f64, Logical>, factor: f64) -> Rectangle<f64, Logical> {
     let p = clamp(pointer, size);
     Rectangle::new((p.x - p.x / factor, p.y - p.y / factor).into(), (size.w / factor, size.h / factor).into())
+}
+
+/// The point to follow so that full-screen zoom at `factor` shows `rect`, moving the view from where following `at`
+/// puts it as little as it can; a rect bigger than the view shows its top-left.
+pub fn towards(size: Size<f64, Logical>, at: Point<f64, Logical>, rect: Rectangle<f64, Logical>, factor: f64) -> Point<f64, Logical> {
+    if factor <= 1.0 {
+        return rect.loc + Point::from((rect.size.w / 2.0, rect.size.h / 2.0));
+    }
+    let view = viewport(size, at, factor);
+    let pan = |lo: f64, len: f64, r_lo: f64, r_len: f64, total: f64| {
+        let lo = if r_len > len || r_lo < lo {
+            r_lo
+        } else if r_lo + r_len > lo + len {
+            r_lo + r_len - len
+        } else {
+            lo
+        };
+        lo.clamp(0.0, (total - len).max(0.0))
+    };
+    let (x, y) = (pan(view.loc.x, view.size.w, rect.loc.x, rect.size.w, size.w), pan(view.loc.y, view.size.h, rect.loc.y, rect.size.h, size.h));
+    // `viewport` puts the view at `at × (1 − 1/factor)`: the inverse.
+    let k = 1.0 - 1.0 / factor;
+    (x / k, y / k).into()
 }
 
 /// The lens: what it shows (`src`) and where (`dst`), centred on `pointer` and kept on the output.
@@ -247,6 +302,24 @@ mod tests {
         let (p, f) = (Point::<f64, Logical>::from((300.0, 700.0)), 3.0);
         let v = viewport(size, p, f);
         assert!(((p.x - v.loc.x) * f - p.x).abs() < 1e-9 && ((p.y - v.loc.y) * f - p.y).abs() < 1e-9);
+    }
+
+    #[test]
+    fn towards_pans_just_enough_to_show_the_rect() {
+        let size: Size<f64, Logical> = SIZE.into();
+        let centre = Point::from((960.0, 540.0));
+        // At 2× around the centre the view is 480…1440 × 270…810.
+        let inside = Rectangle::new((600.0, 400.0).into(), (2.0, 20.0).into());
+        assert_eq!(towards(size, centre, inside, 2.0), centre, "already shown: stays");
+        // A caret right of the view: the view's right edge comes to it, nothing else moves.
+        let right = Rectangle::new((1600.0, 400.0).into(), (2.0, 20.0).into());
+        let v = viewport(size, towards(size, centre, right, 2.0), 2.0);
+        assert!((v.loc.x + v.size.w - 1602.0).abs() < 1e-9 && (v.loc.y - 270.0).abs() < 1e-9);
+        // A window bigger than the view: its top-left corner.
+        let window = Rectangle::new((100.0, 50.0).into(), (1200.0, 900.0).into());
+        assert_eq!(viewport(size, towards(size, centre, window, 2.0), 2.0).loc, (100.0, 50.0).into());
+        // Unzoomed: its centre.
+        assert_eq!(towards(size, centre, window, 1.0), (700.0, 500.0).into());
     }
 
     #[test]

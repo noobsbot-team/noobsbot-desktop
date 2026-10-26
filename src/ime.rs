@@ -198,6 +198,7 @@ impl State {
     // ponytail: smithay hides whether an input method runs, so with fcitx5 the app gets enter/leave twice (Qt and GTK
     // just enable again); intercept zwp_input_method_v2 the way text input is, if a client minds.
     pub fn text_input_focus(&mut self, focused: Option<&WlSurface>) {
+        self.zoom.refocus();
         let handle = self.seat.text_input().clone();
         if let Some(old) = self.text_inputs.entered.take().filter(|old| old.is_alive() && Some(old) != focused) {
             handle.set_focus(Some(old));
