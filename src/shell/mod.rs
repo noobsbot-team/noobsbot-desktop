@@ -139,7 +139,11 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) 
             row("About This Computer".into(), "", settings("about")),
             row("System Settings…".into(), "", settings("appearance")),
             // The row itself is the badge (E6.13).
-            if update { row("Restart to Update…".into(), "", Some(Action::InstallUpdate)) } else { row("Software Update…".into(), "", settings("general")) },
+            if update {
+                row("Restart to Update…".into(), "", Some(Action::InstallUpdate))
+            } else {
+                row("Software Update…".into(), "", settings("general"))
+            },
             None,
             row("Force Quit…".into(), "⌥⌘⎋", Some(Action::ForceQuit)),
             None,
