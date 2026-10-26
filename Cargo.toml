@@ -36,6 +36,8 @@ semver = "1.0.28"
 resvg ={ version = "0.48.1", default-features = false, features = ["raster-images"] }
 minisign-verify = "0.3.0"
 sha2 = "0.10.9"
+accesskit = "0.25.2"
+accesskit_unix = "0.24.1"
 
 [profile.release]
 lto = "thin"
