@@ -458,6 +458,17 @@ pub fn mostly_on<T>(frame: Rectangle<i32, Logical>, outputs: impl Iterator<Item 
         .map(|(_, output)| output)
 }
 
+/// The display a new window opens on: the one its remembered frame is mostly on, else its parent's frame, else the
+/// one under `pointer`.
+pub fn opens_on<T>(
+    remembered: Option<Rectangle<i32, Logical>>,
+    parent: Option<Rectangle<i32, Logical>>,
+    pointer: Point<i32, Logical>,
+    outputs: impl Iterator<Item = (Rectangle<i32, Logical>, T)>,
+) -> Option<T> {
+    mostly_on(remembered.or(parent).unwrap_or(Rectangle::new(pointer, (1, 1).into())), outputs)
+}
+
 /// Less than half of `frame` is on the displays: what a window left on an unplugged one keeps (a sliver over the
 /// edge of the one beside it is not enough to grab it back).
 pub fn stranded(frame: Rectangle<i32, Logical>, screens: &[Rectangle<i32, Logical>]) -> bool {
@@ -767,6 +778,19 @@ mod tests {
         let left = || [(rect(0, 0, 1920, 1080), "main"), (rect(-1920, 0, 1920, 1080), "left")].into_iter();
         assert_eq!(mostly_on(rect(-1000, 200, 800, 600), left()), Some("left"));
         assert_eq!(mostly_on(rect(-300, 200, 800, 600), left()), Some("main"), "more of it on the main one");
+    }
+
+    #[test]
+    fn a_new_window_opens_on_the_pointers_display() {
+        let rect = |x, y, w, h| Rectangle::<i32, Logical>::new((x, y).into(), (w, h).into());
+        let outputs = || [(rect(0, 0, 1920, 1080), "first"), (rect(1920, 0, 2560, 1440), "second")].into_iter();
+        assert_eq!(opens_on(None, None, (2500, 700).into(), outputs()), Some("second"), "under the pointer");
+        assert_eq!(opens_on(None, None, (100, 100).into(), outputs()), Some("first"));
+        assert_eq!(opens_on(Some(rect(100, 100, 800, 600)), None, (2500, 700).into(), outputs()), Some("first"), "remembered frame");
+        assert_eq!(opens_on(None, Some(rect(200, 50, 900, 700)), (2500, 700).into(), outputs()), Some("first"), "over its parent");
+        assert_eq!(opens_on(None, None, (9000, 0).into(), outputs()), None, "pointer on no display");
+        let single = || [(rect(0, 0, 1920, 1080), "only")].into_iter();
+        assert_eq!(opens_on(None, None, (500, 500).into(), single()), Some("only"));
     }
 
     #[test]
