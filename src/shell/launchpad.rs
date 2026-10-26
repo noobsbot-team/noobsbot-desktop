@@ -1310,6 +1310,13 @@ mod tests {
         let text = serde_json::to_string(&order).unwrap();
         assert_eq!(text, r#"["kate",{"name":"Games","apps":["a","b"]}]"#);
         assert_eq!(serde_json::from_str::<Vec<Entry>>(&text).unwrap(), order);
+        // Loaded after "b" and "gone" were uninstalled: they drop out silently, and the folder of one is its app.
+        let saved = r#"["gone",{"name":"Games","apps":["a","b"]},{"name":"Tools","apps":["kate","c","gone"]}]"#;
+        let apps = [app("A"), app("C"), app("Kate")];
+        let loaded = arrange(&serde_json::from_str::<Vec<Entry>>(saved).unwrap(), &apps);
+        let tools = Entry::Folder { name: "Tools".into(), apps: vec!["kate".into(), "c".into()] };
+        assert_eq!(loaded, [Entry::App("a".into()), tools]);
+        assert!(serde_json::from_str::<Vec<Entry>>("{not json").is_err(), "a broken file loads as no order (load_order)");
     }
 
     #[test]
