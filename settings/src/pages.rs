@@ -694,10 +694,46 @@ fn choice<'a>(t: Tokens, current: &str, options: &'static [(&'static str, &'stat
     segments(t, options.iter().map(|&(value, label)| (label.to_owned(), current == value, Message::Choose(key.into(), value))).collect())
 }
 
-/// The `[notification_apps]` styles, as the desktop reads them.
-const APP_STYLES: &[(&str, &str)] = &[("banner", "Banners"), ("alert", "Alerts"), ("none", "None"), ("off", "Off")];
+/// The `[notification_apps]` styles an allowed app can have (off is the Allow switch).
+const APP_STYLES: &[(&str, &str)] = &[("banner", "Banners"), ("alert", "Alerts"), ("none", "None")];
 
-/// Notifications ▸ Applications: each app that has notified (or has a style set), with its style.
+/// One app's `[notification_apps]` rule, as the desktop reads it: a style alone, or a table with switches (missing
+/// ones on).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AppRule {
+    pub style: String,
+    pub sound: bool,
+    pub badge: bool,
+    pub center: bool,
+}
+
+impl AppRule {
+    pub fn read(value: Option<&toml_edit::Value>) -> Self {
+        let table = value.and_then(toml_edit::Value::as_inline_table);
+        let style = value.and_then(toml_edit::Value::as_str).or_else(|| table?.get("style")?.as_str()).unwrap_or("banner");
+        let switch = |key| table.and_then(|t| t.get(key)?.as_bool()).unwrap_or(true);
+        AppRule { style: style.to_owned(), sound: switch("sound"), badge: switch("badge"), center: switch("center") }
+    }
+
+    /// As written: the style alone while every switch is on, else a table.
+    pub fn value(&self) -> toml_edit::Value {
+        if self.sound && self.badge && self.center {
+            return self.style.as_str().into();
+        }
+        let mut table = toml_edit::InlineTable::new();
+        table.insert("style", self.style.as_str().into());
+        table.insert("sound", self.sound.into());
+        table.insert("badge", self.badge.into());
+        table.insert("center", self.center.into());
+        table.into()
+    }
+}
+
+/// One of an `AppRule`'s switches.
+type Switch = fn(&mut AppRule) -> &mut bool;
+
+/// Notifications ▸ Applications: each app that has notified (or has a rule), with Allow; opened, its style and
+/// switches.
 fn notifying_apps(app: &App) -> Vec<Element<'_, Message>> {
     let t = app.tokens;
     let mut apps = app.config.keys("notification_apps");
@@ -707,15 +743,40 @@ fn notifying_apps(app: &App) -> Vec<Element<'_, Message>> {
     if apps.is_empty() {
         return vec![note(t, "Apps show here once they send a notification.")];
     }
-    let rows = apps
-        .into_iter()
-        .map(|name| {
-            let key = format!("notification_apps.{name}");
-            let current = app.config.get(&key).and_then(toml_edit::Value::as_str).unwrap_or("banner");
-            line(t, name, "", choice(t, current, APP_STYLES, &key))
-        })
-        .collect();
-    vec![group(t, "Applications", rows), note(t, "Alerts stay until dismissed; None keeps them in Notification Center only; Off drops them.")]
+    let mut rows = Vec::new();
+    for name in apps {
+        let rule = AppRule::read(app.config.get(&format!("notification_apps.{name}")));
+        let allowed = rule.style != "off";
+        let open = app.notify_app.as_ref() == Some(&name);
+        let set = |change: &dyn Fn(&mut AppRule)| {
+            let mut new = rule.clone();
+            change(&mut new);
+            Message::AppRule(name.clone(), new)
+        };
+        let allow = set(&|r| r.style = "off".into());
+        let enable = set(&|r| r.style = "banner".into());
+        let more = button(text(if open { "Done" } else { "Options…" }).size(12))
+            .padding([3, 10])
+            .style(t.push(false))
+            .on_press(Message::NotifyApp((!open).then(|| name.clone())));
+        let controls = row![toggle(t, allowed, move |on| if on { enable.clone() } else { allow.clone() }), more].spacing(8).align_y(Alignment::Center);
+        rows.push(line(t, name.clone(), "", controls.into()));
+        if !open || !allowed {
+            continue;
+        }
+        let styles = APP_STYLES.iter().map(|&(value, label)| (label.to_owned(), rule.style == value, set(&|r| r.style = value.into()))).collect();
+        rows.push(line(t, "Style", "Alerts stay until dismissed; None keeps them in Notification Center only", segments(t, styles)));
+        let switches: [(&str, bool, Switch); 3] = [
+            ("Play sound", rule.sound, |r| &mut r.sound),
+            ("Badge app icon", rule.badge, |r| &mut r.badge),
+            ("Show in Notification Center", rule.center, |r| &mut r.center),
+        ];
+        for (label, on, field) in switches {
+            let (yes, no) = (set(&|r| *field(r) = true), set(&|r| *field(r) = false));
+            rows.push(line(t, label, "", toggle(t, on, move |v| if v { yes.clone() } else { no.clone() })));
+        }
+    }
+    vec![group(t, "Applications", rows)]
 }
 
 fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>, step: f64, value: f64) -> Element<'a, Message> {
@@ -1338,6 +1399,18 @@ fn note<'a>(t: Tokens, words: &'a str) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_rules_read_and_write_both_forms() {
+        let doc: toml_edit::DocumentMut = "a = \"alert\"\nb = { style = \"none\", badge = false }\n".parse().unwrap();
+        let a = AppRule::read(doc.get("a").and_then(toml_edit::Item::as_value));
+        assert_eq!(a, AppRule { style: "alert".into(), sound: true, badge: true, center: true });
+        assert_eq!(a.value().as_str(), Some("alert"), "every switch on: the style alone");
+        let b = AppRule::read(doc.get("b").and_then(toml_edit::Item::as_value));
+        assert_eq!(b, AppRule { style: "none".into(), sound: true, badge: false, center: true });
+        assert_eq!(AppRule::read(Some(&b.value())), b);
+        assert_eq!(AppRule::read(None).style, "banner");
+    }
 
     #[test]
     fn every_setting_is_in_the_shipped_config() {
