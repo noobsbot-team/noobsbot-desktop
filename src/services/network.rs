@@ -104,6 +104,7 @@ trait Settings {
 #[zbus::proxy(interface = "org.freedesktop.NetworkManager.Settings.Connection", default_service = "org.freedesktop.NetworkManager")]
 trait Saved {
     fn get_settings(&self) -> zbus::Result<HashMap<String, HashMap<String, OwnedValue>>>;
+    fn update(&self, properties: HashMap<String, HashMap<String, OwnedValue>>) -> zbus::Result<()>;
 }
 
 #[zbus::proxy(interface = "org.freedesktop.NetworkManager.Device.Wireless", default_service = "org.freedesktop.NetworkManager")]
@@ -166,16 +167,20 @@ pub async fn scan(bus: &Connection) {
     }
 }
 
-/// Control Center ▸ Wi-Fi ▸ a network: its saved connection, or a new one; `password` makes it a WPA-PSK one.
+/// Control Center ▸ Wi-Fi ▸ a network: its saved connection (with `password` as its new one), or a new WPA-PSK one.
 pub async fn join(bus: &Connection, ssid: &str, ap: &str, device: &str, password: Option<&str>) {
     let result = async {
         let (ap, device) = (ObjectPath::try_from(ap)?, ObjectPath::try_from(device)?);
         let manager = ManagerProxy::builder(bus).cache_properties(CacheProperties::No).build().await?;
-        let saved = saved(bus).await?.0.into_iter().find(|(_, s)| s == ssid.as_bytes());
-        match (saved, password) {
-            (Some((connection, _)), None) => drop(manager.activate_connection(&connection, &device, &ap).await?),
-            (_, password) => {
-                // ponytail: a new password for a saved network adds a second connection; the M7 Settings app edits them.
+        let saved = saved(bus).await?.0.into_iter().find(|(_, s)| s == ssid.as_bytes()).map(|(path, _)| path);
+        match plan(saved, password) {
+            Join::Activate(connection) => drop(manager.activate_connection(&connection, &device, &ap).await?),
+            Join::Update(connection, password) => {
+                let saved = SavedProxy::builder(bus).path(&connection)?.cache_properties(CacheProperties::No).build().await?;
+                saved.update(with_password(saved.get_settings().await?, password)?).await?;
+                drop(manager.activate_connection(&connection, &device, &ap).await?);
+            }
+            Join::Add(password) => {
                 let mut settings = HashMap::new();
                 if let Some(psk) = password {
                     settings.insert("802-11-wireless-security", HashMap::from([("key-mgmt", Value::from("wpa-psk")), ("psk", Value::from(psk))]));
@@ -188,6 +193,48 @@ pub async fn join(bus: &Connection, ssid: &str, ap: &str, device: &str, password
     if let Err(err) = result.await {
         tracing::warn!("joining {ssid:?}: {err}");
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum Join<'a> {
+    Activate(OwnedObjectPath),
+    /// A saved network with a new password: its secrets change, no second connection.
+    Update(OwnedObjectPath, &'a str),
+    Add(Option<&'a str>),
+}
+
+fn plan(saved: Option<OwnedObjectPath>, password: Option<&str>) -> Join<'_> {
+    match (saved, password) {
+        (Some(connection), None) => Join::Activate(connection),
+        (Some(connection), Some(password)) => Join::Update(connection, password),
+        (None, password) => Join::Add(password),
+    }
+}
+
+/// A saved connection's settings with `password` as its key: the WEP key on a WEP one, else the WPA one. Stored by
+/// NetworkManager (flags 0), as a new connection's would be.
+fn with_password(mut settings: Settings, password: &str) -> zbus::Result<Settings> {
+    let value = |v: Value| OwnedValue::try_from(v).map_err(zbus::Error::from);
+    let security = settings.entry("802-11-wireless-security".into()).or_default();
+    let key_mgmt = security.get("key-mgmt").and_then(|v| String::try_from(v.try_clone().ok()?).ok()).unwrap_or_else(|| "wpa-psk".into());
+    if key_mgmt == "none" {
+        let index = security.get("wep-tx-keyidx").and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
+        security.insert(format!("wep-key{index}"), value(Value::from(password))?);
+        security.insert("wep-key-type".into(), value(Value::from(wep_key_type(password)))?);
+        security.insert("wep-key-flags".into(), value(Value::from(0u32))?);
+    } else {
+        security.insert("key-mgmt".into(), value(Value::from(key_mgmt))?);
+        security.insert("psk".into(), value(Value::from(password))?);
+        security.insert("psk-flags".into(), value(Value::from(0u32))?);
+    }
+    Ok(settings)
+}
+
+/// NetworkManager's `wep-key-type`: 1, a key (10 or 26 hex digits, or 5 or 13 ASCII characters); 2, a passphrase.
+fn wep_key_type(key: &str) -> u32 {
+    let hex = matches!(key.len(), 10 | 26) && key.chars().all(|c| c.is_ascii_hexdigit());
+    let ascii = matches!(key.len(), 5 | 13) && key.is_ascii();
+    if hex || ascii { 1 } else { 2 }
 }
 
 /// Saved Wi-Fi connections and their network names, and the VPNs (not yet marked active).
@@ -355,6 +402,40 @@ mod tests {
         assert_eq!(secret_ssid(&connection, "802-11-wireless-security", 0), None);
         assert_eq!(secret_ssid(&connection, "802-1x", ALLOW_INTERACTION), None);
         assert_eq!(secret_ssid(&Settings::new(), "802-11-wireless-security", ALLOW_INTERACTION), None);
+    }
+
+    #[test]
+    fn join_updates_a_saved_network() {
+        let path = OwnedObjectPath::try_from("/s/1").unwrap();
+        assert_eq!(plan(Some(path.clone()), None), Join::Activate(path.clone()));
+        assert_eq!(plan(Some(path.clone()), Some("hunter22")), Join::Update(path, "hunter22"));
+        assert_eq!(plan(None, Some("hunter22")), Join::Add(Some("hunter22")));
+        assert_eq!(plan(None, None), Join::Add(None));
+    }
+
+    #[test]
+    fn new_password_into_saved_settings() {
+        let value = |v: Value| OwnedValue::try_from(v).unwrap();
+        let text = |s: &Settings, k: &str| String::try_from(s["802-11-wireless-security"][k].try_clone().unwrap()).unwrap();
+        let number = |s: &Settings, k: &str| u32::try_from(&s["802-11-wireless-security"][k]).unwrap();
+        let wpa = with_password(Settings::new(), "hunter22").unwrap();
+        assert_eq!((text(&wpa, "key-mgmt"), text(&wpa, "psk"), number(&wpa, "psk-flags")), ("wpa-psk".into(), "hunter22".into(), 0));
+        let sae: Settings = HashMap::from([("802-11-wireless-security".into(), HashMap::from([("key-mgmt".into(), value(Value::from("sae")))]))]);
+        assert_eq!(text(&with_password(sae, "pw").unwrap(), "key-mgmt"), "sae");
+        let wep: Settings = HashMap::from([(
+            "802-11-wireless-security".into(),
+            HashMap::from([("key-mgmt".into(), value(Value::from("none"))), ("wep-tx-keyidx".into(), value(Value::from(2u32)))]),
+        )]);
+        let wep = with_password(wep, "abcde").unwrap();
+        assert_eq!((text(&wep, "wep-key2"), number(&wep, "wep-key-type")), ("abcde".into(), 1));
+        assert!(!wep["802-11-wireless-security"].contains_key("psk"));
+    }
+
+    #[test]
+    fn wep_keys_and_passphrases() {
+        assert_eq!(["abcde", "0123456789", "0123456789abcdef0123456789", "13 characters"].map(wep_key_type), [1; 4]);
+        // Wrong lengths, and 10 characters that aren't hex, are passphrases.
+        assert_eq!(["abcd", "0123456789x", "zzzzzzzzzz", "ábcde"].map(wep_key_type), [2; 4]);
     }
 
     #[test]
