@@ -21,6 +21,7 @@ mod grabs;
 mod housekeep;
 mod ical;
 mod idle;
+mod ibus;
 mod ime;
 mod input;
 mod mission;
