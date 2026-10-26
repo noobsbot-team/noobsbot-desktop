@@ -433,7 +433,7 @@ impl State {
     }
 
     /// A press inside the panel. Each change shows at once; the service's echo confirms it.
-    pub(super) fn control_press(&mut self, location: Point<f64, Logical>) {
+    pub(crate) fn control_press(&mut self, location: Point<f64, Logical>) {
         let Some(control) = self.control_layout().hit(location) else { return };
         match control {
             Control::Wifi => {

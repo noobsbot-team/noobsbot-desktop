@@ -380,8 +380,24 @@ impl State {
         // Settings recording a shortcut gets every key, as an app that inhibits shortcuts does.
         let inhibited = self.shortcuts_inhibited() || self.recording_on();
         let super_down = self.super_tap.down();
+        let before = keyboard.modifier_state();
+        let mut reader = false;
         let action = keyboard.input::<Option<Action>, _>(self, code, key_state, serial, time, |state, mods, key| {
             let code = key.raw_code();
+            // The screen reader sees keys first; its grabs reach nothing else (E8.6).
+            let sym = key.modified_sym();
+            let s = &mods.serialized;
+            let a11y = crate::services::a11y::Key {
+                released: key_state == KeyState::Released,
+                state: s.depressed | s.latched | s.locked,
+                keysym: sym.raw(),
+                unichar: sym.key_char().map_or(0, u32::from),
+                keycode: code.raw() as u16,
+            };
+            if state.services.keys.key(a11y) {
+                reader = true;
+                return FilterResult::Intercept(None);
+            }
             let logo = matches!(key.modified_sym(), Keysym::Super_L | Keysym::Super_R);
             state.super_tap.key(logo, key_state == KeyState::Pressed, !mods.ctrl && !mods.alt && !mods.shift, std::time::Instant::now());
             if key_state == KeyState::Released {
@@ -425,6 +441,13 @@ impl State {
                 None => FilterResult::Forward,
             }
         });
+        // A grabbed Caps Lock (the reader's modifier) doesn't toggle Caps Lock.
+        if reader {
+            let now = keyboard.modifier_state();
+            if (now.caps_lock, now.num_lock) != (before.caps_lock, before.num_lock) {
+                keyboard.set_modifier_state(ModifiersState { caps_lock: before.caps_lock, num_lock: before.num_lock, ..now });
+            }
+        }
         self.switcher_settle();
         // Super pressed or let go alone: the dock's number pills come or go (E8.3).
         if self.super_tap.down() != super_down {

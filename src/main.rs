@@ -1,5 +1,6 @@
 //! Noobsbot Desktop: start-up, logging and backend selection.
 
+mod access;
 mod anim;
 mod apps;
 mod arrange;
@@ -199,7 +200,11 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
                 udev.configure_inputs(&config.touchpad, &config.mouse);
             }
             let idle = config.idle != state.config.idle;
+            let reader = config.accessibility.screen_reader != state.config.accessibility.screen_reader;
             state.config = config;
+            if reader {
+                state.apply_screen_reader();
+            }
             if displays {
                 state.apply_displays();
             }
@@ -528,6 +533,9 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         command.clear();
     } else {
         state.x_display = xwayland::spawn(&state.socket_name, backend::cursor::size(state.config.appearance.pointer_size));
+        if state.config.accessibility.screen_reader {
+            state.apply_screen_reader();
+        }
     }
     if !command.is_empty() {
         state.spawn(&command);
@@ -535,6 +543,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
 
     // Replies queued while handling events go out once per loop turn.
     event_loop.run(None, &mut state, |state| {
+        state.access_frame();
         let _ = state.display_handle.flush_clients();
     })?;
     Ok(())

@@ -85,6 +85,8 @@ shake_to_find = true
 dwell_click_ms = 0
 # Hold the primary button still this many ms to get a secondary (right) click instead; 0 = off.
 hold_secondary_ms = 0
+# The Orca screen reader runs while this is on; Super+Alt+F5 toggles it.
+screen_reader = false
 
 [keyboard]
 # xkb layout(s), variant(s) and options; empty = the system's (localectl).
@@ -312,6 +314,7 @@ super_tap = true
 "Super+Alt+8" = "screen-zoom"
 "Super+Alt+equal" = "screen-zoom in"
 "Super+Alt+minus" = "screen-zoom out"
+"Super+Alt+F5" = "screen-reader"
 "Super+Ctrl+Q" = "lock"
 "Super+N" = "notification-center"
 "Super+Space" = "spotlight"

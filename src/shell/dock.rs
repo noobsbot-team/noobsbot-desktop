@@ -566,7 +566,7 @@ impl State {
 
     /// A click on `item`: a builtin's action, else (Plank) a new instance with Ctrl or Shift, the middle button or no
     /// windows, else its windows come forward (`dock_activate`).
-    fn dock_click(&mut self, item: Item, new: bool) {
+    pub(crate) fn dock_click(&mut self, item: Item, new: bool) {
         if let Some(builtin) = Builtin::of(&item.key) {
             self.dock_fx.clicked(item.key.clone());
             return self.dock_builtin(builtin, &item.key);

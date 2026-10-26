@@ -154,6 +154,8 @@ pub struct Accessibility {
     pub dwell_click_ms: u32,
     /// Holding the primary button still this long gives a secondary click instead; 0 = off.
     pub hold_secondary_ms: u32,
+    /// Runs Orca while on (Super+Alt+F5).
+    pub screen_reader: bool,
 }
 
 impl Default for Accessibility {
@@ -172,6 +174,7 @@ impl Default for Accessibility {
             shake_to_find: true,
             dwell_click_ms: 0,
             hold_secondary_ms: 0,
+            screen_reader: false,
         }
     }
 }
@@ -845,6 +848,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Alt+8", "screen-zoom"),
         ("Super+Alt+equal", "screen-zoom in"),
         ("Super+Alt+minus", "screen-zoom out"),
+        ("Super+Alt+F5", "screen-reader"),
         ("Super+Ctrl+Q", "lock"),
         ("Super+N", "notification-center"),
         ("Super+Space", "spotlight"),
