@@ -7,6 +7,7 @@ mod config;
 #[path = "../../src/display_info.rs"]
 mod display_info;
 mod gallery;
+mod network;
 mod pages;
 mod style;
 mod system;
@@ -125,6 +126,14 @@ pub enum Message {
     Submit(String),
     Status(system::Status),
     Wifi(bool),
+    /// A network in range, by name: joins it, or opens its password field.
+    Join(String),
+    /// A saved connection's path: Auto-Join on or off.
+    AutoJoin(String, bool),
+    /// Known Networks ▸ Forget: a saved connection's path.
+    ForgetNetwork(String),
+    /// Opens `nm-connection-editor`.
+    Advanced,
     Bluetooth(bool),
     /// A power-profiles-daemon profile.
     PowerMode(String),
@@ -265,7 +274,13 @@ impl App {
             }
             Message::Submit(key) => {
                 let Some(value) = self.texts.remove(&key) else { return Task::none() };
-                if let Some(name) = key.strip_prefix("display.custom_scale.") {
+                if let Some(ssid) = key.strip_prefix(network::PASSWORD) {
+                    if value.is_empty() {
+                        self.texts.insert(key.clone(), value);
+                        return Task::none();
+                    }
+                    return self.join(ssid, Some(value));
+                } else if let Some(name) = key.strip_prefix("display.custom_scale.") {
                     match pages::parse_scale(&value) {
                         Some(scale) => self.change_outputs(vec![(name.to_owned(), "scale", scale.into())], false),
                         None => self.error = Some(format!("“{}” isn't a scale from 100% to 300%", value.trim())),
@@ -292,6 +307,10 @@ impl App {
             Message::Picker(query) => self.picker = query,
             Message::Options(options) => self.save("keyboard.options", options),
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
+            Message::Join(ssid) => return self.join(&ssid, None),
+            Message::AutoJoin(path, on) => return Task::perform(network::change(move |bus| network::auto_join(bus, path, on)), Message::Status),
+            Message::ForgetNetwork(path) => return Task::perform(network::change(move |bus| network::forget(bus, path)), Message::Status),
+            Message::Advanced => network::advanced(),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::PowerMode(profile) => return Task::perform(system::set_power_mode(profile), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
@@ -373,6 +392,21 @@ impl App {
             Some(keep) => stack![window, pages::keep_sheet(t, keep.left(Instant::now()))].into(),
             None => window.into(),
         }
+    }
+
+    /// Joins a network in range; a new secured one without `password` opens its password field (or closes it).
+    fn join(&mut self, ssid: &str, password: Option<String>) -> Task<Message> {
+        let found = self.status.wifi.as_ref().and_then(|w| w.network.networks.iter().find(|n| n.ssid == ssid));
+        let Some(ap) = found.cloned() else { return Task::none() };
+        let key = format!("{}{ssid}", network::PASSWORD);
+        if password.is_none() && ap.secure && ap.saved.is_none() {
+            if self.texts.remove(&key).is_none() {
+                self.texts.insert(key, String::new());
+            }
+            return Task::none();
+        }
+        self.texts.remove(&key);
+        Task::perform(network::change(move |bus| network::join(bus, ap, password)), Message::Status)
     }
 
     /// The display the Displays page shows: the chosen one, else the primary, else the first.
