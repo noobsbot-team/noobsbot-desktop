@@ -19,6 +19,7 @@ pub mod plank;
 pub mod screenshot;
 pub mod spotlight;
 pub mod switcher;
+pub mod trash;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use smithay::utils::{Logical, Point, Rectangle, Size};
@@ -71,6 +72,7 @@ impl Popup {
             Popup::Menu(Menu::Logo) => BarItem::Logo,
             Popup::Menu(Menu::App) => BarItem::App,
             Popup::Menu(Menu::Tray(i)) => BarItem::Tray(i),
+            Popup::Menu(Menu::Overflow) => BarItem::Overflow,
             Popup::Menu(Menu::Input) => BarItem::Input,
             Popup::Menu(Menu::Dock | Menu::Desktop | Menu::Drawer | Menu::Window) => return None,
             Popup::Control => BarItem::ControlCenter,
@@ -91,6 +93,7 @@ fn popup_for(item: BarItem) -> Option<Popup> {
             Some(Popup::Notifications { year, month })
         }
         BarItem::ControlCenter => Some(Popup::Control),
+        BarItem::Overflow => Some(Popup::Menu(Menu::Overflow)),
         // Its menu comes over D-Bus first: see `tray_press`.
         BarItem::Status(_) | BarItem::Tray(_) => None,
     }
@@ -102,6 +105,8 @@ pub enum Menu {
     App,
     /// `State::tray[i]`'s dbusmenu, rows in `State::tray_menu`.
     Tray(usize),
+    /// The tray items that didn't fit the bar: `State::overflow_menu_rows`.
+    Overflow,
     /// A dock icon's right-click menu: `State::dock_menu_rows`, above `State::dock_ui.menu`.
     Dock,
     /// Keyboard layouts and input methods (E6.12): `State::input_menu_rows`.
@@ -115,27 +120,31 @@ pub enum Menu {
 }
 
 /// Where a menu opens: under the bar with its left edge at x, centred over (x, bottom) like the dock's, or with its
-/// top-left corner at a point (a right click on the desktop).
+/// top-left corner at a point (a right click on the desktop), or as a submenu beside a row: the rect spans the parent
+/// menu's width at the row's height.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Anchor {
     Below(i32),
     Above(Point<i32, Logical>),
     At(Point<i32, Logical>),
+    Beside(Rect),
 }
 
 /// A menu row (D8); `None` in a row list is a separator. No action: drawn disabled.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Row {
     pub label: String,
-    /// macOS-style glyphs; ⌘ is the desktop key.
+    /// Modifier glyphs; ⌘ is the desktop key.
     pub shortcut: &'static str,
     pub action: Option<Action>,
+    /// A submenu's rows: non-empty makes the row open them to the side instead of running an action.
+    pub sub: Vec<Option<Row>>,
 }
 
 /// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows, `update`: a verified
-/// update is waiting (E6.13).
-pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) -> Vec<Option<Row>> {
-    let row = |label: String, shortcut, action| Some(Row { label, shortcut, action });
+/// update is waiting (E6.13), `recent` the Recent Items submenu (`recent_rows`).
+pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool, recent: &[Option<Row>]) -> Vec<Option<Row>> {
+    let row = |label: String, shortcut, action| Some(Row { sub: Vec::new(), label, shortcut, action });
     let settings = |page: &str| Some(Action::Spawn(format!("noobsbot-desktop-settings --page {page}")));
     match menu {
         Menu::Logo => vec![
@@ -147,6 +156,8 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) 
             } else {
                 row("Software Update…".into(), "", settings("general"))
             },
+            None,
+            Some(Row { label: "Recent Items".into(), shortcut: "", action: None, sub: recent.to_vec() }),
             None,
             row("Force Quit…".into(), "⌥⌘⎋", Some(Action::ForceQuit)),
             None,
@@ -166,10 +177,49 @@ pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool) 
             None,
             row(format!("Quit {app}"), "⌘Q", Some(Action::QuitApp)),
         ],
-        Menu::Tray(_) => tray.iter().map(|r| r.as_ref().and_then(|r| row(r.label.clone(), "", r.enabled.then_some(Action::TrayMenu(r.id))))).collect(),
+        Menu::Tray(_) => tray_rows(tray, 0),
         // Built from state: `State::dock_menu_rows`, `State::input_menu_rows`, `State::desktop_menu_rows`.
-        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window => Vec::new(),
+        Menu::Dock | Menu::Input | Menu::Desktop | Menu::Drawer | Menu::Window | Menu::Overflow => Vec::new(),
     }
+}
+
+/// The logo menu's Recent Items: recent `apps` (name, desktop-file id) and `docs` (name, URI), then Clear Menu.
+pub fn recent_rows(apps: &[(String, String)], docs: &[(String, String)]) -> Vec<Option<Row>> {
+    let row = |label: &str, action| Some(Row { label: label.to_owned(), shortcut: "", action, sub: Vec::new() });
+    let mut rows = vec![row("Applications", None)];
+    rows.extend(apps.iter().map(|(name, id)| row(name, Some(Action::Launch(id.clone())))));
+    rows.extend([None, row("Documents", None)]);
+    rows.extend(docs.iter().map(|(name, uri)| row(name, Some(Action::Spawn(format!("xdg-open {uri}"))))));
+    let empty = apps.is_empty() && docs.is_empty();
+    rows.extend([None, row("Clear Menu", (!empty).then_some(Action::ClearRecent))]);
+    rows
+}
+
+/// A dbusmenu's rows: submenus open beside the menu, and from `depth` 1 on (a submenu's submenu) are listed inline
+/// under their row, indented. An empty submenu shows "Empty".
+// ponytail: one level of side submenus; deeper ones inline.
+fn tray_rows(tray: &[Option<MenuRow>], depth: usize) -> Vec<Option<Row>> {
+    let mut rows = Vec::new();
+    for r in tray {
+        let Some(r) = r else {
+            rows.push(None);
+            continue;
+        };
+        let indent = "    ".repeat(depth.saturating_sub(1));
+        let action = (r.enabled && r.submenu.is_none()).then_some(Action::TrayMenu(r.id));
+        let mut sub = match &r.submenu {
+            Some(kids) if depth == 0 => tray_rows(kids, 1),
+            _ => Vec::new(),
+        };
+        if r.submenu.is_some() && depth == 0 && sub.is_empty() {
+            sub.push(Some(Row { label: "Empty".into(), shortcut: "", action: None, sub: Vec::new() }));
+        }
+        rows.push(Some(Row { label: format!("{indent}{}", r.label), shortcut: "", action, sub }));
+        if let (Some(kids), 1..) = (&r.submenu, depth) {
+            rows.extend(tray_rows(kids, depth + 1));
+        }
+    }
+    rows
 }
 
 /// A menu's height with `rows`.
@@ -198,6 +248,9 @@ pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows:
         Anchor::Below(x) => (x, menubar::HEIGHT + DROP),
         Anchor::Above(p) => (p.x - width / 2, p.y - DROP - height),
         Anchor::At(p) => (p.x, p.y),
+        // To the right of the parent, its first row level with the parent's row; flipped left at the screen edge.
+        Anchor::Beside(r) if r.loc.x + r.size.w + width > output.w - MARGIN => (r.loc.x - width, r.loc.y - PAD),
+        Anchor::Beside(r) => (r.loc.x + r.size.w, r.loc.y - PAD),
     };
     let x = left.min(output.w - MARGIN - width).max(MARGIN);
     let top = top.min(output.h - MARGIN - height).max(menubar::HEIGHT + DROP);
@@ -320,6 +373,12 @@ impl State {
         }
     }
 
+    /// The open popup or its open submenu is under `location` (output-relative).
+    pub fn in_popup(&self, location: Point<f64, Logical>) -> bool {
+        let sub = self.open_submenu().and(self.backend.as_ref()).and_then(|b| b.submenu.rect());
+        self.popup_rect().into_iter().chain(sub).any(|r| r.to_f64().contains(location))
+    }
+
     /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar, an open popup or the dock.
     pub fn shell_covers(&self, location: Point<f64, Logical>) -> bool {
         let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(location));
@@ -339,7 +398,7 @@ impl State {
             return true;
         }
         let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
-        on_bar || self.popup_rect().is_some_and(|r| r.to_f64().contains(location)) || self.dock_covers(location)
+        on_bar || self.in_popup(location) || self.dock_covers(location)
     }
 
     /// A press at `location` (output-relative); `secondary`: the right button. `true`: the shell took it, so no
@@ -359,13 +418,13 @@ impl State {
         }
         let item = self.backend.as_ref().and_then(|b| b.menu_bar.hit(location));
         let open = self.popup;
-        let in_popup = self.popup_rect().is_some_and(|r| r.to_f64().contains(location));
+        let in_popup = self.in_popup(location);
         let taken = match (open, item) {
             (Some(popup), _) if in_popup => {
                 self.popup_press(popup, location);
                 true
             }
-            // Its own item again closes the popup, as on macOS.
+            // Its own item again closes the popup.
             (_, Some(item)) => {
                 let again = open.and_then(Popup::item) == Some(item);
                 self.popup = if again { None } else { popup_for(item) };
@@ -395,20 +454,21 @@ impl State {
         match popup {
             Popup::Notifications { .. } => self.center_press(location),
             Popup::Menu(menu) => {
-                let index = self.backend.as_ref().and_then(|b| b.menu.row_at(location));
-                // Separators and disabled rows keep the menu open, as on macOS.
-                let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
-                let rows = match menu {
-                    Menu::Dock => self.dock_menu_rows(),
-                    Menu::Input => self.input_menu_rows(),
-                    Menu::Desktop => self.desktop_menu_rows(),
-                    Menu::Drawer => self.drawer_menu_rows(),
-                    Menu::Window => self.window_menu_rows(),
-                    _ => menu_rows(menu, "", tray, self.update_ready()),
+                let rows = self.open_menu_rows(menu);
+                let Some(backend) = self.backend.as_ref() else { return };
+                let main = backend.menu.row_at(location);
+                let row = match self.open_submenu() {
+                    Some(i) if backend.submenu.rect().is_some_and(|r| r.to_f64().contains(location)) => {
+                        backend.submenu.row_at(location).and_then(|j| rows.get(i)?.as_ref()?.sub.get(j).cloned()).flatten()
+                    }
+                    _ => main.and_then(|i| rows.into_iter().nth(i)).flatten(),
                 };
-                if let Some(action) = index.and_then(|i| rows.into_iter().nth(i)).flatten().and_then(|row| row.action) {
+                // Separators and disabled rows keep the menu open; a submenu row opens its submenu.
+                if let Some(action) = row.and_then(|row| row.action) {
                     self.popup = None;
                     self.run_action(action);
+                } else if let Some(i) = main {
+                    self.menu_hover(menu, i);
                 }
             }
             Popup::Control => self.control_press(location),
@@ -416,7 +476,7 @@ impl State {
     }
 
     /// The pointer moved from `from` to `to` (output-relative). With a popup open, sliding along the bar opens the
-    /// next item's popup, as on macOS; in a menu, the hovered row follows.
+    /// next item's popup; in a menu, the hovered row follows.
     pub fn shell_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         if self.shell_drag.is_some() {
             return self.control_drag(to);
@@ -428,17 +488,156 @@ impl State {
         if let Some(next) = backend.menu_bar.hit(to).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(popup_for) {
             self.popup = Some(next);
             self.schedule_redraw();
-        } else if matches!(open, Popup::Menu(_)) && backend.menu.row_at(from) != backend.menu.row_at(to) {
+        } else if let Popup::Menu(menu) = open {
+            let (row, moved) = (backend.menu.row_at(to), backend.menu.row_at(from) != backend.menu.row_at(to));
+            let sub = backend.submenu.row_at(from) != backend.submenu.row_at(to);
+            if moved {
+                // A row of the parent opens its submenu or closes the open one.
+                if let Some(i) = row {
+                    self.menu_hover(menu, i);
+                }
+                self.schedule_redraw();
+            } else if sub && self.open_submenu().is_some() {
+                self.schedule_redraw();
+            }
+        }
+    }
+
+    /// The rows of the open `menu`.
+    pub fn open_menu_rows(&mut self, menu: Menu) -> Vec<Option<Row>> {
+        let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
+        match menu {
+            Menu::Dock => self.dock_menu_rows(),
+            Menu::Input => self.input_menu_rows(),
+            Menu::Desktop => self.desktop_menu_rows(),
+            Menu::Drawer => self.drawer_menu_rows(),
+            Menu::Window => self.window_menu_rows(),
+            Menu::Overflow => self.overflow_menu_rows(),
+            _ => menu_rows(menu, "", tray, self.update_ready(), self.recent_menu.as_deref().unwrap_or_default()),
+        }
+    }
+
+    /// Reads the Recent Items when the logo menu opens and drops them when it closes, so it reads the file once.
+    pub fn refresh_recent(&mut self) {
+        if self.popup != Some(Popup::Menu(Menu::Logo)) {
+            self.recent_menu = None;
+            return;
+        }
+        if self.recent_menu.is_some() {
+            return;
+        }
+        // ponytail: five of each, files that no longer exist skipped; the recent-files age setting comes later.
+        let (names, uris) = dock::recent_items(&std::fs::read_to_string(dock::recent_path()).unwrap_or_default());
+        let mut apps: Vec<(String, String)> = Vec::new();
+        for app in names.iter().filter_map(|n| self.apps.find(n)).filter(|a| !a.no_display) {
+            if apps.len() < 5 && !apps.iter().any(|(_, id)| *id == app.id) {
+                apps.push((app.name.clone(), app.id.clone()));
+            }
+        }
+        let docs: Vec<(String, String)> = uris
+            .into_iter()
+            .filter_map(|uri| {
+                let path = crate::apps::file_path(&uri)?;
+                let name = std::path::Path::new(&path).file_name()?.to_string_lossy().into_owned();
+                std::path::Path::new(&path).exists().then_some((name, uri))
+            })
+            .take(5)
+            .collect();
+        self.recent_menu = Some(recent_rows(&apps, &docs));
+    }
+
+    /// The tray items hidden under "»", by title; a click opens the item's menu or activates it.
+    pub fn overflow_menu_rows(&self) -> Vec<Option<Row>> {
+        let hidden = self.backend.as_ref().map_or(0, |b| b.menu_bar.overflow());
+        let title = |t: &crate::services::tray::TrayItem| if t.title.is_empty() { t.service.clone() } else { t.title.clone() };
+        self.tray
+            .iter()
+            .take(hidden)
+            .enumerate()
+            .map(|(i, t)| Some(Row { label: title(t), shortcut: "", action: Some(Action::TrayItem(i)), sub: Vec::new() }))
+            .collect()
+    }
+
+    /// The row of the open menu whose submenu is open.
+    pub fn open_submenu(&self) -> Option<usize> {
+        self.submenu.filter(|(popup, _)| Some(*popup) == self.popup).map(|(_, i)| i)
+    }
+
+    /// The pointer or a click is on row `i` of the open `menu`: its submenu opens, any other closes.
+    // ponytail: no safe triangle; going diagonally from a row to its submenu across the next row closes it.
+    fn menu_hover(&mut self, menu: Menu, i: usize) {
+        let has_sub = self.open_menu_rows(menu).get(i).and_then(Option::as_ref).is_some_and(|r| !r.sub.is_empty());
+        let next = has_sub.then_some(i);
+        if next == self.open_submenu() {
+            return;
+        }
+        self.submenu = next.zip(self.popup).map(|(i, popup)| (popup, i));
+        // The app may fill a submenu in only when asked (AboutToShow).
+        if let (Some(i), Menu::Tray(_), Some((service, path, rows))) = (next, menu, &self.tray_menu)
+            && let Some(Some(row)) = rows.get(i)
+        {
+            self.services.send(Command::TrayMenu { service: service.clone(), menu: path.clone(), parent: row.id });
+        }
+        self.schedule_redraw();
+    }
+
+    /// Right opens the submenu of the row under the pointer; Left and Esc close the open one. `true`: used.
+    pub fn menu_key(&mut self, sym: smithay::input::keyboard::Keysym) -> bool {
+        use smithay::input::keyboard::Keysym;
+        let Some(Popup::Menu(menu)) = self.popup else { return false };
+        match sym {
+            Keysym::Left | Keysym::Escape if self.open_submenu().is_some() => {
+                self.submenu = None;
+                self.schedule_redraw();
+                true
+            }
+            Keysym::Right => {
+                let at = self.seat.get_pointer().map(|p| self.to_output(p.current_location()));
+                if let Some(i) = at.and_then(|at| self.backend.as_ref()?.menu.row_at(at)) {
+                    self.menu_hover(menu, i);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// An auto-hiding bar shows while the pointer touches the top edge of a display, and stays while it is on the bar.
+    // ponytail: one flag for every display's bar, so they slide together.
+    pub fn bar_motion(&mut self, at: Point<f64, Logical>) {
+        if !self.config.menu_bar.auto_hide {
+            return;
+        }
+        let output = self.space.output_under(at).next().and_then(|o| self.space.output_geometry(o));
+        let y = output.map_or(f64::MAX, |g| at.y - f64::from(g.loc.y));
+        let hover = menubar::reveals(self.bar_pointer || self.popup.is_some(), y);
+        if hover != self.bar_pointer {
+            self.bar_pointer = hover;
             self.schedule_redraw();
         }
     }
 
+    /// How far an auto-hiding bar is out of sight this frame, 0 (shown) to 1 (gone); keeps frames coming while it
+    /// slides. Open menus keep it shown.
+    pub fn bar_hidden(&mut self) -> f64 {
+        let now = self.frame_time;
+        let hide = self.config.menu_bar.auto_hide && !self.bar_pointer && self.popup.is_none();
+        if self.config.appearance.reduce_motion {
+            return f64::from(u8::from(hide));
+        }
+        self.bar_hide.set(hide, now);
+        if self.bar_hide.moving(now) {
+            crate::anim::extend(&mut self.anim_until, now + crate::shell::dock_fx::HIDE_TIME);
+        }
+        self.bar_hide.value(now)
+    }
+
     /// A click on tray item `i`: its menu (fetched, then shown by `show_tray_menu`) if it is a menu or this is a
     /// right click, else Activate at the click.
-    fn tray_press(&mut self, i: usize, location: Point<f64, Logical>, secondary: bool) {
+    pub fn tray_press(&mut self, i: usize, location: Point<f64, Logical>, secondary: bool) {
         let Some(item) = self.tray.get(i) else { return };
         let command = match &item.menu {
-            Some(menu) if item.item_is_menu || secondary => Command::TrayMenu { service: item.service.clone(), menu: menu.clone() },
+            Some(menu) if item.item_is_menu || secondary => Command::TrayMenu { service: item.service.clone(), menu: menu.clone(), parent: 0 },
             _ => {
                 let origin = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or((0, 0).into(), |g| g.loc);
                 let at = location.to_i32_round() + origin;
@@ -448,8 +647,16 @@ impl State {
         self.services.send(command);
     }
 
-    /// A tray menu's rows arrived: opens it under its item.
-    pub fn show_tray_menu(&mut self, service: String, menu: String, rows: Vec<Option<MenuRow>>) {
+    /// A tray menu's rows arrived: opens it under its item, or (`parent` ≠ 0) fills in that submenu of the open one.
+    pub fn show_tray_menu(&mut self, service: String, menu: String, parent: i32, rows: Vec<Option<MenuRow>>) {
+        if parent != 0 {
+            let open = self.tray_menu.as_mut().filter(|(s, m, _)| *s == service && *m == menu);
+            if let Some(row) = open.and_then(|(_, _, all)| all.iter_mut().flatten().find(|r| r.id == parent)) {
+                row.submenu = Some(rows);
+                self.schedule_redraw();
+            }
+            return;
+        }
         let Some(i) = self.tray.iter().position(|t| t.service == service) else { return };
         if !rows.is_empty() {
             self.popup = Some(Popup::Menu(Menu::Tray(i)));
@@ -520,8 +727,25 @@ mod tests {
     }
 
     #[test]
+    fn recent_items_list_apps_and_documents() {
+        let label = |r: &Option<Row>| r.as_ref().map(|r| r.label.clone());
+        let rows = recent_rows(&[("Kate".into(), "org.kde.kate".into())], &[("a.txt".into(), "file:///a.txt".into())]);
+        let labels: Vec<_> = rows.iter().map(label).collect();
+        let s = |t: &str| Some(t.to_owned());
+        assert_eq!(labels, [s("Applications"), s("Kate"), None, s("Documents"), s("a.txt"), None, s("Clear Menu")]);
+        assert_eq!(rows[1].as_ref().unwrap().action, Some(Action::Launch("org.kde.kate".into())));
+        assert_eq!(rows[4].as_ref().unwrap().action, Some(Action::Spawn("xdg-open file:///a.txt".into())));
+        assert_eq!(rows[6].as_ref().unwrap().action, Some(Action::ClearRecent));
+        // Nothing to clear: Clear Menu is greyed.
+        assert_eq!(recent_rows(&[], &[]).last().unwrap().as_ref().unwrap().action, None);
+        // The logo menu carries them as its Recent Items submenu.
+        let logo = menu_rows(Menu::Logo, "", &[], false, &rows);
+        assert_eq!(logo.iter().flatten().find(|r| r.label == "Recent Items").map(|r| r.sub.len()), Some(rows.len()));
+    }
+
+    #[test]
     fn menus_stay_on_screen_and_stack_rows() {
-        let rows = menu_rows(Menu::App, "Kate", &[], false);
+        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
         let output = Size::from((1280, 1200));
         let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
@@ -539,7 +763,7 @@ mod tests {
 
     #[test]
     fn tall_menus_stay_on_screen_and_scroll_by_whole_rows() {
-        let rows: Vec<Option<Row>> = (0..40).map(|i| Some(Row { label: format!("Item {i}"), shortcut: "", action: None })).collect();
+        let rows: Vec<Option<Row>> = (0..40).map(|i| Some(Row { sub: Vec::new(), label: format!("Item {i}"), shortcut: "", action: None })).collect();
         let output = Size::from((1280, 768));
         let shown = |cells: &[Rect]| cells.iter().filter(|c| c.size.h > 0).count();
         // Under the bar: clipped at the bottom margin, whole rows only.
@@ -559,6 +783,32 @@ mod tests {
         // A context menu near the bottom is pushed up to fit.
         let (rect, _) = menu_layout(Anchor::At((100, 700).into()), output, 200, &rows[..5], 0);
         assert_eq!(rect.loc.y + rect.size.h, 768 - 8);
+    }
+
+    #[test]
+    fn submenus_open_beside_their_row_and_flip_at_the_edge() {
+        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
+        let output = Size::from((1280, 800));
+        // The parent spans x 100..300; its row is at y 60.
+        let row = Rectangle::new((100, 60).into(), (200, 22).into());
+        let (rect, cells) = menu_layout(Anchor::Beside(row), output, 200, &rows, 0);
+        assert_eq!((rect.loc.x, cells[0].loc.y), (300, 60), "to the right, first row level with the parent's");
+        // No room on the right: to the left of the parent instead of over it.
+        let row = Rectangle::new((1000, 60).into(), (200, 22).into());
+        assert_eq!(menu_layout(Anchor::Beside(row), output, 200, &rows, 0).0.loc.x, 800);
+    }
+
+    #[test]
+    fn tray_submenus_nest_one_level() {
+        let row = |id, label: &str, submenu| Some(MenuRow { id, label: label.into(), enabled: true, submenu });
+        let deep = row(3, "Deep", Some(vec![row(4, "Leaf", None)]));
+        let tray = [row(1, "Open", None), row(2, "More", Some(vec![deep])), row(5, "Lazy", Some(Vec::new()))];
+        let rows = tray_rows(&tray, 0);
+        let labels = |rows: &[Option<Row>]| rows.iter().flatten().map(|r| r.label.clone()).collect::<Vec<_>>();
+        assert_eq!(rows[0].as_ref().unwrap().action, Some(Action::TrayMenu(1)));
+        let more = rows[1].as_ref().unwrap();
+        assert_eq!((more.action.clone(), labels(&more.sub)), (None, vec!["Deep".to_owned(), "    Leaf".to_owned()]));
+        assert_eq!(labels(&rows[2].as_ref().unwrap().sub), ["Empty"]);
     }
 
     #[test]

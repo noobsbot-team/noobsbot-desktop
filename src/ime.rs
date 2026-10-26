@@ -114,20 +114,19 @@ fn menu_rows(layouts: &Layouts) -> Vec<Option<Row>> {
         .list
         .iter()
         .enumerate()
-        .map(|(i, (_, name))| Some(Row { label: name.clone(), shortcut: tick(i == layouts.active), action: Some(Action::Layout(Some(i))) }))
+        .map(|(i, (_, name))| Some(Row { sub: Vec::new(), label: name.clone(), shortcut: tick(i == layouts.active), action: Some(Action::Layout(Some(i))) }))
         .collect();
     if let Some(fcitx) = layouts.methods.as_ref().filter(|f| !f.methods.is_empty()) {
         rows.push(None);
-        rows.extend(
-            fcitx
-                .methods
-                .iter()
-                .map(|(id, name)| Some(Row { label: name.clone(), shortcut: tick(*id == fcitx.current), action: Some(Action::InputMethod(id.clone())) })),
-        );
+        rows.extend(fcitx.methods.iter().map(|(id, name)| {
+            Some(Row { sub: Vec::new(), label: name.clone(), shortcut: tick(*id == fcitx.current), action: Some(Action::InputMethod(id.clone())) })
+        }));
     }
     if layouts.fcitx || layouts.methods.is_some() {
         rows.push(None);
-        rows.push(Some(Row { label: "Input Method Settings…".into(), shortcut: "", action: Some(Action::Spawn("fcitx5-configtool".into())) }));
+        rows.push(Some(Row {
+            sub: Vec::new(), label: "Input Method Settings…".into(), shortcut: "", action: Some(Action::Spawn("fcitx5-configtool".into()))
+        }));
     }
     rows
 }
@@ -171,7 +170,7 @@ impl State {
     pub fn input_menu_rows(&self) -> Vec<Option<Row>> {
         let label = if self.osk_shown() { "Hide On-Screen Keyboard" } else { "Show On-Screen Keyboard" };
         let mut rows = menu_rows(&self.layouts);
-        rows.extend([None, Some(Row { label: label.into(), shortcut: "", action: Some(Action::OnScreenKeyboard) })]);
+        rows.extend([None, Some(Row { sub: Vec::new(), label: label.into(), shortcut: "", action: Some(Action::OnScreenKeyboard) })]);
         rows
     }
 

@@ -1,6 +1,6 @@
 # Noobsbot Desktop — Design Plan (v1 "Opal")
 
-A complete, macOS-style desktop environment for Linux with a glassy theme, written in Rust, for a fresh
+A complete desktop environment for Linux with a glassy theme, a global menu bar and a dock, written in Rust, for a fresh
 Arch Linux system.
 
 > Status: **planning only — no code until the owner says "start"**.
@@ -8,7 +8,7 @@ Arch Linux system.
 > Noobsbot Terminal. Technical name **`noobsbot-desktop`** (program, package, config folder, session file).
 > **Release codename for version 1: "Opal"** (shown as "Noobsbot Desktop 1 · Opal" in About). An opal is a gem
 > that looks like glass with soft light inside but isn't see-through, like this design: glassy, yet mostly solid.
-> Later major releases get other gem codenames (e.g. Pearl, Jade, Onyx), the way macOS names its versions.
+> Later major releases get other gem codenames (e.g. Pearl, Jade, Onyx).
 > Code will live in `~/Projects/Linux Tools/custom-desktop-environemt/` (folder name kept as is).
 > **Repository:** `github.com/noobsbot-team/noobsbot-desktop`, next to `noobsbot-team/noobsbot-terminal`. Both
 > started on the owner's account (`anil0403/…`) and moved to the team's organisation; GitHub redirects the old URLs.
@@ -22,7 +22,7 @@ Arch Linux system.
 - **Part A** — What we are building (goal, requirements, non-goals, layers)
 - **Part B** — Glossary
 - **Part C** — Core technology choices (what, why, what we rejected)
-- **Part D** — Design system: the glassy macOS look shared by every element
+- **Part D** — Design system: the glassy look shared by every element
 - **Part E** — Milestones M1–M8: every element in detail (what, design, built with, why, done when)
 - **Part F** — Apps that ship with Noobsbot Desktop
 - **Part G** — System layer: hardware, drivers, services, package list
@@ -39,14 +39,14 @@ Arch Linux system.
 ## A1. The goal
 Noobsbot Desktop is a whole desktop: everything you see after logging in. That means windows, menu bar, dock,
 Spotlight, Launchpad, Notification Center, Control Center, calendar, Spaces, Mission Control, touchpad gestures,
-lock screen and System Settings. It **looks and behaves like macOS** with a **glassy theme**, is installed on a
+lock screen and System Settings. It has a **global menu bar, a dock and a glassy theme**, and **behaves the same way everywhere**, is installed on a
 **fresh Arch Linux** system by one script, does not rely on any other desktop,
 and must be **very fast** while using **as little RAM and CPU as possible**.
 
 ## A2. Requirements (set by the owner)
 | # | Requirement | Where |
 |---|---|---|
-| R1 | Look and feel like macOS, **well designed** everywhere | Part D + the "Design" block of every element in Part E |
+| R1 | A consistent glassy look and feel, **well designed** everywhere | Part D + the "Design" block of every element in Part E |
 | R2 | Glassy theme, **no blur**, low transparency (mostly solid) | D3 materials |
 | R3 | Super fast, minimal system resources | Part C, Part I |
 | R4 | Rust (or a better language if one exists) | C1 |
@@ -160,7 +160,7 @@ Each choice lists **what it decides**, **what we use**, **why**, and **what we r
 - **Why:** (1) **RAM:** each separate GUI program costs about 20–40 MB (its own GPU context, fonts, toolkit).
   Eight shell programs would be 160–320 MB; one process stays under 100 MB. (2) **Perfect sync:** dock
   magnification, gestures and Mission Control move in the same frame as the windows. (3) **Simpler:** the shell
-  sees every window directly, with no extra protocols. (4) macOS works the same way (WindowServer + Dock).
+  sees every window directly, with no extra protocols. (4) A single display server that owns the dock is a proven design.
 - **Separate on purpose:** real apps and the future Settings app. They're big, and their bugs mustn't kill the desktop.
 - **Downside & mitigation:** a shell crash ends the session. Mitigated with Rust safety, no `unwrap()` in shell
   code (enforced by Clippy lints `unwrap_used` / `expect_used` / `panic` in CI, not only by rule), and unit tests.
@@ -231,7 +231,7 @@ one product. All values live in `src/theme.rs` and can be overridden in `config.
 | `window-bg` | `#ECECEC` | `#1E1E1E` | Settings app window, alerts |
 | `accent` (default blue) | `#007AFF` | `#0A84FF` | selection, toggles on, focus ring, default button |
 
-### Accent choices (macOS set)
+### Accent choices (eight accent colours)
 | Blue | Purple | Pink | Red | Orange | Yellow | Green | Graphite |
 |---|---|---|---|---|---|---|---|
 | `#007AFF`/`#0A84FF` | `#AF52DE`/`#BF5AF2` | `#FF2D55`/`#FF375F` | `#FF3B30`/`#FF453A` | `#FF9500`/`#FF9F0A` | `#FFCC00`/`#FFD60A` | `#34C759`/`#30D158` | `#8E8E93`/`#98989D` |
@@ -342,7 +342,7 @@ drawn in one shader pass. Opacity is per material, multiplied by the global `gla
 ## D9. Iconography
 | Kind | Choice | Size |
 |---|---|---|
-| App icons | **WhiteSur** icon theme (macOS Big Sur style squircles) | dock 84 (zoomed to 126, like the current Plank), Launchpad 80, switcher 96, Spotlight 24/32, notifications 32 |
+| App icons | **WhiteSur** icon theme (squircle style) | dock 84 (zoomed to 126, like the current Plank), Launchpad 80, switcher 96, Spotlight 24/32, notifications 32 |
 | Symbols (menu bar, Control Center, OSD, menus) | **Phosphor Icons** (MIT, free; regular + fill weights, similar feel to Apple's SF Symbols) bundled as SVG | 16 (menu bar), 18–20 (Control Center), 24 (OSD) |
 | Cursors | **WhiteSur cursors** | 24 (scales with display) |
 - Menu-bar symbols are monochrome `label`; Control Center glyphs flip to white on accent when on.
@@ -360,7 +360,7 @@ drawn in one shader pass. Opacity is per material, multiplied by the global `gla
 
 ## D11. Wallpaper
 - Ships with **our own** wallpapers: a soft opal-like colour-gradient set (milky white with hints of blue, pink and green; a dark variant) with light and dark variants (dark used
-  automatically in dark mode). macOS wallpapers are copyrighted.
+  automatically in dark mode). Third-party OS wallpapers are copyrighted.
 - Any PNG/JPEG can be set (fill / fit / centre). Lock screen uses the same wallpaper darkened 30%.
 
 ## D12. Design workflow (how "well designed" is guaranteed)
@@ -382,7 +382,7 @@ included, with no element ever cut off or overflowing. Rules every element follo
 | **Minimum screen** | 1280 × 720 logical. Everything below is checked at 1280 × 720, 1366 × 768, 1920 × 1080, 2560 × 1440 @ 150%, 3840 × 2160 @ 200% and 1080 × 1920 (portrait) in the mockups and in the design review |
 | **Menu bar** | fixed 24 px; right-side items keep their order and, when space runs out, drop left-to-right into a "»" overflow menu (tray icons first, clock last to go); app-menu titles truncate with "…" and never wrap |
 | **Control Center** | fixed 320 px wide; if the screen is shorter than its height, the panel scrolls (never taller than screen − menu bar − 16) |
-| **Notification Center** | fixed 360 px wide, full height, scrolls; on screens narrower than 1366, it overlaps the content like macOS (it never pushes windows) |
+| **Notification Center** | fixed 360 px wide, full height, scrolls; on screens narrower than 1366, it overlaps the content (it never pushes windows) |
 | **Spotlight** | 680 px wide, or **90% of the screen width** when narrower; results list capped at 8 rows or at the space above the dock |
 | **Launchpad** | grid computed from the screen: columns = ⌊(width − 2 × 48) / 112⌋ clamped to 5…9, rows = ⌊(height − 160) / 120⌋ clamped to 3…6 (7 × 5 at 1080p, 5 × 4 at 720p, 9 × 6 at 4K); icon 80 px, or 64 px under 1366 wide |
 | **Dock** | exactly Plank's rule: when the pinned + running icons don't fit the screen width, the **icon size shrinks** (84 → down to 32) until they do; zoom still applies. One dock per monitor, each fitted to its own width |
@@ -415,7 +415,7 @@ Size: S = days, M = 1–2 weeks, L = several weeks (rough estimates).
 
 ## M1 — Compositor, windows & glass foundation (dev mode) — size L
 Goal: Noobsbot Desktop runs as a window inside another desktop (safe development). Apps open inside it in
-macOS-style glass windows.
+glass windows with traffic lights.
 
 ### E1.1 Compositor core
 - **What it is:** the heart of Noobsbot Desktop. It receives every app's window, draws it, and sends keyboard and mouse to the right app.
@@ -430,7 +430,7 @@ macOS-style glass windows.
   `linux-drm-syncobj-v1` (explicit sync: **required** on NVIDIA 555+ to avoid flicker and glitches), `linux-dmabuf`
   v4 feedback (tells apps which buffer formats our GPU can import, so no black windows on mixed GPUs));
   calloop; **winit backend** (runs as a window).
-  - **Clipboard persistence:** Wayland drops the clipboard when the source app quits; macOS keeps it. The compositor
+  - **Clipboard persistence:** Wayland drops the clipboard when the source app quits; we keep it. The compositor
     keeps a copy of the last clipboard contents (up to 10 MB, `clipboard.rs`) so copy → quit the app → paste works.
 - **Why:** Smithay + calloop (C3, C7); the winit backend lets us develop without logging out or risking the
   real session. The protocol list is what modern apps (Helium, Qt, GTK, games, VMs, noobsbot) need to run fully.
@@ -440,7 +440,7 @@ macOS-style glass windows.
 ### E1.2 Windows & window management
 - **What it is:** where windows go and how they move, resize, focus, minimise and zoom.
 - **Design:**
-  - Windows **float** like macOS. New windows open centred, slightly above the middle (golden ratio), or at
+  - Windows **float**. New windows open centred, slightly above the middle (golden ratio), or at
     the position remembered for that app.
   - Click = focus + raise. The focused window gets elevation 5, unfocused gets elevation 4 and its title at
     `label-secondary`.
@@ -450,24 +450,24 @@ macOS-style glass windows.
     | Grab | title bar (left button), or **Super + drag anywhere** in the window (Linux habit, configurable); 1-finger tap-drag and the optional 3-finger drag on the touchpad |
     | Start | the move begins after a **4 px** drag threshold, so a plain click never nudges the window |
     | Follow | the window follows the pointer **1:1 in the same frame** (E1.10). Only the window's texture moves; the app is not asked to redraw, so even a busy app drags smoothly |
-    | Limits | the title bar can never go under the menu bar (macOS rule); at least 40 px of the title bar must stay on screen so it can always be grabbed again; otherwise a window may hang off any edge |
+    | Limits | the title bar can never go under the menu bar; at least 40 px of the title bar must stay on screen so it can always be grabbed again; otherwise a window may hang off any edge |
     | Magnetic edges | within **8 px** of a screen edge, the menu bar, the dock, or another window's edge, the window **sticks** gently (release inside the zone aligns it exactly); holding **Ctrl** disables sticking (Alt is taken by symmetric resize) |
     | Monitors | drag across monitors with different scales seamlessly (the texture is drawn on both at each one's scale); the menu bar of the monitor containing the window's centre becomes the active one on release |
     | Snapping | hold the window at a screen edge for 300 ms → a translucent `panel`-material preview of the half/quarter zone appears; release → the window springs into it (`smooth`); dragging it away restores its previous size |
     | Spaces | drag a window to the screen edge and keep pushing for 600 ms → the Space switches (optional, off by default); dragging onto a Space thumbnail in Mission Control moves it (E5.2) |
-    | Release | no inertia (macOS has none); the window simply stops |
+    | Release | no inertia; the window simply stops |
     | Mission Control / drag | starting a 3-finger swipe while dragging opens Mission Control with the window still in hand |
   - **Resizing a window:**
     | Detail | Behaviour |
     |---|---|
     | Grab zones | **8 px outside** every edge (invisible) plus the outer 4 px of the window frame; corners use a 16 × 16 zone and resize diagonally. The cursor changes to ↔ ↕ ⤡ ⤢ (`cursor-shape` protocol) as soon as the pointer enters a zone |
     | Live resize | each frame we send the app one `xdg_toplevel.configure` with the new size, **never more than one outstanding** (we wait for the app's ack + new buffer before sending the next). This is what keeps resizing smooth instead of flooding slow apps |
-    | While the app lags | the frame (title bar, corners, shadow) is drawn at the **new** size immediately; the app's last buffer is anchored to the edge opposite the one being dragged (drag the right edge → content pinned to the left; drag the top-left corner → content pinned to the bottom-right) and the uncovered strip is filled with the window's background colour (`window-bg`). Exactly what macOS does, so nothing jumps |
+    | While the app lags | the frame (title bar, corners, shadow) is drawn at the **new** size immediately; the app's last buffer is anchored to the edge opposite the one being dragged (drag the right edge → content pinned to the left; drag the top-left corner → content pinned to the bottom-right) and the uncovered strip is filled with the window's background colour (`window-bg`). So nothing jumps |
     | Min / max | the app's `min_size` / `max_size` hints are respected; apps that give none get a floor of 200 × 120 so a window can never vanish |
-    | Modifiers | **Alt + resize** = symmetric resize from the centre; **Shift + resize** = keep the aspect ratio (macOS behaviours) |
-    | Double-click an edge | the window grows to the screen edge in that direction only (macOS: Option-click behaviour, made the default) |
+    | Modifiers | **Alt + resize** = symmetric resize from the centre; **Shift + resize** = keep the aspect ratio |
+    | Double-click an edge | the window grows to the screen edge in that direction only (the default, no modifier needed) |
     | Magnetic edges | the dragged edge sticks to screen and window edges within 8 px, same as moving; Ctrl disables it |
-    | Fullscreen / zoomed | resize handles are disabled; dragging a zoomed window's title bar un-zooms it first (macOS) |
+    | Fullscreen / zoomed | resize handles are disabled; dragging a zoomed window's title bar un-zooms it first |
     | Touchpad | click-drag on a zone; pinch does **not** resize windows (it belongs to apps, E1.7) |
     | Keyboard | Super+Ctrl+arrows nudge/resize by 16 px steps (configurable, off by default) |
   - **Stacking order (bottom → top), fixed so no element can ever be hidden by the wrong one:** wallpaper → desktop
@@ -478,22 +478,22 @@ macOS-style glass windows.
     screenshot overlay → **lock screen** (above everything, always).
   - **Focus stealing:** a new window takes focus only with a valid `xdg-activation` token (it was launched by the
     user's click/keystroke, or the focused app opened it). Otherwise it opens *behind* and its dock icon bounces
-    (macOS behaviour), so typing in one app never lands in another.
+    so typing in one app never lands in another.
   - **Grabs:** opening a shell popover closes any app popup grab and vice versa; a lock, a Space switch or a monitor
     hot-unplug cancels every drag, resize and grab in progress.
-  - Double-click the title bar = zoom (configurable: zoom / minimise / nothing), like macOS.
+  - Double-click the title bar = zoom (configurable: zoom / minimise / nothing).
   - **Zoom** = fill the screen between the menu bar and dock (keeping a 0 px gap; the window still has a title bar).
-  - Window snapping (macOS Sequoia style, on by default, can be turned off): edge → half, corner → quarter; details
+  - Window snapping (on by default, can be turned off): edge → half, corner → quarter; details
     in the Snapping row above.
 - **Built with:** Smithay `Space` + our `wm.rs`.
-- **Why floating:** macOS floats (R1). Remembered positions: macOS behaviour. Snapping: modern macOS
-  has it, and it's cheap to add.
+- **Why floating:** floating windows are the design (R1). Remembered positions: the user's layout survives restarts.
+  Snapping: users expect it, and it's cheap to add.
 - **Done when:** move, resize, focus, raise, zoom, minimise and close all work with mouse and touchpad,
   without flicker; a window being resized by its left edge keeps its content pinned to the right while a
   deliberately slow test app (`sleep 200 ms` per frame) catches up; dragging follows the pointer with no visible lag
   at 120 Hz; magnetic edges and both modifiers work (unit tests for the anchor and sticking math).
 
-### E1.3 macOS title bars & traffic lights
+### E1.3 Title bars & traffic lights
 - **What it is:** the bar on top of every window with close / minimise / zoom buttons.
 - **Design:**
   ```
@@ -503,14 +503,14 @@ macOS-style glass windows.
   │                  (app content)                            │
   ```
   - Height **28 px**; traffic lights **12 px** circles, **8 px** apart, centre 14 px from the left edge, vertically centred.
-  - Colours and hover glyphs per D2. Hovering any one shows the glyphs on all three (macOS behaviour).
+  - Colours and hover glyphs per D2. Hovering any one shows the glyphs on all three.
   - Title: Headline (13 semibold), centred, truncated with "…", `label` when focused / `label-secondary` when not.
   - Unfocused windows: traffic lights turn grey.
   - Window corners: radius 10 (top) and 10 (bottom), continuous squircle; 0.5 px hairline around the window.
 - **Built with:** server-side decorations (we draw them) negotiated through `xdg-decoration` **and** the older
   `org_kde_kwin_server_decoration` (GTK3 and Qt 5 only understand this older one; without it every GTK3 dialog, including
   the portal file picker, draws its own title bar); SDF shader for the circles and glyphs.
-- **Why:** server-side is the only way **every** app gets the same macOS title bar. SDF keeps circles crisp at
+- **Why:** server-side is the only way **every** app gets the same title bar. SDF keeps circles crisp at
   every scale. Apps that refuse server-side decorations (GTK4/libadwaita) keep their own (see L2).
 - **Done when:** noobsbot, Dolphin and Kate show our title bar (Helium keeps its own, see F2), and the
   lights work.
@@ -542,14 +542,14 @@ macOS-style glass windows.
   Ctrl and the F-keys.** Noobsbot Desktop never takes combinations apps rely on: Ctrl+←/→ (word jump in every text
   field), Ctrl+1…9 (browser tabs), F3 (find next), Ctrl+Shift+I (DevTools). Super+key is ours unless listed as
   pass-through: Super+C/V/X/Z/A/S/F/T/R/L go to the focused app untouched, which is what makes the optional mode below
-  possible. **"Mac keys" mode** (optional, off by default, Open-1 at M5): Super becomes Cmd, exactly like macOS.
-  Every Super+letter/digit that isn't a desktop action on macOS is translated to Ctrl+… for the focused app (not for
-  terminals): C/V/X/Z/A/S/F/T/R/L **and** W (close tab), N (new window), 1…9 (tabs). Desktop actions keep their macOS
+  possible. **"Mac keys" mode** (optional, off by default, Open-1 at M5): Super becomes Cmd.
+  Every Super+letter/digit that isn't a desktop action is translated to Ctrl+… for the focused app (not for
+  terminals): C/V/X/Z/A/S/F/T/R/L **and** W (close tab), N (new window), 1…9 (tabs). Desktop actions keep their Cmd-style
   keys: Super+Q quit, Super+H hide, Super+M minimise, Super+Tab, Super+Space; and because apps now receive Ctrl through
-  Super, physical **Ctrl is free for the desktop**, so Spaces and Mission Control move to macOS's own Ctrl+←/→,
+  Super, physical **Ctrl is free for the desktop**, so Spaces and Mission Control move to Ctrl+←/→,
   Ctrl+1…9, Ctrl+↑/↓, and Notification Center to the clock / hot corner only. Switching the mode swaps the whole
   binding set at once, so no key is ever bound twice.
-  **Keyboard layout / input method switch:** Super+Ctrl+Space (macOS's Ctrl+Space clashes with IDE autocomplete),
+  **Keyboard layout / input method switch:** Super+Ctrl+Space (plain Ctrl+Space clashes with IDE autocomplete),
   plus the menu-bar keyboard item (E6.12).
 - **Design:** shortcuts in M1: Super+Enter (noobsbot-terminal), Super+B (Helium), Super+E (Dolphin), Super+Q (quit
   app), Super+W (close window), Super+M (minimise), Super+H (hide), Super+Tab (basic cycling; the full switcher comes
@@ -575,7 +575,7 @@ macOS-style glass windows.
   |---|---|
   | 1-finger tap | click (tap-to-click, on by default) |
   | 2-finger tap / click | right-click |
-  | 2-finger scroll | scroll, **natural** direction by default (like macOS) |
+  | 2-finger scroll | scroll, **natural** direction by default |
   | 2-finger pinch | **passed to the app**: zoom in Helium, Dolphin and image viewers |
   | 2-finger swipe left/right | a horizontal **scroll** passed to the app; Helium turns it into back/forward |
   | Click + drag | select / move windows |
@@ -598,7 +598,7 @@ macOS-style glass windows.
   config starts the desktop with defaults and a notification.
 
 ### E1.9 Window rules
-- **What it is:** per-app rules in `config.toml`, the way macOS remembers how an app's windows behave.
+- **What it is:** per-app rules in `config.toml`, so the desktop remembers how an app's windows behave.
 - **Design:** `[[rules]]` entries matched by Wayland `app_id` and an optional title pattern: `space = "all" | n`,
   `float_above = true` (always on top, e.g. Helium's picture-in-picture window, matched by its title), `size`,
   `position`, `fullscreen`, `decorations = false` and `layer = "overlay"` (the quake terminal, E2.8: above fullscreen apps), `opacity`. Rules apply when a window
@@ -664,7 +664,7 @@ macOS-style glass windows.
 ---
 
 ## M2 — Menu bar, Control Center, clock & calendar, system status — size L
-Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brightness and battery are all controllable.
+Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bluetooth, sound, brightness and battery are all controllable.
 
 ### E2.1 Text & widget set
 - **What it is:** the foundation for all shell UI: text rendering + the D8 components.
@@ -689,11 +689,11 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   - Right (12 px gaps, symbols 16 px): tray icons · keyboard layout (only if more than one) · Wi-Fi · Bluetooth ·
     battery (% optional) · volume · **Control Center** ⊞ · **date & time**.
   - Click an item → its menu/popover drops 4 px below the bar; the item gets a pressed pill highlight (radius 4).
-  - Restart / Shut Down / Log Out show an **alert** (D8) with a 60 s countdown, like macOS.
+  - Restart / Shut Down / Log Out show an **alert** (D8) with a 60 s countdown.
 - **Built with:** our widgets; tray through **StatusNotifierItem** + **dbusmenu** (zbus; **we host the `StatusNotifierWatcher`** service, because
   without a watcher apps never register their icons); power actions via
   **logind**.
-- **Why:** this is the macOS layout (R1). StatusNotifierItem is the tray standard modern apps use.
+- **Why:** this is the menu-bar layout of the design (R1). StatusNotifierItem is the tray standard modern apps use.
 - **Done when:** every item opens its menu; tray icons from apps appear and their menus work; Sleep/Restart/
   Shut Down/Log Out work.
 
@@ -723,7 +723,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   │ ╰──────────────────────────────────╯ │
   ╰──────────────────────────────────────╯
   ```
-  (The AirDrop row isn't included; it's only drawn above to show macOS's layout. Our network module has
+  (The AirDrop row isn't included; it's only drawn above to show the full layout. Our network module has
   Wi-Fi + Bluetooth only.)
   - Round toggles 28 px (D8). Clicking a module's title expands it in place (spring `smooth`): Wi-Fi shows a
     network list with signal bars and a lock icon; Bluetooth shows devices with battery %; Sound shows outputs
@@ -789,8 +789,8 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 
 ### E2.7 On-screen display (OSD) for media keys
 - **What it is:** the small indicator when you press volume / brightness / mute keys.
-- **Design:** `hud` material pill, **280 × 48 px**, radius 24, top-right under the menu bar (macOS Sonoma
-  position). Symbol 24 px + a progress bar (D8) + the value. Appears with `snappy`, hides after 1.5 s.
+- **Design:** `hud` material pill, **280 × 48 px**, radius 24, top-right under the menu bar.
+  Symbol 24 px + a progress bar (D8) + the value. Appears with `snappy`, hides after 1.5 s.
   The mute key shows a crossed-out speaker. It shares the top-right corner with notification banners (E4.1): while
   the OSD is visible, banners move down by 56 px (spring `snappy`), so the two never overlap.
 - **Built with:** key events from libinput; PipeWire (`wpctl`) / logind brightness.
@@ -807,7 +807,7 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
 
 ### E2.9 Universal glass theme for apps (Dolphin, Kate & every other app)
 - **What it is:** apps that aren't drawn by Noobsbot Desktop (Dolphin, Kate, Partition Manager, System Monitor,
-  Filelight, file-picker dialogs) get **the same glassy macOS look** as the desktop, from the same Part D tokens,
+  Filelight, file-picker dialogs) get **the same glassy look** as the desktop, from the same Part D tokens,
   and switch light/dark together with it. **Scope:** the generator plus Dolphin and Kate are verified in M2 (nested, on
   the dev machine); Partition Manager, System Monitor and Filelight in M6, once `install.sh` installs them.
 - **Design: Dolphin as the reference (Finder-like):**
@@ -832,14 +832,14 @@ Goal: the top of the screen works like macOS, and Wi-Fi, Bluetooth, sound, brigh
   | File area | solid `card` colour (white / `#323232`) so file names stay perfectly readable, like Finder |
   | Selection | accent fill + white text (D7) |
   | Menus, context menus, tooltips | `popover` glass, radius 8, D8 menu spec |
-  | Buttons, fields, scrollbars | D8 sizes and radii; thin overlay scrollbars like macOS |
+  | Buttons, fields, scrollbars | D8 sizes and radii; thin overlay scrollbars |
   | Fonts | Inter (UI), JetBrains Mono (fixed width) |
   | Icons | WhiteSur (light/dark matching the mode) |
   - Kate, Partition Manager, System Monitor, Filelight: the same rules (glass sidebars/toolbars, solid content area).
 - **Built with:**
   | Piece | What we ship | Why |
   |---|---|---|
-  | **Kvantum theme "Noobsbot Glass"** (light + dark) | our own Kvantum theme, derived from WhiteSur's Kvantum theme, recoloured and resized to Part D. Kvantum's translucency is on (`translucent_windows`, window/menu opacity set to match D3), with **no blur** | Kvantum is the standard way to fully restyle Qt apps on any desktop, and it supports translucent windows. Starting from WhiteSur gives macOS shapes; our tokens give our exact colours |
+  | **Kvantum theme "Noobsbot Glass"** (light + dark) | our own Kvantum theme, derived from WhiteSur's Kvantum theme, recoloured and resized to Part D. Kvantum's translucency is on (`translucent_windows`, window/menu opacity set to match D3), with **no blur** | Kvantum is the standard way to fully restyle Qt apps on any desktop, and it supports translucent windows. Starting from WhiteSur gives the right shapes; our tokens give our exact colours |
   | **Qt colour scheme "Noobsbot Glass"** (light + dark) in `~/.local/share/color-schemes/`, selected in `~/.config/kdeglobals` | Dolphin and Kate take some colours (views, selection, links) from the colour scheme, not from the style; both must match |
   | `kdeglobals` fonts + icons | `font=Inter,10`, `fixed=JetBrains Mono,10`, `[Icons] Theme=WhiteSur` / `WhiteSur-dark` | Dolphin and Kate read these on any desktop |
   | Session env | `QT_QPA_PLATFORMTHEME=qt6ct`, `QT_STYLE_OVERRIDE=kvantum` (E6.7) | forces every Qt app to use the theme |
@@ -984,7 +984,7 @@ Goal: everything that informs you and helps you find things.
 - **Done when:** `notify-send "Title" "Body"` shows a correct banner; actions call back the app; DND silences everything.
 
 ### E4.2 Notification Center (the notification panel)
-- **What it is:** a panel on the right side with all notifications plus widgets, like macOS.
+- **What it is:** a panel on the right side with all notifications plus widgets.
 - **How to open:** click the **date & time** in the menu bar · **Super+N** · optional hot corner. Close: Esc, click
   outside, or click the clock again.
 - **Design:**
@@ -1029,7 +1029,7 @@ Goal: everything that informs you and helps you find things.
     | Weather (optional, later) | needs an online weather API, so off by default | later decision |
   - "Edit Widgets" (later, M7) to add, remove and reorder.
 - **Built with:** our widgets; the notification store from E4.1; UPower; chrono.
-- **Why:** this is macOS's notification panel (R1, R13); a single place for missed notifications.
+- **Why:** this is the design's notification panel (R1, R13); a single place for missed notifications.
 - **Done when:** notifications arrive in history, group by app, expand/collapse, clear and act; widgets show live data;
   open/close animates at 120 Hz.
 
@@ -1059,7 +1059,7 @@ Goal: everything that informs you and helps you find things.
 - **Done when:** any installed app is found within 1 frame of typing and launches on Enter.
 
 ### E4.4 Launchpad (app grid)
-- **What it is:** a full-screen grid of all apps, like macOS Launchpad.
+- **What it is:** a full-screen grid of all apps: Launchpad.
 - **How to open:** dock icon · 4-finger pinch in (E5.3) · F4 (off by default, E1.6). Close: Esc, click empty space, or pinch out.
 - **Design:**
   - Wallpaper **dimmed and desaturated** (no blur), so icons stand out.
@@ -1070,7 +1070,7 @@ Goal: everything that informs you and helps you find things.
   - Icons zoom in (scale 1.1→1, fade) on open with `smooth`.
   - Drag an icon onto the dock to pin it. Folders: later.
 - **Built with:** the shared app index + icons (M3); our widgets.
-- **Why:** macOS has it (R1), and it's cheap because the app index and icons already exist.
+- **Why:** the design calls for it (R1), and it's cheap because the app index and icons already exist.
 - **Done when:** all apps show, paging and search work, and opening/closing is smooth.
 
 ### E4.5 App switcher
@@ -1078,7 +1078,7 @@ Goal: everything that informs you and helps you find things.
 - **Design:** centred `hud` panel, radius 18, icons **96 px**, 12 px gaps; the selected app has a rounded (radius 12)
   white @ 20% highlight and its name in Body under the strip. Super+Tab = next, Super+Shift+Tab = previous,
   Super+` = windows of the same app, Super+Q while open = quit the selected app.
-  Appears only after a 150 ms hold (a quick tap switches instantly, like macOS).
+  Appears only after a 150 ms hold (a quick tap switches instantly).
 - **Built with:** our widgets + the window list the compositor already has (C5 benefit).
 - **Done when:** order is most-recently-used; it switches across Spaces (jumps to the app's Space).
 
@@ -1095,7 +1095,7 @@ Goal: everything that informs you and helps you find things.
 - **Done when:** plug → notification → open in Dolphin → eject → "safe to remove".
 
 ### E4.7 Force Quit window & "not responding" detection
-- **What it is:** macOS's Force Quit Applications window, plus a warning when an app freezes.
+- **What it is:** a Force Quit Applications window, plus a warning when an app freezes.
 - **Design:**
   ```
   ╭─────────────────────────────────────────╮
@@ -1127,26 +1127,26 @@ Goal: everything that informs you and helps you find things.
 ---
 
 ## M5 — Spaces, Mission Control, system gestures, animation polish — size L
-Goal: multiple workspaces and the full macOS gesture experience.
+Goal: multiple workspaces and the full multi-finger gesture experience.
 
 ### E5.1 Multiple workspaces ("Spaces")
 - **What it is:** several virtual desktops, each with its own windows.
 - **Design / behaviour:**
-  - **Dynamic** (macOS): start with 1 Space; **+** in Mission Control adds one; ✕ on a Space thumbnail removes it
+  - **Dynamic**: start with 1 Space; **+** in Mission Control adds one; ✕ on a Space thumbnail removes it
     (its windows move to the neighbouring Space). Option: fixed count (`spaces = 4`).
   - **Switch:** Super+← / →, Super+1…9 (Ctrl+arrows and Ctrl+digits stay with the apps, E1.6), **3-finger swipe left/right** (E5.3), or click a Space in Mission Control.
     The whole screen slides (spring `smooth`; follows the fingers with gestures).
   - **Move a window:** Super+Shift+← / → (the window comes with you), drag in Mission Control, or right-click title
     bar → Move to ▸ Space N.
   - **Fullscreen = its own Space** (green traffic light); exiting removes that Space. Alt+green = zoom instead.
-  - **Each monitor has its own Spaces** (macOS default).
+  - **Each monitor has its own Spaces** (default).
   - Clicking a dock icon or picking an app in the switcher **jumps to the Space** where its window is.
   - **Assign app:** dock → Options ▸ This Space / All Spaces / None (the quake terminal = All Spaces).
   - **Indicator:** on switch, a small `hud` pill at the top centre with dots (current dot = `label`, others @ 30%), fades after 0.8 s.
   - Optional Space number/dots in the menu bar (off by default).
 - **Built with:** `spaces.rs`: per monitor a list of Spaces, each with its own window stack and focus. Hidden Spaces
   are **not drawn** (zero GPU) but their apps keep running. `ext-workspace-v1` protocol so other tools can list and switch Spaces.
-- **Why:** dynamic Spaces are macOS behaviour (R1, R11); not drawing hidden Spaces keeps it free (R3).
+- **Why:** dynamic Spaces are the design (R1, R11); not drawing hidden Spaces keeps it free (R3).
 - **Done when:** all behaviours above work by keyboard, gesture and mouse; switching is interruptible midway.
 
 ### E5.2 Mission Control & App Exposé
@@ -1171,13 +1171,13 @@ Goal: multiple workspaces and the full macOS gesture experience.
     follows the fingers during the gesture).
   - Hover a window → 3 px accent outline + its title in a glass pill below it.
   - Click = focus that window and exit. Drag a window onto a Space thumbnail = move it there.
-  - The Spaces bar collapses to names (Callout) and expands into thumbnails on hover (macOS Sonoma behaviour).
+  - The Spaces bar collapses to names (Callout) and expands into thumbnails on hover.
 - **Built with:** layout algorithm in `mission.rs` (pure function, unit-tested); live window textures (only while open).
 - **Why:** thumbnails reuse the textures the apps already gave us, so no extra rendering happens while closed.
 - **Done when:** with 10+ windows, opening and closing stays at full frame rate; layout never overlaps.
 
 ### E5.3 Touchpad gestures (full system set)
-- **What it is:** the macOS multi-finger gesture set.
+- **What it is:** the multi-finger gesture set.
 - **Design (all gestures follow the fingers 1:1, then finish with a velocity-based spring; a quick flick is
   enough, and a slow drag that's released halfway cancels):**
   | Gesture | Action | Milestone |
@@ -1195,15 +1195,15 @@ Goal: multiple workspaces and the full macOS gesture experience.
   | **4-finger spread out** | **Show Desktop** (windows slide to the screen edges) | M5 |
   | 3-finger drag (optional, off by default) | drag windows/text without clicking (libinput feature) | M5 |
   | 3-finger hold (optional) | reserved for later (e.g. look up) | later |
-  - Option: use **4 fingers** instead of 3 for Space/Mission Control swipes (like macOS's setting), which leaves
+  - Option: use **4 fingers** instead of 3 for Space/Mission Control swipes (a setting), which leaves
     3-finger swipes to apps.
   - Gesture settings: sensitivity, natural scrolling, tap-to-click, finger count; in config now, Trackpad page in M7.
 - **Built with:** **libinput** gesture events (swipe / pinch / hold with begin–update–end and finger count) via
   Smithay; our recogniser in `input.rs` (gesture → action, with velocity tracking); pinch goes to apps through the
   `pointer-gestures` protocol, 2-finger movement as normal scroll events.
 - **Why:** libinput already recognises multi-finger gestures reliably on every Linux touchpad (with palm rejection).
-  We only map them to actions and animate them. Following the fingers 1:1 is what makes macOS gestures feel physical.
-- **Limit:** macOS's "swipe from the right edge with 2 fingers for Notification Center" isn't possible, because
+  We only map them to actions and animate them. Following the fingers 1:1 is what makes gestures feel physical.
+- **Limit:** A "swipe from the right edge with 2 fingers for Notification Center" isn't possible, because
   libinput doesn't report where fingers are on the pad. Notification Center opens by clicking the clock, Super+N or a hot corner.
 - **Done when:** every gesture in the table works on a real touchpad, is interruptible, and has no false triggers
   while typing (palm rejection) or scrolling.
@@ -1288,7 +1288,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   │        Sleep   Restart   Shut Down             ⌨ EN   🔋 85%  │  bottom: Callout buttons + status
   └─────────────────────────────────────────────────────────────┘
   ```
-  - Wallpaper darkened 30%. A wrong password makes the field **shake** (macOS) and shows "Incorrect password".
+  - Wallpaper darkened 30%. A wrong password makes the field **shake** and shows "Incorrect password".
   - Notifications on the lock screen: count only ("3 notifications"), with no content by default (privacy).
   - Locks on: Super+Ctrl+Q, the logo menu, lid close, wake from sleep, and after idle time.
 - **Built with:** drawn **by the compositor itself**; while locked no app is drawn and no input reaches apps.
@@ -1318,7 +1318,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 
 ### E6.6 Login screen
 - **What it is:** where you log in after boot.
-- **Design:** greetd + tuigreet (text, centred, clean) for M6. A **graphical macOS-style login** that matches the
+- **Design:** greetd + tuigreet (text, centred, clean) for M6. A **graphical glass login** that matches the
   lock screen comes later (optional, M7+); greetd allows it, and Noobsbot Desktop could run in a "greeter mode".
 - **Built with:** **greetd** (a tiny login daemon, written in Rust) + **tuigreet**.
 - **How it works:** greetd draws nothing itself. At boot systemd starts greetd → greetd starts the *greeter*
@@ -1349,7 +1349,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | Auto-login | **off by default**; it skips the password by design (only for desktops nobody else touches) |
   `install.sh` runs a **security check** and warns (without changing anything) if: the root disk isn't encrypted,
   bootloader editing is enabled, auto-login is on, or Secure Boot is off (informational).
-- **Own greeter (E7.2, opt-in):** `noobsbot-desktop --greeter` draws a glass macOS-style login (the lock screen,
+- **Own greeter (E7.2, opt-in):** `noobsbot-desktop --greeter` draws a glass login (the lock screen,
   E6.4, plus a user row and session choice) and speaks greetd's small JSON IPC itself (`shell/greeter.rs`, no crate).
   `install.sh --greeter` writes `data/system/etc/greetd/noobsbot-greeter.toml` as the config; tuigreet stays the default and fallback.
 - **Why:** minimal, doesn't depend on any desktop, the modern standard for lightweight setups.
@@ -1435,7 +1435,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   re-arrange monitors** (`wlr-screencopy`, `ext-image-copy-capture`, `wlr-output-management`, `ext-workspace`,
   `ext-foreign-toplevel-list`, `virtual-keyboard`, `virtual-pointer`, `wlr-layer-shell`, `keyboard-shortcuts-inhibit`).
   Exposed to everyone, any app or script becomes a screen recorder or keylogger with no prompt.
-- **Design:** macOS asks "‹App› would like to record this computer's screen"; so do we. These globals are only
+- **Design:** We ask "‹App› would like to record this computer's screen". These globals are only
   advertised to **trusted clients** (the portals, xwayland-satellite, our Settings app, anything started with
   `noobsbot-desktop --trusted <cmd>`). Any other client that binds one gets a one-time **alert** (D8): "Allow ‹app› to
   record the screen / control input?" with Allow / Deny, remembered per app in config (Settings ▸ Privacy later). Screen
@@ -1460,7 +1460,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 
 ### E6.13 Versioning, releases & Software Update (auto-updating)
 - **What it is:** how a version number is born, how a release is built, and how every installed desktop learns about
-  it and installs it, the way macOS's **Software Update** does. Nobody edits a version number by hand, and the owner
+  it and installs it, like a built-in **Software Update**. Nobody edits a version number by hand, and the owner
   never has to tell users "pull and rebuild".
 - **Version scheme (SemVer, one source of truth):**
   | Part | Rule | Example |
@@ -1502,7 +1502,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | Step | How |
   |---|---|
   | **Check** | once every 24 h (calloop timer; also "Check Now" and the first launch after boot) `GET https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/latest` (Beta channel: `/releases`, pre-releases allowed). Compares SemVer with the running version. No account, no identifier, no telemetry: the request carries nothing but the version header. Off with one toggle. Fails silently when offline |
-  | **Notify** | notification (E4.1): "Noobsbot Desktop 1.3 is available · *Update Tonight* / *Details*"; a red badge "1" on System Settings in the dock, like macOS |
+  | **Notify** | notification (E4.1): "Noobsbot Desktop 1.3 is available · *Update Tonight* / *Details*"; a red badge "1" on System Settings in the dock |
   | **Download** | in the background to `~/.cache/noobsbot-desktop/updates/`; `SHA256SUMS` + **minisign signature verified** before anything is touched; a bad signature deletes the file and shows an alert |
   | **Install** | a compositor can't replace itself while running, so the verified tarball is staged, and installed by the tiny privileged helper `noobsbot-desktop-update` through **polkit** (admin password in our alert; one polkit action `org.noobsbot.desktop.update`). It unpacks to `/usr/lib/noobsbot-desktop/versions/1.3.0/`, switches the `/usr/bin/noobsbot-desktop` symlink, keeps the previous version. Applied at the **next login** ("Install at next login", default) or now via "Log Out & Update" |
   | **Rollback** | the session wrapper `noobsbot-desktop-session` starts the current version and writes a `boot-ok` marker after 60 s of running; if a new version dies 3 times within 2 min before the marker, the wrapper starts the **previous version** and shows "Update 1.3.0 was rolled back" with a Report button (opens the GitHub issue page). Settings keeps a "Revert to 1.2.4" button for 30 days |
@@ -1516,7 +1516,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why this way:** GitHub Releases is free, already where the code lives, and needs no server of ours; release-plz
   removes human version bumps and keeps the changelog honest; minisign is the smallest proven signing scheme (used for
   Zig and libsodium releases, among others), and it is what stops a hijacked download from becoming a root
-  install; staged install + rollback is how macOS and ChromeOS avoid bricking the desktop with an update.
+  install; staged install + rollback is how mature systems avoid bricking the desktop with an update.
   **Rejected:** `git pull && cargo build` on the user's machine (needs the Rust toolchain, 5-minute builds, no
   signatures); replacing the binary live (the compositor would die); Flatpak (compositors can't be Flatpaks); only
   pacman/AUR (no repo until Open-3, and AUR builds from source anyway); our own update server (cost and upkeep);
@@ -1534,7 +1534,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 ## M7 — System Settings app (+ optional extras) — size L
 
 ### E7.1 System Settings app
-- **What it is:** a macOS-style System Settings window. It's the only Noobsbot Desktop part that is a separate program.
+- **What it is:** a glass System Settings window with a sidebar. It's the only Noobsbot Desktop part that is a separate program.
 - **Design:**
   ```
   ╭─────────────────────────────────────────────────────────────────────╮
@@ -1563,7 +1563,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
   ╰─────────────────────────────────────────────────────────────────────╯
   ```
   - 720 × 560 default; sidebar 220 px in `panel` material (rows 28 px, colourful 20 px icon squircles, selected row =
-    accent @ 20%); content uses grouped card rows (radius 10), with label left and control right, like macOS Ventura+.
+    accent @ 20%); content uses grouped card rows (radius 10), with label left and control right.
   - Pages: Wi-Fi · Bluetooth · Sound (output; **input device, level, mute**; alert volume) · Displays (drag-to-arrange
     monitors, VRR toggle later) · Appearance (mode Light / Dark / **Auto = schedule**, accent, glass opacity,
     wallpaper picker, Reduce transparency/motion) · Dock · Keyboard (layouts, repeat, shortcuts editor) ·
@@ -1588,7 +1588,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Weather widget (done, off by default) | forecast in Notification Center | Open-Meteo (no key, no account; city or lat/long, no IP lookup), `services/weather.rs` |
 | Fingerprint unlock | lock screen + sudo | `fprintd` |
 | Printers | printing from apps | CUPS |
-| Desktop icons (done) | files in `~/Desktop` shown on the wallpaper, like macOS (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
+| Desktop icons (done) | files in `~/Desktop` shown on the wallpaper (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
 | Emoji picker (done) | Super+Ctrl+E / Super+. popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
 | Own screen recorder | Super+Shift+5 ▸ Record without `wf-recorder` | compositor frames → PipeWire → `ffmpeg`/`gst` encoder |
 | Own Finder-style file manager | replace Dolphin | big project; only if wanted |
@@ -1599,8 +1599,8 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 
 An audit on 2026-10-26 compared Noobsbot Desktop with a mature traditional Linux desktop, one setting, applet and key
 at a time (about 30 settings modules, 36 panel applets, 880 settings keys). This milestone lists every gap that has a
-sensible macOS form, as Noobsbot Desktop would draw it: same glass, same Part D tokens, same behaviour rules. A feature
-with no macOS form is either given one or listed under "Not cloned" with the reason.
+sensible form in our design, as Noobsbot Desktop would draw it: same glass, same Part D tokens, same behaviour rules. A feature
+with no such form is either given one or listed under "Not cloned" with the reason.
 
 Order of work: **E8.1 first** (things that look done but aren't), then **Settings pages, the dock's per-window
 features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own mini-plan as usual.
@@ -1619,7 +1619,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 | Logo menu "System Settings…" and "About This Computer" rows are disabled | `src/shell/mod.rs` | open the Settings app (at About) |
 | Do Not Disturb is lost on restart | `src/shell/control.rs` | save it in `config.toml` |
 | Menu bar, dock, Spaces, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
-| `show-desktop` has no default key | `data/config.toml` | Super+F11 (macOS F11) |
+| `show-desktop` has no default key | `data/config.toml` | Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
 Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers (later)**. Every row writes `config.toml` or
@@ -1646,7 +1646,7 @@ calls the system service, and applies live.
 | Printers (later) | CUPS, printer list, queue, Add Printer; print-queue icon in the dock while printing |
 
 ### E8.3 Dock: the per-window jobs of a window list (priority 1)
-The dock stays per app, as on macOS. Every per-window job a taskbar does gets a macOS surface instead:
+The dock stays per app, by design. Every per-window job a taskbar does gets a surface of our own instead:
 - **Window previews:** hover (or long-press) an icon with several windows → a glass strip of live thumbnails above it,
   click to focus, × or middle-click to close, hovering a thumbnail fades the other windows. Reuses Mission Control's
   thumbnails and `close_button`.
@@ -1672,7 +1672,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow.
 
 ### E8.5 Window management
-- **Tiling, macOS 15 style:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
+- **Tiling:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
   300 ms hold; dragging out restores the old size (E1.2). Keyboard: Super+Ctrl+arrows tile (replaces the unbuilt
   nudge keys in E1.2).
 - **Window menu:** right-click the title bar, or the app asks (`show_window_menu`): Minimize, Zoom, Fill, Center,
@@ -1699,7 +1699,7 @@ Rows live on the Appearance page (E8.2). Behind them:
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
   reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space.
-- Keyboard Shortcuts dialog in macOS form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
+- Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
   ⚠ on conflicts (today the first match wins silently).
 - Default keys: log out (Super+Shift+Q), sleep key, keyboard backlight (UPower), touchpad toggle, display key
   (Settings › Displays until mirroring exists), calculator / mail / web / explorer / search keys (default-app,
@@ -1708,17 +1708,17 @@ Rows live on the Appearance page (E8.2). Behind them:
 - Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout.
 
 ### E8.8 Menu bar, tray, widgets and session
-- Tray: real submenus and an overflow "»" menu.
+- ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row (flipped left at the edge), one level deep; deeper ones list inline.
 - Menu bar on every display; auto-hide option; a Recent Items menu with Clear.
 - Trash at the dock's right end; Launchpad folders and drag to rearrange.
 - Widgets for Notification Center and the desktop as separate processes over D-Bus (no plugins in the compositor).
 - Keep-awake Control Center tile with the list of apps blocking sleep.
-- Reopen windows at login (checkbox in the Log Out alert).
+- ~~Reopen windows at login (checkbox in the Log Out alert).~~ Done: `session.toml` in the state dir; each app starts once 3 s after login and its windows go back to their Space, display and frame as they map (20 s wait).
 - Thunderbolt "Allow accessory to connect?" alert through `boltd` (G2).
 - Desktop icons for mounted drives with Eject.
 - Housekeeping: low-disk notification, Trash and thumbnail cleanup, recent-files age.
 
-### Not cloned (no macOS form, or not worth it)
+### Not cloned (no fitting form, or not worth it)
 Window shading; title-bar scroll opacity; button-layout and title-bar font choices (fixed by D2, D4); notifications at
 the bottom; free-form clock and lock-screen formats; a sound file per event; several switcher styles; pointer warping;
 volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add-on store for applets and desklets
@@ -1766,7 +1766,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   title bar (with its own window buttons) and its own light/dark setting. The window still gets our rounded corners,
   shadow, dock icon, Mission Control and gestures, like every other window.
 - **Installed by:** `helium-browser-bin` (AUR; official signed release tarballs from github.com/imputnet/helium-linux).
-  Updates come with the AUR package (Helium's own auto-update is macOS/Windows only).
+  Updates come with the AUR package (Helium's own auto-update doesn't cover Linux).
 
 ## F3. File manager → **Dolphin**
 - **Why:** owner choice (R7). Fast; tabs, split view, previews; network shares, phones (MTP) and archives via KIO.
@@ -1789,7 +1789,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
 - **Design / where you find it:**
   | Task | Where | Tool |
   |---|---|---|
-  | Free space at a glance | Dolphin status bar + sidebar; Settings ▸ About ▸ **Storage** bar (M7, macOS-style coloured usage bar) | udisks2 |
+  | Free space at a glance | Dolphin status bar + sidebar; Settings ▸ About ▸ **Storage** bar (M7, coloured usage bar) | udisks2 |
   | Format a USB stick / SD card (exFAT, FAT32, NTFS, ext4) | right-click the drive in Dolphin → Format, or Partition Manager | Partition Manager |
   | Create / resize / move / delete partitions, change labels, mount points | **Partition Manager** (Spotlight: "Disk") | Partition Manager |
   | Drive health (SMART: temperature, bad sectors, hours used) | Partition Manager ▸ SMART Status; low-health notification (E4.1) | smartmontools |
@@ -1801,7 +1801,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   `btrfs-progs`, `e2fsprogs` (ext4). The disk-full warning lives in Noobsbot Desktop's `services/disks.rs`.
 - **Why these:** Partition Manager and Filelight are **Qt apps like Dolphin and Kate**, so they share the libraries
   already installed (only ~8 MB extra) and get the same Noobsbot Glass theme (E2.9). Partition Manager does everything
-  macOS Disk Utility does, plus resizing. Filelight is the clearest "what uses my space" view.
+  a disk utility should, plus resizing. Filelight is the clearest "what uses my space" view.
   **Rejected:** GTK disk tools (GTK4/libadwaita: extra GTK libraries, its own title bar, see L2); GParted (GTK3, runs
   as root with X11, poor fit on Wayland).
 - **Milestone:** packages installed in M6 (`install.sh`); disk-full warning M4 (with notifications); Storage bar M7.
@@ -1809,7 +1809,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   filling a test disk past 90% raises the warning.
 
 ## F6. Resource monitor → **System Monitor** (`plasma-systemmonitor`) + **btop** + Noobsbot Desktop's Force Quit window
-- **What it is:** see what's using CPU, memory, GPU, disk and network, and stop apps that hang (macOS Activity Monitor
+- **What it is:** see what's using CPU, memory, GPU, disk and network, and stop apps that hang (an Activity Monitor
   + Force Quit).
 - **Design / where you find it:**
   | Need | Where | Tool |
@@ -1824,7 +1824,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
 - **Why these:** System Monitor is the one the owner already keeps in the dock today (dock2), it's Qt like the
   other apps (same look, shared libraries), and it covers everything Activity Monitor does, including GPU.
   btop is tiny and great in the terminal. Force Quit is built into Noobsbot Desktop because the compositor already knows
-  every window and its process. It works even when everything else is busy, and looks exactly like macOS.
+  every window and its process. It works even when everything else is busy, and looks like the rest of the desktop.
   **Rejected:** Mission Center (good, but GTK4/libadwaita: extra libraries and its own title bar); GTK system
   monitors (another desktop's look); htop (btop is nicer and still small).
 - **Milestone:** apps installed in M6; Force Quit + "not responding" in M4; System widget M4 (optional).
@@ -1838,7 +1838,7 @@ Image viewer (gwenview), video player (mpv), PDF viewer (okular), office, email.
 
 ## G1. Why we write no drivers
 Drivers live **inside the Linux kernel** and device **firmware** comes from `linux-firmware`. If a device works on
-Linux, it works on Noobsbot Desktop. Our job is the standard **services** above the drivers plus a macOS-style UI for each.
+Linux, it works on Noobsbot Desktop. Our job is the standard **services** above the drivers plus a glass UI for each.
 `install.sh` detects hardware and installs only what that machine needs.
 
 ## G2. Hardware table
@@ -1942,10 +1942,10 @@ Debian names verified 2026-10-26 (on arm64; the x86-only ones by name).
 | Other languages | **Noto Sans / Serif** | covers almost every script | — |
 | CJK | **Noto CJK** | complete coverage | — |
 | Emoji | **Noto Color Emoji** | full colour, free | Apple Color Emoji (license) |
-| App icons | **WhiteSur icon theme** | high-quality macOS Big Sur-style, large coverage | Apple icons (license), Papirus (not macOS-like) |
+| App icons | **WhiteSur icon theme** | high-quality squircle style, large coverage | Apple icons (license), Papirus (doesn't match the design) |
 | Symbols | **Phosphor Icons** (MIT) | consistent line icons with regular + fill weights, close to SF Symbols in feel | SF Symbols (license), mixed theme symbolics (inconsistent) |
-| Cursors | **WhiteSur cursors** | matching macOS-style cursors | — |
-| Qt apps (Dolphin, Kate, …) | **our "Noobsbot Glass" Kvantum theme + colour scheme** (derived from WhiteSur Kvantum) + qt6ct, generated from Part D tokens (E2.9) | the same glassy macOS look as the desktop, light/dark + accent in sync | Breeze (another desktop's look), plain WhiteSur (not our exact tokens) |
+| Cursors | **WhiteSur cursors** | cursors matching the icons | — |
+| Qt apps (Dolphin, Kate, …) | **our "Noobsbot Glass" Kvantum theme + colour scheme** (derived from WhiteSur Kvantum) + qt6ct, generated from Part D tokens (E2.9) | the same glassy look as the desktop, light/dark + accent in sync | Breeze (another desktop's look), plain WhiteSur (not our exact tokens) |
 | GTK dialogs | **WhiteSur-gtk recoloured to Part D** (E2.9) | same colours for file pickers (solid; GTK can't do translucency) | Adwaita (another desktop's look) |
 | Icon fallback | `hicolor` + `breeze-icons` (comes with Dolphin) | never a missing icon | — |
 | Wallpapers | **our own** set (D11) | Apple wallpapers are copyrighted | — |
