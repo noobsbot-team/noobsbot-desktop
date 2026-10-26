@@ -138,7 +138,7 @@ pub enum Action {
     Screenshot(crate::shell::screenshot::Start),
 }
 
-/// A volume or brightness key press, in percent (about macOS's 1/16 steps).
+/// A volume or brightness key press, in percent (about 1/16 steps).
 const STEP: u8 = 6;
 /// About a quarter of `STEP`.
 const FINE_STEP: u8 = 2;
@@ -428,7 +428,7 @@ impl State {
             Action::Volume(up) | Action::VolumeFine(up) => {
                 let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
                 if up && output.muted {
-                    // As on macOS: turning it up unmutes.
+                    // Turning it up unmutes.
                     output.muted = false;
                     self.services.send(Command::Mute { output: true, muted: false });
                 }
