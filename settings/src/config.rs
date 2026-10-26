@@ -44,6 +44,11 @@ impl Config {
         lookup(&self.doc, key).or_else(|| lookup(&self.defaults, key))
     }
 
+    /// The shipped default for `key`, whatever the user's file says.
+    pub fn default_of(&self, key: &str) -> Option<&str> {
+        lookup(&self.defaults, key)?.as_str()
+    }
+
     pub fn bool(&self, key: &str) -> bool {
         self.get(key).and_then(Value::as_bool).unwrap_or(false)
     }
@@ -79,7 +84,23 @@ impl Config {
 
     /// Sets every key, then saves once (the desktop never reloads half the change).
     pub fn set_all<'a>(&mut self, changes: impl IntoIterator<Item = (&'a str, Value)>) -> io::Result<()> {
-        for (key, value) in changes {
+        self.change(&[], changes)
+    }
+
+    /// Removes the user's `remove` keys (their defaults apply again), sets `set`, then saves once.
+    pub fn change<'a>(&mut self, remove: &[String], set: impl IntoIterator<Item = (&'a str, Value)>) -> io::Result<()> {
+        for key in remove {
+            let (table, name) = key.split_once('.').map_or(("", key.as_str()), |(t, k)| (t, k));
+            let parent = if table.is_empty() {
+                Some(self.doc.as_table_mut() as &mut dyn toml_edit::TableLike)
+            } else {
+                self.doc.get_mut(table).and_then(Item::as_table_like_mut)
+            };
+            if let Some(parent) = parent {
+                parent.remove(name);
+            }
+        }
+        for (key, value) in set {
             self.put(key, value)?;
         }
         save_atomic(&self.path, &self.doc.to_string())
@@ -279,6 +300,16 @@ mod tests {
             fs::write(&path, text).unwrap();
         }
         path
+    }
+
+    #[test]
+    fn removed_keys_fall_back_to_defaults() {
+        let path = temp("remove", Some("[bindings]\n\"Super+Q\" = \"none\"\n\"Super+K\" = \"lock\"\n"));
+        let (mut config, _) = Config::load(path.clone());
+        config.change(&["bindings.Super+Q".into()], [("bindings.Super+period", "none".into())]).unwrap();
+        let (config, _) = Config::load(path);
+        assert_eq!(config.keys("bindings"), ["Super+K", "Super+period"]);
+        assert!(config.bindings().contains(&("Super+Q".into(), "quit".into())));
     }
 
     #[test]
