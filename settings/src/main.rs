@@ -4,6 +4,7 @@
 mod arrange;
 mod autostart;
 mod config;
+mod defaults;
 #[path = "../../src/display_info.rs"]
 mod display_info;
 mod gallery;
