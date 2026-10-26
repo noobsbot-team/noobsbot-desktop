@@ -81,6 +81,20 @@ impl Popup {
     }
 }
 
+/// How long a submenu stays open while the pointer heads for it across other rows of its menu.
+const AIM_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// The pointer going from `from` to `to` heads for submenu `sub`: `to` is in the triangle between `from` and the
+/// submenu's near edge, so a diagonal move across the parent's other rows keeps it open.
+pub fn aims_at(from: Point<f64, Logical>, to: Point<f64, Logical>, sub: Rect) -> bool {
+    let sub = sub.to_f64();
+    let x = if sub.loc.x >= from.x { sub.loc.x } else { sub.loc.x + sub.size.w };
+    let (a, b) = (Point::from((x, sub.loc.y)), Point::from((x, sub.loc.y + sub.size.h)));
+    let side = |p: Point<f64, Logical>, q: Point<f64, Logical>| (q.x - p.x) * (to.y - p.y) - (q.y - p.y) * (to.x - p.x);
+    let (d1, d2, d3) = (side(from, a), side(a, b), side(b, from));
+    to != from && !((d1 < 0.0 || d2 < 0.0 || d3 < 0.0) && (d1 > 0.0 || d2 > 0.0 || d3 > 0.0))
+}
+
 /// What a click on `item` opens.
 // ponytail: the status items' own menus (Wi-Fi list, Bluetooth devices) come with module expansion; until then they
 // open nothing.
@@ -594,14 +608,17 @@ impl State {
         } else if let Popup::Menu(menu) = open {
             let (row, moved) = (backend.menu.row_at(to), backend.menu.row_at(from) != backend.menu.row_at(to));
             let sub = backend.submenu.row_at(from) != backend.submenu.row_at(to);
-            if moved {
+            // Heading for the open submenu across other rows keeps it open a moment.
+            let open = self.open_submenu();
+            let aiming = open.is_some() && row != open && backend.submenu.rect().is_some_and(|r| aims_at(from, to, r));
+            if aiming && row.is_some() {
+                self.aim_wait();
+            } else if let Some(i) = row.filter(|_| moved || self.aim_timer.is_some()) {
                 // A row of the parent opens its submenu or closes the open one.
-                if let Some(i) = row {
-                    self.menu_hover(menu, i);
-                }
-                self.menu_cursor = None;
-                self.schedule_redraw();
-            } else if sub && self.open_submenu().is_some() {
+                self.aim_cancel();
+                self.menu_hover(menu, i);
+            }
+            if moved || (sub && self.open_submenu().is_some()) {
                 self.menu_cursor = None;
                 self.schedule_redraw();
             }
@@ -668,8 +685,29 @@ impl State {
         self.submenu.filter(|(popup, _)| Some(*popup) == self.popup).map(|(_, i)| i)
     }
 
+    /// Starts the aim grace timer unless it runs: then the row under the pointer gets its submenu (`menu_hover`).
+    fn aim_wait(&mut self) {
+        if self.aim_timer.is_some() {
+            return;
+        }
+        let timer = self.loop_handle.insert_source(Timer::from_duration(AIM_GRACE), |_, _, state| {
+            state.aim_timer = None;
+            let at = state.seat.get_pointer().map(|p| state.to_popup(state.to_output(p.current_location())));
+            if let (Some(Popup::Menu(menu)), Some(i)) = (state.popup, at.and_then(|at| state.backend.as_ref()?.menu.row_at(at))) {
+                state.menu_hover(menu, i);
+            }
+            TimeoutAction::Drop
+        });
+        self.aim_timer = timer.inspect_err(|err| tracing::warn!("menu aim timer: {err}")).ok();
+    }
+
+    fn aim_cancel(&mut self) {
+        if let Some(token) = self.aim_timer.take() {
+            self.loop_handle.remove(token);
+        }
+    }
+
     /// The pointer or a click is on row `i` of the open `menu`: its submenu opens, any other closes.
-    // ponytail: no safe triangle; going diagonally from a row to its submenu across the next row closes it.
     fn menu_hover(&mut self, menu: Menu, i: usize) {
         let has_sub = self.open_menu_rows(menu).get(i).and_then(Option::as_ref).is_some_and(|r| !r.sub.is_empty());
         let next = has_sub.then_some(i);
@@ -1062,6 +1100,21 @@ mod tests {
         assert_eq!(bar_step(&items, BarItem::Input, true, menu), Some(BarItem::Logo), "round");
         assert_eq!(bar_step(&items, BarItem::Logo, false, menu), Some(BarItem::Input));
         assert_eq!(bar_step(&items, BarItem::Tray(5), false, menu), None, "an item not on the bar");
+    }
+
+    #[test]
+    fn heading_for_a_submenu_keeps_it_open() {
+        // A submenu to the right at x 200..300, y 40..240; the pointer leaves its row at (150, 60).
+        let sub = Rectangle::new((200, 40).into(), (100, 200).into());
+        let at = |x, y| Point::<f64, Logical>::from((x, y));
+        assert!(aims_at(at(150.0, 60.0), at(156.0, 66.0), sub), "down and to the right, into the next row");
+        assert!(aims_at(at(150.0, 60.0), at(156.0, 58.0), sub), "a little up");
+        assert!(!aims_at(at(150.0, 60.0), at(151.0, 70.0), sub), "straight down the menu");
+        assert!(!aims_at(at(150.0, 60.0), at(144.0, 64.0), sub), "away from it");
+        assert!(!aims_at(at(150.0, 60.0), at(150.0, 60.0), sub), "not moving");
+        // Flipped to the left of its menu: aimed at its right edge.
+        let left = Rectangle::new((0, 40).into(), (100, 200).into());
+        assert!(aims_at(at(150.0, 60.0), at(144.0, 66.0), left) && !aims_at(at(150.0, 60.0), at(156.0, 66.0), left));
     }
 
     #[test]
