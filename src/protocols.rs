@@ -115,6 +115,8 @@ impl State {
             pointer.frame(self);
             return;
         }
+        self.switcher_motion(host);
+        self.hover_focus(host);
         self.shell_motion(self.to_output(current), self.to_output(host));
         self.dock_motion(self.to_output(current), self.to_output(host));
         self.desktop_motion(self.to_output(host));

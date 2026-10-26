@@ -744,6 +744,18 @@ impl State {
         });
     }
 
+    /// Gives `window` the keyboard and the active look, leaving the stacking alone (hover focus).
+    pub fn focus_unraised(&mut self, window: &Window) {
+        let Some(keyboard) = self.seat.get_keyboard() else { return };
+        if self.locked() || self.exclusive_layer().is_some() {
+            return;
+        }
+        self.switcher.touch(window);
+        self.space.elements().for_each(|w| _ = w.set_activated(w == window));
+        keyboard.set_focus(self, window.toplevel().map(|t| t.wl_surface().clone()), SERIAL_COUNTER.next_serial());
+        self.space.elements().filter_map(|w| w.toplevel()).filter(|t| t.is_initial_configure_sent()).for_each(|t| _ = t.send_pending_configure());
+    }
+
     /// Window rules (E1.9), resolved before the first configure so the app opens at the ruled size, and again if the
     /// app sets its app_id only after that (then the window is resized and moved where the rule says).
     /// `layer` is kept by `restack`, `decorations` by decorations.rs.
