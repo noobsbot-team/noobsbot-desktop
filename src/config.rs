@@ -84,6 +84,8 @@ pub struct Appearance {
     pub reduce_motion: bool,
     /// How the wallpaper picture meets the screen.
     pub wallpaper_fit: WallpaperFit,
+    /// Settings' wallpaper gallery also shows these folders (`:`-separated); the desktop doesn't read it.
+    pub gallery_folders: String,
     /// Slideshow: a folder of PNG/JPEG pictures shown in turn (instead of the two files above); empty = off.
     pub wallpaper_folder: String,
     /// Minutes per picture; 0 = a new one only at login.
@@ -1058,6 +1060,7 @@ impl Default for Appearance {
             theme_apps: false,
             reduce_motion: false,
             wallpaper_fit: WallpaperFit::Fill,
+            gallery_folders: String::new(),
             wallpaper_folder: String::new(),
             wallpaper_interval: 30,
             wallpaper_shuffle: false,

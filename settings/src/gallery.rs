@@ -13,9 +13,23 @@ const MAX: usize = 48;
 /// A picture longer than this a side is skipped rather than decoded into hundreds of MB (as the desktop does).
 const MAX_SIDE: usize = 8192;
 
-/// The folders searched, system ones first.
-fn folders() -> Vec<PathBuf> {
-    let mut all = vec![PathBuf::from("/usr/share/backgrounds"), PathBuf::from("/usr/share/wallpapers")];
+/// The config key of the folders added with "+ Add Folder…", and the text field key of that button's path field.
+pub const FOLDERS: &str = "appearance.gallery_folders";
+pub const ADD: &str = "gallery.add";
+
+/// `folders` (`:`-separated) with `path` added; `~/` is the home folder.
+pub fn add(folders: &str, path: &str) -> String {
+    let path = match path.trim().strip_prefix("~/") {
+        Some(rest) => format!("{}/{rest}", std::env::var("HOME").unwrap_or_default()),
+        None => path.trim().to_owned(),
+    };
+    folders.split(':').map(str::trim).filter(|f| !f.is_empty() && *f != path).chain([path.as_str()]).collect::<Vec<_>>().join(":")
+}
+
+/// The folders searched: the ones added with "+ Add Folder…" (`:`-separated), then the system's, then the user's.
+fn folders(added: &str) -> Vec<PathBuf> {
+    let mut all: Vec<PathBuf> = added.split(':').filter(|f| !f.trim().is_empty()).map(|f| PathBuf::from(f.trim())).collect();
+    all.extend([PathBuf::from("/usr/share/backgrounds"), PathBuf::from("/usr/share/wallpapers")]);
     if let Some(home) = std::env::var_os("HOME").map(PathBuf::from) {
         all.extend([home.join("Pictures/Wallpapers"), home.join(".local/share/wallpapers"), home.join("Pictures")]);
     }
@@ -27,7 +41,7 @@ fn is_picture(path: &Path) -> bool {
 }
 
 /// Up to `MAX` pictures, a few folders deep, in a stable order.
-pub fn find() -> Vec<PathBuf> {
+pub fn find(added: &str) -> Vec<PathBuf> {
     fn walk(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else { return };
         let mut entries: Vec<PathBuf> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
@@ -44,15 +58,15 @@ pub fn find() -> Vec<PathBuf> {
         }
     }
     let mut out = Vec::new();
-    for folder in folders() {
+    for folder in folders(added) {
         walk(&folder, 4, &mut out);
     }
     out
 }
 
 /// Every picture with its thumbnail; ones that don't decode are left out.
-pub async fn load() -> Vec<(PathBuf, Handle)> {
-    let paths = find();
+pub async fn load(added: String) -> Vec<(PathBuf, Handle)> {
+    let paths = find(&added);
     std::thread::scope(|s| {
         let jobs: Vec<_> = paths.into_iter().map(|path| s.spawn(move || thumbnail(&path).map(|rgba| (path, Handle::from_rgba(W, H, rgba))))).collect();
         jobs.into_iter().filter_map(|j| j.join().ok().flatten()).collect()
@@ -114,6 +128,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn added_folders_join_once() {
+        assert_eq!(add("", "/a"), "/a");
+        assert_eq!(add("/a: /b", " /a "), "/b:/a");
+    }
+
+    #[test]
     fn png_thumbnails_cover_the_tile() {
         let dir = std::env::temp_dir().join(format!("noobsbot-settings-gallery-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -129,6 +149,8 @@ mod tests {
         assert_eq!(&thumb[..4], &[255, 0, 0, 255]);
         assert_eq!(&thumb[thumb.len() - 4..], &[0, 0, 255, 255]);
         assert!(is_picture(&file) && !is_picture(Path::new("a.jxl")));
+        // An added folder comes first.
+        assert_eq!(find(&format!(" :{}", dir.display())).first(), Some(&file));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
