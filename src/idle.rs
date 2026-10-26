@@ -1,8 +1,9 @@
 //! Idle, sleep & power (E6.5): after `[idle]`'s times without input the screen dims, turns off (and locks), then the
 //! machine sleeps. One timer, armed for the next step only; input just stamps the time, so typing costs nothing and an
 //! idle desktop wakes only at the deadlines. Apps that play video hold `idle-inhibit`, which keeps it all away;
-//! `ext-idle-notify` tells other tools (swayidle) when the seat is idle. Low battery warns at 20% and 10%; UPower
-//! alone sleeps at 5% (install.sh's drop-in), so that action has one owner.
+//! `ext-idle-notify` tells other tools (swayidle) when the seat is idle. Low battery warns at 20% and 10%, the
+//! computer's and each wireless mouse's, keyboard's or headset's; UPower alone sleeps at 5% (install.sh's drop-in), so
+//! that action has one owner.
 
 use std::time::{Duration, Instant};
 
@@ -25,7 +26,10 @@ use smithay::{
 
 use crate::{
     config,
-    services::{notifications::Notification, power::Battery},
+    services::{
+        notifications::Notification,
+        power::{Battery, Peripheral},
+    },
     state::State,
 };
 
@@ -46,7 +50,8 @@ pub enum Stage {
 const DIM_STEP: u8 = 10;
 const DIM_FLOOR: u8 = 20;
 
-/// The low-battery notification's id (replaced, not stacked); below the disk notices' ids.
+/// The low-battery notification's id (replaced, not stacked); below the disk notices' ids. Peripherals take the ids
+/// just above it, one per name (`peripheral_id`).
 const LOW_BATTERY: u32 = 0xFFFE_0000;
 
 pub struct Idle {
@@ -93,7 +98,45 @@ pub fn next(config: &config::Idle, on_battery: bool, stage: Stage, idle: Duratio
 /// The low-battery level `new` just fell to (20 or 10), coming from `old`.
 pub fn low_battery(old: Option<&Battery>, new: Option<&Battery>) -> Option<u8> {
     let (old, new) = (old?, new?);
-    [10, 20].into_iter().find(|&level| new.on_battery && new.percent <= level && old.percent > level)
+    crossed(old.percent, new.percent).filter(|_| new.on_battery)
+}
+
+/// The warning level (20 or 10) a fall from `old` to `new` percent passes; the lower one on a jump past both.
+fn crossed(old: u8, new: u8) -> Option<u8> {
+    [10, 20].into_iter().find(|&level| new <= level && old > level)
+}
+
+/// The peripherals in `new` that just fell to 20% or 10%, with the level; matched to `old` by name, so a device just
+/// connected doesn't warn. ponytail: two devices of one model share a name and so a warning; UPower's path would tell
+/// them apart.
+pub fn peripheral_warnings<'a>(old: &[Peripheral], new: &'a [Peripheral]) -> Vec<(&'a Peripheral, u8)> {
+    new.iter()
+        .filter_map(|p| {
+            let before = old.iter().find(|o| o.name == p.name)?;
+            Some((p, crossed(before.percent, p.percent)?))
+        })
+        .collect()
+}
+
+/// A peripheral's own low-battery notification id, so devices don't replace one another.
+fn peripheral_id(name: &str) -> u32 {
+    LOW_BATTERY + 1 + name.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b.into())) % 0xFFFE
+}
+
+/// The low-battery notification: `id`, its summary and body, urgent at 10%.
+fn low_battery_notice(id: u32, summary: String, body: String, level: u8) -> Notification {
+    Notification {
+        id,
+        app: "Battery".into(),
+        icon_name: "battery-caution".into(),
+        icon: crate::services::notifications::load_icon("battery-caution").map(std::sync::Arc::new),
+        summary,
+        body,
+        urgency: if level <= 10 { 2 } else { 1 },
+        expire: -1,
+        time: chrono::Local::now().timestamp(),
+        ..Default::default()
+    }
 }
 
 /// Brightness after a change of power source, and how much is now taken: unplugged, `DIM_STEP` lower but not below
@@ -213,22 +256,22 @@ impl State {
         }
     }
 
+    /// UPower's peripherals; each warns once on the way down through 20% and 10%, in its own notification.
+    pub fn peripherals_changed(&mut self, list: Vec<Peripheral>) {
+        for (p, level) in peripheral_warnings(&self.peripherals, &list) {
+            let body = format!("{} has {level}% battery remaining. Charge it soon.", p.name);
+            let notice = low_battery_notice(peripheral_id(&p.name), format!("{} Battery Low", p.name), body, level);
+            self.notify(notice);
+        }
+        self.peripherals = list;
+    }
+
     /// UPower's new battery state; warns once on the way down through 20% and 10%, re-times idleness on a change of power
     /// source.
     pub fn battery_changed(&mut self, battery: Option<Battery>) {
         if let Some(level) = low_battery(self.battery.as_ref(), battery.as_ref()) {
-            self.notify(Notification {
-                id: LOW_BATTERY,
-                app: "Battery".into(),
-                icon_name: "battery-caution".into(),
-                icon: crate::services::notifications::load_icon("battery-caution").map(std::sync::Arc::new),
-                summary: "Low Battery".into(),
-                body: format!("{level}% battery remaining. Plug in to keep working."),
-                urgency: if level <= 10 { 2 } else { 1 },
-                expire: -1,
-                time: chrono::Local::now().timestamp(),
-                ..Default::default()
-            });
+            let body = format!("{level}% battery remaining. Plug in to keep working.");
+            self.notify(low_battery_notice(LOW_BATTERY, "Low Battery".into(), body, level));
         }
         let replugged = self.battery.map(|b| b.on_battery) != battery.map(|b| b.on_battery);
         let old_known = self.battery.is_some();
@@ -351,6 +394,19 @@ mod tests {
         assert_eq!(battery_dim(15, true, 0), (15, 0), "already below it: untouched");
         assert_eq!(battery_dim(95, false, 10), (100, 0), "turned up meanwhile: capped");
         assert_eq!(battery_dim(60, false, 0), (60, 0), "nothing taken, nothing given");
+    }
+
+    #[test]
+    fn peripherals_warn_once_per_crossing_each() {
+        let p = |name: &str, percent| Peripheral { name: name.into(), percent };
+        let old = [p("Mouse", 21), p("Headset", 15)];
+        let new = [p("Mouse", 20), p("Headset", 10), p("Keyboard", 5)];
+        let warned: Vec<_> = peripheral_warnings(&old, &new).into_iter().map(|(p, level)| (p.name.as_str(), level)).collect();
+        assert_eq!(warned, [("Mouse", 20), ("Headset", 10)], "the keyboard just connected: no warning");
+        assert!(peripheral_warnings(&new, &[p("Mouse", 19), p("Headset", 9)]).is_empty(), "already warned");
+        assert!(peripheral_warnings(&[p("Mouse", 19)], &[p("Mouse", 25)]).is_empty(), "charging");
+        assert_ne!(peripheral_id("Mouse"), peripheral_id("Headset"));
+        assert!(peripheral_id("Mouse") > LOW_BATTERY && peripheral_id("Mouse") < 0xFFFF_0000);
     }
 
     #[test]

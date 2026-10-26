@@ -359,9 +359,10 @@ previews = "always"
 # Per app, by the name it sends: "banner" (goes after a few seconds), "alert" (stays until dismissed), "none" (only in
 # Notification Center) or "off" (dropped). Apps not listed show banners. Or a table with switches as well, each on
 # unless set: sound (a sound as it arrives), badge (the count on its dock icon), center (kept in Notification Center;
-# off, it goes with its banner). System Settings ▸ Notifications sets these.
+# off, it goes with its banner), and lock, off unless set (listed on the lock screen by title, and body when
+# [notifications] previews = "always"; otherwise only counted). System Settings ▸ Notifications sets these.
 # "Firefox" = "alert"
-# "Thunderbird" = { style = "banner", sound = false, badge = true, center = true }
+# "Thunderbird" = { style = "banner", sound = false, badge = true, center = true, lock = true }
 
 [app_drawer]
 # The app drawer (Super+A, or the "app-drawer" dock item): apps by category, search, Favorites and Recent.

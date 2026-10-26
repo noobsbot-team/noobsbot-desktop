@@ -407,7 +407,7 @@ impl State {
                 // Only the changed menu-bar item gets a new buffer, so the redraw damages just that item.
                 match update {
                     crate::services::Update::Battery(battery) => state.battery_changed(battery),
-                    crate::services::Update::Peripherals(list) => state.peripherals = list.unwrap_or_default(),
+                    crate::services::Update::Peripherals(list) => state.peripherals_changed(list.unwrap_or_default()),
                     crate::services::Update::Network(network) => {
                         use crate::services::network::{PORTAL_NOTICE, portal_changed, portal_notice};
                         match (portal_changed(state.network.as_ref(), network.as_ref()), network.as_ref()) {

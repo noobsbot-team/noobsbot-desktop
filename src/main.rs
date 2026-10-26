@@ -476,7 +476,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
                 winit.components = Some(Default::default());
             }
         }
-        // The lock screen (E6.4): empty, with a password typed and two missed notifications, or just after a wrong
+        // The lock screen (E6.4): empty, with a password typed, two listed and two missed notifications, or just after a wrong
         // one (frozen mid-shake, with its hint).
         Some(show @ ("lock" | "lock-typing" | "lock-wrong")) => {
             state.lock_screen();
@@ -486,6 +486,8 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
                         lock.field.text = "hunter2".into();
                         lock.field.caret = 7;
                         lock.missed = 2;
+                        let listed = |app: &str, title: &str| shell::lock::Listed { app: app.into(), title: title.into(), body: String::new() };
+                        lock.listed = vec![listed("Mail", "Lunch on Friday?"), listed("Calendar", "Stand-up in 10 minutes")];
                     }
                     "lock-wrong" => lock.wrong = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600)),
                     _ => {}
