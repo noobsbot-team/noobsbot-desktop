@@ -28,14 +28,14 @@ use super::{
 use crate::{
     shell::screenshot::{self, Hit, Mode, OPTION_ROWS, Shot, Thumb},
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     wm::Rect,
 };
 
 /// What the toolbar can show besides the shot itself: can record, is recording, timer seconds, thumbnail off.
 pub type Flags = (bool, bool, u8, bool);
-/// Shot, flags, output size, dark, accent, opacity, scale.
-type Key = (Shot, Flags, Size<i32, Logical>, bool, [u8; 3], u32, u64);
+/// Shot, flags, output size, dark, accent, opacity, scale, text scale.
+type Key = (Shot, Flags, Size<i32, Logical>, bool, [u8; 3], u32, u64, u32);
 type Drawn = (Key, Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>);
 /// The image, the frame it was drawn for (rect, dark, scale), its buffer and its edge + shadow.
 type Thumbnail = (Arc<[u8]>, (Rect, bool, u64), MemoryRenderBuffer, Vec<PixelShaderElement>);
@@ -74,7 +74,7 @@ impl ScreenshotView {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let key = (shot.clone(), flags, output, dark, accent, glass_opacity.to_bits(), scale.to_bits());
+        let key = (shot.clone(), flags, output, dark, accent, glass_opacity.to_bits(), scale.to_bits(), crate::text::factor().to_bits());
         if self.cache.as_ref().is_none_or(|(k, ..)| *k != key) {
             let mut ui = Ui { shaders, text, symbols, dark, accent, glass_opacity, scale, glass: Vec::new(), pieces: Vec::new() };
             draw_selection(&mut ui, shot, output);
@@ -156,7 +156,7 @@ fn size_label(ui: &mut Ui, sel: Rect, output: Size<i32, Logical>) {
     let style = Style { color: ui.label(), tabular: true, ..CALLOUT };
     let piece = ui.text.label(&words, style, 200, ui.scale);
     let w = (f64::from(piece.width) / ui.scale).round() as i32 + 16;
-    let h = 22;
+    let h = ts(22);
     let below = sel.loc.y + sel.size.h + 8;
     let y = if below + h <= output.h { below } else { sel.loc.y + sel.size.h - h - 8 };
     let x = (sel.loc.x + sel.size.w - w).clamp(0, (output.w - w).max(0));
