@@ -1007,7 +1007,8 @@ impl State {
     pub fn dock_menu_rows(&self) -> Vec<Option<Row>> {
         let Some(item) = self.dock_ui.menu.as_ref().and_then(|(key, _)| self.dock_item(key)) else { return Vec::new() };
         if item.key == TRASH_KEY {
-            let row = |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Dock) });
+            let row =
+                |label: &str, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: command.map(Action::Dock) });
             let full = super::trash::is_full(&super::trash::dir());
             return vec![row("Open", Some(Command::Open)), None, row("Empty Trash", full.then_some(Command::EmptyTrash))];
         }
@@ -1222,8 +1223,8 @@ impl State {
         });
     }
 
-    /// An app's drag ended over no window: on the dock, `.desktop` files are pinned where they land (not while items
-    /// are locked), other files open with the app they land on.
+    /// An app's drag ended over no window: on the Trash, files are trashed; elsewhere on the dock, `.desktop` files
+    /// are pinned where they land (not while items are locked), other files open with the app they land on.
     // ponytail: only `.desktop` files of installed apps (in an `applications/` dir) pin; others are ignored.
     pub fn dock_drop(&mut self) {
         let Some(location) = self.seat.get_pointer().map(|p| self.to_output(p.current_location())) else { return };
@@ -1234,6 +1235,16 @@ impl State {
         }
         let items = self.dock_items();
         let Some(layout) = self.dock_layout(&items) else { return };
+        if hit(&layout, location).is_some_and(|i| items[i].key == TRASH_KEY) {
+            let paths: Vec<String> = uris.iter().filter_map(|u| crate::apps::file_path(u)).collect();
+            let date = chrono::Local::now().format("%Y-%m-%dT%H:%M:%S").to_string();
+            let _ = std::thread::Builder::new().name("trash".into()).spawn(move || {
+                for path in paths {
+                    let _ = super::trash::trash(&super::trash::dir(), path.as_ref(), &date).inspect_err(|err| tracing::warn!("trash: {path}: {err}"));
+                }
+            });
+            return;
+        }
         if uris.iter().all(|u| u.ends_with(".desktop")) {
             if self.config.dock.lock_items {
                 return;
