@@ -2071,7 +2071,7 @@ dependencies = [
 
 [[package]]
 name = "noobsbot-desktop"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-channel",
  "chrono",
