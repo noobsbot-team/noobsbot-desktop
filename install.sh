@@ -677,6 +677,9 @@ install_desktop_source() {
     if ((DRY)) || [[ -f $src/target/release/noobsbot-desktop-update ]]; then
         as_root install -Dm755 "$src/target/release/noobsbot-desktop-update" "$LIB/versions/$ver/noobsbot-desktop-update"
     fi
+    if ((DRY)) || [[ -f $src/target/release/noobsbot-desktop-watchdog ]]; then
+        as_root install -Dm755 "$src/target/release/noobsbot-desktop-watchdog" "$LIB/versions/$ver/noobsbot-desktop-watchdog"
+    fi
     use_version "$ver"
     install_xwayland_satellite "$src/target/release"
 }
