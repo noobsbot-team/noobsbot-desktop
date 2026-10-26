@@ -156,6 +156,15 @@ impl Config {
         save_atomic(&self.path, &self.doc.to_string())
     }
 
+    /// Takes `key` out of every `[[display.outputs]]` entry (Displays ▸ Reset: `position`).
+    pub fn clear_outputs(&mut self, key: &str) -> io::Result<()> {
+        let outputs = self.doc.get_mut("display").and_then(|d| d.get_mut("outputs")).and_then(Item::as_array_of_tables_mut);
+        for entry in outputs.into_iter().flat_map(|o| o.iter_mut()) {
+            entry.remove(key);
+        }
+        save_atomic(&self.path, &self.doc.to_string())
+    }
+
     /// The `[display]` section as it stands (with its `[[display.outputs]]`), for `restore_display` and the desktop's
     /// `display.previous`; empty without one.
     pub fn display_text(&self) -> String {
@@ -387,6 +396,11 @@ mod tests {
         assert_eq!(config.output("eDP-1").unwrap()["rotation"].as_integer(), Some(90));
         assert_eq!(config.output("HDMI-A-1").unwrap()["position"].as_array().map(|a| a.len()), Some(2));
         assert!(config.output("DP-1").is_none());
+        // Reset: positions go, everything else stays.
+        let mut reset = Config::load(path.clone()).0;
+        reset.clear_outputs("position").unwrap();
+        assert!(reset.output("HDMI-A-1").unwrap().get("position").is_none());
+        assert_eq!(reset.output("eDP-1").unwrap()["scale"].as_float(), Some(1.25));
         // Revert: only `[display]` goes back; a change elsewhere meanwhile stays.
         config.set("appearance.mode", "dark").unwrap();
         config.restore_display(&before).unwrap();

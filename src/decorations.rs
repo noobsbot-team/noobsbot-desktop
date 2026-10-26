@@ -295,7 +295,7 @@ pub fn menu_rows(full: bool, on_top: bool, spaces: &[(String, bool)], displays: 
 }
 
 /// A display's name in menus: the laptop's own panel, else its EDID model, else its connector (`HDMI-A-1`).
-fn display_name(connector: &str, model: &str) -> String {
+pub fn display_name(connector: &str, model: &str) -> String {
     match model {
         _ if crate::display_info::built_in(connector) => "Built-in Display".into(),
         "" | "Unknown" => connector.to_owned(),

@@ -111,6 +111,8 @@ pub struct App {
     selected: Option<String>,
     /// A display change waiting for "Keep Changes" before it reverts.
     keep: Option<arrange::Keep>,
+    /// The built-in panel's brightness in percent; `None` without a backlight.
+    brightness: Option<u8>,
     /// Appearance's wallpaper gallery, loaded on start.
     thumbs: Vec<(std::path::PathBuf, iced::widget::image::Handle)>,
     /// General ▸ Login Items, and the apps "+" offers; read when General opens.
@@ -190,6 +192,12 @@ pub enum Message {
     Revert,
     /// Half a second of "Keep these display settings?" went by.
     Tick,
+    /// Every display shows its name for 2 s.
+    Identify,
+    /// The arrangement goes back to automatic: the built-in display first, the others in a row right of it.
+    ResetArrangement,
+    /// A call to the desktop came back: what went wrong, if anything.
+    Called(Option<String>),
     Thumbs(Vec<(std::path::PathBuf, iced::widget::image::Handle)>),
     /// A gallery picture (empty: the built-in opal), for light and dark mode alike.
     Wallpaper(String),
@@ -235,6 +243,7 @@ impl App {
             displays: read_displays(),
             selected: None,
             keep: None,
+            brightness: display_info::brightness(),
             thumbs: Vec::new(),
             login_items: Vec::new(),
             installed: Vec::new(),
@@ -313,6 +322,11 @@ impl App {
                     "sound.output" | "sound.input" => return Task::perform(system::set_volume(key == "sound.output", value.round() as u8), Message::Status),
                     "sound.balance" => return Task::perform(system::set_balance((value / 100.0) as f32), Message::Status),
                     "keyboard.backlight" => return Task::perform(system::set_kbd_backlight(value.round() as u8), Message::Status),
+                    "display.brightness" => {
+                        let percent = value.round() as u8;
+                        self.brightness = Some(percent);
+                        return Task::perform(system::displays_call("SetBrightness", percent), Message::Called);
+                    }
                     _ => {}
                 }
                 match pages::setting(&key).map(|s| s.kind) {
@@ -445,6 +459,13 @@ impl App {
                     self.save("terminal", command.clone());
                 }
             }
+            Message::Identify => return Task::perform(system::displays_call("Identify", ()), Message::Called),
+            Message::ResetArrangement => {
+                if self.ask_keep() {
+                    self.error = self.config.clear_outputs("position").err().map(|err| format!("Couldn't save the display settings: {err}"));
+                }
+            }
+            Message::Called(error) => self.error = error,
             Message::Keep => self.keep(),
             Message::Revert => self.revert(),
             // Ran out: the desktop is putting the settings back; the sheet just goes.
@@ -506,19 +527,25 @@ impl App {
     /// `[display]` back as it was before the first unkept change (from `display.previous`, set aside here first so
     /// it does so even if we are gone by then).
     fn change_outputs(&mut self, changes: Vec<(String, &'static str, toml_edit::Value)>, ask: bool) {
-        if ask {
-            let previous = self.keep.take().map_or_else(|| self.config.display_text(), |k| k.previous);
-            let set_aside = display_info::previous_path().ok_or_else(|| std::io::Error::other("no XDG_RUNTIME_DIR")).and_then(|p| std::fs::write(p, &previous));
-            if let Err(err) = set_aside {
-                self.error = Some(format!("Couldn't set the display settings aside: {err}"));
-                return;
-            }
-            self.keep = Some(arrange::Keep { previous, since: Instant::now() });
+        if ask && !self.ask_keep() {
+            return;
         }
         match self.config.set_outputs(changes) {
             Ok(()) => self.error = None,
             Err(err) => self.error = Some(format!("Couldn't save the display settings: {err}")),
         }
+    }
+
+    /// Sets `[display]` aside and starts "Keep these display settings?"; `false` (and the error) if it can't.
+    fn ask_keep(&mut self) -> bool {
+        let previous = self.keep.take().map_or_else(|| self.config.display_text(), |k| k.previous);
+        let set_aside = display_info::previous_path().ok_or_else(|| std::io::Error::other("no XDG_RUNTIME_DIR")).and_then(|p| std::fs::write(p, &previous));
+        if let Err(err) = set_aside {
+            self.error = Some(format!("Couldn't set the display settings aside: {err}"));
+            return false;
+        }
+        self.keep = Some(arrange::Keep { previous, since: Instant::now() });
+        true
     }
 
     /// After a Login Items change: the error if it failed, and the list read again.

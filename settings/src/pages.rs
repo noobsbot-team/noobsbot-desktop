@@ -577,7 +577,7 @@ fn shown(key: &str, value: f64) -> String {
         "dock.icon_size" | "appearance.pointer_size" => format!("{value:.0} px"),
         "appearance.text_scale" => format!("{:.0}%", value * 100.0),
         "windows.spaces" if whole(key, value) == 0 => "Dynamic".into(),
-        "sound.output" | "sound.input" | "keyboard.backlight" => format!("{value:.0}%"),
+        "sound.output" | "sound.input" | "keyboard.backlight" | "display.brightness" => format!("{value:.0}%"),
         "sound.balance" if value.abs() < 0.5 => "Centre".into(),
         "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
@@ -1422,6 +1422,10 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
             "The white bar marks the main display: it has the menu bar and the Dock."
         },
     ));
+    let identify = button(text("Identify").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::Identify);
+    let reset =
+        (app.displays.len() > 1).then(|| button(text("Reset Arrangement").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ResetArrangement));
+    parts.push(row![space().width(Length::Fill)].push(reset).push(identify).spacing(8).into());
     // Displays that are off aren't in the arrangement: pick any one here.
     if app.displays.len() > 1 {
         let items =
@@ -1440,6 +1444,10 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
     let about = [Some(maker).filter(|m| !m.is_empty()), size].into_iter().flatten().collect::<Vec<_>>().join(" · ");
     if !about.is_empty() {
         rows.push(fact(t, "Display", about));
+    }
+    if let Some(level) = app.brightness.filter(|_| d.built_in) {
+        let value = app.drafts.get("display.brightness").copied().unwrap_or(f64::from(level));
+        rows.push(line(t, "Brightness", "", slider_row(t, "display.brightness", 1.0..=100.0, 1.0, value)));
     }
     if !d.nested {
         rows.push(line(t, "Use this display", "", toggle(t, d.enabled, move |on| change(vec![("enabled", on.into())]))));
