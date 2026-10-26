@@ -43,8 +43,8 @@ pub struct Frame<'a> {
     /// 0 → 1 as it opens.
     pub shown: f64,
     pub field: &'a TextField,
-    /// The tile being dragged and where its icon is.
-    pub lifted: Option<(usize, Rect)>,
+    /// The tile being dragged (in an open folder: and its app being dragged), and where its icon is.
+    pub lifted: Option<(usize, Option<usize>, Rect)>,
     /// How far each tile is drawn off its cell (sliding aside); may be empty.
     pub offsets: &'a [Point<i32, Logical>],
     /// The tile a dragged icon is held over: dropping makes a folder.
@@ -112,14 +112,26 @@ impl LaunchpadView {
         let mut moving: Vec<Shape> = Vec::new();
         // In front of the grid: the lifted icon, a little bigger, then the open folder.
         let (mut top, mut front): (Vec<Piece>, Vec<Shape>) = (Vec::new(), Vec::new());
-        if let Some((tile, rect)) = lifted.and_then(|(i, r)| Some((tiles.get(i)?, r))) {
+        if let Some((tile, inner, rect)) = lifted.and_then(|(i, j, r)| Some((tiles.get(i)?, j, r))) {
             let big = zoom(rect, rect.loc.to_f64() + rect.size.to_f64().downscale(2.0).to_point(), 1.1);
-            art(icons, tile, big, (px, mini_px), alpha * 0.9, tint(alpha), &mut top, &mut front);
+            match (tile, inner) {
+                (Tile::Folder(_, apps), Some(j)) => {
+                    if let Some(app) = apps.get(j) {
+                        top.push((icon_image(icons, &app.icon, px), big, true, alpha * 0.9));
+                    }
+                }
+                _ => {
+                    art(icons, tile, big, (px, mini_px), alpha * 0.9, tint(alpha), &mut top, &mut front);
+                }
+            }
         }
+        // The folder app being dragged leaves its place empty.
+        let dragged_in = lifted.and_then(|(_, j, _)| j);
+        let lifted = lifted.filter(|(_, j, _)| j.is_none()).map(|(i, ..)| i);
         if let Some((panel, inner, name, index)) = folder
             && let Some(Tile::Folder(_, apps)) = tiles.get(index)
         {
-            for (j, app) in apps.iter().enumerate().take(inner.per_page()) {
+            for (j, app) in apps.iter().enumerate().take(inner.per_page()).filter(|(j, _)| dragged_in != Some(*j)) {
                 top.push((icon_image(icons, &app.icon, px), inner.icon_rect(j), true, alpha));
                 top.push((text.label(&app.name, CALLOUT, inner.name_rect(j).size.w as u32, scale), inner.name_rect(j), false, alpha));
             }
@@ -145,7 +157,7 @@ impl LaunchpadView {
         let last = (position.ceil().max(0.0) as usize).min(count - 1);
         for p in first..=last {
             let dx = ((p as f64 - position) * f64::from(output.w)).round() as i32;
-            for (i, tile) in tiles.iter().enumerate().skip(p * per_page).take(per_page).filter(|(i, _)| lifted.is_none_or(|(l, _)| l != *i)) {
+            for (i, tile) in tiles.iter().enumerate().skip(p * per_page).take(per_page).filter(|(i, _)| lifted != Some(*i)) {
                 let off = offsets.get(i).copied().unwrap_or_default();
                 let i = i % per_page;
                 let shift = |r: Rect| zoom(Rectangle::new((r.loc.x + dx + off.x, r.loc.y + off.y).into(), r.size), centre, s);

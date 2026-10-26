@@ -291,6 +291,17 @@ pub fn merge(order: &mut Vec<Entry>, from: usize, onto: usize, apps: &[App]) -> 
     true
 }
 
+/// Takes app `j` out of the folder at `folder`, to just after it (a folder left with one app dissolves). Its new place.
+pub fn take_out(order: &mut Vec<Entry>, folder: usize, j: usize) -> Option<usize> {
+    let Some(Entry::Folder { apps, .. }) = order.get_mut(folder) else { return None };
+    let id = (j < apps.len()).then(|| apps.remove(j))?;
+    if let Some(left) = tidy(order[folder].clone()) {
+        order[folder] = left;
+    }
+    order.insert(folder + 1, Entry::App(id));
+    Some(folder + 1)
+}
+
 fn order_file() -> std::path::PathBuf {
     super::drawer::state_file("launchpad.json")
 }
@@ -449,10 +460,10 @@ impl Launchpad {
         !self.field.text.trim().is_empty()
     }
 
-    /// The tile being dragged and where its icon is drawn (output-relative), while not searching.
-    pub fn lifted(&self, grid: &Grid, now: Instant) -> Option<(usize, Rect)> {
-        let p = self.press.as_ref().filter(|p| p.lifted(now) && p.inner.is_none() && !self.searching())?;
-        Some((p.index, Rectangle::new((p.at - p.grab).to_i32_round(), (grid.icon, grid.icon).into())))
+    /// The tile being dragged (and in an open folder, the app in it), and where its icon is drawn (output-relative).
+    pub fn lifted(&self, grid: &Grid, now: Instant) -> Option<(usize, Option<usize>, Rect)> {
+        let p = self.press.as_ref().filter(|p| p.lifted(now) && !self.searching())?;
+        Some((p.index, p.inner, Rectangle::new((p.at - p.grab).to_i32_round(), (grid.icon, grid.icon).into())))
     }
 
     pub fn closing(&self) -> bool {
@@ -685,14 +696,33 @@ impl State {
     /// The pointer moved to `to` (output-relative): a lifted icon follows it, and takes the place under it.
     pub fn launchpad_motion(&mut self, to: Point<f64, Logical>) {
         let Some(grid) = self.launchpad_grid() else { return };
+        let folder = self.launchpad_folder();
         let Some(l) = self.launchpad.as_mut() else { return };
         let searching = l.searching();
         let Some(p) = l.press.as_mut() else { return };
         p.at = to;
         p.moved |= (to.x - p.start.x).hypot(to.y - p.start.y) >= DRAG_START;
-        // ponytail: in an open folder a drag only stops the click, until dragging out lands (E8.8).
-        if !p.moved || searching || p.inner.is_some() {
+        if !p.moved || searching {
             return;
+        }
+        // In an open folder: a new place in it, or dragged off the panel, out of it and on into the grid.
+        if let (Some(j), Some((panel, inner))) = (p.inner, folder) {
+            let Some(Entry::Folder { apps, .. }) = l.order.get_mut(p.index) else { return };
+            if panel.to_f64().contains(to) {
+                if let Some(k) = inner.cell_at(to).map(|k| k.min(apps.len() - 1)).filter(|k| *k != j) {
+                    move_to(apps, j, k);
+                    p.inner = Some(k);
+                }
+                return self.schedule_redraw();
+            }
+            let Some(at) = take_out(&mut l.order, p.index, j) else { return };
+            (p.index, p.inner, l.folder) = (at, None, None);
+            // Its place keeps it on screen: the page it is on.
+            let page = at / grid.per_page().max(1);
+            let pages = pages(l.order.len(), grid.per_page());
+            l.turn_to(page, pages, Instant::now());
+            save_order(&l.order);
+            return self.schedule_redraw();
         }
         p.onto = None;
         if let Some(i) = grid.cell_at(to) {
@@ -1003,6 +1033,17 @@ mod tests {
         assert!(!merge(&mut order, 0, 0, &games));
         let mut nest = vec![two[0].clone(), Entry::App("x".into())];
         assert!(!merge(&mut nest, 0, 1, &games), "folders don't nest");
+    }
+
+    #[test]
+    fn dragged_out_of_a_folder() {
+        let folder = |ids: &[&str]| Entry::Folder { name: "F".into(), apps: ids.iter().map(|i| i.to_string()).collect() };
+        let mut order = vec![Entry::App("x".into()), folder(&["a", "b", "c"])];
+        assert_eq!(take_out(&mut order, 1, 1), Some(2));
+        assert_eq!(order, [Entry::App("x".into()), folder(&["a", "c"]), Entry::App("b".into())]);
+        assert_eq!(take_out(&mut order, 1, 0), Some(2));
+        assert_eq!(order, ["x", "c", "a", "b"].map(|id| Entry::App(id.into())), "a folder of one dissolves");
+        assert_eq!(take_out(&mut order, 0, 0), None, "not a folder");
     }
 
     #[test]
