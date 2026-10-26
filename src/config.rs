@@ -371,6 +371,15 @@ pub struct Windows {
     pub double_click_title: TitleAction,
     /// Spaces (E5.1): 0 = dynamic (start with one, `+` in Mission Control adds more); 2–16 = that many, fixed.
     pub spaces: u8,
+    /// Which window gets the keyboard: the one clicked, or (advanced) the one under the pointer.
+    pub focus: FocusMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FocusMode {
+    Click,
+    Hover,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -719,7 +728,7 @@ impl Default for Touchpad {
 
 impl Default for Windows {
     fn default() -> Self {
-        Self { move_modifier: Modifier::Super, magnetic_edges: true, snapping: true, double_click_title: TitleAction::Zoom, spaces: 0 }
+        Self { move_modifier: Modifier::Super, magnetic_edges: true, snapping: true, double_click_title: TitleAction::Zoom, spaces: 0, focus: FocusMode::Click }
     }
 }
 

@@ -1,17 +1,19 @@
 //! The app switcher (E4.5): hold the desktop key and press Tab to step through the apps, most recently used first;
-//! letting go of the key switches. Shift steps back, Esc cancels, Q quits the selected app. It shows only after a
-//! 150 ms hold, so a quick Super+Tab flips to the previous app without a flash.
+//! letting go of the key switches. Shift steps back, Esc cancels, Q quits and H hides the selected app; the pointer
+//! picks by hovering and switches with a click. It shows only after a 150 ms hold, so a quick Super+Tab flips to
+//! the previous app without a flash, on the display with the pointer.
 
 use std::time::Duration;
 
 use smithay::{
     desktop::Window,
     input::keyboard::{Keysym, ModifiersState},
+    output::Output,
     reexports::calloop::{
         RegistrationToken,
         timer::{TimeoutAction, Timer},
     },
-    utils::{IsAlive, Rectangle, SERIAL_COUNTER, Size},
+    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER, Size},
 };
 
 use crate::{state::State, wm::Rect};
@@ -48,6 +50,8 @@ pub struct Open {
     pub selected: usize,
     /// Past the 150 ms hold.
     pub visible: bool,
+    /// The display it shows on: the pointer's when it opened.
+    pub output: Option<Output>,
     held: Held,
     timer: Option<RegistrationToken>,
     /// What the last key decided; carried out once the keyboard is free (see `switcher_settle`).
@@ -59,6 +63,7 @@ enum Outcome {
     Commit,
     Cancel,
     Quit,
+    Hide,
 }
 
 #[derive(Default)]
@@ -134,7 +139,61 @@ pub fn layout(output: Size<i32, smithay::utils::Logical>, count: usize) -> (Rect
     (Rectangle::new((x, y).into(), (w, h).into()), cells, name)
 }
 
+/// The app cell at `p` (output-relative), if any.
+pub fn hit(output: Size<i32, Logical>, count: usize, p: Point<f64, Logical>) -> Option<usize> {
+    layout(output, count).1.iter().position(|c| c.to_f64().contains(p))
+}
+
 impl State {
+    /// The display under the pointer, else the first.
+    fn switcher_output(&self) -> Option<Output> {
+        let at = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default();
+        self.space.output_under(at).next().or_else(|| self.space.outputs().next()).cloned()
+    }
+
+    /// The shown panel's display and the panel, global.
+    fn switcher_panel(&self) -> Option<(Rect, Rect)> {
+        let open = self.switcher.open.as_ref().filter(|o| o.visible)?;
+        let geo = self.space.output_geometry(open.output.as_ref()?)?;
+        let mut panel = layout(geo.size, open.apps.len()).0;
+        panel.loc += geo.loc;
+        Some((geo, panel))
+    }
+
+    /// The app under global `location` in the shown panel.
+    fn switcher_index(&self, location: Point<f64, Logical>) -> Option<usize> {
+        let (geo, _) = self.switcher_panel()?;
+        hit(geo.size, self.switcher.open.as_ref()?.apps.len(), location - geo.loc.to_f64())
+    }
+
+    /// Whether the shown panel is under global `location` (no app gets the pointer there).
+    pub fn switcher_covers(&self, location: Point<f64, Logical>) -> bool {
+        self.switcher_panel().is_some_and(|(_, p)| p.to_f64().contains(location))
+    }
+
+    /// Hovering an app selects it.
+    pub fn switcher_motion(&mut self, location: Point<f64, Logical>) {
+        if let Some(i) = self.switcher_index(location)
+            && let Some(open) = self.switcher.open.as_mut()
+            && open.selected != i
+        {
+            open.selected = i;
+            self.schedule_redraw();
+        }
+    }
+
+    /// A click on an app switches to it; anywhere on the panel is taken.
+    pub fn switcher_press(&mut self, location: Point<f64, Logical>) -> bool {
+        if let Some(i) = self.switcher_index(location)
+            && let Some(open) = self.switcher.open.as_mut()
+        {
+            open.selected = i;
+            self.switcher_finish(Outcome::Commit);
+            return true;
+        }
+        self.switcher_covers(location)
+    }
+
     /// The theme icon of the installed app `window` belongs to.
     pub fn app_icon(&self, window: &Window) -> Option<String> {
         self.apps.find(&self.app_key(window)?).map(|a| a.icon.clone())
@@ -175,7 +234,8 @@ impl State {
             }
             TimeoutAction::Drop
         });
-        self.switcher.open = Some(Open { apps, selected, visible: false, held, timer: timer.ok(), outcome: None });
+        let output = self.switcher_output();
+        self.switcher.open = Some(Open { apps, selected, visible: false, output, held, timer: timer.ok(), outcome: None });
         // A binding without modifiers (an F key) has nothing to hold: it switches at once.
         let mods = self.modifiers();
         if !held.down(&mods, self.nested) {
@@ -187,7 +247,8 @@ impl State {
     pub fn switcher_preview(&mut self) {
         let apps = self.switcher_apps();
         let selected = step(0, apps.len(), false);
-        self.switcher.open = Some(Open { apps, selected, visible: true, held: Held { desktop: true, ..Default::default() }, timer: None, outcome: None });
+        let (output, held) = (self.switcher_output(), Held { desktop: true, ..Default::default() });
+        self.switcher.open = Some(Open { apps, selected, visible: true, output, held, timer: None, outcome: None });
         self.schedule_redraw();
     }
 
@@ -203,6 +264,7 @@ impl State {
             Keysym::Escape => open.outcome = Some(Outcome::Cancel),
             Keysym::Return | Keysym::KP_Enter => open.outcome = Some(Outcome::Commit),
             Keysym::q | Keysym::Q => open.outcome = Some(Outcome::Quit),
+            Keysym::h | Keysym::H => open.outcome = Some(Outcome::Hide),
             _ => {}
         }
         self.schedule_redraw();
@@ -230,6 +292,12 @@ impl State {
     fn switcher_finish(&mut self, outcome: Outcome) {
         let Some(open) = self.switcher.open.as_mut() else { return };
         let app = open.apps.get(open.selected).cloned();
+        if outcome == Outcome::Hide {
+            // Stays open, the app still listed (switching to it shows it again), as on macOS.
+            let windows = app.map(|a| a.windows.into_iter().filter(|w| self.space.elements().any(|e| e == w)).collect()).unwrap_or_default();
+            self.hide_windows(windows);
+            return;
+        }
         if outcome == Outcome::Quit {
             // Stays open on the next app, as on macOS.
             if let Some(app) = &app {
@@ -305,6 +373,15 @@ mod tests {
         assert!(!held.down(&alt, false));
         assert!(held.down(&logo, false));
         assert!(!Held::default().down(&logo, false), "an F-key binding holds nothing");
+    }
+
+    #[test]
+    fn hits_cells_only() {
+        let (_, cells, name) = layout((1280, 800).into(), 3);
+        let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
+        assert_eq!(hit((1280, 800).into(), 3, centre(cells[2])), Some(2));
+        assert_eq!(hit((1280, 800).into(), 3, centre(name)), None, "the name line");
+        assert_eq!(hit((1280, 800).into(), 3, (0.0, 0.0).into()), None);
     }
 
     #[test]

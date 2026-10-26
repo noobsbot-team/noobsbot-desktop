@@ -130,6 +130,9 @@ snapping = true
 double_click_title = "zoom"
 # Spaces (virtual desktops): 0 = dynamic (start with one; + in Mission Control adds more), or a fixed count 2–16.
 spaces = 0
+# Advanced: "hover" gives the keyboard to the window under the pointer after a moment, without raising it;
+# "click" (the default) needs a click.
+focus = "click"
 
 [clock]
 # Time zone, like "Asia/Kathmandu"; empty = keep the system's. Changing it sets the system zone (may ask for your password).
