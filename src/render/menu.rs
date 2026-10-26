@@ -52,6 +52,18 @@ impl MenuPopover {
         self.layout.as_ref()?.1.iter().position(|r| r.to_f64().contains(location))
     }
 
+    /// Scrolls a menu taller than the screen until row `i` shows (whole rows, so a mix of separators may take a
+    /// second call).
+    pub fn reveal(&mut self, i: usize) {
+        let Some((_, cells)) = &self.layout else { return };
+        if cells.get(i).is_none_or(|c| c.size.h > 0) {
+            return;
+        }
+        let above = cells.iter().take_while(|c| c.size.h == 0).count();
+        let shown = cells.iter().filter(|c| c.size.h > 0).count();
+        self.scroll.0 = if i < above { i } else { i + 1 - shown };
+    }
+
     /// The wheel over the menu: `dy` logical px. `true`: the rows shown changed.
     pub fn scroll_by(&mut self, dy: f64) -> bool {
         let Some((_, cells)) = &self.layout else { return false };
@@ -95,7 +107,6 @@ impl MenuPopover {
         let inset = ts(SIDE);
         // A submenu row shows a chevron where a shortcut would be.
         let side = |row: &Row| if row.sub.is_empty() { row.shortcut } else { "›" };
-        let live = |row: &Row| row.action.is_some() || !row.sub.is_empty();
         for row in rows.iter().flatten() {
             let shortcut = if side(row).is_empty() { 0 } else { ts(SHORTCUT_GAP) + logical(text.label(side(row), body, 200, scale).width) };
             width = width.max(logical(text.label(&row.label, body, 400, scale).width) + shortcut + 2 * (inset + PAD));
@@ -104,7 +115,7 @@ impl MenuPopover {
             self.scroll = (0, 0.0, Some((anchor, rows.len())));
         }
         let (rect, cells) = shell::menu_layout(anchor, output, width, rows, self.scroll.0);
-        let hovered = cells.iter().position(|c| c.to_f64().contains(hover)).filter(|&i| rows[i].as_ref().is_some_and(live)).or(open);
+        let hovered = cells.iter().position(|c| c.to_f64().contains(hover)).filter(|&i| rows[i].as_ref().is_some_and(Row::live)).or(open);
 
         let separators: Vec<Rect> = rows
             .iter()
@@ -137,7 +148,7 @@ impl MenuPopover {
         let mut pieces = Vec::new();
         for (i, row) in rows.iter().enumerate() {
             let Some(row) = row else { continue };
-            let (main, second) = match (Some(i) == hovered, live(row)) {
+            let (main, second) = match (Some(i) == hovered, row.live()) {
                 (true, _) => (white, white),
                 (false, true) => (label, secondary),
                 (false, false) => (disabled, disabled),
