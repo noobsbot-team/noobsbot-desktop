@@ -393,11 +393,21 @@ pub struct Mouse {
     pub middle_click_emulation: bool,
     /// Two clicks closer than this (ms) are a double-click: our title bars, desktop icons and edges, and GTK apps.
     pub double_click_ms: u32,
+    /// Middle click pastes the last selected text (the primary selection); off: apps never see it.
+    pub middle_click_paste: bool,
 }
 
 impl Default for Mouse {
     fn default() -> Self {
-        Self { speed: 0.0, acceleration: true, left_handed: false, natural_scroll: false, middle_click_emulation: false, double_click_ms: 400 }
+        Self {
+            speed: 0.0,
+            acceleration: true,
+            left_handed: false,
+            natural_scroll: false,
+            middle_click_emulation: false,
+            double_click_ms: 400,
+            middle_click_paste: true,
+        }
     }
 }
 

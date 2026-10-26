@@ -434,6 +434,7 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Mouse, "", "mouse.left_handed", "Primary button on the right", "The trackpad follows", Kind::Toggle),
     s(Page::Mouse, "", "mouse.middle_click_emulation", "Left + right = middle click", "", Kind::Toggle),
     s(Page::Mouse, "", "mouse.double_click_ms", "Double-click speed", "Longest gap between two clicks", Kind::Slider { min: 150.0, max: 1000.0, step: 50.0 }),
+    s(Page::Mouse, "", "mouse.middle_click_paste", "Middle click pastes", "The last selected text", Kind::Toggle),
     s(Page::DateTime, "", "clock.timezone", "Time zone", "Type a city; picking one also sets the system's", Kind::Zone),
     s(Page::DateTime, "", "clock.hour24", "24-hour time", "", Kind::Toggle),
     s(Page::DateTime, "Menu bar clock", "clock.weekday", "Show the day of the week", "", Kind::Toggle),
