@@ -186,8 +186,8 @@ impl State {
         views.switcher.elements(renderer, &views.shaders, &mut self.text, &mut self.icons, &names, &icon_names, selected, geo.size, dark, opacity, scale)
     }
 
-    // ponytail: the shell (bar, dock, popups) is on the first output only, since its caches and hit tests are for one
-    // output; a bar and dock per display (E6.2) needs a `Views` per output.
+    // ponytail: the shell (dock, popups) is on the first output only, since its caches and hit tests are for one
+    // output; the other displays get a menu bar of their own, drawn only (`State::bar_content`).
     fn scene_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
         let switcher_elements = self.switcher_elements(renderer, output);
         if self.space.outputs().next() != Some(output) {
@@ -195,15 +195,22 @@ impl State {
             let scale = output.current_scale().fractional_scale();
             let dark = render::is_dark(&self.config.appearance);
             let (locked, idle_shade, animating) = (self.lock.is_some(), self.idle_shade(), self.animating());
+            let content = self.bar_content(output);
             let views = self.backend.as_mut()?;
             // Locked (E6.4): nothing of the apps on this output either, only the wallpaper under our screen.
             let mut elements = if locked {
                 views.wallpaper.element(&views.shaders, geo.size, scale, dark)
             } else {
-                // Its own ghosts of closing and minimising windows, in front of the windows.
+                // Its own menu bar, and ghosts of closing and minimising windows, in front of the windows.
                 let now = self.frame_time;
                 views.ghosts.retain(|g| !g.anim.done(now));
-                let ghosts = views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)).collect();
+                let bar = views.bars.entry(output.name()).or_default();
+                let mut front = content.map_or_else(Vec::new, |content| {
+                    let appearance = &self.config.appearance;
+                    let (text, symbols, icons) = (&mut self.text, &mut self.symbols, &mut self.icons);
+                    bar.elements(renderer, &views.shaders, text, symbols, icons, &content, None, geo.size.w, dark, appearance.glass_opacity, scale)
+                });
+                front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
                 render::scene(
                     renderer,
                     &views.shaders,
@@ -212,7 +219,7 @@ impl State {
                     &self.space,
                     output,
                     &self.config.appearance,
-                    ghosts,
+                    front,
                     None,
                     self.frame_time,
                 )
@@ -228,7 +235,7 @@ impl State {
         self.capture_ask();
         let shot_flags = (self.can_record(), self.screenshots.recording.is_some(), self.screenshots.delay, self.screenshots.no_thumbnail);
         let thumbnail = self.thumbnail_rect().zip(self.screenshots.thumbnail.as_ref().map(|(t, _)| t.clone()));
-        let content = self.menu_bar();
+        let content = self.bar_content(output);
         let status = (self.popup == Some(Popup::Control)).then(|| self.control_status());
         let quit_list = self.force_quit.clone().map(|f| {
             let entries = self.force_quit_entries();
@@ -284,6 +291,7 @@ impl State {
             gallery,
             components,
             menu_bar,
+            bars: _,
             notifications,
             entering,
             menu,

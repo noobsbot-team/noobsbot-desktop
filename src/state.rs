@@ -598,6 +598,22 @@ impl State {
         })
     }
 
+    /// The bar on `output`: the focused app's name only on its window's display, tray icons only on the first one.
+    // ponytail: the other displays' bars are drawn but take no clicks, as popups and hit tests live on the first
+    // output; per-display popups need the shell's caches per output.
+    pub fn bar_content(&self, output: &smithay::output::Output) -> Option<crate::render::menubar::Content> {
+        let mut content = self.menu_bar()?;
+        let first = self.space.outputs().next() == Some(output);
+        let on = self.focused_window().and_then(|w| self.window_output(&w));
+        if on.as_ref().map_or(!first, |o| o != output) {
+            content.app = None;
+        }
+        if !first {
+            content.tray.clear();
+        }
+        Some(content)
+    }
+
     /// The window's app id; noobsbot and others set none, so then its program's name, read once per window.
     pub fn app_id(&self, window: &Window) -> Option<String> {
         let t = window.toplevel()?;
