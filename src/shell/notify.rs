@@ -15,6 +15,7 @@ use smithay::{
 use super::{CalendarLayout, DROP, MARGIN, Popup, calendar_click, calendar_layout, grid};
 pub use crate::services::notifications::{Notification, Reason};
 use crate::{
+    config::AppStyle,
     render::menubar,
     services::{Command, notifications},
     state::State,
@@ -398,16 +399,24 @@ impl State {
         Some(center(&self.notifications, self.output_size(), self.config.notifications.dnd, rows, up_next, self.batteries().len(), self.weather.is_some()))
     }
 
-    /// A notification from an app: stored, and shown as a banner unless Do Not Disturb is on, a fullscreen app has
-    /// focus, or Notification Center is open.
+    /// A notification from an app: dropped if its app is off (`[notification_apps]`), else stored, and shown as a
+    /// banner unless its app's style is "none", Do Not Disturb is on, a fullscreen app has focus, or Notification Center
+    /// is open.
     pub fn notify(&mut self, mut n: Notification) {
         n.body_lines = self.body_lines(&n.body);
         let id = n.id;
+        let style = self.config.notification_apps.get(&n.app).copied().unwrap_or(AppStyle::Banner);
+        if style == AppStyle::Off {
+            return self.services.send(Command::NotificationClosed { id, reason: Reason::Dismissed });
+        }
+        if style == AppStyle::Alert {
+            n.expire = 0;
+        }
         // Locked: no banner, only the count on the lock screen (privacy).
         if let Some(lock) = self.lock.as_mut() {
             lock.missed += 1;
         }
-        let quiet = self.config.notifications.dnd || self.locked() || self.menu_bar().is_none() || self.center_open();
+        let quiet = style == AppStyle::None || self.config.notifications.dnd || self.locked() || self.menu_bar().is_none() || self.center_open();
         let transient = n.transient;
         self.notifications.insert(n);
         self.notifications.banners.retain(|b| *b != id);

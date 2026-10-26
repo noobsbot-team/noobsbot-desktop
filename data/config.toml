@@ -199,6 +199,11 @@ icons = true
 # Do Not Disturb (the Control Center tile): banners stay quiet; Notification Center still collects them.
 dnd = false
 
+[notification_apps]
+# Per app, by the name it sends: "banner" (goes after a few seconds), "alert" (stays until dismissed), "none" (only in
+# Notification Center) or "off" (dropped). Apps not listed show banners. System Settings ▸ Notifications sets these.
+# "Firefox" = "alert"
+
 [app_drawer]
 # The app drawer (Super+A, or the "app-drawer" dock item): apps by category, search, Favorites and Recent.
 # Press and release Super on its own to open it, like a classic start menu. Super+key shortcuts, Super+drag, holding

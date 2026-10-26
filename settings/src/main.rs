@@ -94,6 +94,8 @@ pub struct App {
     keep: Option<arrange::Keep>,
     /// Appearance's wallpaper gallery, loaded on start.
     thumbs: Vec<(std::path::PathBuf, iced::widget::image::Handle)>,
+    /// Apps in the notification history, read when Notifications opens.
+    notifiers: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -101,7 +103,7 @@ pub enum Message {
     Page(Page),
     Search(String),
     Toggle(&'static str, bool),
-    Choose(&'static str, &'static str),
+    Choose(String, &'static str),
     Slide(String, f64),
     Release(String),
     Type(String, String),
@@ -151,6 +153,7 @@ impl App {
             selected: None,
             keep: None,
             thumbs: Vec::new(),
+            notifiers: config::notifying_apps(),
         };
         app.retheme();
         // Typing searches at once, as in macOS (see `type_ahead`).
@@ -181,13 +184,16 @@ impl App {
             Message::Page(page) => {
                 self.page = page;
                 self.query.clear();
+                if page == Page::Notifications {
+                    self.notifiers = config::notifying_apps();
+                }
                 if page.is_system() {
                     return Task::perform(system::read(), Message::Status);
                 }
             }
             Message::Search(query) => self.query = query,
             Message::Toggle(key, on) => self.save(key, on),
-            Message::Choose(key, value) => self.save(key, value),
+            Message::Choose(key, value) => self.save(&key, value),
             Message::Slide(key, value) => {
                 self.drafts.insert(key, value);
             }
