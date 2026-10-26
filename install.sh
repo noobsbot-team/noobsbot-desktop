@@ -754,7 +754,8 @@ enable_services() {
     say "Enabling services"
     as_root systemctl enable NetworkManager.service bluetooth.service power-profiles-daemon.service systemd-timesyncd.service
     # Spotlight's file results come from plocate; build its index now, then daily.
-    as_root systemctl enable --now plocate-updatedb.timer && as_root systemctl start --no-block plocate-updatedb.service
+    { as_root systemctl enable --now plocate-updatedb.timer && as_root systemctl start --no-block plocate-updatedb.service; } ||
+        warn "plocate's index timer could not be enabled; Spotlight shows recent files only"
     if debian; then
         # Sound goes through PipeWire (the volume menu talks to it). PulseAudio from an earlier desktop stays
         # installed, but is masked for every user.
