@@ -51,6 +51,8 @@ pub struct Display {
     pub vrr_capable: bool,
     /// Variable refresh rate is on (asked for, and capable).
     pub vrr: bool,
+    /// Percent (0–10) the picture is shrunk by, centred (TVs that crop the edges); 0 when nested.
+    pub underscan: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

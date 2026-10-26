@@ -42,9 +42,11 @@ pub fn plan(mut displays: Vec<Display>, config: &Displays, lid_closed: bool) -> 
         d.auto_scale = pick_scale((d.mode.width, d.mode.height), (d.width_mm, d.height_mm), d.built_in);
         // In 1/120 steps, the granularity of wp_fractional_scale, so what apps are told is what we draw at.
         d.scale = [e.scale, config.scale].into_iter().find(|s| *s > 0.0).map_or(d.auto_scale, |s| (s.clamp(1.0, 3.0) * 120.0).round() / 120.0);
+        d.underscan = if d.nested { 0 } else { e.underscan.min(10) };
         let (w, h) = if d.rotation % 180 == 90 { (d.mode.height, d.mode.width) } else { (d.mode.width, d.mode.height) };
         // As smithay's `Space::output_geometry` rounds, so neighbours meet exactly.
-        (d.width, d.height) = ((f64::from(w) / d.scale).ceil() as i32, (f64::from(h) / d.scale).ceil() as i32);
+        let s = drawn_scale(d.scale, d.underscan);
+        (d.width, d.height) = ((f64::from(w) / s).ceil() as i32, (f64::from(h) / s).ceil() as i32);
         d.primary = false;
         d.mirror = String::new();
         d.vrr = e.vrr && d.vrr_capable;
@@ -121,6 +123,22 @@ pub fn letterbox(src: Size<i32, Physical>, dst: Size<i32, Physical>) -> Rectangl
     let k = (f64::from(dst.w) / f64::from(src.w)).min(f64::from(dst.h) / f64::from(src.h));
     let size = Size::from(((f64::from(src.w) * k).round() as i32, (f64::from(src.h) * k).round() as i32));
     Rectangle::new(((dst.w - size.w) / 2, (dst.h - size.h) / 2).into(), size)
+}
+
+/// The scale a display's output gets: with underscan, larger by 1 / (1 − underscan), so its logical size (and with
+/// it windows, panels and the pointer's range) is the shrunk picture's; the backend draws the frame shrunk by that
+/// much into `underscan_rect`. In 1/120 steps like `scale`.
+// ponytail: apps draw at the larger scale and their pixels are shrunk back, slightly soft; a shrunk output mode with a
+// static mode source on the DRM compositor keeps them sharp, if anyone squints at a TV.
+pub fn drawn_scale(scale: f64, underscan: u8) -> f64 {
+    if underscan == 0 { scale } else { (scale / (1.0 - f64::from(underscan) / 100.0) * 120.0).round() / 120.0 }
+}
+
+/// Where an underscanned frame of `size` px goes: `underscan` percent smaller, centred (black around it).
+pub fn underscan_rect(size: Size<i32, Physical>, underscan: u8) -> Rectangle<i32, Physical> {
+    let k = 1.0 - f64::from(underscan.min(10)) / 100.0;
+    let inner = Size::from(((f64::from(size.w) * k).round() as i32, (f64::from(size.h) * k).round() as i32));
+    Rectangle::new(((size.w - inner.w) / 2, (size.h - inner.h) / 2).into(), inner)
 }
 
 /// The entry's `mode = "WxH"` at the refresh nearest its `refresh` (0: the highest); `None` when it names no mode the
@@ -265,6 +283,9 @@ pub(crate) fn set_outputs(text: &str, outputs: &[OutputSettings]) -> String {
         if !o.mirror.is_empty() {
             tables += &format!("mirror = {:?}\n", o.mirror);
         }
+        if o.underscan > 0 {
+            tables += &format!("underscan = {}\n", o.underscan);
+        }
         tables += "\n";
     }
     let (mut out, mut skip, mut placed) = (String::new(), false, false);
@@ -362,7 +383,8 @@ impl State {
                 output.change_current_state(None, Some(base + rotation(d.rotation)), Some(Scale::Integer(1)), None);
                 continue;
             }
-            output.change_current_state(None, Some(base + rotation(d.rotation)), Some(Scale::Fractional(d.scale)), Some((d.x, d.y).into()));
+            let scale = Scale::Fractional(drawn_scale(d.scale, d.underscan));
+            output.change_current_state(None, Some(base + rotation(d.rotation)), Some(scale), Some((d.x, d.y).into()));
             self.space.map_output(output, (d.x, d.y));
             layer_map_for_output(output).arrange();
         }
@@ -697,6 +719,21 @@ mod tests {
         };
         let p = plan(displays, &both, false);
         assert!(!p[0].vrr && p[1].vrr);
+    }
+
+    #[test]
+    fn underscan_shrinks_the_logical_size_and_the_picture() {
+        let tv = Displays {
+            outputs: vec![OutputSettings { underscan: 5, ..output("HDMI-A-1") }, OutputSettings { underscan: 50, ..output("eDP-1") }],
+            ..Default::default()
+        };
+        let p = plan(laptop_and_monitor(), &tv, false);
+        assert_eq!((p[1].underscan, p[1].scale, p[1].width), (5, 1.0, 2439), "the scale shown stays; 2560 / 1.05");
+        assert_eq!(p[0].underscan, 10, "at most 10 %");
+        assert_eq!(drawn_scale(1.25, 0), 1.25);
+        assert_eq!(underscan_rect((1920, 1080).into(), 0), Rectangle::from_size((1920, 1080).into()));
+        assert_eq!(underscan_rect((1920, 1080).into(), 5), Rectangle::new((48, 27).into(), (1824, 1026).into()));
+        assert_eq!(underscan_rect((1366, 768).into(), 10), Rectangle::new((68, 38).into(), (1229, 691).into()));
     }
 
     #[test]
