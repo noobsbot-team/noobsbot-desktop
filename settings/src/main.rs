@@ -10,6 +10,7 @@ mod gallery;
 mod pages;
 mod style;
 mod system;
+mod xkb;
 
 use std::{collections::HashMap, sync::OnceLock, time::Instant};
 
@@ -103,6 +104,8 @@ pub struct App {
     /// General ▸ Login Items, and the apps "+" offers; read when General opens.
     login_items: Vec<autostart::Item>,
     installed: Vec<autostart::Installed>,
+    /// Keyboard ▸ Input Sources' picker, open, with what is typed in its search field.
+    picker: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -158,6 +161,12 @@ pub enum Message {
     LoginItem(String, bool),
     AddLoginItem(autostart::Installed),
     RemoveLoginItem(String),
+    /// The chosen input sources, as (layout, variant), in order.
+    Sources(Vec<(String, String)>),
+    /// Open (or filter) the input source picker; `None` closes it.
+    Picker(Option<String>),
+    /// `keyboard.options` rewritten by a Modifier Keys dropdown.
+    Options(String),
 }
 
 impl App {
@@ -180,6 +189,7 @@ impl App {
             thumbs: Vec::new(),
             login_items: Vec::new(),
             installed: Vec::new(),
+            picker: None,
         };
         app.retheme();
         if page == Page::General {
@@ -259,6 +269,14 @@ impl App {
                 self.save("appearance.wallpaper", path.as_str());
                 self.save("appearance.wallpaper_dark", path);
             }
+            Message::Sources(sources) => {
+                let (layouts, variants) = xkb::lists(&sources);
+                self.picker = None;
+                self.save("keyboard.variant", variants);
+                self.save("keyboard.layout", layouts);
+            }
+            Message::Picker(query) => self.picker = query,
+            Message::Options(options) => self.save("keyboard.options", options),
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::PowerMode(profile) => return Task::perform(system::set_power_mode(profile), Message::Status),
