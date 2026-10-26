@@ -19,6 +19,7 @@ pub mod plank;
 pub mod screenshot;
 pub mod spotlight;
 pub mod switcher;
+pub mod trash;
 
 use chrono::{Datelike, Local, NaiveDate, Weekday};
 use smithay::utils::{Logical, Point, Rectangle, Size};
