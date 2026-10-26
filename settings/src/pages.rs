@@ -422,7 +422,7 @@ pub const SETTINGS: &[Setting] = &[
         "touchpad.secondary_click",
         "Secondary click",
         "",
-        Kind::Choice(&[("two-fingers", "Two fingers"), ("corner", "Bottom-right corner")]),
+        Kind::Choice(&[("two-fingers", "Two fingers"), ("corner", "Bottom-right corner"), ("off", "Off")]),
     ),
     s(Page::Trackpad, "", "touchpad.tap_to_drag", "Tap to drag", "Tap, then drag with the finger down", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.drag_lock", "Drag lock", "Keep dragging through a short lift", Kind::Toggle),
