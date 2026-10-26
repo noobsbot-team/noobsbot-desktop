@@ -129,6 +129,11 @@ pub enum Command {
         output: bool,
         percent: u8,
     },
+    /// An app's stream, by PipeWire node id.
+    StreamVolume {
+        id: u32,
+        percent: u8,
+    },
     Mute {
         output: bool,
         muted: bool,
@@ -397,6 +402,7 @@ async fn handle(
             (Command::WifiJoin { ssid, ap, device, password }, Some(bus), _) => network::join(bus, &ssid, &ap, &device, password.as_deref()).await,
             // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
             (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
+            (Command::StreamVolume { id, percent }, ..) => sound::set_stream_volume(id, percent),
             (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),
             (Command::Output(id), ..) => sound::set_output(id),
             (Command::NotificationClosed { id, reason }, _, Some(bus)) => notifications::closed(bus, id, reason).await,

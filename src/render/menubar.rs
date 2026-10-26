@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(battery_of(5, false).symbol, Symbol::BatteryEmpty);
         assert_eq!(battery_of(40, true).symbol, Symbol::BatteryCharging);
 
-        let sound = |volume, muted| Sound { output: Device { name: String::new(), volume, muted }, input: None, outputs: Vec::new() };
+        let sound = |volume, muted| Sound { output: Device { name: String::new(), volume, muted }, input: None, outputs: Vec::new(), streams: Vec::new() };
         assert_eq!(volume(&sound(89, false)), Symbol::SpeakerHigh);
         assert_eq!(volume(&sound(50, false)), Symbol::SpeakerLow);
         assert_eq!(volume(&sound(10, false)), Symbol::SpeakerNone);
