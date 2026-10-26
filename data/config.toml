@@ -101,6 +101,8 @@ options = ""
 # Key repeat: held this many ms, then this many times a second (0 = no repeat).
 repeat_delay = 500
 repeat_rate = 30
+# Each window remembers the layout it was typed in and switches back to it when focused.
+per_window_source = false
 
 [touchpad]
 # Off: the trackpad does nothing. The touchpad-toggle key flips this until the file is next saved.

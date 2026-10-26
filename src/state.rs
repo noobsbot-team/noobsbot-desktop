@@ -1327,6 +1327,7 @@ impl SeatHandler for State {
         // Middle-click paste off: no app is offered the primary selection.
         set_primary_focus(dh, seat, client.filter(|_| self.config.mouse.middle_click_paste));
         self.text_input_focus(focused);
+        self.layout_focus(focused);
     }
 }
 
