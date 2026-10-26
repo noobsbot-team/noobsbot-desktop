@@ -128,8 +128,9 @@ pub fn cli(channel: Channel) -> i32 {
     }
 }
 
-/// The update notification's id, below the disk notices' range (shell/disks.rs) and far above the server's counter.
-pub const NOTICE_ID: u32 = 0xFFFE_0000;
+/// The update notification's id, apart from low battery's and below the disk notices' range (shell/disks.rs), far above
+/// the server's counter.
+pub const NOTICE_ID: u32 = 0xFFFB_0000;
 
 /// "Noobsbot Desktop 1.3 is available".
 pub fn notice(release: &Release) -> super::notifications::Notification {
