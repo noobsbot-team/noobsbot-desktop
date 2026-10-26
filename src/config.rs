@@ -84,6 +84,8 @@ pub struct Appearance {
     pub reduce_motion: bool,
     /// How the wallpaper picture meets the screen.
     pub wallpaper_fit: WallpaperFit,
+    /// Settings' wallpaper gallery also shows these folders (`:`-separated); the desktop doesn't read it.
+    pub gallery_folders: String,
     /// Slideshow: a folder of PNG/JPEG pictures shown in turn (instead of the two files above); empty = off.
     pub wallpaper_folder: String,
     /// Minutes per picture; 0 = a new one only at login.
@@ -136,6 +138,8 @@ pub enum NightSchedule {
 pub struct Accessibility {
     /// Zoom (Super+Alt+8) magnifies the whole screen, or a lens around the pointer.
     pub zoom_style: ZoomStyle,
+    /// Zoom also follows the text caret and keyboard focus, not only the pointer.
+    pub zoom_follows_focus: bool,
     /// The whole screen through a colour filter; screenshots stay true.
     pub colour_filter: ColourFilter,
     /// Glass near-opaque, with a visible 1 px border.
@@ -168,6 +172,7 @@ impl Default for Accessibility {
     fn default() -> Self {
         Self {
             zoom_style: ZoomStyle::Full,
+            zoom_follows_focus: true,
             colour_filter: ColourFilter::None,
             increase_contrast: false,
             sticky_keys: false,
@@ -248,7 +253,7 @@ impl From<WeekStart> for chrono::Weekday {
     }
 }
 
-/// Wallpaper fit (Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen).
+/// Wallpaper fit (Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen, Tile).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WallpaperFit {
@@ -260,6 +265,8 @@ pub enum WallpaperFit {
     #[serde(alias = "center")]
     Centre,
     Stretch,
+    /// At its own pixel size, repeated from the top-left corner.
+    Tile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -1058,6 +1065,7 @@ impl Default for Appearance {
             theme_apps: false,
             reduce_motion: false,
             wallpaper_fit: WallpaperFit::Fill,
+            gallery_folders: String::new(),
             wallpaper_folder: String::new(),
             wallpaper_interval: 30,
             wallpaper_shuffle: false,

@@ -26,8 +26,10 @@ glass_opacity = 1.0
 wallpaper = ""
 # Used in dark mode; empty = the built-in dark opal gradient.
 wallpaper_dark = ""
-# "fill" (cover the screen), "fit" (the whole picture), "centre" (its own size) or "stretch".
+# "fill" (cover the screen), "fit" (the whole picture), "centre" (its own size), "stretch" or "tile" (repeated).
 wallpaper_fit = "fill"
+# More folders of pictures for Settings' wallpaper gallery ("+ Add Folder…"), separated by ":".
+gallery_folders = ""
 # Slideshow: a folder of PNG/JPEG pictures shown in turn, in light and dark mode; empty = off.
 wallpaper_folder = ""
 # Minutes per picture; 0 = a new one only at each login (pair with shuffle).
@@ -58,6 +60,8 @@ until = 7
 # Zoom (Super+Alt+8 on/off, Super+Alt+= / Super+Alt+- in and out, 1x … 16x): "full" magnifies the whole screen
 # following the pointer, "lens" a window around the pointer.
 zoom_style = "full"
+# Zoom also follows the text cursor as you type, and the window keyboard focus moves to.
+zoom_follows_focus = true
 # The whole screen through a filter: "none", "invert", "invert-hue" (light and dark swap, colours keep their hue) or
 # "greyscale". Screenshots and screen sharing stay true to colour.
 colour_filter = "none"
