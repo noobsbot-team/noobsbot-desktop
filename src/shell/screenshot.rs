@@ -306,6 +306,15 @@ pub fn drag_bytes(mime: &str, path: &Path) -> Option<Vec<u8>> {
     }
 }
 
+/// wf-recorder's arguments: the file, and `-o` the display picked in the open toolbar (`picked`), else the pointer's.
+fn record_args(path: &Path, picked: Option<String>, pointer: Option<String>) -> Vec<std::ffi::OsString> {
+    let mut args = vec!["-f".into(), path.into()];
+    if let Some(connector) = picked.or(pointer) {
+        args.extend(["-o".into(), connector.into()]);
+    }
+    args
+}
+
 /// Whether `program` is on `$PATH`.
 fn installed(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(program).is_file()))
@@ -786,8 +795,8 @@ impl State {
         true
     }
 
-    /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts `wf-recorder` on the whole
-    /// screen (into ~/Videos), or stops it.
+    /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts `wf-recorder` on the toolbar's
+    /// display, else the pointer's (into ~/Videos), or stops it.
     // ponytail: wf-recorder until our own PipeWire recorder (E7.2).
     pub fn toggle_recording(&mut self) {
         if let Some((pid, _)) = self.screenshots.recording.take() {
@@ -802,9 +811,12 @@ impl State {
         let _ = std::fs::create_dir_all(&dir);
         let path = file_name(&dir, "Screen Recording", "mp4", &chrono::Local::now());
         let tx = self.screenshot_channel();
+        let toolbar = self.screenshots.shot.as_ref().is_some_and(|s| s.toolbar);
+        let picked = self.overlay_output(self.screenshots.output.as_ref()).filter(|_| toolbar).map(|o| o.name());
+        let args = record_args(&path, picked, self.pointer_output().map(|o| o.name()));
         // Through the trusted socket, so it doesn't ask for itself (E6.11).
         let mut command = std::process::Command::new("wf-recorder");
-        command.arg("-f").arg(&path).env("WAYLAND_DISPLAY", crate::perms::trusted_socket(&self.socket_name));
+        command.args(args).env("WAYLAND_DISPLAY", crate::perms::trusted_socket(&self.socket_name));
         match command.spawn() {
             Ok(mut child) => {
                 self.screenshots.recording = Some((child.id(), Instant::now()));
@@ -854,6 +866,15 @@ mod tests {
         // The menu opens above the bar.
         let (menu, rows) = options_menu(&bar, (1280, 800).into());
         assert!(menu.loc.y + menu.size.h <= bar.rect.loc.y && rows.len() == OPTION_ROWS.len());
+    }
+
+    #[test]
+    fn records_the_picked_display_else_the_pointers() {
+        let path = Path::new("/v/r.mp4");
+        let args = |picked: Option<&str>, pointer: Option<&str>| record_args(path, picked.map(Into::into), pointer.map(Into::into));
+        assert_eq!(args(Some("HDMI-A-1"), Some("eDP-1")), ["-f", "/v/r.mp4", "-o", "HDMI-A-1"]);
+        assert_eq!(args(None, Some("eDP-1")), ["-f", "/v/r.mp4", "-o", "eDP-1"]);
+        assert_eq!(args(None, None), ["-f", "/v/r.mp4"]);
     }
 
     #[test]
