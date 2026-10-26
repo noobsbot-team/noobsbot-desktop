@@ -111,6 +111,8 @@ pub enum Message {
     Bluetooth(bool),
     /// Output (`true`) or input muted.
     Mute(bool, bool),
+    /// Date & Time ▸ Set time and date automatically.
+    Ntp(bool),
     /// `config.toml` was written (here or elsewhere, e.g. the Control Center's Dark toggle).
     Reload,
     /// Typed with no field focused: goes to the search field.
@@ -187,7 +189,10 @@ impl App {
             }
             Message::Search(query) => self.query = query,
             Message::Toggle(key, on) => self.save(key, on),
-            Message::Choose(key, value) => self.save(key, value),
+            Message::Choose(key, value) => {
+                self.texts.remove(key);
+                self.save(key, value);
+            }
             Message::Slide(key, value) => {
                 self.drafts.insert(key, value);
             }
@@ -224,6 +229,7 @@ impl App {
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
+            Message::Ntp(on) => return Task::perform(system::set_ntp(on), Message::Status),
             Message::Reload => {
                 // A half-written or broken file keeps what is shown, with the error under it.
                 let (config, error) = config::Config::load(config::path());
