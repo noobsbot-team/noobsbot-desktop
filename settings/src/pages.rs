@@ -165,6 +165,8 @@ pub enum Kind {
     },
     Text(&'static str),
     Accent,
+    /// A whole number from a few steps: value written, label shown.
+    Steps(&'static [(i64, &'static str)]),
 }
 
 pub struct Setting {
@@ -282,6 +284,15 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::LockScreen, "", "idle.dim", "Dim the display when inactive", "", Kind::Slider { min: 0.0, max: 600.0, step: 30.0 }),
     s(Page::LockScreen, "", "idle.screen_off", "Turn display off when inactive", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::LockScreen, "", "idle.lock", "Lock when the display turns off", "It always locks before sleeping", Kind::Toggle),
+    s(
+        Page::LockScreen,
+        "",
+        "idle.lock_delay",
+        "Require password after the display turns off",
+        "",
+        Kind::Steps(&[(0, "Immediately"), (5, "5 s"), (60, "1 min"), (300, "5 min"), (3600, "1 h")]),
+    ),
+    s(Page::LockScreen, "", "idle.lock_message", "Message on the lock screen", "Shown under the clock", Kind::Text("If found, please call …")),
     s(Page::LockScreen, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::LockScreen, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
@@ -366,6 +377,10 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
     match setting.kind {
         Kind::Toggle => toggle(t, app.config.bool(key), move |on| Message::Toggle(key, on)),
         Kind::Choice(options) => choice(t, app.config.str(key), options, key),
+        Kind::Steps(steps) => {
+            let current = app.config.num(key) as i64;
+            segments(t, steps.iter().map(|&(n, label)| (label.to_owned(), current == n, Message::Number(key, n))).collect())
+        }
         Kind::Slider { min, max, step } => {
             let value = app.drafts.get(key).copied().unwrap_or_else(|| app.config.num(key));
             slider_row(t, key, min..=max, step, value)

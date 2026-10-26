@@ -30,14 +30,28 @@ pub struct Content<'a> {
     pub battery: Option<Battery>,
     /// The keyboard layout's short name ("EN").
     pub keyboard: &'a str,
+    /// `[idle] lock_message`; empty: none.
+    pub message: &'a str,
     pub hour24: bool,
     pub now: chrono::DateTime<chrono::Local>,
 }
 
-/// Date, time, missed count, hover, wrong, battery, keyboard, size, dark, opacity, scale, greeter (user, session,
+/// Date, time, missed count, hover, wrong, battery, (keyboard, message), size, dark, opacity, scale, greeter (user, session,
 /// error).
-type PageKey =
-    (String, String, usize, Option<Button>, bool, Option<(u8, bool)>, String, Size<i32, Logical>, bool, u32, u64, Option<(usize, usize, Option<String>)>);
+type PageKey = (
+    String,
+    String,
+    usize,
+    Option<Button>,
+    bool,
+    Option<(u8, bool)>,
+    (String, String),
+    Size<i32, Logical>,
+    bool,
+    u32,
+    u64,
+    Option<(usize, usize, Option<String>)>,
+);
 type FieldKey = (TextField, Rect, bool, bool, [u8; 3], u32, u64);
 /// Full name and round picture per user.
 type Users = Vec<(String, Option<Arc<Rendered>>)>;
@@ -112,7 +126,7 @@ impl LockView {
             lock.hover,
             lock.wrong.is_some(),
             battery,
-            content.keyboard.to_owned(),
+            (content.keyboard.to_owned(), content.message.to_owned()),
             size,
             dark,
             glass_opacity.to_bits(),
@@ -128,6 +142,9 @@ impl LockView {
             if lock.missed > 0 {
                 let words = if lock.missed == 1 { "1 notification".to_owned() } else { format!("{} notifications", lock.missed) };
                 ui.text(&words, Style { color: WHITE85, ..CALLOUT }, layout.missed, Align::Centre);
+            }
+            if lock.greeter.is_none() && !content.message.is_empty() {
+                ui.text(content.message, Style { color: WHITE85, ..CALLOUT }, layout.message, Align::Centre);
             }
             // The greeter's row (E7.2): the picked user ringed and named in white, the others in 85%.
             let row = crate::shell::greeter::row(&layout, size.w, users.len());

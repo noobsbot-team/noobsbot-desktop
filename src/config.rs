@@ -569,11 +569,15 @@ pub struct Idle {
     pub sleep_on_ac: u32,
     /// Lock when the screen turns off.
     pub lock: bool,
+    /// Seconds after the screen turns off before it locks; input meanwhile wakes it unlocked.
+    pub lock_delay: u32,
+    /// Shown on the lock screen, under the clock.
+    pub lock_message: String,
 }
 
 impl Default for Idle {
     fn default() -> Self {
-        Self { dim: 120, screen_off: 300, sleep_on_battery: 900, sleep_on_ac: 0, lock: true }
+        Self { dim: 120, screen_off: 300, sleep_on_battery: 900, sleep_on_ac: 0, lock: true, lock_delay: 0, lock_message: String::new() }
     }
 }
 
