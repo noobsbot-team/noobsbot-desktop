@@ -431,6 +431,29 @@ cargo fmt --all --check
   [release-plz](https://release-plz.dev) uses to pick the next version and write the changelog. Merging its release
   pull request tags the version and builds the signed release.
 
+### Widgets from your own apps
+Any process can show a widget in Notification Center or on the desktop over the session bus; nothing is loaded into
+the desktop itself. Call `Set(id, content)` on `org.noobsbot.Desktop` `/org/noobsbot/Desktop`, interface
+`org.noobsbot.Desktop.Widgets`, again with the same id to update it, and `Remove(id)` to take it away. `content` is an
+`a{sv}`; every key is optional:
+
+| Key | Type | |
+|---|---|---|
+| `title` | `s` | the bold first line |
+| `lines` | `as` | up to four lines of text |
+| `icon` | `s` | any symbol by its file name in `assets/phosphor/regular/`, e.g. `cloud-sun`, `cpu`, `music-note` |
+| `progress` | `d` | 0–1, a bar along the bottom |
+| `size` | `s` | `small` (half width, the default) or `medium` (full width) |
+
+```sh
+busctl --user call org.noobsbot.Desktop /org/noobsbot/Desktop org.noobsbot.Desktop.Widgets Set 'sa{sv}' build 4 \
+  title s "Nightly build" lines as 2 "main · 3 of 5 steps" "about 2 min left" icon s gear progress d 0.6
+```
+A widget belongs to the connection that set it and goes when that connection leaves the bus, so the one above shows
+only for a moment (`busctl` exits); a real app keeps its connection open. A click sends the `Activated(id)` signal
+to the owner alone. `[widgets]` in `config.toml` sets the order in Notification Center and puts chosen ids on the
+desktop instead. Each app may have up to eight widgets.
+
 ## Known limits
 - Most Linux apps don't publish their menus, so the menu bar's app menu has only About, Hide and Quit.
 - Apps that draw their own title bars (GTK4/libadwaita) don't show our traffic lights.
