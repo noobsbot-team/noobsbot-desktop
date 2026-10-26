@@ -313,6 +313,12 @@ impl MenuBar {
     }
 }
 
+/// `at` (global) relative to the display at `geo`, when it is on that display's bar.
+pub fn on_bar(geo: Rect, at: smithay::utils::Point<f64, smithay::utils::Logical>) -> Option<smithay::utils::Point<f64, smithay::utils::Logical>> {
+    let local = at - geo.loc.to_f64();
+    (geo.to_f64().contains(at) && local.y < f64::from(height())).then_some(local)
+}
+
 /// Whether an auto-hiding bar shows with the pointer `y` px below its display's top: at the very edge, or anywhere
 /// on the bar once `shown`.
 pub fn reveals(shown: bool, y: f64) -> bool {

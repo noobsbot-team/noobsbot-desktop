@@ -386,8 +386,16 @@ impl State {
         if self.space.outputs().next() == Some(output) { Some(&b.menu_bar) } else { b.bars.get(&output.name()) }
     }
 
+    /// The display whose menu bar is under `location` (first-output-relative), with `location` relative to it.
+    pub fn menu_bar_at(&self, location: Point<f64, Logical>) -> Option<(smithay::output::Output, Point<f64, Logical>)> {
+        let at = location + self.space.output_geometry(self.space.outputs().next()?)?.loc.to_f64();
+        let (output, local) = self.space.outputs().find_map(|o| Some((o.clone(), menubar::on_bar(self.space.output_geometry(o)?, at)?)))?;
+        self.bar_view(&output).is_some_and(|b| b.visible()).then_some((output, local))
+    }
+
     /// The wheel over an open menu scrolls it when it is taller than the screen. `true`: the menu took it.
     pub fn menu_scroll(&mut self, location: Point<f64, Logical>, dy: f64) -> bool {
+        let location = self.to_popup(location);
         if !matches!(self.popup, Some(Popup::Menu(_))) || !self.popup_rect().is_some_and(|r| r.to_f64().contains(location)) {
             return false;
         }
@@ -407,8 +415,9 @@ impl State {
         }
     }
 
-    /// The open popup or its open submenu is under `location` (output-relative).
+    /// The open popup or its open submenu is under `location` (first-output-relative).
     pub fn in_popup(&self, location: Point<f64, Logical>) -> bool {
+        let location = self.to_popup(location);
         let sub = self.open_submenu().and(self.backend.as_ref()).and_then(|b| b.submenu.rect());
         self.popup_rect().into_iter().chain(sub).any(|r| r.to_f64().contains(location))
     }
@@ -431,8 +440,7 @@ impl State {
         if self.launchpad_open() || self.drawer_layout().is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
-        let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::height());
-        on_bar || self.in_popup(location) || self.dock_covers(location)
+        self.menu_bar_at(location).is_some() || self.in_popup(location) || self.dock_covers(location)
     }
 
     /// A press at `location` (output-relative); `secondary`: the right button. `true`: the shell took it, so no
@@ -450,17 +458,21 @@ impl State {
         {
             return true;
         }
-        let item = self.backend.as_ref().and_then(|b| b.menu_bar.hit(location));
+        // Any display's bar: its popups open on that display.
+        let bar = self.menu_bar_at(location);
+        let item = bar.as_ref().and_then(|(output, at)| self.bar_view(output)?.hit(*at));
         let open = self.popup;
         let in_popup = self.in_popup(location);
         let taken = match (open, item) {
             (Some(popup), _) if in_popup => {
-                self.popup_press(popup, location);
+                self.popup_press(popup, self.to_popup(location));
                 true
             }
             // Its own item again closes the popup.
             (_, Some(item)) => {
-                let again = open.and_then(Popup::item) == Some(item);
+                let output = bar.map(|(output, _)| output);
+                let again = open.and_then(Popup::item) == Some(item) && self.popup_output() == output;
+                self.bar_output = output;
                 self.popup = if again { None } else { popup_for(item) };
                 match (item, again) {
                     (BarItem::Tray(i), false) => self.tray_press(i, location, secondary),
@@ -484,6 +496,7 @@ impl State {
         taken
     }
 
+    /// A press at `location`, relative to the popup's display.
     fn popup_press(&mut self, popup: Popup, location: Point<f64, Logical>) {
         match popup {
             Popup::Notifications { .. } => self.center_press(location),
@@ -513,14 +526,16 @@ impl State {
     /// next item's popup; in a menu, the hovered row follows.
     pub fn shell_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         if self.shell_drag.is_some() {
-            return self.control_drag(to);
+            return self.control_drag(self.to_popup(to));
         }
         self.notify_motion(to);
         self.drawer_motion(to);
         self.launchpad_motion(to);
         let Some(open) = self.popup else { return };
+        let (from, to) = (self.to_popup(from), self.to_popup(to));
+        let bar = self.popup_output().and_then(|o| self.bar_view(&o));
         let Some(backend) = self.backend.as_ref() else { return };
-        if let Some(next) = backend.menu_bar.hit(to).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(popup_for) {
+        if let Some(next) = bar.and_then(|b| b.hit(to)).filter(|item| open.item().is_some_and(|o| o != *item)).and_then(popup_for) {
             self.popup = Some(next);
             self.schedule_redraw();
         } else if let Popup::Menu(menu) = open {
@@ -583,7 +598,7 @@ impl State {
 
     /// The tray items hidden under "»", by title; a click opens the item's menu or activates it.
     pub fn overflow_menu_rows(&self) -> Vec<Option<Row>> {
-        let hidden = self.backend.as_ref().map_or(0, |b| b.menu_bar.overflow());
+        let hidden = self.popup_output().and_then(|o| self.bar_view(&o)).map_or(0, |b| b.overflow());
         let title = |t: &crate::services::tray::TrayItem| if t.title.is_empty() { t.service.clone() } else { t.title.clone() };
         self.tray
             .iter()
@@ -627,7 +642,7 @@ impl State {
                 true
             }
             Keysym::Right => {
-                let at = self.seat.get_pointer().map(|p| self.to_output(p.current_location()));
+                let at = self.seat.get_pointer().map(|p| self.to_popup(self.to_output(p.current_location())));
                 if let Some(i) = at.and_then(|at| self.backend.as_ref()?.menu.row_at(at)) {
                     self.menu_hover(menu, i);
                 }
