@@ -238,6 +238,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
 - **Emoji:** Super+Ctrl+E or Super+period opens the picker; the emoji is typed into the focused text field, or copied.
 - **On-screen keyboard:** the `on-screen-keyboard` action (or the input menu) shows a keyboard to click, on the lock
   screen too; `[accessibility] on_screen_keyboard = true` keeps it up.
+- **Keyboard Viewer:** the input menu (or the `keyboard-viewer` action) shows the active layout's keys, read-only;
+  the keys you hold light up.
 - **Quake terminal:** F12 drops a terminal down from the top of the screen.
 - **Desktop icons:** files in `~/Desktop` appear on the wallpaper. Drag to arrange, double-click to open,
   right-click for Open, Rename, Move to Trash and New Folder. Mounted drives show at the top right, with Eject.
@@ -279,6 +281,7 @@ settings file.
 | Super+Shift+Q | log out (asks first) |
 | Super+Alt+Esc | Force Quit |
 | Super+Ctrl+Space | next keyboard layout |
+| Super+Ctrl+Shift+Space | previous keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
 | F12 | quake terminal |
 | Volume, mute, mic, brightness, keyboard backlight and media keys | as labelled, with an on-screen display |
@@ -321,7 +324,7 @@ doesn't understand is skipped and reported in the journal.
 | `[appearance]` | light / dark / auto (set hours, or sunset to sunrise at the weather place), accent colour, glass opacity, wallpapers, gallery folders and slideshow, theming Qt apps to match, reduce motion, text size and pointer size (exported to apps) |
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
 | `[accessibility]` | Zoom style (whole screen or a lens) and whether it follows the text cursor and keyboard focus, colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown, the Orca screen reader |
-| `[keyboard]` | layouts, variants, xkb options, Mac keys mode |
+| `[keyboard]` | layouts, variants, xkb options, key repeat, a layout remembered per window |
 | `[touchpad]` | on or off, tap to click, natural scrolling, secondary click (two fingers, corner or off), scroll method (two fingers, edge or none), three or four-finger swipes, gesture sensitivity, each gesture on or off |
 | `[mouse]` | tracking speed, acceleration, primary button, natural scrolling, middle-click emulation, double-click speed and middle-click paste (also given to GTK apps) |
 | `[hot_corners]` | an action for each screen corner (off by default) |

@@ -2,10 +2,11 @@
 //! `on-screen-keyboard` action or always with `[accessibility] on_screen_keyboard`. A click types the key through the
 //! seat's keyboard, as if pressed on a real one, so shortcuts, the lock screen's password field and every app get it.
 //! Modifiers latch for the next key. US key positions; the letters come from the active xkb layout.
+//! The Keyboard Viewer (input menu) is the same panel, read-only: it shows the layout and lights the keys held down.
 
 use smithay::{
     backend::input::KeyState,
-    input::keyboard::Keycode,
+    input::keyboard::{Keycode, xkb},
     utils::{Logical, Point, Rectangle, Size},
 };
 
@@ -98,6 +99,17 @@ pub fn is_modifier(code: u32) -> bool {
     matches!(code, 29 | 42 | 54 | 56 | 100 | 125)
 }
 
+/// Each key's label in `layout` of `keymap`: its own, or the layout's character (Shift's level with `shift`).
+pub fn labels(keymap: &xkb::Keymap, layout: u32, shift: bool) -> Vec<String> {
+    let char_at = |code: u32, level| keymap.key_get_syms_by_level(Keycode::new(code + 8), layout, level).first().and_then(|s| s.key_char());
+    keys()
+        .map(|(code, _, label)| match label {
+            "" => (if shift { char_at(code, 1) } else { None }).or_else(|| char_at(code, 0)).map(String::from).unwrap_or_default(),
+            label => label.to_owned(),
+        })
+        .collect()
+}
+
 /// Every key in row order.
 pub fn keys() -> impl Iterator<Item = Key> {
     ROWS.iter().flat_map(|r| r.iter().copied())
@@ -147,6 +159,10 @@ pub struct Osk {
     pub open: bool,
     /// Modifiers clicked, by evdev code, held down for the next key.
     pub latched: Vec<u32>,
+    /// The Keyboard Viewer: the panel shows, clicks type nothing.
+    pub viewer: bool,
+    /// Keys held on the keyboard while the viewer shows, by evdev code.
+    pub pressed: Vec<u32>,
 }
 
 impl State {
@@ -160,27 +176,42 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// The panel on the shell's output, when shown.
-    pub fn osk_panel(&self) -> Option<Rect> {
-        self.osk_shown().then(|| self.space.outputs().next().and_then(|o| self.space.output_geometry(o))).flatten().map(|g| panel(g.size))
+    pub fn toggle_keyboard_viewer(&mut self) {
+        self.osk.viewer = !self.osk.viewer;
+        self.osk.pressed.clear();
+        self.schedule_redraw();
     }
 
-    /// Each key's label: its own, or the active layout's character (upper case while Shift is latched).
+    /// A key went down or up: the viewer lights it.
+    pub fn viewer_key(&mut self, code: u32, down: bool) {
+        if !self.osk.viewer {
+            return;
+        }
+        self.osk.pressed.retain(|c| *c != code);
+        if down {
+            self.osk.pressed.push(code);
+        }
+        self.schedule_redraw();
+    }
+
+    /// The keys drawn lit: latched modifiers and, in the viewer, the keys held.
+    pub fn osk_lit(&self) -> Vec<u32> {
+        self.osk.latched.iter().chain(&self.osk.pressed).copied().collect()
+    }
+
+    /// The panel on the shell's output, when shown.
+    pub fn osk_panel(&self) -> Option<Rect> {
+        (self.osk_shown() || self.osk.viewer).then(|| self.space.outputs().next().and_then(|o| self.space.output_geometry(o))).flatten().map(|g| panel(g.size))
+    }
+
+    /// Each key's label in the active layout (`labels`), Shift's while Shift is latched or held.
     pub fn osk_labels(&mut self) -> Vec<String> {
         let Some(keyboard) = self.seat.get_keyboard() else { return Vec::new() };
-        let shift = self.osk.latched.iter().any(|c| SHIFT.contains(c));
+        let shift = self.osk_lit().iter().any(|c| SHIFT.contains(c));
         keyboard.with_xkb_state(self, |ctx| {
             let xkb = ctx.xkb().lock().unwrap();
-            keys()
-                .map(|(code, _, label)| match label {
-                    "" => {
-                        // ponytail: level 1 only, upper-cased with Shift; Shift's digits row ("!", "@") isn't shown.
-                        let c = xkb.raw_syms_for_key_in_layout(Keycode::new(code + 8), xkb.active_layout()).first().and_then(|s| s.key_char());
-                        c.map(|c| if shift { c.to_uppercase().collect() } else { c.to_string() }).unwrap_or_default()
-                    }
-                    label => label.to_owned(),
-                })
-                .collect()
+            // SAFETY: only read, while the lock is held.
+            labels(unsafe { xkb.keymap() }, xkb.active_layout().0, shift)
         })
     }
 
@@ -190,7 +221,8 @@ impl State {
         if !panel(output.size).to_f64().contains(location) {
             return false;
         }
-        let Some((code, ..)) = hit(output.size, location).and_then(|i| keys().nth(i)) else { return true };
+        // The viewer only shows.
+        let Some((code, ..)) = hit(output.size, location).and_then(|i| keys().nth(i)).filter(|_| self.osk_shown()) else { return true };
         if is_modifier(code) {
             match self.osk.latched.iter().position(|c| *c == code) {
                 Some(i) => _ = self.osk.latched.remove(i),
@@ -226,6 +258,26 @@ mod tests {
         codes.sort();
         codes.dedup();
         assert_eq!(codes.len(), keys().count(), "a key twice");
+    }
+
+    /// Skipped without xkeyboard-config.
+    #[test]
+    fn labels_follow_the_layout() {
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let Some(keymap) = xkb::Keymap::new_from_names(&context, "", "", "us,de", "", None, xkb::KEYMAP_COMPILE_NO_FLAGS) else {
+            eprintln!("no xkb data, skipped");
+            return;
+        };
+        let label = |layout, shift, code| {
+            let i = keys().position(|k| k.0 == code).unwrap();
+            labels(&keymap, layout, shift)[i].clone()
+        };
+        // Y and Z swap places; Shift+2 is @ and ".
+        assert_eq!((label(0, false, 21), label(1, false, 21)), ("y".into(), "z".into()));
+        assert_eq!((label(0, true, 3), label(1, true, 3)), ("@".into(), "\"".into()));
+        assert_eq!((label(0, false, 39), label(1, false, 39)), (";".into(), "ö".into()));
+        assert_eq!(label(1, true, 39), "Ö");
+        assert_eq!(label(1, false, 15), "tab");
     }
 
     #[test]
