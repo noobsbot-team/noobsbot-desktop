@@ -1375,6 +1375,35 @@ mod tests {
         assert_eq!(tray_row(&tray, &[1, 0, 0]).map(|r| r.id), Some(6));
     }
 
+    #[test]
+    fn rows_shrinking_under_an_open_path_and_cursor_cut_them_back() {
+        let row = |id, label: &str, submenu| Some(MenuRow { id, label: label.into(), enabled: true, submenu });
+        let leaves = |n| Some((10..10 + n).map(|id| row(id, "Leaf", None)).collect());
+        let p = Popup::Menu(Menu::Tray(0));
+        let open = |path: Vec<usize>, cursor| (Some((p, path)), Some((p, 2, cursor)));
+        // Open, More › Deep › its fifth leaf lit by the keyboard.
+        let (mut submenu, mut cursor) = open(vec![1, 0], 4);
+        // Deep came back with two leaves: the last one is lit instead.
+        let rows = tray_rows(&[row(1, "Open", None), row(2, "More", Some(vec![row(3, "Deep", leaves(2))]))]);
+        fit_menu(&rows, Some(p), &mut submenu, &mut cursor);
+        assert_eq!((submenu.clone().unwrap().1, cursor.unwrap()), (vec![1, 0], (p, 2, 1)));
+        // More lost its submenu: the path stops before it and the cursor, two levels down, goes.
+        let rows = tray_rows(&[row(1, "Open", None), row(2, "More", None)]);
+        let (mut submenu, mut cursor) = open(vec![1, 0], 4);
+        fit_menu(&rows, Some(p), &mut submenu, &mut cursor);
+        assert_eq!((submenu.unwrap().1, cursor), (vec![], None));
+        // More itself is gone (the window behind it closed); another popup's state is left alone.
+        let (mut submenu, mut cursor) = open(vec![1, 0], 4);
+        fit_menu(&rows[..1], Some(Popup::Control), &mut submenu, &mut cursor);
+        assert_eq!(submenu.as_ref().unwrap().1, [1, 0]);
+        fit_menu(&rows[..1], Some(p), &mut submenu, &mut cursor);
+        assert_eq!((submenu.unwrap().1, cursor), (vec![], None));
+        // A keyboard row past the end of the menu itself: its last live row.
+        let (mut submenu, mut cursor) = (None, Some((p, 0, 9)));
+        fit_menu(&rows, Some(p), &mut submenu, &mut cursor);
+        assert_eq!(cursor, Some((p, 0, 1)));
+        assert_eq!(menu_step(&rows, Some(9), false), Some(1), "Up from past the end: no panic");
+    }
 
     #[test]
     fn keys_skip_separators_and_disabled_rows_and_stop_at_the_ends() {
