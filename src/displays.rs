@@ -201,7 +201,8 @@ impl State {
             .collect();
         for window in lost {
             let (Some(frame), Some(area)) = (self.frame(&window), self.work_area()) else { continue };
-            let row = self.window_row(&window) * crate::spaces::STRIDE;
+            // Per display, a gone display's Spaces mean nothing on the first: its windows join the shown Space.
+            let row = if self.config.spaces.per_display { 0 } else { self.window_row(&window) * crate::spaces::STRIDE };
             self.set_visible_loc(&window, crate::wm::place(area, frame.size) + smithay::utils::Point::from((0, row)));
         }
         self.refit_filled();
