@@ -19,7 +19,7 @@ use crate::{
     services::{media::Media, power::Battery},
     shell::lock::{self, ART, AVATAR, Button, Lock},
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     ui::field::TextField,
     wm::Rect,
 };
@@ -277,10 +277,11 @@ fn now_playing(ui: &mut Ui, card: Rect, media: &Media, art: Option<Arc<Rendered>
     let (x, right) = (square.loc.x + ART + 12, buttons[0].loc.x - 8);
     let row = |y: i32, h: i32| Rectangle::new((x, y).into(), (right - x, h).into());
     // No artist (a browser tab): the title alone, centred.
-    let y = if media.artist.is_empty() { card.loc.y + (card.size.h - 16) / 2 } else { card.loc.y + 15 };
+    let line = ts(16);
+    let y = card.loc.y + (card.size.h - if media.artist.is_empty() { line } else { 2 * line + 2 }) / 2;
     let (label, secondary) = (ui.label(), ui.secondary());
-    ui.text(&media.title, Style { color: label, ..HEADLINE }, row(y, 16), Align::Left);
-    ui.text(&media.artist, Style { color: secondary, ..BODY }, row(y + 18, 16), Align::Left);
+    ui.text(&media.title, Style { color: label, ..HEADLINE }, row(y, line), Align::Left);
+    ui.text(&media.artist, Style { color: secondary, ..BODY }, row(y + line + 2, line), Align::Left);
     let middle = if media.playing { Symbol::Pause } else { Symbol::Play };
     for (button, symbol) in buttons.into_iter().zip([Symbol::SkipBack, middle, Symbol::SkipForward]) {
         let at = Rectangle::new((button.loc.x + (button.size.w - 18) / 2, button.loc.y + (button.size.h - 18) / 2).into(), (18, 18).into());
