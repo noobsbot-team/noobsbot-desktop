@@ -96,6 +96,13 @@ pub struct Item {
     pub symbol: Symbol,
     /// Shown left of the symbol (the battery percentage).
     pub text: Option<String>,
+    /// A small "!" right of the symbol: the network is behind a sign-in page (its item opens the portal menu).
+    pub badge: bool,
+}
+
+/// The network's item: its symbol, with "!" behind a captive portal.
+pub fn network(network: &Network) -> Item {
+    Item { symbol: wifi(network), text: None, badge: network.portal.is_some() }
 }
 
 pub fn wifi(network: &Network) -> Symbol {
@@ -126,7 +133,7 @@ pub fn battery(battery: &Battery, percent: bool) -> Item {
         13.. => Symbol::BatteryLow,
         _ => Symbol::BatteryEmpty,
     };
-    Item { symbol, text: percent.then(|| format!("{}%", battery.percent)) }
+    Item { symbol, text: percent.then(|| format!("{}%", battery.percent)), badge: false }
 }
 
 /// `symbol` is the battery's: its item opens the battery menu.
@@ -258,7 +265,10 @@ impl MenuBar {
             if let Some(t) = &item.text {
                 right.push((text.label(t, body, 100, scale), ts(TIGHT), BarItem::Status(i)));
             }
-            right.push((symbol(symbols, item.symbol), ts(GAP), BarItem::Status(i)));
+            right.push((symbol(symbols, item.symbol), if item.badge { ts(1) } else { ts(GAP) }, BarItem::Status(i)));
+            if item.badge {
+                right.push((text.label("!", Style { size: 11, weight: 700, ..body }, 100, scale), ts(GAP), BarItem::Status(i)));
+            }
         }
         right.push((symbol(symbols, Symbol::Sliders), ts(GAP), BarItem::ControlCenter));
         right.push((text.label(&content.clock, body, 300, scale), 0, BarItem::Clock));
@@ -366,9 +376,13 @@ mod tests {
         assert_eq!(wifi_of(Link::None, true), Symbol::WifiNone);
         assert_eq!(wifi_of(Link::None, false), Symbol::WifiSlash);
         assert_eq!(wifi_of(Link::Ethernet, false), Symbol::Ethernet);
+        let mut cafe = Network { wifi_enabled: true, link: Link::Wifi { ssid: "Cafe".into(), bars: 2 }, networks: Vec::new(), vpns: Vec::new(), portal: None };
+        assert!(!network(&cafe).badge);
+        cafe.portal = Some("http://check.example/".into());
+        assert_eq!(network(&cafe), Item { symbol: Symbol::WifiMedium, text: None, badge: true });
 
         let battery_of = |percent, charging| battery(&Battery { percent, charging, on_battery: !charging, minutes_left: None }, true);
-        assert_eq!(battery_of(85, false), Item { symbol: Symbol::BatteryHigh, text: Some("85%".into()) });
+        assert_eq!(battery_of(85, false), Item { symbol: Symbol::BatteryHigh, text: Some("85%".into()), badge: false });
         assert_eq!(battery_of(100, false).symbol, Symbol::BatteryFull);
         assert_eq!(battery_of(5, false).symbol, Symbol::BatteryEmpty);
         assert_eq!(battery_of(40, true).symbol, Symbol::BatteryCharging);
