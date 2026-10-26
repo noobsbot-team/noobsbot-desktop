@@ -85,6 +85,8 @@ pub struct Udev {
     gpus: GpuManager<Api>,
     cards: HashMap<DrmNode, Card>,
     cursors: Cursors,
+    /// Plugged-in input devices, so a config reload reaches them at once.
+    inputs: Vec<InputDevice>,
 }
 
 /// One GPU and the displays wired to it.
@@ -141,7 +143,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
 
     let udev = UdevBackend::new(&seat)?;
     let gpus = GpuManager::new(Api::default())?;
-    state.device = Some(Device::Udev(Box::new(Udev { session, libinput, primary, gpus, cards: HashMap::new(), cursors: HashMap::new() })));
+    state.device = Some(Device::Udev(Box::new(Udev { session, libinput, primary, gpus, cards: HashMap::new(), cursors: HashMap::new(), inputs: Vec::new() })));
     for (dev, path) in udev.device_list() {
         if let Err(err) = state.card_added(dev, path) {
             tracing::warn!("{}: {err}", path.display());
@@ -543,7 +545,17 @@ impl State {
 
     fn libinput_event(&mut self, event: InputEvent<LibinputInputBackend>) {
         match event {
-            InputEvent::DeviceAdded { mut device } => configure(&mut device, &self.config.touchpad),
+            InputEvent::DeviceAdded { mut device } => {
+                configure(&mut device, &self.config.touchpad);
+                if let Some(Device::Udev(udev)) = self.device.as_mut() {
+                    udev.inputs.push(device);
+                }
+            }
+            InputEvent::DeviceRemoved { device } => {
+                if let Some(Device::Udev(udev)) = self.device.as_mut() {
+                    udev.inputs.retain(|d| *d != device);
+                }
+            }
             InputEvent::PointerMotion { event } => self.relative_motion(event.delta(), event.time()),
             // A touchscreen or tablet maps onto its own display, not the first.
             InputEvent::PointerMotionAbsolute { event } => {
@@ -655,8 +667,16 @@ fn refresh(output: &Output) -> Duration {
     Duration::from_nanos(1_000_000_000_000 / mhz as u64)
 }
 
-/// The touchpad settings (E1.7), applied as a device appears.
-// ponytail: a config reload reaches touchpads at their next plug-in; keep the devices to re-apply it live.
+impl Udev {
+    /// The touchpad settings changed: apply them to every plugged-in device.
+    pub fn configure_inputs(&mut self, touchpad: &Touchpad) {
+        for device in &mut self.inputs {
+            configure(device, touchpad);
+        }
+    }
+}
+
+/// The touchpad settings (E1.7), applied as a device appears and on reload.
 fn configure(device: &mut InputDevice, touchpad: &Touchpad) {
     if device.config_tap_finger_count() > 0 {
         let _ = device.config_tap_set_enabled(touchpad.tap_to_click);
