@@ -243,7 +243,9 @@ impl State {
     /// shortcuts through. True when the key was used.
     fn shell_key(&mut self, sym: Keysym, raw: Keysym, mods: &ModifiersState) -> bool {
         if self.locked() {
-            return self.lock_key(sym, mods.ctrl);
+            // Sound, brightness, media and layout shortcuts run (see `Action::while_locked`).
+            let through = shortcuts::lookup(&self.bindings, mods, raw, self.nested).is_some_and(Action::while_locked);
+            return !through && self.lock_key(sym, mods.ctrl);
         }
         if self.alert_key(sym, mods.ctrl) {
             return true;
@@ -252,7 +254,7 @@ impl State {
         if (self.screenshots.shot.is_some() && unbound && self.shot_key(sym))
             || self.switcher_key(raw, mods)
             || self.force_quit_key(sym)
-            || self.mission_key(sym)
+            || self.mission_key(sym, mods)
             || self.spotlight_key(sym, raw, mods)
             || self.emoji_key(sym, raw, mods)
             || self.menu_key(sym)
@@ -428,13 +430,11 @@ impl State {
                 state.start_repeat(code, key.modified_sym(), raw, *mods);
                 return FilterResult::Intercept(None);
             }
-            // Locked: the lock screen took every key, or its client's lock surface gets them.
-            if state.locked() {
-                return FilterResult::Forward;
-            }
+            // Locked: only `Action::while_locked` shortcuts; the rest goes to a client's lock surface, if any.
+            let locked = state.locked();
             // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
             let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
-            match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
+            match shortcuts::lookup(&state.bindings, mods, sym, state.nested).filter(|a| !locked || a.while_locked()).cloned() {
                 Some(action) => {
                     state.suppressed.push(code);
                     FilterResult::Intercept(Some(action))

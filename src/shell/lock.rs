@@ -23,6 +23,7 @@ use smithay::{
 use crate::{
     shell::alert::Power,
     state::State,
+    text::ts,
     ui::field::{Edit, TextField},
     wm::Rect,
 };
@@ -178,6 +179,10 @@ pub struct Layout {
     pub buttons: [Rect; 3],
     /// Keyboard layout and battery, right-aligned in it.
     pub status: Rect,
+    /// The Now Playing card, above the user block; `None` when the screen is too short for it.
+    pub media: Option<Rect>,
+    /// The keyboard layout pill right of the field, with more than one layout (E8.7).
+    pub layouts: Rect,
 }
 
 pub const AVATAR: i32 = 64;
@@ -186,26 +191,51 @@ pub const FIELD_H: i32 = 30;
 const BUTTON_W: i32 = 84;
 const BUTTON_H: i32 = 28;
 const EDGE: i32 = 24;
+pub const MEDIA_W: i32 = 320;
+pub const MEDIA_H: i32 = 64;
+/// The album art's side in the Now Playing card.
+pub const ART: i32 = 48;
+const PILL_W: i32 = 40;
 
+/// Rows, buttons, the field and the Now Playing card grow with the text size (E8.4); the picture and gaps stay.
 pub fn layout(size: Size<i32, Logical>) -> Layout {
     let (w, h) = (size.w, size.h);
     let centred = |width: i32, y: i32, height: i32| Rectangle::new(((w - width) / 2, y).into(), (width, height).into());
+    let (title_h, clock_h, callout_h, headline_h) = (ts(22), ts(100), ts(15), ts(16));
+    let (field_w, field_h, button_w, button_h) = (ts(FIELD_W), ts(FIELD_H), ts(BUTTON_W), ts(BUTTON_H));
     let top = (h / 10).max(32);
-    let date = centred(w.min(600), top, 22);
-    let clock = centred(w.min(600), top + 22, 100);
-    let missed = centred(w.min(600), clock.loc.y + 100 + 8, 15);
-    let message = centred(w.min(600), missed.loc.y + 20, 15);
+    let date = centred(w.min(600), top, title_h);
+    let clock = centred(w.min(600), top + title_h, clock_h);
+    let missed = centred(w.min(600), clock.loc.y + clock_h + 8, callout_h);
+    let message = centred(w.min(600), missed.loc.y + ts(20), callout_h);
     // The user block sits in the lower third, above the buttons.
-    let avatar_y = (h * 64 / 100).min(h - EDGE - BUTTON_H - 24 - (AVATAR + 12 + 16 + 16 + FIELD_H + 8 + 15)).max(missed.loc.y + 40);
+    let block = AVATAR + 12 + headline_h + 16 + field_h + 8 + callout_h;
+    let avatar_y = (h * 64 / 100).min(h - EDGE - button_h - 24 - block).max(missed.loc.y + 40);
     let avatar = centred(AVATAR, avatar_y, AVATAR);
-    let name = centred(w.min(400), avatar_y + AVATAR + 12, 16);
-    let field = centred(FIELD_W, name.loc.y + 16 + 16, FIELD_H);
-    let hint = centred(w.min(400), field.loc.y + FIELD_H + 8, 15);
-    let y = h - EDGE - BUTTON_H;
-    let row = 3 * BUTTON_W + 2 * 8;
-    let buttons = [0, 1, 2].map(|i| Rectangle::new(((w - row) / 2 + i * (BUTTON_W + 8), y).into(), (BUTTON_W, BUTTON_H).into()));
-    let status = Rectangle::new((w - EDGE - 200, y).into(), (200, BUTTON_H).into());
-    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status }
+    let name = centred(w.min(400), avatar_y + AVATAR + 12, headline_h);
+    let field = centred(field_w, name.loc.y + headline_h + 16, field_h);
+    let hint = centred(w.min(400), field.loc.y + field_h + 8, callout_h);
+    let y = h - EDGE - button_h;
+    let row = 3 * button_w + 2 * 8;
+    let buttons = [0, 1, 2].map(|i| Rectangle::new(((w - row) / 2 + i * (button_w + 8), y).into(), (button_w, button_h).into()));
+    let status = Rectangle::new((w - EDGE - ts(200), y).into(), (ts(200), button_h).into());
+    let media_h = ts(MEDIA_H);
+    let media = centred(ts(MEDIA_W).min(w - 2 * EDGE), avatar_y - 16 - media_h, media_h);
+    let media = (media.loc.y >= message.loc.y + message.size.h + 8).then_some(media);
+    let layouts = Rectangle::new((field.loc.x + field_w + 8, field.loc.y).into(), (ts(PILL_W), field_h).into());
+    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status, layouts, media }
+}
+
+/// The layout pill's label ("EN"), shown with more than one layout.
+pub fn layout_pill(layouts: &crate::ime::Layouts) -> Option<String> {
+    layouts.list.get(layouts.active).filter(|_| layouts.list.len() > 1).map(|(code, _)| code.to_uppercase())
+}
+
+/// The Now Playing button under `location` in `card`: previous, play/pause, next (the control centre's spots).
+pub fn media_hit(card: Rect, location: Point<f64, Logical>) -> Option<crate::services::media::Action> {
+    use crate::services::media::Action;
+    let buttons = crate::shell::control::media_buttons(card);
+    [Action::Previous, Action::PlayPause, Action::Next].into_iter().zip(buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(a, _)| a)
 }
 
 impl State {
@@ -355,7 +385,7 @@ impl State {
         }
     }
 
-    /// A press while locked: Sleep, Restart or Shut Down when it hits one.
+    /// A press while locked: Sleep, Restart, Shut Down or a Now Playing button when it hits one.
     pub fn lock_press(&mut self, location: Point<f64, Logical>) {
         if self.lock.as_ref().is_some_and(|l| l.client_surface().is_some()) {
             return;
@@ -363,6 +393,16 @@ impl State {
         let Some(layout) = self.lock_layout() else { return };
         if self.greeter_press(&layout, location) {
             return;
+        }
+        // Now Playing's buttons (never on the login screen: no session player there).
+        if self.greeter().is_none()
+            && let (Some(media), Some(card)) = (self.media.as_ref(), layout.media)
+            && let Some(action) = media_hit(card, location)
+        {
+            return self.services.send(crate::services::Command::Media { player: media.player.clone(), action });
+        }
+        if layout_pill(&self.layouts).is_some() && layout.layouts.to_f64().contains(location) {
+            return self.switch_layout(None);
         }
         let hit = Button::ALL.into_iter().zip(layout.buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(b, _)| b);
         match hit {
@@ -528,6 +568,55 @@ mod tests {
             assert!(l.buttons[0].loc.x + l.buttons[0].size.w < l.buttons[1].loc.x);
             assert!(l.buttons.iter().all(|b| b.loc.y + b.size.h <= size.h - EDGE));
             assert_eq!(l.field.size, (FIELD_W, FIELD_H).into());
+            let media = l.media.unwrap();
+            assert!((mid(media) - size.w / 2).abs() <= 1 && media.loc.y > l.message.loc.y + 15, "{size:?}");
+            assert!(media.loc.y + MEDIA_H < l.avatar.loc.y, "{size:?}: the card sits above the user block");
+            assert!(l.layouts.loc.x > l.field.loc.x + FIELD_W && l.layouts.loc.x + PILL_W <= size.w && l.layouts.loc.y == l.field.loc.y);
         }
+        assert_eq!(layout(Size::from((800, 400))).media, None, "no room under the clock: no card");
+    }
+
+    #[test]
+    fn layout_grows_with_the_text_size() {
+        let size = Size::from((1920, 1080));
+        let (small, l) = (layout(size), crate::text::with_scale(1.5, || layout(size)));
+        // Line heights at 1.5: Title 2 33, Display 150, Callout 23 (22.5 rounded), Headline and Body 24.
+        assert!(l.date.size.h >= 33 && l.clock.size.h >= 150 && l.missed.size.h >= 23 && l.message.size.h >= 23);
+        assert!(l.date.loc.y + l.date.size.h <= l.clock.loc.y && l.clock.loc.y + l.clock.size.h <= l.missed.loc.y);
+        assert!(l.name.size.h >= 24 && l.field.size.h >= 24 + 8 && l.hint.size.h >= 23 && l.buttons[0].size.h >= 23 + 8);
+        assert!(l.name.loc.y + l.name.size.h <= l.field.loc.y && l.field.loc.y + l.field.size.h <= l.hint.loc.y);
+        assert!(l.hint.loc.y + l.hint.size.h < l.buttons[0].loc.y && l.buttons[0].loc.x + l.buttons[0].size.w < l.buttons[1].loc.x);
+        assert!(l.field.size.w > small.field.size.w && l.avatar.size == small.avatar.size && l.layouts.size.h == l.field.size.h);
+        let media = l.media.unwrap();
+        // Title and artist: 24 + 2 + 24 inside the card, which still clears the message and the picture.
+        assert!(media.size.h >= 50 + 8 && media.size.w > small.media.unwrap().size.w && media.loc.y + media.size.h < l.avatar.loc.y);
+        assert!(media.loc.y >= l.message.loc.y + l.message.size.h + 8);
+        assert!(crate::shell::control::media_buttons(media).iter().all(|b| media.contains_rect(*b)));
+    }
+
+    #[test]
+    fn media_buttons_hit() {
+        use crate::services::media::Action;
+        let card = layout(Size::from((1280, 800))).media.unwrap();
+        let centre = |r: Rect| Point::from((f64::from(r.loc.x + r.size.w / 2), f64::from(r.loc.y + r.size.h / 2)));
+        let buttons = crate::shell::control::media_buttons(card);
+        assert_eq!(buttons.map(|b| media_hit(card, centre(b))), [Some(Action::Previous), Some(Action::PlayPause), Some(Action::Next)]);
+        assert!(buttons.iter().all(|b| card.contains_rect(*b)), "inside the card");
+        assert!(buttons[0].loc.x > card.loc.x + 8 + ART + 100, "room for the art and the words");
+        assert_eq!(media_hit(card, centre(card) - Point::from((100.0, 0.0))), None, "the words take no click");
+    }
+
+    #[test]
+    fn layout_pill_label_and_hit() {
+        let mut layouts = crate::ime::Layouts { list: vec![("us".into(), "English (US)".into())], ..Default::default() };
+        assert_eq!(layout_pill(&layouts), None, "one layout: no pill");
+        layouts.list.push(("np".into(), "Nepali".into()));
+        assert_eq!(layout_pill(&layouts).as_deref(), Some("US"));
+        layouts.active = 1;
+        assert_eq!(layout_pill(&layouts).as_deref(), Some("NP"));
+        let l = layout(Size::from((1280, 800)));
+        let inside = l.layouts.to_f64().loc + Point::from((PILL_W as f64 / 2.0, FIELD_H as f64 / 2.0));
+        assert!(l.layouts.to_f64().contains(inside) && !l.field.to_f64().contains(inside));
+        assert!(!l.layouts.to_f64().contains(l.field.to_f64().loc), "the field isn't the pill");
     }
 }

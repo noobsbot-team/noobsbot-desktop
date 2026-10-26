@@ -17,7 +17,7 @@ use super::{
     mission::{Shape, material, rgba, shapes},
     titlebar::{Label, keep_buffers, label_element},
     transformed,
-    ui::{CALLOUT, Ui},
+    ui::Ui,
     window_elements,
 };
 use crate::{
@@ -98,9 +98,10 @@ pub struct DockView {
     separator: Option<(Rect, PixelShaderElement)>,
 }
 
-type TipKey = (Vec<(String, Point<i32, Logical>)>, bool, u64);
+/// The last `u32` is the text scale, so a showing tooltip or badge resizes when it changes.
+type TipKey = (Vec<(String, Point<i32, Logical>)>, bool, u64, u32);
 
-type BadgeKey = (Vec<(Rect, Option<i64>, Option<u8>)>, [u8; 3], u64);
+type BadgeKey = (Vec<(Rect, Option<i64>, Option<u8>)>, [u8; 3], u64, u32);
 type Piece = (Arc<Rendered>, Rect);
 
 impl DockView {
@@ -117,7 +118,7 @@ impl DockView {
         scale: f64,
     ) -> Vec<SceneElement> {
         let shown = badges.iter().map(|(r, e)| (*r, e.count, e.progress.map(|p| (p * 100.0).round() as u8))).collect();
-        let key = (shown, accent, scale.to_bits());
+        let key = (shown, accent, scale.to_bits(), crate::text::factor().to_bits());
         if self.badges.as_ref().is_none_or(|(k, _, _)| *k != key) {
             // The dock is a dark theme in light and dark mode, so its controls are drawn dark.
             let mut ui = Ui { shaders, text, symbols, dark: true, accent, glass_opacity: 1.0, scale, glass: Vec::new(), pieces: Vec::new() };
@@ -165,11 +166,11 @@ impl DockView {
             (self.tip, self.tip_labels) = (None, Vec::new());
             return Vec::new();
         }
-        let key = (tips.to_vec(), dark, scale.to_bits());
+        let key = (tips.to_vec(), dark, scale.to_bits(), crate::text::factor().to_bits());
         if self.tip.as_ref().is_none_or(|(k, _, _)| *k != key) {
             let mut ui = Ui { shaders, text, symbols, dark, accent: [0, 0, 0], glass_opacity: 1.0, scale, glass: Vec::new(), pieces: Vec::new() };
             for (words, at) in tips {
-                let (w, h) = (ui.width(words, CALLOUT) + 16, i32::from(CALLOUT.line_height) + 12);
+                let (w, h) = ui.tooltip_size(words);
                 ui.tooltip((at.x - w / 2, at.y - h).into(), words);
             }
             let (mut glass, pieces) = (ui.glass, ui.pieces);

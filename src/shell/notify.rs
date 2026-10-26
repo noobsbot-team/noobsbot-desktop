@@ -19,7 +19,7 @@ use crate::{
     render::menubar,
     services::{Command, notifications},
     state::State,
-    text::Style,
+    text::{Style, ts},
     wm::Rect,
 };
 
@@ -155,7 +155,9 @@ pub fn card(n: &Notification, x: i32, y: i32, w: i32, hovered: bool, close: bool
     let r = |dx: i32, dy: i32, rw: i32, rh: i32| Rectangle::new((x + dx, y + dy).into(), (rw, rh).into());
     let text_w = w - TEXT_X - PAD;
     let lines = i32::from(n.body_lines.min(2));
-    let mut bottom = 26 + LINE + lines * LINE;
+    // Text rows grow with the text size; the icon and the side padding stay.
+    let (line, top, button_h) = (ts(LINE), ts(26), ts(BUTTON_H));
+    let mut bottom = top + line + lines * line;
     let progress = n.progress.map(|_| {
         bottom += 10;
         r(TEXT_X, bottom - 4, text_w, 4)
@@ -166,17 +168,17 @@ pub fn card(n: &Notification, x: i32, y: i32, w: i32, hovered: bool, close: bool
         let count = keys.len() as i32;
         let each = (w - 2 * PAD - (count - 1) * GAP) / count;
         bottom += 8;
-        actions = keys.into_iter().enumerate().map(|(i, key)| (r(PAD + i as i32 * (each + GAP), bottom, each, BUTTON_H), key.clone())).collect();
-        bottom += BUTTON_H;
+        actions = keys.into_iter().enumerate().map(|(i, key)| (r(PAD + i as i32 * (each + GAP), bottom, each, button_h), key.clone())).collect();
+        bottom += button_h;
     }
     Card {
         id: n.id,
         rect: r(0, 0, w, (bottom + PAD).max(MIN_H)),
         icon: r(PAD, PAD, ICON, ICON),
-        app: r(TEXT_X, 10, text_w - 48, 14),
-        time: r(w - PAD - 48, 10, 48, 14),
-        title: r(TEXT_X, 26, text_w, LINE),
-        body: r(TEXT_X, 26 + LINE, text_w, lines * LINE),
+        app: r(TEXT_X, ts(10), text_w - ts(48), ts(14)),
+        time: r(w - PAD - ts(48), ts(10), ts(48), ts(14)),
+        title: r(TEXT_X, top, text_w, line),
+        body: r(TEXT_X, top + line, text_w, lines * line),
         progress,
         close: (hovered && close).then(|| r(-6, -6, CLOSE, CLOSE)),
         actions,
@@ -186,7 +188,7 @@ pub fn card(n: &Notification, x: i32, y: i32, w: i32, hovered: bool, close: bool
 /// The banners on screen (newest on top), and the "+N more" pill under them when there are more than 3.
 pub fn banners(store: &Store, output_width: i32, osd: bool) -> (Vec<Card>, Option<(Rect, usize)>) {
     let x = output_width - BANNER_RIGHT - BANNER_W;
-    let mut y = menubar::HEIGHT + BANNER_TOP + if osd { OSD_SHIFT } else { 0 };
+    let mut y = menubar::height() + BANNER_TOP + if osd { OSD_SHIFT } else { 0 };
     let mut cards = Vec::new();
     for n in store.banners.iter().filter_map(|id| store.get(*id)).take(MAX_BANNERS) {
         let card = card(n, x, y, BANNER_W, store.hovered == Some(n.id), true);
@@ -194,7 +196,7 @@ pub fn banners(store: &Store, output_width: i32, osd: bool) -> (Vec<Card>, Optio
         cards.push(card);
     }
     let more = store.banners.len().saturating_sub(MAX_BANNERS);
-    let pill = (more > 0).then(|| (Rectangle::new((x + (BANNER_W - 96) / 2, y).into(), (96, BUTTON_H).into()), more));
+    let pill = (more > 0).then(|| (Rectangle::new((x + (BANNER_W - ts(96)) / 2, y).into(), (ts(96), ts(BUTTON_H)).into()), more));
     (cards, pill)
 }
 
@@ -250,24 +252,26 @@ impl Center {
 #[expect(clippy::too_many_arguments, reason = "one count per section")]
 pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize, up_next: usize, batteries: usize, weather: bool, widgets: &[bool]) -> Center {
     let x = output.w - MARGIN - CENTER_W;
-    let top = menubar::HEIGHT + DROP;
+    let top = menubar::height() + DROP;
     let rect = Rectangle::new((x, top).into(), (CENTER_W, (output.h - top - MARGIN).max(100)).into());
     let inner_x = x + CENTER_PAD;
     let inner_w = CENTER_W - 2 * CENTER_PAD;
     let start = top + 16 - store.scroll;
     let mut y = start;
     let row = |x: i32, y: i32, w: i32, h: i32| Rectangle::new((x, y).into(), (w, h).into());
-    let date = row(inner_x + 4, y, inner_w - 40, 22);
-    let settings = row(x + CENTER_W - CENTER_PAD - 4 - 22, y, 22, 22);
-    y += 22 + 12;
+    // Rows that hold text grow with the text size (E8.4); widths, icons and gaps stay.
+    let (head, button) = (ts(22), ts(76));
+    let date = row(inner_x + 4, y, inner_w - 40, head);
+    let settings = row(x + CENTER_W - CENTER_PAD - 4 - 22, y + (head - 22) / 2, 22, 22);
+    y += head + 12;
     let dnd = dnd.then(|| {
-        let banner = row(inner_x, y, inner_w, 40);
-        y += 40 + 12;
-        (banner, row(inner_x + inner_w - 8 - 76, banner.loc.y + 8, 76, BUTTON_H))
+        let banner = row(inner_x, y, inner_w, ts(40));
+        y += banner.size.h + 12;
+        (banner, row(inner_x + inner_w - 8 - button, banner.loc.y + ts(8), button, ts(BUTTON_H)))
     });
     let header = (!store.list.is_empty()).then(|| {
-        let h = (row(inner_x + 4, y + 3, 160, 16), row(inner_x + inner_w - 76, y, 76, 22));
-        y += 22 + 8;
+        let h = (row(inner_x + 4, y + ts(3), 160, ts(16)), row(inner_x + inner_w - button, y, button, head));
+        y += head + 8;
         h
     });
     let mut groups = Vec::new();
@@ -276,8 +280,8 @@ pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize,
         let group_hovered = ids.iter().any(|id| store.hovered == Some(*id));
         let mut group = Group { app: app.clone(), count: ids.len(), header: None, cards: Vec::new(), plate: None, close: None };
         if open {
-            group.header = Some((row(inner_x + 4, y + 3, 200, 16), row(inner_x + inner_w - 84, y, 84, 22)));
-            y += 22 + 8;
+            group.header = Some((row(inner_x + 4, y + ts(3), 200, ts(16)), row(inner_x + inner_w - ts(84), y, ts(84), head)));
+            y += head + 8;
             for n in ids.iter().filter_map(|id| store.get(*id)) {
                 let card = card(n, inner_x, y, inner_w, store.hovered == Some(n.id), true);
                 y += card.rect.size.h + GAP;
@@ -287,31 +291,32 @@ pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize,
             let card = card(n, inner_x, y, inner_w, store.hovered == Some(n.id), false);
             let bottom = card.rect.loc.y + card.rect.size.h;
             group.close = group_hovered.then(|| row(inner_x - 6, y - 6, CLOSE, CLOSE));
-            group.plate = (ids.len() > 1).then(|| row(inner_x + 10, bottom - 8, inner_w - 20, 8 + PLATE));
-            y = bottom + if ids.len() > 1 { PLATE } else { 0 } + GAP;
+            group.plate = (ids.len() > 1).then(|| row(inner_x + 10, bottom - 8, inner_w - 20, 8 + ts(PLATE)));
+            y = bottom + if ids.len() > 1 { ts(PLATE) } else { 0 } + GAP;
             group.cards.push(card);
         }
         groups.push(group);
     }
     y += 4;
     let up_next = (up_next > 0).then(|| {
-        let card = row(inner_x, y, inner_w, UP_NEXT_TOP + up_next as i32 * UP_NEXT_ROW + 6);
+        let (top, each) = (ts(UP_NEXT_TOP), ts(UP_NEXT_ROW));
+        let card = row(inner_x, y, inner_w, top + up_next as i32 * each + 6);
         y += card.size.h + GAP;
-        (card, (0..up_next as i32).map(|i| row(inner_x + 12, card.loc.y + UP_NEXT_TOP + i * UP_NEXT_ROW, inner_w - 24, UP_NEXT_ROW - 6)).collect())
+        (card, (0..up_next as i32).map(|i| row(inner_x + 12, card.loc.y + top + i * each, inner_w - 24, each - 6)).collect())
     });
-    let cal_h = super::calendar::GRID_Y + rows as i32 * super::calendar::CELL_H + super::calendar::BOTTOM;
+    let cal_h = super::calendar::height(rows);
     let calendar = (row(inner_x, y, inner_w, cal_h), calendar_layout(inner_x + (inner_w - super::calendar::WIDTH) / 2, y, rows));
     y += cal_h + GAP;
     let weather = weather.then(|| {
-        let card = row(inner_x, y, inner_w, WEATHER_H);
-        y += WEATHER_H + GAP;
+        let card = row(inner_x, y, inner_w, ts(WEATHER_H));
+        y += card.size.h + GAP;
         card
     });
     let batteries = (batteries > 0).then(|| {
-        let card = row(inner_x, y, inner_w, 68);
+        let card = row(inner_x, y, inner_w, ts(68));
         let each = (inner_w - 24) / batteries.min(3) as i32;
-        y += 68 + GAP;
-        (card, (0..batteries.min(3) as i32).map(|i| row(inner_x + 12 + i * each, card.loc.y + 36, each, 20)).collect())
+        y += card.size.h + GAP;
+        (card, (0..batteries.min(3) as i32).map(|i| row(inner_x + 12 + i * each, card.loc.y + ts(36), each, ts(20))).collect())
     });
     let (widgets, bottom) = tiles(widgets, inner_x, y, inner_w);
     y = bottom;
@@ -322,27 +327,27 @@ pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize,
 /// Widget cards from `y` down in a `w`-wide column: medium ones full width, small ones two to a row; and the y
 /// below them.
 pub fn tiles(medium: &[bool], x: i32, mut y: i32, w: i32) -> (Vec<Rect>, i32) {
-    let half = (w - GAP) / 2;
+    let (half, widget_h) = ((w - GAP) / 2, ts(WIDGET_H));
     // A small card waiting for a neighbour on its right.
     let mut open = false;
     let mut out = Vec::new();
     for &m in medium {
         if open && !m {
-            out.push(Rectangle::new((x + w - half, y).into(), (half, WIDGET_H).into()));
+            out.push(Rectangle::new((x + w - half, y).into(), (half, widget_h).into()));
             open = false;
-            y += WIDGET_H + GAP;
+            y += widget_h + GAP;
             continue;
         }
         if open {
-            y += WIDGET_H + GAP;
+            y += widget_h + GAP;
         }
-        out.push(Rectangle::new((x, y).into(), (if m { w } else { half }, WIDGET_H).into()));
+        out.push(Rectangle::new((x, y).into(), (if m { w } else { half }, widget_h).into()));
         open = !m;
         if m {
-            y += WIDGET_H + GAP;
+            y += widget_h + GAP;
         }
     }
-    (out, if open { y + WIDGET_H + GAP } else { y })
+    (out, if open { y + widget_h + GAP } else { y })
 }
 
 /// What a click in Notification Center hits.
@@ -498,7 +503,7 @@ impl State {
         if body.is_empty() {
             return 0;
         }
-        let lines = self.text.wrapped(body, BODY, BODY_W as u32, 2, 1.0).height / BODY.line_height as u32;
+        let lines = self.text.wrapped(body, BODY, BODY_W as u32, 2, 1.0).height / ts(BODY.line_height.into()) as u32;
         lines.clamp(1, 2) as u8
     }
 
@@ -811,6 +816,40 @@ mod tests {
         assert_eq!(cards[0].actions.len(), 1);
         assert!(cards[0].close.is_some() && cards[0].rect.contains_rect(cards[0].actions[0].0));
         assert_eq!(banner_hit(&cards, more, cards[0].actions[0].0.to_f64().loc + Point::from((2.0, 2.0))), Some((Some(5), false, Some("reply".into()))));
+    }
+
+    #[test]
+    fn text_rows_grow_with_the_text_size() {
+        let mut store = Store::default();
+        for (id, app) in [(1, "A"), (2, "A"), (3, "B")] {
+            store.insert(Notification { body_lines: 2, actions: vec![("default".into(), "Open".into()), ("x".into(), "Reply".into())], ..note(id, app) });
+            store.banners.insert(0, id);
+        }
+        store.hovered = Some(3);
+        let lay = || (banners(&store, 1280, false).0, center(&store, Size::from((1280, 3000)), true, 6, 2, 2, true, &[true, false]));
+        let (small, small_c) = lay();
+        let (big, big_c) = crate::text::with_scale(1.5, lay);
+        // Line heights at 1.5: headline and body 24, subheadline 21, caption 20 (19.5 rounded), title3 30.
+        let card = &big[0];
+        assert!(card.title.size.h >= 24 && card.body.size.h >= 48 && card.app.size.h >= 21 && card.time.size.h >= 20);
+        assert!(card.actions.iter().all(|(r, _)| r.size.h >= 36 && card.rect.contains_rect(*r)));
+        assert!([card.app, card.time, card.title, card.body, card.icon].iter().all(|r| card.rect.contains_rect(*r)));
+        assert!(card.body.loc.y >= card.title.loc.y + card.title.size.h && card.icon.size.h == ICON);
+        assert!(card.rect.size.h > small[0].rect.size.h && card.rect.size.w == small[0].rect.size.w);
+        let c = &big_c;
+        assert!(c.date.size.h >= 33 && c.header.unwrap().0.size.h >= 21 && c.header.unwrap().1.size.h >= 22);
+        let (strip, off) = c.dnd.unwrap();
+        assert!(strip.size.h >= 36 && strip.contains_rect(off) && off.size.h >= 22);
+        let plate = c.groups.iter().find_map(|g| g.plate).unwrap();
+        assert!(plate.size.h - 8 >= 20);
+        let (next, rows) = c.up_next.clone().unwrap();
+        assert!(rows.iter().all(|r| next.contains_rect(*r) && r.size.h >= ts(19) + 21) && rows[0].loc.y >= next.loc.y + ts(10) + 30);
+        let weather = c.weather.unwrap();
+        assert!(weather.size.h >= ts(132) + 24 && c.widgets[0].size.h == weather.size.h);
+        let (bat, slots) = c.batteries.clone().unwrap();
+        assert!(slots.iter().all(|s| bat.contains_rect(*s) && s.size.h >= 24));
+        assert!(c.calendar.0.contains_rect(c.calendar.1.rect) && c.max_scroll == 0);
+        assert!(c.calendar.0.size.h > small_c.calendar.0.size.h && c.widgets[1].loc.y > small_c.widgets[1].loc.y);
     }
 
     #[test]

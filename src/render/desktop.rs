@@ -17,8 +17,8 @@ use super::{
 };
 use crate::{
     apps::Icons,
-    shell::desktop::{FALLBACK_ICON, Frame, ICON, LABEL_LINE, LABEL_W, icon_rect, label_rect},
-    text::{Rendered, Style, Text},
+    shell::desktop::{FALLBACK_ICON, Frame, ICON, LABEL_LINE, icon_rect, label_rect, label_w},
+    text::{Rendered, Style, Text, ts},
     wm::Rect,
 };
 
@@ -53,6 +53,7 @@ impl DesktopView {
         let px = (f64::from(ICON) * scale).ceil() as u32;
         let [ar, ag, ab] = accent;
         // (piece, rect: filled when `stretch`, else its top-left corner)
+        let (label_w, line) = (label_w(), ts(LABEL_LINE));
         let mut names: Vec<(Arc<Rendered>, Rect, bool)> = Vec::new();
         let mut shadows = Vec::new();
         let mut images = Vec::new();
@@ -71,30 +72,30 @@ impl DesktopView {
                 Some((_, field)) => {
                     let ink = if dark { [255, 255, 255, 230] } else { [0, 0, 0, 230] };
                     let style = Style { color: ink, weight: 400, ..NAME };
-                    let piece = text.label(&field.text, style, LABEL_W as u32 + 4, scale);
+                    let piece = text.label(&field.text, style, label_w as u32 + 4, scale);
                     let w = logical(piece.width);
-                    let boxed = Rectangle::new((label.loc.x - 4, label.loc.y - 1).into(), (LABEL_W + 8, LABEL_LINE + 4).into());
+                    let boxed = Rectangle::new((label.loc.x - 4, label.loc.y - 1).into(), (label_w + 8, line + 4).into());
                     let x = boxed.loc.x + ((boxed.size.w - w) / 2).max(2);
                     let y = boxed.loc.y + 2;
                     if field.all {
-                        shapes.push((Rectangle::new((x - 1, y).into(), (w + 2, LABEL_LINE).into()), [ar, ag, ab, 110], 2));
+                        shapes.push((Rectangle::new((x - 1, y).into(), (w + 2, line).into()), [ar, ag, ab, 110], 2));
                     } else {
                         let before = logical(text.label(&field.text[..field.caret], style, 4000, scale).width).min(w);
-                        shapes.push((Rectangle::new((x + before, y).into(), (1, LABEL_LINE).into()), [ar, ag, ab, 255], 0));
+                        shapes.push((Rectangle::new((x + before, y).into(), (1, line).into()), [ar, ag, ab, 255], 0));
                     }
                     shapes.push((boxed, if dark { [30, 30, 30, 255] } else { [255, 255, 255, 255] }, 3));
-                    names.push((piece, Rectangle::new((x, y).into(), (w, LABEL_LINE).into()), false));
+                    names.push((piece, Rectangle::new((x, y).into(), (w, line).into()), false));
                 }
                 None => {
-                    let piece = text.centred(entry.shown(), NAME, LABEL_W as u32, 2, scale);
-                    let at = Rectangle::new(label.loc, (LABEL_W, logical(piece.height)).into());
+                    let piece = text.centred(entry.shown(), NAME, label_w as u32, 2, scale);
+                    let at = Rectangle::new(label.loc, (label_w, logical(piece.height)).into());
                     if selected {
                         // Tight around a one-line name, the label's width for two.
-                        let w = logical(text.label(entry.shown(), NAME, LABEL_W as u32, scale).width).min(LABEL_W) + 8;
-                        let pill = Rectangle::new((label.loc.x + (LABEL_W - w) / 2, label.loc.y - 1).into(), (w, logical(piece.height) + 2).into());
+                        let w = logical(text.label(entry.shown(), NAME, label_w as u32, scale).width).min(label_w) + 8;
+                        let pill = Rectangle::new((label.loc.x + (label_w - w) / 2, label.loc.y - 1).into(), (w, logical(piece.height) + 2).into());
                         shapes.push((pill, [ar, ag, ab, 255], 4));
                     } else {
-                        let shadow = text.centred(entry.shown(), Style { color: SHADOW, ..NAME }, LABEL_W as u32, 2, scale);
+                        let shadow = text.centred(entry.shown(), Style { color: SHADOW, ..NAME }, label_w as u32, 2, scale);
                         shadows.push((shadow, Rectangle::new(at.loc + Point::from((0, 1)), at.size), false));
                     }
                     names.push((piece, at, false));

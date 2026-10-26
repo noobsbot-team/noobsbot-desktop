@@ -1608,104 +1608,124 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 ### E8.1 Settings that do nothing today (fix first, S each)
 | Gap | Where | Fix |
 |---|---|---|
-| `[windows] double_click_title` is shown in Settings but ignored | `src/decorations.rs` always zooms | honour Zoom / Minimize / Nothing |
-| `[windows] snapping` is on by default, has a toggle and a README line, but nothing reads it | `src/config.rs` | build E8.5 tiling, or hide the toggle until then |
-| `[keyboard] mac_keys` toggle is parsed but never applied | `src/config.rs` only | implement the E1.6 swap or hide the toggle |
-| Window rule `opacity` is documented but not drawn | `src/state.rs` ponytail note | apply it in the renderer or drop it from the docs |
-| Minimise from apps that draw their own title bar (GTK4, libadwaita) does nothing | no `minimize_request` handler | route it to `minimise` |
-| Trackpad tap-to-click and natural scroll apply only when the device is re-plugged | `src/backend/udev.rs` | re-configure devices on config reload |
-| Green traffic light zooms; E5.1 says full screen (Alt = zoom) | `src/decorations.rs` | decide, then fix code or plan |
+| ~~`[windows] double_click_title` is shown in Settings but ignored~~ | `src/decorations.rs` | Done: Zoom / Minimise / Nothing honoured |
+| ~~`[windows] snapping` is on by default, has a toggle and a README line, but nothing reads it~~ | `src/grabs.rs` | Done: gates edge tiling while dragging (E8.5) |
+| `[keyboard] mac_keys` toggle is parsed but never applied | `src/config.rs` only | implement the E1.6 swap or hide the toggle. Partly: no Settings row any more; the key is still parsed and unused |
+| ~~Window rule `opacity` is documented but not drawn~~ | `src/render/mod.rs` | Done: fades the app's content; title bar and shadow stay solid |
+| ~~Minimise from apps that draw their own title bar (GTK4, libadwaita) does nothing~~ | `src/state.rs` | Done: `minimize_request` calls `minimise` |
+| ~~Trackpad tap-to-click and natural scroll apply only when the device is re-plugged~~ | `src/backend/udev.rs` | Done: `configure_inputs` re-applies trackpad and mouse settings on reload |
+| ~~Green traffic light zooms; E5.1 says full screen (Alt = zoom)~~ | `src/decorations.rs` | Done: green is full screen, Alt+green zooms |
 | Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow | `src/gestures.rs` | drive the transitions from the gesture progress |
-| Logo menu "System Settings…" and "About This Computer" rows are disabled | `src/shell/mod.rs` | open the Settings app (at About) |
-| Do Not Disturb is lost on restart | `src/shell/control.rs` | save it in `config.toml` |
+| ~~Logo menu "System Settings…" and "About This Computer" rows are disabled~~ | `src/shell/mod.rs` | Done: open Settings at Appearance / About |
+| ~~Do Not Disturb is lost on restart~~ | `src/shell/control.rs` | Done: saved as `[notifications] dnd` |
 | Menu bar, dock, Spaces, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
-| `show-desktop` has no default key | `data/config.toml` | Super+F11 |
+| ~~`show-desktop` has no default key~~ | `data/config.toml` | Done: Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
 Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers (later)**. Every row writes `config.toml` or
 calls the system service, and applies live.
 | Page | Add |
 |---|---|
-| Appearance | wallpaper gallery (thumbnails of `/usr/share/backgrounds`, `~/Pictures`, "+ Add Folder") instead of the path field; Fill / Fit / Centre / Stretch / Tile; slideshow with interval and crossfade; Auto-dark hours or sunset (today fixed 19–07 in `src/render/mod.rs`); Reduce motion and Desktop icons rows; text size; pointer size; minimise effect Scale / Genie; also write the app font, monospace font and scrollbar keys for GTK and Qt apps |
-| Displays | mirroring ("Use as: Mirror for …"); identify (name label on each screen while the page is open); "Reset"; brightness slider; Night Light (designed in E6.2, not built); layouts remembered per set of monitors; clamshell (lid closed + external monitor keeps running); underscan for TVs (later) |
-| Sound | output and input device pickers; live input level meter; balance; alert sound and alert volume; "Play user interface sound effects", startup sound, volume-change feedback; per-app volume in the Control Center Sound expansion |
-| Network (new; Wi-Fi page grows into it) | network list, Known Networks with Forget and Auto-Join; Details sheet (IP, DNS, router, MAC); "Other…" for hidden and WPA-Enterprise networks; Ethernet details and static IP; VPN and WireGuard connect; proxy; captive-portal "!" icon that opens the login page; "Advanced…" opens `nm-connection-editor` until the native sheets exist. VPN stays out of the Control Center card (E2.3) |
-| Bluetooth | Nearby Devices (discovery) with Connect; per-device ⓘ ▸ Forget, Rename (the pairing agent and alerts already exist) |
-| Battery (new) | show percentage; time remaining and power source in the battery menu; Low Power Mode; dim on battery; display off and sleep times for battery and for power adapter (today `[idle]` in the config file only); keyboard backlight; low-battery warnings for wireless mouse and keyboard |
-| Keyboard | key repeat delay and rate sliders with an Off stop (now constants in `src/input.rs`, sent live with `set_repeat_info`); Input Sources list with a searchable picker, reorder, IMEs; "previous" and "n-th source" actions; remember the source per window; Modifier Keys dropdowns (Caps Lock, Compose, Ctrl/Alt swap) plus a raw options field; Keyboard Viewer; Keyboard Shortcuts dialog (E8.7) |
-| Mouse (new, `[mouse]`) | tracking speed; acceleration on/off; primary button left/right; natural scroll (separate from the trackpad); double-click speed (also used by our own title-bar double-click); middle-click emulation; middle-click paste on/off |
-| Trackpad | tracking speed; secondary click (two fingers / bottom corners / off); tap to drag with drag lock; ignore trackpad while a mouse is plugged in; disable while typing; scroll method; each gesture with on/off; hot corners |
-| Desktop & Dock | dock click, middle-click and scroll actions (E8.3); double-click title bar action; minimise effect; **default apps** (browser, mail, music, video, photos, text, PDF, file manager) written to `mimeapps.list`, and Super+B / Super+E follow them |
-| Date & Time | "Set time and date automatically" (timedated `SetNTP`); manual date and time; searchable time-zone list instead of the text field; week numbers; first weekday from the locale |
-| Notifications | per-app allow, banner or alert, sound, show on lock screen; previews Always / When Unlocked / Never; DND schedule; show while full screen |
-| Lock Screen | the `[idle]` timers and lock toggle; password delay (immediately … 1 h); message on the lock screen |
-| Privacy & Security | recent files: remember, how long, Clear; connectivity check; camera and microphone per app; empty Trash after 30 days |
-| General | **Login Items** (`~/.config/autostart` and system entries, toggle with `Hidden=true`, + app or command, −); Storage (low-disk warning, Trash and thumbnail cleanup); About ▸ copy System Report |
-| Users | name, picture (stock, file, camera) and password through AccountsService and our polkit agent |
+| Appearance | wallpaper gallery (thumbnails of `/usr/share/backgrounds`, `~/Pictures`, "+ Add Folder") instead of the path field; Fill / Fit / Centre / Stretch / Tile; slideshow with interval and crossfade; Auto-dark hours or sunset (today fixed 19–07 in `src/render/mod.rs`); Reduce motion and Desktop icons rows; text size; pointer size; minimise effect Scale / Genie; also write the app font, monospace font and scrollbar keys for GTK and Qt apps. Built: gallery, Fill/Fit/Centre/Stretch, slideshow + crossfade, auto-dark hours or sunset, reduce motion, desktop icons, text and pointer size (Accessibility page), Scale/Genie (Dock page), Qt theming. Missing: "+ Add Folder", Tile, app/monospace font and scrollbar keys for GTK and Qt. |
+| Displays | mirroring ("Use as: Mirror for …"); identify (name label on each screen while the page is open); "Reset"; brightness slider; Night Light (designed in E6.2, not built); layouts remembered per set of monitors; clamshell (lid closed + external monitor keeps running); underscan for TVs (later). Built: arrangement, resolution, refresh, scale, rotation, primary, Keep/Revert countdown, Night Light. Missing: mirroring, identify, Reset, brightness slider, per-monitor-set layouts, clamshell. |
+| Sound | output and input device pickers; live input level meter; balance; alert sound and alert volume; "Play user interface sound effects", startup sound, volume-change feedback; per-app volume in the Control Center Sound expansion. Built: output and input pickers, volume and mute. Missing: live input meter, balance, alert sound and volume, UI sounds, per-app volume. |
+| Network (new; Wi-Fi page grows into it) | network list, Known Networks with Forget and Auto-Join; Details sheet (IP, DNS, router, MAC); "Other…" for hidden and WPA-Enterprise networks; Ethernet details and static IP; VPN and WireGuard connect; proxy; captive-portal "!" icon that opens the login page; "Advanced…" opens `nm-connection-editor` until the native sheets exist. VPN stays out of the Control Center card (E2.3). Built: network list with join, Known Networks with Auto-Join and Forget, Wi-Fi/Ethernet details, "Advanced…". Missing: "Other…" (hidden, Enterprise), static IP, VPN/WireGuard, proxy, captive portal. |
+| Bluetooth | Nearby Devices (discovery) with Connect; per-device ⓘ ▸ Forget, Rename (the pairing agent and alerts already exist). Built: Nearby Devices with Connect, Connect/Disconnect, Forget. Missing: Rename. |
+| Battery (new) | show percentage; time remaining and power source in the battery menu; Low Power Mode; dim on battery; display off and sleep times for battery and for power adapter (today `[idle]` in the config file only); keyboard backlight; low-battery warnings for wireless mouse and keyboard. Built: page with level, power source, time remaining, power mode (Low Power), sleep on battery / adapter; low-battery notification at 20% and 10%; keyboard backlight keys. Missing: show-percentage toggle, time in the battery menu, dim on battery, separate display-off times, backlight row, peripheral batteries. |
+| Keyboard | key repeat delay and rate sliders with an Off stop (now constants in `src/input.rs`, sent live with `set_repeat_info`); Input Sources list with a searchable picker, reorder, IMEs; "previous" and "n-th source" actions; remember the source per window; Modifier Keys dropdowns (Caps Lock, Compose, Ctrl/Alt swap) plus a raw options field; Keyboard Viewer; Keyboard Shortcuts dialog (E8.7). Built: repeat sliders (rate 0 = off), Input Sources with searchable picker, Caps Lock / Compose / raw options, Keyboard Shortcuts dialog, next-source key. Missing: reorder, IME list, previous / n-th source, per-window source, Keyboard Viewer. |
+| Mouse (new, `[mouse]`) | tracking speed; acceleration on/off; primary button left/right; natural scroll (separate from the trackpad); double-click speed (also used by our own title-bar double-click); middle-click emulation; middle-click paste on/off. Built: speed, acceleration, left-handed, natural scroll, middle-click emulation. Missing: double-click speed, middle-click paste toggle. |
+| Trackpad | tracking speed; secondary click (two fingers / bottom corners / off); tap to drag with drag lock; ignore trackpad while a mouse is plugged in; disable while typing; scroll method; each gesture with on/off; hot corners. Built: speed, secondary click, tap to drag, drag lock, ignore with mouse, disable while typing. Missing: secondary-click Off, scroll method, per-gesture toggles, hot corners rows. |
+| Desktop & Dock | dock click, middle-click and scroll actions (E8.3); double-click title bar action; minimise effect; **default apps** (browser, mail, music, video, photos, text, PDF, file manager) written to `mimeapps.list`, and Super+B / Super+E follow them. Built: click / middle / scroll actions, double-click title, minimise effect; `default-app` keys open the MIME default. Missing: default-apps rows writing `mimeapps.list`. |
+| Date & Time | "Set time and date automatically" (timedated `SetNTP`); manual date and time; searchable time-zone list instead of the text field; week numbers; first weekday from the locale. Built: NTP toggle (timedated), time-zone search that also sets the system's, first weekday choice. Missing: manual date/time, week-numbers toggle, weekday from locale. |
+| Notifications | per-app allow, banner or alert, sound, show on lock screen; previews Always / When Unlocked / Never; DND schedule; show while full screen. Built: DND row; `[notification_apps]` per app in the config file only. Missing: per-app rows, sound, lock screen, previews, DND schedule, full-screen option. |
+| Lock Screen | the `[idle]` timers and lock toggle; password delay (immediately … 1 h); message on the lock screen. Done: dim, display off, lock toggle, password delay (immediately … 1 h), lock message. |
+| Privacy & Security | recent files: remember, how long, Clear; connectivity check; camera and microphone per app; empty Trash after 30 days. Built: recent files Clear and age (General page). Missing: connectivity check, camera and microphone per app. |
+| General | **Login Items** (`~/.config/autostart` and system entries, toggle with `Hidden=true`, + app or command, −); Storage (low-disk warning, Trash and thumbnail cleanup); About ▸ copy System Report. Built: Login Items, Storage (Trash and recent-files ages; low-disk warning in the desktop), Software Update, reopen at login. Missing: copy System Report. |
+| Users | name, picture (stock, file, camera) and password through AccountsService and our polkit agent. Not built (only the lock screen reads the AccountsService picture). |
 | Accessibility (new) | everything in E8.6 |
 | Printers (later) | CUPS, printer list, queue, Add Printer; print-queue icon in the dock while printing |
 
 ### E8.3 Dock: the per-window jobs of a window list (priority 1)
 The dock stays per app, by design. Every per-window job a taskbar does gets a surface of our own instead:
-- **Window previews:** hover (or long-press) an icon with several windows → a glass strip of live thumbnails above it,
+- ~~**Window previews:** hover (or long-press) an icon with several windows → a glass strip of live thumbnails above it,
   click to focus, × or middle-click to close, hovering a thumbnail fades the other windows. Reuses Mission Control's
-  thumbnails and `close_button`.
+  thumbnails and `close_button`.~~ Done: hover an icon with several windows; ✕ or middle-click closes, the hovered
+  window's surroundings dim (`src/shell/dock.rs` `Peek`, `src/render/dock.rs`). Long-press is not built.
 - **Minimised windows** as thumbnail tiles after a separator at the dock's right end (E3); the minimise animation
   lands on the tile. Built; `[dock] minimise_into_icon` turns them off.
 - **One dock per display** with its own filtering (D13, E3).
-- **Super+1…9** focuses, cycles or opens the n-th dock app, Super+Shift+n opens a new window, and holding Super shows
-  number pills over the icons. Space keys move to Super+Ctrl+1…9, so Ctrl+1…9 stays with apps (browser tabs).
+- ~~**Super+1…9** focuses, cycles or opens the n-th dock app, Super+Shift+n opens a new window, and holding Super shows
+  number pills over the icons. Space keys move to Super+Ctrl+1…9, so Ctrl+1…9 stays with apps (browser tabs).~~ Done:
+  `dock-app` / `dock-app-new` actions, number pills, Spaces on Super+Ctrl+1…9.
 - **Right-click menu:** Options ▸ Assign To (All Spaces / This Space / None), Move to Display, Open at Login; Close
-  Others; recent files of the app (`recently-used.xbel`); ◆ next to minimised windows.
-- **Spring-loading:** a file dragged over an icon brings that app's window up (App Exposé when it has several).
+  Others; recent files of the app (`recently-used.xbel`); ◆ next to minimised windows. Built: Open at Login, Keep in
+  Dock, Show in Files, recent files, ◆, Close / Close All (Options inline). Missing: Assign To, Move to Display, Close
+  Others.
+- **Spring-loading:** a file dragged over an icon brings that app's window up (App Exposé when it has several). Not built.
 - **Config:** `[dock] click = "toggle" | "cycle"`, `middle = "new" | "close"`, scroll on / off / reverse, Shift-click
-  new window, cycle across apps.
+  new window, cycle across apps. Built: `click`, `middle`, `scroll`, Shift/Ctrl-click new window, with Settings rows.
+  Missing: cycle across apps.
 - **Later, if asked:** `[dock] mode = "windows"`, one icon per window with the title as tooltip.
 
 ### E8.4 Appearance and themes (priority 1)
 Rows live on the Appearance page (E8.2). Behind them:
 - Wallpaper: gallery, fit modes, slideshow and crossfade in the wallpaper renderer (built: `[appearance] wallpaper_folder`, `wallpaper_interval`, `wallpaper_shuffle`; 1 s crossfade on every change).
-- Auto-dark from configurable hours or sunset (needs the location the user typed for weather; no geoclue, E2.6).
-- Night Light as an output colour-temperature shader with schedule, as designed in E6.2.
+- ~~Auto-dark from configurable hours or sunset (needs the location the user typed for weather; no geoclue, E2.6).~~
+  Done: `[appearance] dark_from`, `dark_until`, `auto_sunset` (`src/sun.rs`, from the weather place).
+- ~~Night Light as an output colour-temperature shader with schedule, as designed in E6.2.~~ Done: `[night_light]`
+  (custom hours or sunset, temperature), a final multiply pass fading over a minute (`src/render/night.rs`); Settings
+  rows on Displays.
 - Text size and pointer size applied to the shell and exported to apps and XWayland (`XCURSOR_SIZE` today).
-- Genie minimise as the alternative to Scale (E5.5).
-- Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow.
+- ~~Genie minimise as the alternative to Scale (E5.5).~~ Done: `[dock] minimise_effect = "genie"` (`src/render/genie.frag`).
+- Our fonts, colour scheme and accent written to GTK and Qt settings so apps follow. Built: `noobsbot-desktop theme
+  --write` (Kvantum, Qt colour scheme with accent, kdeglobals font; gsettings colour scheme, theme, Inter, text and
+  cursor size). Missing: accent for GTK, monospace font.
 
 ### E8.5 Window management
-- **Tiling:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
+- ~~**Tiling:** drag to an edge for a half, a corner for a quarter, the top edge to fill; preview after a
   300 ms hold; dragging out restores the old size (E1.2). Keyboard: Super+Ctrl+arrows tile (replaces the unbuilt
-  nudge keys in E1.2).
-- **Window menu:** right-click the title bar, or the app asks (`show_window_menu`): Minimize, Zoom, Fill, Center,
-  Move & Resize ▸ halves and quarters, Full Screen, Keep on Top, Move to ▸ Space n / Display, Close.
-- **Sheets:** modal dialogs attach under the parent's title bar and move with it (E1.2 stacking).
-- **Actions** for bindings: `zoom`, `fullscreen` (Super+Ctrl+F), `keep-on-top`, `center`, `move-to-display`,
-  `move-to-space <n>`, `move-to-new-space`, `cycle-app-windows` (Super+`, E4.5).
-- Each app's window frame remembered (E1.2).
-- Switcher: pick with hover and click; H hides the selected app; centred on the active display.
-- Optional: Super + right-drag resizes; focus follows mouse as a hidden `[windows] focus = "hover"`.
+  nudge keys in E1.2).~~ Done: `wm::tile_at` in the move grab behind `[windows] snapping` (Ctrl skips it); the preview
+  shows on arrival, and a side edge held 700 ms switches Space instead; `untile` restores; Super+Ctrl+arrows.
+- ~~**Window menu:** right-click the title bar, or the app asks (`show_window_menu`): Minimize, Zoom, Fill, Center,
+  Move & Resize ▸ halves and quarters, Full Screen, Keep on Top, Move to ▸ Space n / Display, Close.~~ Done:
+  `src/decorations.rs` window menu, also from `show_window_menu`.
+- ~~**Sheets:** modal dialogs attach under the parent's title bar and move with it (E1.2 stacking).~~ Done: `src/sheets.rs`.
+- ~~**Actions** for bindings: `zoom`, `fullscreen` (Super+Ctrl+F), `keep-on-top`, `center`, `move-to-display`,
+  `move-to-space <n>`, `move-to-new-space`, `cycle-app-windows` (Super+`, E4.5).~~ Done: all in `src/shortcuts.rs`.
+- ~~Each app's window frame remembered (E1.2).~~ Done: `window-frames` in the state dir (`src/sheets.rs`).
+- ~~Switcher: pick with hover and click; H hides the selected app; centred on the active display.~~ Done: `src/shell/switcher.rs`.
+- ~~Optional: Super + right-drag resizes; focus follows mouse as a hidden `[windows] focus = "hover"`.~~ Done: both
+  (`src/input.rs`).
 
 ### E8.6 Accessibility
 - **Zoom** (full screen and picture-in-picture), with invert and greyscale filters; keys Super+Alt+8 / = / −. Built
   (`[accessibility] zoom_style`, `colour_filter`); following the text caret and keyboard focus is left.
 - **Keyboard:** sticky keys, slow keys, bounce keys, mouse keys (in `src/input.rs`). Built: `[accessibility] sticky_keys`,
   `sticky_keys_shortcut` (Shift ×5), `slow_keys_ms`, `bounce_keys_ms`, `mouse_keys`.
-- **Pointer:** dwell click, hold for secondary click, pointer size, shake to find the pointer.
-- **Display:** increase contrast, larger text, reduce transparency (exists), reduce motion (exists).
+- ~~**Pointer:** dwell click, hold for secondary click, pointer size, shake to find the pointer.~~ Done:
+  `[accessibility] dwell_click_ms`, `hold_secondary_ms`, `shake_to_find` (`src/pointer_assist.rs`), `[appearance] pointer_size`.
+- **Display:** increase contrast, larger text, reduce transparency (exists), reduce motion (exists). Built:
+  `[accessibility] increase_contrast`, glass opacity, reduce motion, colour filters; larger text is the text-size work.
 - **Alerts:** visual and audible bell (`xdg_system_bell`), Caps Lock indicator. Built: `[accessibility] bell`, a Caps Lock
   OSD and ⇪ in the lock screen's field.
-- **On-screen keyboard** (`virtual_keyboard` protocol), also on the lock screen.
-- **Screen reader** path: AT-SPI for our shell widgets and an Orca key monitor. Size L.
+- ~~**On-screen keyboard** (`virtual_keyboard` protocol), also on the lock screen.~~ Done: our own glass panel
+  (`src/shell/osk.rs`, `on-screen-keyboard` action, `[accessibility] on_screen_keyboard`) typing through the seat, so the
+  lock screen gets it too; `zwp_virtual_keyboard_v1` is served for other keyboards.
+- ~~**Screen reader** path: AT-SPI for our shell widgets and an Orca key monitor. Size L.~~ Done: menu bar, dock and
+  Control Center over AT-SPI (`src/access.rs`), the `KeyboardMonitor` key monitor (`src/services/a11y.rs`),
+  `[accessibility] screen_reader`. Other shell surfaces (Spotlight, Launchpad, notifications) are not exposed yet.
 
 ### E8.7 Spaces, gestures, keys and shortcuts
 - Spaces and Mission Control on every display; move a window to the next Space by dragging it against the edge;
-  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space.
-- Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
-  ⚠ on conflicts (today the first match wins silently).
+  reorder Spaces; Mission Control keyboard navigation; Mission Control view of every Space. Built: edge drag, reorder by dragging a Space in the bar, keyboard navigation, every-Space view; every display still in progress.
+- ~~Keyboard Shortcuts dialog in our form: category sidebar, record keys by pressing them, + / −, Restore Defaults,
+  ⚠ on conflicts (today the first match wins silently).~~ Done: Settings ▸ Keyboard ▸ Keyboard Shortcuts…
+  (`settings/src/shortcuts.rs`); recording asks the desktop to pass every key through; conflicts are also logged.
 - Default keys: log out (Super+Shift+Q), sleep key, keyboard backlight (UPower), touchpad toggle, display key
   (Settings › Displays until mirroring exists), calculator / mail / web / explorer / search keys (default-app,
   Spotlight), media stop / seek / eject, Shift+Alt+volume quarter steps, Alt+Print window screenshot, Super+Alt+5
   screen recording. Done.
-- Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout.
+- Lock screen lets volume, brightness and media keys through; shows Now Playing; switches keyboard layout. Done.
 
 ### E8.8 Menu bar, tray, widgets and session
 - ~~Tray: real submenus and an overflow "»" menu.~~ Done: submenus open beside their row (flipped left at the edge), one level deep; deeper ones list inline.
@@ -1713,8 +1733,10 @@ Rows live on the Appearance page (E8.2). Behind them:
 - ~~Trash at the dock's right end; Launchpad folders and drag to rearrange.~~ Done: Trash after the separator (Open, Empty Trash,
   drop to trash, `[dock] show_trash`); Launchpad icons drag to reorder and onto each other to make folders (saved in
   `launchpad.json`).
-- Widgets for Notification Center and the desktop as separate processes over D-Bus (no plugins in the compositor).
-- Keep-awake Control Center tile with the list of apps blocking sleep (done: idle-inhibit windows and logind `block`
+- ~~Widgets for Notification Center and the desktop as separate processes over D-Bus (no plugins in the compositor).~~
+  Done: `org.noobsbot.Desktop.Widgets` (`src/services/widgets.rs`), placed by `[widgets] center` / `desktop`; no
+  widget apps ship yet.
+- ~~Keep-awake Control Center tile with the list of apps blocking sleep~~ (done: idle-inhibit windows and logind `block`
   inhibitors; on until logout).
 - ~~Reopen windows at login (checkbox in the Log Out alert).~~ Done: `session.toml` in the state dir; each app starts once 3 s after login and its windows go back to their Space, display and frame as they map (20 s wait).
 - ~~Thunderbolt "Allow accessory to connect?" alert through `boltd` (G2).~~ Done: a device boltd lists as "connected" asks Don't Allow / Allow (queued while locked); Allow enrolls it with policy "auto". Real sessions only.

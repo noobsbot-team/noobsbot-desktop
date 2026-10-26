@@ -25,7 +25,7 @@ use crate::{
     },
     shell::notify::{BODY, CLOSE, Card, Center, LINE, Notification, PLATE, Store, buttons},
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     wm::Rect,
 };
 
@@ -99,15 +99,16 @@ fn weather_pieces(pieces: &mut Pieces, text: &mut Text, symbols: &mut Symbols, i
     let at = |x: i32, y: i32, width: i32, h: i32| Rectangle::new((card.loc.x + x, card.loc.y + y).into(), (width, h).into());
     let inner = card.size.w - 28;
     let (words, symbol) = condition(w.code, w.day);
-    pieces.put(text.label(&w.place, ink.headline(), (inner - 120) as u32, scale), at(14, 12, inner - 120, 16), Align::Left);
+    // Rows grow with the text size (E8.4); icons keep their size.
+    pieces.put(text.label(&w.place, ink.headline(), (inner - 120) as u32, scale), at(14, ts(12), inner - 120, ts(16)), Align::Left);
     let big = Style { size: 34, line_height: 40, weight: 400, color: ink.label, tabular: false };
-    pieces.put(text.label(&degrees(w.temp), big, 120, scale), at(12, 30, 120, 40), Align::Left);
+    pieces.put(text.label(&degrees(w.temp), big, 120, scale), at(12, ts(30), 120, ts(40)), Align::Left);
     let now = chrono::Utc::now().timestamp();
     if w.stale(now) {
-        pieces.put(text.label(&updated(now - w.fetched), ink.caption(), 200, scale), at(14, 72, 200, 13), Align::Left);
+        pieces.put(text.label(&updated(now - w.fetched), ink.caption(), 200, scale), at(14, ts(72), 200, ts(13)), Align::Left);
     }
     pieces.put(symbols.get(symbol, Weight::Fill, 20, scale, ink.label), at(card.size.w - 14 - 20, 12, 20, 20), Align::Centre);
-    let right = |y: i32| at(card.size.w - 14 - 160, y, 160, 16);
+    let right = |y: i32| at(card.size.w - 14 - 160, ts(y), 160, ts(16));
     pieces.put(text.label(words, Style { size: 12, ..ink.headline() }, 160, scale), right(38), Align::Right);
     pieces.put(text.label(&format!("H:{}  L:{}", degrees(w.high), degrees(w.low)), Style { size: 12, ..ink.body() }, 160, scale), right(54), Align::Right);
     let each = inner / 6;
@@ -118,9 +119,9 @@ fn weather_pieces(pieces: &mut Pieces, text: &mut Text, symbols: &mut Symbols, i
             _ if hour24 => format!("{hour:02}"),
             _ => format!("{}{}", (hour + 11) % 12 + 1, if hour < 12 { "AM" } else { "PM" }),
         };
-        pieces.put(text.label(&name, ink.caption(), each as u32, scale), at(x, 92, each, 13), Align::Centre);
-        pieces.put(symbols.get(condition(code, day).1, Weight::Fill, 18, scale, ink.label), at(x + (each - 18) / 2, 110, 18, 18), Align::Centre);
-        pieces.put(text.label(&degrees(temp), Style { tabular: true, ..ink.body() }, each as u32, scale), at(x, 132, each, 16), Align::Centre);
+        pieces.put(text.label(&name, ink.caption(), each as u32, scale), at(x, ts(92), each, ts(13)), Align::Centre);
+        pieces.put(symbols.get(condition(code, day).1, Weight::Fill, 18, scale, ink.label), at(x + (each - 18) / 2, ts(110), 18, 18), Align::Centre);
+        pieces.put(text.label(&degrees(temp), Style { tabular: true, ..ink.body() }, each as u32, scale), at(x, ts(132), each, ts(16)), Align::Centre);
     }
 }
 
@@ -133,9 +134,9 @@ fn widget_pieces(pieces: &mut Pieces, shapes: &mut Vec<(Rect, Shape)>, text: &mu
     if let Some(icon) = w.icon {
         pieces.put(symbols.get(icon, Weight::Fill, 20, scale, ink.label), at(14, 12, 20, 20), Align::Centre);
     }
-    pieces.put(text.label(&w.title, ink.headline(), (inner - indent).max(1) as u32, scale), at(14 + indent, 14, inner - indent, 16), Align::Left);
+    pieces.put(text.label(&w.title, ink.headline(), (inner - indent).max(1) as u32, scale), at(14 + indent, ts(14), inner - indent, ts(16)), Align::Left);
     for (i, line) in w.lines.iter().enumerate() {
-        pieces.put(text.label(line, ink.body(), inner.max(1) as u32, scale), at(14, 42 + i as i32 * 20, inner, 16), Align::Left);
+        pieces.put(text.label(line, ink.body(), inner.max(1) as u32, scale), at(14, ts(42 + i as i32 * 20), inner, ts(16)), Align::Left);
     }
     if let Some(value) = w.progress {
         let track = at(14, card.size.h - 20, inner, 6);
@@ -314,7 +315,7 @@ impl NotificationViews {
                     pieces.put(symbols.get(Symbol::Sliders, Weight::Regular, 16, scale, ink.secondary), center.settings, Align::Centre);
                 }
                 if let Some((strip, off)) = center.dnd.filter(|(strip, _)| dnd && shown(*strip)) {
-                    let icon = Rectangle::new((strip.loc.x + 12, strip.loc.y + 12).into(), (16, 16).into());
+                    let icon = Rectangle::new((strip.loc.x + 12, strip.loc.y + (strip.size.h - 16) / 2).into(), (16, 16).into());
                     pieces.put(symbols.get(Symbol::Moon, Weight::Fill, 16, scale, ink.label), icon, Align::Centre);
                     let words = Rectangle::new((strip.loc.x + 36, strip.loc.y).into(), (off.loc.x - strip.loc.x - 44, strip.size.h).into());
                     pieces.put(text.label("Do Not Disturb is on", ink.body(), row_w(words), scale), words, Align::Left);
@@ -343,13 +344,13 @@ impl NotificationViews {
                         }
                     }
                     if let Some(plate) = group.plate.filter(|p| shown(*p)) {
-                        let peek = Rectangle::new((plate.loc.x, plate.loc.y + plate.size.h - PLATE).into(), (plate.size.w, PLATE).into());
+                        let peek = Rectangle::new((plate.loc.x, plate.loc.y + plate.size.h - ts(PLATE)).into(), (plate.size.w, ts(PLATE)).into());
                         pieces.put(text.label(&format!("{} more", group.count - 1), ink.caption(), row_w(peek), scale), peek, Align::Centre);
                         shapes.push((plate, Shape::Plate));
                     }
                 }
                 if let Some((card, rows)) = center.up_next.as_ref().filter(|(c, _)| shown(*c)) {
-                    let title = Rectangle::new((card.loc.x + 12, card.loc.y + 10).into(), (card.size.w - 24, 20).into());
+                    let title = Rectangle::new((card.loc.x + 12, card.loc.y + ts(10)).into(), (card.size.w - 24, ts(20)).into());
                     pieces.put(
                         text.label("Up Next", Style { size: 15, line_height: 20, weight: 600, color: ink.label, tabular: false }, row_w(title), scale),
                         title,
@@ -360,10 +361,10 @@ impl NotificationViews {
                         // An accent bar, the title, then when and where.
                         shapes.push((Rectangle::new(row.loc, (3, row.size.h).into()), Shape::Bar));
                         let line = |dy: i32, h: i32| Rectangle::new((row.loc.x + 11, row.loc.y + dy).into(), (row.size.w - 11, h).into());
-                        pieces.put(text.label(&u.summary, ink.headline(), row_w(line(0, 0)), scale), line(1, 16), Align::Left);
+                        pieces.put(text.label(&u.summary, ink.headline(), row_w(line(0, 0)), scale), line(ts(1), ts(16)), Align::Left);
                         let place = if u.location.is_empty() { String::new() } else { format!(" · {}", u.location) };
                         let detail = format!("{}{place}", crate::events::when(u, now, hour24));
-                        pieces.put(text.label(&detail, ink.subheadline(), row_w(line(0, 0)), scale), line(19, 14), Align::Left);
+                        pieces.put(text.label(&detail, ink.subheadline(), row_w(line(0, 0)), scale), line(ts(19), ts(14)), Align::Left);
                     }
                     shapes.push((*card, Shape::Widget));
                 }
@@ -376,7 +377,7 @@ impl NotificationViews {
                     shapes.push((card, Shape::Widget));
                 }
                 if let Some((card, slots)) = center.batteries.as_ref().filter(|(c, _)| shown(*c)) {
-                    let title = Rectangle::new((card.loc.x + 12, card.loc.y + 10).into(), (card.size.w - 24, 20).into());
+                    let title = Rectangle::new((card.loc.x + 12, card.loc.y + ts(10)).into(), (card.size.w - 24, ts(20)).into());
                     pieces.put(
                         text.label("Batteries", Style { size: 15, line_height: 20, weight: 600, color: ink.label, tabular: false }, row_w(title), scale),
                         title,
@@ -384,7 +385,11 @@ impl NotificationViews {
                     );
                     for (slot, (name, percent)) in slots.iter().zip(batteries) {
                         let symbol = if name == "Laptop" { Symbol::BatteryHigh } else { Symbol::Headphones };
-                        pieces.put(symbols.get(symbol, Weight::Regular, 18, scale, ink.label), Rectangle::new(slot.loc, (20, 20).into()), Align::Centre);
+                        pieces.put(
+                            symbols.get(symbol, Weight::Regular, 18, scale, ink.label),
+                            Rectangle::new((slot.loc.x, slot.loc.y + (slot.size.h - 20) / 2).into(), (20, 20).into()),
+                            Align::Centre,
+                        );
                         let words = Rectangle::new((slot.loc.x + 26, slot.loc.y).into(), (slot.size.w - 30, slot.size.h).into());
                         pieces.put(text.label(&format!("{name} {percent}%"), Style { tabular: true, ..ink.body() }, row_w(words), scale), words, Align::Left);
                     }

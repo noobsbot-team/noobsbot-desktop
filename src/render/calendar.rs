@@ -14,7 +14,7 @@ use super::{
 use crate::{
     shell::{self, CalendarLayout},
     symbols::{Symbol, Symbols, Weight},
-    text::{Style, Text},
+    text::{Style, Text, ts},
     wm::Rect,
 };
 
@@ -71,7 +71,7 @@ impl CalendarWidget {
             let mut glass = Vec::new();
             // Event dots under the day numbers: white inside today's circle, else the number's ink, fainter.
             for (i, cell) in layout.cells.iter().enumerate().filter(|(i, _)| shown.dots.get(*i) == Some(&true)) {
-                let dot = Rectangle::new((cell.loc.x + (cell.size.w - DOT) / 2, cell.loc.y + cell.size.h - 9).into(), (DOT, DOT).into());
+                let dot = Rectangle::new((cell.loc.x + (cell.size.w - DOT) / 2, cell.loc.y + cell.size.h - ts(9)).into(), (DOT, DOT).into());
                 let ink = if dark { 1.0 } else { 0.0 };
                 let fill = match (Some(i) == today, days[i].month() == shown.month) {
                     (true, _) => [1.0, 1.0, 1.0, 1.0],
@@ -81,7 +81,9 @@ impl CalendarWidget {
                 glass.push(shaders.light(dot, fill, false, scale));
             }
             if let Some(cell) = today.map(|i| layout.cells[i]) {
-                let circle = Rectangle::new((cell.loc.x + (cell.size.w - TODAY) / 2, cell.loc.y + (cell.size.h - TODAY) / 2).into(), (TODAY, TODAY).into());
+                // It holds the day's number, so it grows with the text, up to the cell's width.
+                let d = ts(TODAY).min(cell.size.w);
+                let circle = Rectangle::new((cell.loc.x + (cell.size.w - d) / 2, cell.loc.y + (cell.size.h - d) / 2).into(), (d, d).into());
                 let [r, g, b] = accent.map(|c| f32::from(c) / 255.0);
                 glass.push(shaders.light(circle, [r, g, b, 1.0], false, scale));
             }

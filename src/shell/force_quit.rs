@@ -24,6 +24,7 @@ use crate::{
     decorations::{FIRST_LIGHT, LIGHT, LIGHT_STEP},
     shell::{alert, switcher},
     state::State,
+    text::ts,
     wm::Rect,
 };
 
@@ -128,24 +129,26 @@ pub struct Layout {
 
 pub fn layout(output: Size<i32, Logical>, count: usize) -> Layout {
     use layout::*;
-    let (x, y) = (((output.w - WIDTH) / 2).max(0), ((output.h - HEIGHT) / 2).max(0));
+    // Text lines, rows, the button and so the height grow with the text size (E8.4); the width and title bar stay.
+    let (height, line, row, button_w, button_h) = (ts(HEIGHT), ts(LINE), ts(ROW), ts(BUTTON_W), ts(BUTTON_H));
+    let (x, y) = (((output.w - WIDTH) / 2).max(0), ((output.h - height) / 2).max(0));
     let at = |dx: i32, dy: i32, w: i32, h: i32| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
     let light = |i: i32| {
         let c = FIRST_LIGHT + f64::from(i) * LIGHT_STEP - LIGHT / 2.0;
         at(c.round() as i32, ((f64::from(BAR) - LIGHT) / 2.0).round() as i32, LIGHT as i32, LIGHT as i32)
     };
-    let list_y = BAR + 8 + 2 * LINE + 10;
-    let button_y = HEIGHT - PAD - BUTTON_H;
+    let list_y = BAR + 8 + 2 * line + 10;
+    let button_y = height - PAD - button_h;
     let list = at(PAD, list_y, WIDTH - 2 * PAD, button_y - PAD - list_y);
-    let fits = ((list.size.h - 8) / ROW) as usize;
+    let fits = ((list.size.h - 8) / row) as usize;
     Layout {
-        rect: at(0, 0, WIDTH, HEIGHT),
+        rect: at(0, 0, WIDTH, height),
         lights: [light(0), light(1), light(2)],
         title: at(0, 0, WIDTH, BAR),
-        lines: [at(PAD + 4, BAR + 8, WIDTH - 2 * PAD - 4, LINE), at(PAD + 4, BAR + 8 + LINE, WIDTH - 2 * PAD - 4, LINE)],
-        rows: (0..count.min(fits) as i32).map(|i| at(PAD + 4, list_y + 4 + i * ROW, WIDTH - 2 * PAD - 8, ROW)).collect(),
+        lines: [at(PAD + 4, BAR + 8, WIDTH - 2 * PAD - 4, line), at(PAD + 4, BAR + 8 + line, WIDTH - 2 * PAD - 4, line)],
+        rows: (0..count.min(fits) as i32).map(|i| at(PAD + 4, list_y + 4 + i * row, WIDTH - 2 * PAD - 8, row)).collect(),
         list,
-        button: at(WIDTH - PAD - BUTTON_W, button_y, BUTTON_W, BUTTON_H),
+        button: at(WIDTH - PAD - button_w, button_y, button_w, button_h),
     }
 }
 
@@ -375,5 +378,16 @@ mod tests {
         // More apps than rows: only what fits.
         let many = layout((1280, 800).into(), 50);
         assert_eq!(many.rows.len(), 6);
+    }
+
+    #[test]
+    fn window_grows_with_the_text_size() {
+        let l = crate::text::with_scale(1.5, || layout((1280, 800).into(), 50));
+        // Body lines are 24 px at 1.5, the subheadline 23 (22.5 rounded).
+        assert!(l.rect.size.h > 320 && l.rect.size.w == 360 && l.lines.iter().all(|r| r.size.h >= 23) && l.button.size.h >= 24 + 8);
+        let parts = l.lights.iter().chain(&l.lines).chain(&l.rows).chain([&l.list, &l.button, &l.title]);
+        assert!(parts.into_iter().all(|r| l.rect.contains_rect(*r)));
+        assert!(l.rows.iter().all(|r| l.list.contains_rect(*r) && r.size.h >= 24) && !l.list.overlaps(l.button));
+        assert!(l.lines[1].loc.y + l.lines[1].size.h <= l.list.loc.y);
     }
 }

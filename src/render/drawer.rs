@@ -25,7 +25,7 @@ use crate::{
     apps::Icons,
     shell::drawer::{Frame, SESSION, Target, layout},
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     wm::Rect,
 };
 
@@ -203,9 +203,10 @@ fn draw(ui: &mut Ui, icons: &mut Icons, f: &Frame) -> Vec<(Arc<Rendered>, Rect)>
         if app.comment.is_empty() {
             ui.text(&app.name, Style { color: main, ..BODY }, Rectangle::new((x, row.loc.y).into(), (w, row.size.h).into()), Align::Left);
         } else {
-            let top = row.loc.y + (row.size.h - 16 - 2 - 15) / 2;
-            ui.text(&app.name, Style { color: main, ..BODY }, Rectangle::new((x, top).into(), (w, 16).into()), Align::Left);
-            ui.text(&app.comment, Style { color: side, ..CALLOUT }, Rectangle::new((x, top + 18).into(), (w, 15).into()), Align::Left);
+            let (name_h, comment_h) = (ts(16), ts(15));
+            let top = row.loc.y + (row.size.h - name_h - 2 - comment_h) / 2;
+            ui.text(&app.name, Style { color: main, ..BODY }, Rectangle::new((x, top).into(), (w, name_h).into()), Align::Left);
+            ui.text(&app.comment, Style { color: side, ..CALLOUT }, Rectangle::new((x, top + name_h + 2).into(), (w, comment_h).into()), Align::Left);
         }
         if star > 0 {
             let at = Rectangle::new((row.loc.x + row.size.w - 12 - 12, row.loc.y + (row.size.h - 12) / 2).into(), (12, 12).into());
@@ -219,7 +220,7 @@ fn draw(ui: &mut Ui, icons: &mut Icons, f: &Frame) -> Vec<(Arc<Rendered>, Rect)>
         ui.text(
             f.empty,
             Style { color: tertiary, ..BODY },
-            Rectangle::new((area.loc.x, area.loc.y + area.size.h / 2 - 20).into(), (area.size.w, 20).into()),
+            Rectangle::new((area.loc.x, area.loc.y + area.size.h / 2 - ts(20)).into(), (area.size.w, ts(20)).into()),
             Align::Centre,
         );
     }

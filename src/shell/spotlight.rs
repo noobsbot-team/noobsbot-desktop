@@ -10,12 +10,13 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size},
 };
 
-use crate::{apps::App, state::State, ui::field::Edit, ui::field::TextField, wm::Rect};
+use crate::{apps::App, state::State, text::ts, ui::field::Edit, ui::field::TextField, wm::Rect};
 
 /// Most rows shown (E4.3).
 pub const MAX_ROWS: usize = 8;
 
 /// E4.3 and D13: 680 wide (90% of a narrower screen), top edge at 22% of the height; the field 52 px, rows 40.
+/// `WIDTH`, `FIELD` and `ROW` grow with the text size (`text::ts`).
 pub mod layout {
     pub const WIDTH: i32 = 680;
     pub const RADIUS: f64 = 14.0;
@@ -38,17 +39,17 @@ pub struct Layout {
 
 /// The panel on an `output`-sized screen whose usable area ends at `bottom` (the dock's top), with `count` results.
 pub fn layout(output: Size<i32, Logical>, bottom: i32, count: usize) -> Layout {
-    use layout::*;
-    let w = WIDTH.min(output.w * 9 / 10);
+    use layout::{MAGNIFIER, PAD};
+    let (w, field_h, row_h) = (ts(layout::WIDTH).min(output.w * 9 / 10), ts(layout::FIELD), ts(layout::ROW));
     let (x, y) = ((output.w - w) / 2, output.h * 22 / 100);
     let field_x = x + PAD + 8 + MAGNIFIER + 8;
-    let field = Rectangle::new((field_x, y + PAD).into(), (x + w - PAD - field_x, FIELD).into());
-    let magnifier = Rectangle::new((x + PAD + 8, y + PAD + (FIELD - MAGNIFIER) / 2).into(), (MAGNIFIER, MAGNIFIER).into());
-    let top = y + PAD + FIELD + PAD;
-    let fits = ((bottom - top - PAD).max(0) / ROW) as usize;
+    let field = Rectangle::new((field_x, y + PAD).into(), (x + w - PAD - field_x, field_h).into());
+    let magnifier = Rectangle::new((x + PAD + 8, y + PAD + (field_h - MAGNIFIER) / 2).into(), (MAGNIFIER, MAGNIFIER).into());
+    let top = y + PAD + field_h + PAD;
+    let fits = ((bottom - top - PAD).max(0) / row_h) as usize;
     let rows: Vec<Rect> =
-        (0..count.min(MAX_ROWS).min(fits) as i32).map(|i| Rectangle::new((x + PAD, top + i * ROW).into(), (w - 2 * PAD, ROW).into())).collect();
-    let h = if rows.is_empty() { PAD + FIELD + PAD } else { top - y + rows.len() as i32 * ROW + PAD };
+        (0..count.min(MAX_ROWS).min(fits) as i32).map(|i| Rectangle::new((x + PAD, top + i * row_h).into(), (w - 2 * PAD, row_h).into())).collect();
+    let h = if rows.is_empty() { PAD + field_h + PAD } else { top - y + rows.len() as i32 * row_h + PAD };
     Layout { rect: Rectangle::new((x, y).into(), (w, h).into()), magnifier, field, rows }
 }
 
@@ -442,5 +443,16 @@ mod tests {
         let short = layout((1280, 600).into(), 600 - 101, 20);
         assert_eq!(short.rows.len(), 7);
         assert!(short.rect.loc.y + short.rect.size.h <= 499);
+    }
+
+    #[test]
+    fn layout_grows_with_text_size() {
+        let at = |k| crate::text::with_scale(k, || layout((1920, 1080).into(), 979, 3));
+        let (one, big) = (at(1.0), at(1.5));
+        assert_eq!((big.field.size.h, big.rows[0].size.h, big.rect.size.w), (78, 60, 1020));
+        // Title 1 (26 px lines) and Body (16) at 1.5 still fit their boxes, and every box stays inside the panel.
+        assert!(big.field.size.h >= 26 * 3 / 2 + 8 && big.rows[0].size.h >= 2 * 16 && big.rows[0].size.h >= layout::ICON);
+        assert!(big.rows.iter().chain([&big.field, &big.magnifier]).all(|r| big.rect.contains_rect(*r)));
+        assert!(big.rect.size.h > one.rect.size.h && big.rect.loc.y + big.rect.size.h <= 979);
     }
 }
