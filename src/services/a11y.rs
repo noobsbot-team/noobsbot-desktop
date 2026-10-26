@@ -200,6 +200,29 @@ pub async fn serve(bus: &Connection, monitor: Arc<Mutex<Monitor>>, events: async
     futures_lite::future::zip(gone, send).await;
 }
 
+#[zbus::proxy(interface = "org.a11y.Status", default_service = "org.a11y.Bus", default_path = "/org/a11y/bus")]
+trait Status {
+    #[zbus(property)]
+    fn set_is_enabled(&self, on: bool) -> zbus::Result<()>;
+    #[zbus(property)]
+    fn set_screen_reader_enabled(&self, on: bool) -> zbus::Result<()>;
+}
+
+/// Tells the accessibility bus whether a screen reader runs, which turns apps' accessibility trees on or off.
+pub async fn set_status(bus: &Connection, on: bool) {
+    let set = async {
+        let status = StatusProxy::new(bus).await?;
+        // Off leaves IsEnabled alone: another assistive tool may still need it.
+        if on {
+            status.set_is_enabled(true).await?;
+        }
+        status.set_screen_reader_enabled(on).await
+    };
+    if let Err(err) = set.await {
+        tracing::warn!("accessibility bus: {err}");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
