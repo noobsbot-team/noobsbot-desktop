@@ -865,6 +865,8 @@ pub enum Command {
     ToDisplay(usize),
     /// Close / Close All.
     Close,
+    /// Closes every other app's windows, as Quit does.
+    CloseOthers,
     /// The app's n-th desktop action.
     Action(usize),
     /// The Trash's Open: what a click does.
@@ -892,8 +894,8 @@ pub struct Options {
 
 /// The menu, in order: the app's windows (`titles`, the `active` one greyed), its `recent` files, its desktop
 /// actions, the Options submenu (Keep in Dock, Open at Login, Show in Files, Assign To), then Close (Close All with
-/// several windows).
-pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], actions: &[String], options: &Options) -> Vec<Option<Row>> {
+/// several windows) and Close Others while `others` (other apps have windows).
+pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], actions: &[String], options: &Options, others: bool) -> Vec<Option<Row>> {
     let row =
         |label: &str, shortcut, command: Option<Command>| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut, action: command.map(Action::Dock) });
     let tick = |on: bool| if on { "✓" } else { "" };
@@ -924,7 +926,10 @@ pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], ac
         sub.extend(options.displays.iter().enumerate().map(|(i, (name, can))| row(name, "", can.then_some(Command::ToDisplay(i)))));
     }
     let options = if sub.is_empty() { Vec::new() } else { vec![Some(Row { sub, label: "Options".to_owned(), shortcut: "", action: None })] };
-    let close = if titles.is_empty() { Vec::new() } else { vec![row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close))] };
+    let mut close = if titles.is_empty() { Vec::new() } else { vec![row(if titles.len() > 1 { "Close All" } else { "Close" }, "", Some(Command::Close))] };
+    if others {
+        close.push(row("Close Others", "", Some(Command::CloseOthers)));
+    }
     let mut rows = Vec::new();
     for group in [windows, recent, actions, options, close] {
         if group.is_empty() {
@@ -1117,7 +1122,14 @@ impl State {
         let outputs: Vec<_> = self.space.outputs().collect();
         let here = item.windows.first().and_then(|w| self.window_output(w));
         let displays = if item.windows.is_empty() { Vec::new() } else { outputs.iter().map(|o| (o.name(), here.as_ref() != Some(*o))).collect() };
-        menu_rows(&titles, active, &recent, &actions, &Options { pinned, login: self.dock_ui.login, assign, displays })
+        menu_rows(
+            &titles,
+            active,
+            &recent,
+            &actions,
+            &Options { pinned, login: self.dock_ui.login, assign, displays },
+            Builtin::of(&item.key).is_none() && !self.dock_others(&item.key).is_empty(),
+        )
     }
 
     /// Right click: icon `i`'s menu, centred over it.
@@ -1220,6 +1232,7 @@ impl State {
                 }
             }
             Command::Close => item.windows.iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
+            Command::CloseOthers => self.dock_others(&item.key).iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             Command::Open => self.dock_click(item, false),
             Command::EmptyTrash => self.open_ask(crate::shell::alert::Kind::EmptyTrash),
             Command::Action(i) => {
@@ -1229,6 +1242,12 @@ impl State {
             }
         }
         self.schedule_redraw();
+    }
+
+    /// The windows, shown and minimised, of every dock app but `key` (not the quake terminal).
+    fn dock_others(&self, key: &str) -> Vec<Window> {
+        let all = self.space.elements().chain(self.hidden.iter().map(|(w, _)| w));
+        all.filter(|w| !self.is_quake(w) && self.dock_key(w).is_some_and(|(k, _)| k != key)).cloned().collect()
     }
 
     /// Rewrites config.toml with `edit`, in the file the user edits (through a dotfiles symlink), so the live
@@ -1526,7 +1545,14 @@ mod tests {
         let actions = ["New Window".to_owned()];
         let recent = ["notes.md".to_owned()];
         assert_eq!(
-            labels(menu_rows(&two, Some(0), &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() })),
+            labels(menu_rows(
+                &two,
+                Some(0),
+                &recent,
+                &actions,
+                &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() },
+                false
+            )),
             [
                 s("a.txt", "", false),
                 s("◆ b.txt", "", true),
@@ -1540,7 +1566,7 @@ mod tests {
                 s("Close All", "", true)
             ]
         );
-        let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() });
+        let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() }, false);
         assert_eq!(
             labels(rows[7].clone().unwrap().sub),
             [
@@ -1556,24 +1582,27 @@ mod tests {
         );
         // Not running; locked items, no desktop file, a builtin: no Options at all.
         let options = |rows: Vec<Option<Row>>| rows.into_iter().flatten().find(|r| r.label == "Options").map(|r| labels(r.sub));
-        assert_eq!(menu_rows(&[], None, &[], &[], &Options::default()), []);
+        assert_eq!(menu_rows(&[], None, &[], &[], &Options::default(), false), []);
         assert_eq!(
-            options(menu_rows(&[], None, &[], &[], &Options { pinned: Some(true), login: Some(true), ..Options::default() })),
+            options(menu_rows(&[], None, &[], &[], &Options { pinned: Some(true), login: Some(true), ..Options::default() }, false)),
             Some(vec![s("Keep in Dock", "✓", true), s("Open at Login", "✓", true), s("Show in Files", "", true)])
         );
-        let all = options(menu_rows(&[], None, &[], &[], &Options { assign: Some(0), ..Options::default() })).unwrap();
+        let all = options(menu_rows(&[], None, &[], &[], &Options { assign: Some(0), ..Options::default() }, false)).unwrap();
         assert_eq!(all[0], s("Assign To", "", false), "no separator at the top");
         assert_eq!(all[1], s("All Spaces", "✓", true));
-        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], &Options::default())), [s("a.txt", "", true), None, s("Close", "", true)]);
+        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], &Options::default(), false)), [s("a.txt", "", true), None, s("Close", "", true)]);
+        // Close Others while other apps have windows, even for an app with none.
+        assert_eq!(labels(menu_rows(&two[..1], None, &[], &[], &Options::default(), true))[2..], [s("Close", "", true), s("Close Others", "", true)]);
+        assert_eq!(labels(menu_rows(&[], None, &[], &[], &Options::default(), true)), [s("Close Others", "", true)]);
         // Move to Display only with more than one display; not to the one the app is on.
         let one = Options { displays: vec![("eDP-1".into(), false)], ..Options::default() };
-        assert_eq!(menu_rows(&two[..1], None, &[], &[], &one).len(), 3, "one display: no Options");
+        assert_eq!(menu_rows(&two[..1], None, &[], &[], &one, false).len(), 3, "one display: no Options");
         let two_displays = Options { assign: Some(2), displays: vec![("eDP-1".into(), false), ("DP-1".into(), true)], ..Options::default() };
-        let sub = options(menu_rows(&two[..1], None, &[], &[], &two_displays)).unwrap();
+        let sub = options(menu_rows(&two[..1], None, &[], &[], &two_displays, false)).unwrap();
         assert_eq!(sub[4..], [None, s("Move to Display", "", false), s("eDP-1", "", false), s("DP-1", "", true)]);
-        let rows = menu_rows(&two[..1], None, &[], &[], &two_displays);
+        let rows = menu_rows(&two[..1], None, &[], &[], &two_displays, false);
         assert_eq!(rows[2].as_ref().unwrap().sub[7].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::ToDisplay(1))));
-        let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() });
+        let rows = menu_rows(&two, None, &recent, &actions, &Options { pinned: Some(true), login: Some(false), assign: Some(2), ..Options::default() }, false);
         assert_eq!(rows[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
         assert_eq!(rows[3].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Recent(0))));
         assert_eq!(rows[5].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Action(0))));
