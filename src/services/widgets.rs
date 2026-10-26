@@ -136,6 +136,12 @@ impl Server {
         }
     }
 
+    /// Every widget's id, in the order they first came (Settings lists them).
+    #[zbus(property)]
+    fn ids(&self) -> Vec<String> {
+        self.store.0.iter().map(|w| w.id.clone()).collect()
+    }
+
     /// The widget was clicked; sent to its owner only.
     #[zbus(signal)]
     async fn activated(emitter: &SignalEmitter<'_>, id: &str) -> zbus::Result<()>;
