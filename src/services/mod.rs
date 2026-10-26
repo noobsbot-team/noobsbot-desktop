@@ -4,6 +4,7 @@
 
 pub mod a11y;
 pub mod bluetooth;
+pub mod bolt;
 pub mod brightness;
 pub mod disks;
 pub mod fcitx;
@@ -88,6 +89,8 @@ pub enum Update {
     Record(bool),
     /// The keyboard backlight after a key changed it, in percent.
     KbdBacklight(u8),
+    /// Thunderbolt devices waiting to be allowed; `None`: boltd isn't running.
+    Thunderbolt(Option<Vec<bolt::Accessory>>),
 }
 
 /// Requests from the frame loop.
@@ -193,6 +196,8 @@ pub enum Command {
     FcitxRead,
     /// Switch fcitx5 to this method (unique name).
     InputMethod(String),
+    /// The Thunderbolt alert's Allow: enroll this boltd uid.
+    Thunderbolt(String),
     /// A screen reader started or stopped: apps expose their accessibility trees while one runs.
     ScreenReader(bool),
 }
@@ -246,10 +251,10 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
             polkit::fallback();
         }
     }
-    // Inhibitors only in a real session: nested, the host keeps its own sleep and power key.
+    // Inhibitors and Thunderbolt only in a real session: nested, the host keeps its own sleep, power key and docks.
     let logind = async {
         if let (true, Some(bus)) = (agents, &system) {
-            login::watch(bus, &updates).await;
+            future::zip(login::watch(bus, &updates), bolt::watch(bus, &updates)).await;
         }
     };
     let system_clients = async {
@@ -370,6 +375,7 @@ async fn handle(
             (Command::Bluetooth(on), Some(bus), _) => bluetooth::set_powered(bus, on).await,
             (Command::BluetoothDevice { path, connect }, Some(bus), _) => bluetooth::connect(bus, &path, connect).await,
             (Command::WifiScan, Some(bus), _) => network::scan(bus).await,
+            (Command::Thunderbolt(uid), Some(bus), _) => bolt::enroll(bus, &uid).await,
             (Command::PairingAnswer(yes), ..) => pairing.give(yes),
             (Command::SleepReady, ..) => login::release_sleep(),
             (Command::WifiSecret(psk), ..) => secret.give(psk),

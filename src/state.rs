@@ -253,6 +253,8 @@ pub struct State {
     pub corners: crate::gestures::Corners,
     /// The lock screen (E6.4), while locked.
     pub lock: Option<crate::shell::lock::Lock>,
+    /// Thunderbolt devices waiting for boltd's authorization, and whether the alert has asked about each (E8.8).
+    pub thunderbolt: Vec<(crate::services::bolt::Accessory, bool)>,
     /// Idle timers, idle-notify, idle-inhibit and session-lock globals (E6.5).
     pub idle: crate::idle::Idle,
     /// Night Light's fade and the Control Center's override (E8.4).
@@ -382,6 +384,7 @@ impl State {
                     crate::services::Update::Sound(sound) => state.sound = sound,
                     crate::services::Update::Media(media) => state.media = media,
                     crate::services::Update::Pairing(pairing) => state.show_pairing(pairing),
+                    crate::services::Update::Thunderbolt(waiting) => state.thunderbolt_changed(waiting.unwrap_or_default()),
                     crate::services::Update::WifiSecret(ssid) => state.show_wifi_secret(ssid),
                     crate::services::Update::PinEntry { device, passkey } => state.show_pin_entry(device, passkey),
                     crate::services::Update::Polkit(event) => state.polkit_event(event),
@@ -533,6 +536,7 @@ impl State {
             gesture: None,
             corners: Default::default(),
             lock: None,
+            thunderbolt: Vec::new(),
             idle: crate::idle::Idle::new(&dh, handle.clone()),
             night_light: Default::default(),
             zoom: Default::default(),
