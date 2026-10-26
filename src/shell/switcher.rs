@@ -145,12 +145,6 @@ pub fn hit(output: Size<i32, Logical>, count: usize, p: Point<f64, Logical>) -> 
 }
 
 impl State {
-    /// The display under the pointer, else the first.
-    fn switcher_output(&self) -> Option<Output> {
-        let at = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default();
-        self.space.output_under(at).next().or_else(|| self.space.outputs().next()).cloned()
-    }
-
     /// The shown panel's display and the panel, global.
     fn switcher_panel(&self) -> Option<(Rect, Rect)> {
         let open = self.switcher.open.as_ref().filter(|o| o.visible)?;
@@ -234,7 +228,7 @@ impl State {
             }
             TimeoutAction::Drop
         });
-        let output = self.switcher_output();
+        let output = self.pointer_output();
         self.switcher.open = Some(Open { apps, selected, visible: false, output, held, timer: timer.ok(), outcome: None });
         // A binding without modifiers (an F key) has nothing to hold: it switches at once.
         let mods = self.modifiers();
@@ -247,7 +241,7 @@ impl State {
     pub fn switcher_preview(&mut self) {
         let apps = self.switcher_apps();
         let selected = step(0, apps.len(), false);
-        let (output, held) = (self.switcher_output(), Held { desktop: true, ..Default::default() });
+        let (output, held) = (self.pointer_output(), Held { desktop: true, ..Default::default() });
         self.switcher.open = Some(Open { apps, selected, visible: true, output, held, timer: None, outcome: None });
         self.schedule_redraw();
     }
