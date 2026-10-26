@@ -16,7 +16,10 @@ use std::{
 
 use smithay::{
     desktop::Window,
-    reexports::wayland_server::protocol::wl_data_source::WlDataSource,
+    reexports::{
+        calloop::timer::{TimeoutAction, Timer},
+        wayland_server::protocol::wl_data_source::WlDataSource,
+    },
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
     wayland::{compositor::with_states, selection::data_device::with_source_metadata, shell::xdg::XdgToplevelSurfaceData},
 };
@@ -345,6 +348,38 @@ const BTN_MIDDLE: u32 = 0x112;
 const BTN_RIGHT: u32 = 0x111;
 /// Plank's LONG_PRESS_TIME: a press held this long without moving clicks nothing.
 const LONG_PRESS: Duration = Duration::from_millis(750);
+
+/// How long a dragged file rests on an icon before its app springs forward.
+const SPRING_DELAY: Duration = Duration::from_millis(600);
+
+/// A file dragged (DnD) over the dock: the icon it rests on and since when; `sprung` once that app came forward.
+#[derive(Debug, Default)]
+pub struct Spring {
+    over: Option<(String, Instant)>,
+    sprung: bool,
+}
+
+impl Spring {
+    /// The drag is over icon `key` (`None`: off the icons) at `now`; true when it arrived on another icon.
+    fn over(&mut self, key: Option<&str>, now: Instant) -> bool {
+        if self.over.as_ref().map(|(k, _)| k.as_str()) == key {
+            return false;
+        }
+        self.over = key.map(|k| (k.to_owned(), now));
+        self.sprung = false;
+        key.is_some()
+    }
+
+    /// The icon whose app springs forward at `now`: rested on for `SPRING_DELAY`, once per visit.
+    fn due(&mut self, now: Instant) -> Option<String> {
+        let (key, since) = self.over.as_ref()?;
+        if self.sprung || now < *since + SPRING_DELAY {
+            return None;
+        }
+        self.sprung = true;
+        Some(key.clone())
+    }
+}
 
 /// What a window resolved to under one `Apps` load (`State::apps_epoch`): its `app_key`, the item key and the app.
 #[derive(Default)]
@@ -732,6 +767,7 @@ impl State {
     /// and lightens the icon under the pointer.
     pub fn dock_motion(&mut self, from: Point<f64, Logical>, to: Point<f64, Logical>) {
         self.dock_drag_motion(to);
+        self.dock_spring_motion(to);
         // On the previews the dock stays as it is (shown, zoomed where it was); only the hovered thumbnail changes.
         if let Some((hit, _)) = self.dock_peek_at(to) {
             let hover = match hit {
@@ -790,6 +826,8 @@ pub struct Ui {
     /// The open menu's recent files (URIs) and Open at Login state, read as it opens.
     recent: Vec<String>,
     login: Option<bool>,
+    /// While an app's drag (DnD) is on.
+    spring: Option<Spring>,
 }
 
 /// An icon with several windows, hovered.
@@ -1334,6 +1372,7 @@ impl State {
     /// An app started a drag: its `text/uri-list`, if it offers one, is read now, since a drop on the dock (no client
     /// surface) gets cancelled before we could ask.
     pub fn dock_drag_started(&mut self, source: Option<WlDataSource>) {
+        self.dock_ui.spring = Some(Spring::default());
         let uris = self.dock_ui.uris.clone();
         *uris.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let Some(source) = source else { return };
@@ -1348,6 +1387,47 @@ impl State {
                 *uris.lock().unwrap_or_else(|e| e.into_inner()) = Some(text);
             }
         });
+    }
+
+    /// An app's drag ended, dropped or not.
+    pub fn dock_drag_ended(&mut self) {
+        self.dock_ui.spring = None;
+    }
+
+    /// An app's drag moved to `to`: resting on an icon arms its spring.
+    fn dock_spring_motion(&mut self, to: Point<f64, Logical>) {
+        if self.dock_ui.spring.is_none() {
+            return;
+        }
+        let items = self.dock_items();
+        let key = self.dock_layout(&items).and_then(|l| hit(&l, to)).filter(|_| self.dock_shown()).map(|i| items[i].key.as_str());
+        if self.dock_ui.spring.as_mut().is_some_and(|s| s.over(key, Instant::now())) {
+            let timer = Timer::from_duration(SPRING_DELAY);
+            let _ = self.loop_handle.insert_source(timer, |_, _, state| {
+                state.dock_spring();
+                TimeoutAction::Drop
+            });
+        }
+    }
+
+    /// Spring-loading: a file rested on an icon brings its app's front window up, or App Exposé with several.
+    fn dock_spring(&mut self) {
+        let Some(key) = self.dock_ui.spring.as_mut().and_then(|s| s.due(Instant::now())) else { return };
+        let Some(item) = self.dock_item(&key) else { return };
+        let shown: Vec<&Window> = item.windows.iter().filter(|w| !self.hidden.iter().any(|(h, _)| h == *w)).collect();
+        if shown.len() > 1 {
+            if !self.mission_open() {
+                let app = self.app_key(shown[0]);
+                self.open_mission(app);
+            }
+        } else if let Some(window) = item.windows.first().cloned() {
+            if let Some(at) = self.hidden.iter().position(|(w, _)| *w == window) {
+                let (_, loc) = self.hidden.remove(at);
+                self.set_visible_loc(&window, loc);
+            }
+            self.focus_window(Some(window), SERIAL_COUNTER.next_serial());
+        }
+        self.schedule_redraw();
     }
 
     /// An app's drag ended over no window: on the Trash, files are trashed; elsewhere on the dock, `.desktop` files
@@ -1606,6 +1686,23 @@ mod tests {
         assert_eq!(rows[1].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Window(1))));
         assert_eq!(rows[3].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Recent(0))));
         assert_eq!(rows[5].as_ref().and_then(|r| r.action.clone()), Some(Action::Dock(Command::Action(0))));
+    }
+
+    #[test]
+    fn spring_fires_once_after_resting_on_an_icon() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut spring = Spring::default();
+        assert!(spring.over(Some("kate"), t0), "arriving arms it");
+        assert!(!spring.over(Some("kate"), ms(300)), "moving on the same icon doesn't");
+        assert_eq!(spring.due(ms(599)), None);
+        assert_eq!(spring.due(ms(600)).as_deref(), Some("kate"));
+        assert_eq!(spring.due(ms(900)), None, "once per visit");
+        assert!(spring.over(Some("kitty"), ms(1000)));
+        assert!(!spring.over(None, ms(1300)), "leaving arms nothing");
+        assert_eq!(spring.due(ms(1700)), None, "left before the delay");
+        spring.over(Some("kate"), ms(2000));
+        assert_eq!(spring.due(ms(2600)).as_deref(), Some("kate"), "coming back springs again");
     }
 
     #[test]
