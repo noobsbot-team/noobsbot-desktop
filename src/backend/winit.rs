@@ -241,8 +241,6 @@ impl State {
         let window_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Window)))
             .then(|| self.window_menu_rows())
             .and_then(|rows| Some((self.window_menu_anchor()?, rows)));
-        let path = self.open_path().to_vec();
-        let cursor = self.menu_cursor.filter(|(p, d, _)| Some(*p) == self.popup && *d <= path.len());
         let (now, scale) = (self.frame_time, output.current_scale().fractional_scale());
         let appearance = &self.config.appearance;
         let (dark, reduce, hour24) = (render::is_dark(appearance), appearance.reduce_motion, self.config.clock.format.hour24);
@@ -340,6 +338,10 @@ impl State {
                         ),
                     ),
                 };
+                // Rows may have gone since the last input (a window closed, a tray submenu shrank).
+                crate::shell::fit_menu(&rows, self.popup, &mut self.submenu, &mut self.menu_cursor);
+                let path = self.submenu.as_ref().filter(|(p, _)| Some(*p) == self.popup).map_or(Vec::new(), |(_, path)| path.clone());
+                let cursor = self.menu_cursor.filter(|(p, d, _)| Some(*p) == self.popup && *d <= path.len());
                 let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
                 // The keyboard's row is lit instead of the pointer's, which goes nowhere; a row whose submenu is
                 // open stays lit.

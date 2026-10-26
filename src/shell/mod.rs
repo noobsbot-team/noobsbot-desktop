@@ -96,6 +96,28 @@ pub fn sub_rows<'a>(rows: &'a [Option<Row>], path: &[usize]) -> &'a [Option<Row>
     path.iter().try_fold(rows, |rows, &i| Some(&rows.get(i)?.as_ref()?.sub[..])).unwrap_or_default()
 }
 
+/// Fits `popup`'s open submenus and keyboard row to its `rows` as rebuilt: the path ends before the first row that is
+/// gone or has no submenu any more, and a keyboard row past its level's end goes to the level's last live row.
+pub fn fit_menu(rows: &[Option<Row>], popup: Option<Popup>, submenu: &mut Option<(Popup, Vec<usize>)>, cursor: &mut Option<(Popup, usize, usize)>) {
+    let path = match submenu {
+        Some((p, path)) if Some(*p) == popup => {
+            let opens = |d: usize| sub_rows(rows, &path[..d]).get(path[d]).and_then(Option::as_ref).is_some_and(|r| !r.sub.is_empty());
+            let keep = (0..path.len()).take_while(|&d| opens(d)).count();
+            path.truncate(keep);
+            &path[..]
+        }
+        _ => &[],
+    };
+    if let Some((p, d, i)) = *cursor
+        && Some(p) == popup
+    {
+        let level = path.get(..d).map(|at| sub_rows(rows, at));
+        if level.is_none_or(|level| i >= level.len()) {
+            *cursor = level.and_then(|level| menu_step(level, None, false)).map(|j| (p, d, j));
+        }
+    }
+}
+
 /// The tray menu row at the end of `path` (as `sub_rows`).
 fn tray_row<'a>(rows: &'a [Option<MenuRow>], path: &[usize]) -> Option<&'a MenuRow> {
     let (&last, init) = path.split_last()?;
@@ -732,10 +754,10 @@ impl State {
         }
     }
 
-    /// The rows of the open `menu`.
+    /// The rows of the open `menu`; its open submenus and keyboard row are fitted to them (`fit_menu`).
     pub fn open_menu_rows(&mut self, menu: Menu) -> Vec<Option<Row>> {
         let tray = self.tray_menu.as_ref().map_or(&[][..], |(_, _, rows)| rows);
-        match menu {
+        let rows = match menu {
             Menu::Dock => self.dock_menu_rows(),
             Menu::Input => self.input_menu_rows(),
             Menu::Desktop => self.desktop_menu_rows(),
@@ -744,7 +766,9 @@ impl State {
             Menu::Overflow => self.overflow_menu_rows(),
             Menu::Battery(_) => self.battery_menu_rows(),
             _ => menu_rows(menu, "", tray, self.update_ready(), self.recent_menu.as_deref().unwrap_or_default()),
-        }
+        };
+        fit_menu(&rows, self.popup, &mut self.submenu, &mut self.menu_cursor);
+        rows
     }
 
     /// Reads the Recent Items when the logo menu opens and drops them when it closes, so it reads the file once.
@@ -1350,6 +1374,7 @@ mod tests {
         tray_find(&mut tray, 3).unwrap().submenu = Some(vec![row(6, "New", None)]);
         assert_eq!(tray_row(&tray, &[1, 0, 0]).map(|r| r.id), Some(6));
     }
+
 
     #[test]
     fn keys_skip_separators_and_disabled_rows_and_stop_at_the_ends() {
