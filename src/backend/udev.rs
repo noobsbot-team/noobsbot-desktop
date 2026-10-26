@@ -692,7 +692,11 @@ fn configure(device: &mut InputDevice, touchpad: &Touchpad, mouse: &Mouse) {
             SecondaryClick::Corner => ClickMethod::ButtonAreas,
         };
         let _ = device.config_click_set_method(method);
-        let mode = if touchpad.ignore_with_mouse { SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE } else { SendEventsMode::ENABLED };
+        let mode = match (touchpad.enabled, touchpad.ignore_with_mouse) {
+            (false, _) => SendEventsMode::DISABLED,
+            (true, true) => SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE,
+            (true, false) => SendEventsMode::ENABLED,
+        };
         let _ = device.config_send_events_set_mode(mode);
     } else if device.has_capability(DeviceCapability::Pointer) {
         let _ = device.config_accel_set_speed(mouse.speed.clamp(-1.0, 1.0));

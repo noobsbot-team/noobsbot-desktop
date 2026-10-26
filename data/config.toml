@@ -67,6 +67,8 @@ repeat_delay = 500
 repeat_rate = 30
 
 [touchpad]
+# Off: the trackpad does nothing. The touchpad-toggle key flips this until the file is next saved.
+enabled = true
 tap_to_click = true
 natural_scroll = true
 # 3-finger swipes switch Spaces (left/right), open Mission Control (up) and App Exposé (down); 4 = use 4 fingers

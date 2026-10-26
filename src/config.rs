@@ -261,6 +261,8 @@ fn parse_system_keyboard(text: &str) -> Keyboard {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Touchpad {
+    /// Off: the trackpad does nothing (the touchpad-toggle key flips it until the next reload).
+    pub enabled: bool,
     pub tap_to_click: bool,
     pub natural_scroll: bool,
     /// Fingers of the Space / Mission Control swipes (E5.3): 3, or 4 to leave 3-finger swipes to apps.
@@ -721,6 +723,7 @@ impl Default for Appearance {
 impl Default for Touchpad {
     fn default() -> Self {
         Self {
+            enabled: true,
             tap_to_click: true,
             natural_scroll: true,
             swipe_fingers: 3,
