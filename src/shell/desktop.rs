@@ -119,7 +119,7 @@ pub struct Grid {
 impl Grid {
     /// The grid on a `size` output, keeping `bottom` px clear for the dock.
     pub fn new(size: Size<i32, Logical>, bottom: i32) -> Self {
-        let top = menubar::HEIGHT + 8;
+        let top = menubar::height() + 8;
         let rows = ((size.h - top - bottom) / CELL_H).max(1);
         let cols = ((size.w - 2 * MARGIN) / CELL_W).max(1);
         Self { width: size.w, top, rows, cols }
@@ -468,7 +468,7 @@ impl State {
     pub fn desktop_widgets(&self) -> Vec<Rect> {
         let medium: Vec<bool> = self.shown_widgets(true).iter().map(|w| w.medium).collect();
         let pad = crate::shell::notify::CENTER_PAD;
-        crate::shell::notify::tiles(&medium, MARGIN + pad, menubar::HEIGHT + 8 + pad, crate::shell::notify::CENTER_W - 2 * pad).0
+        crate::shell::notify::tiles(&medium, MARGIN + pad, menubar::height() + 8 + pad, crate::shell::notify::CENTER_W - 2 * pad).0
     }
 
     /// A press on the bare desktop (no window or layer there): a widget tells its app; otherwise selects, opens on a
@@ -631,7 +631,7 @@ impl State {
         let height = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or(i32::MAX, |g| g.size.h);
         let tall = super::menu_height(rows);
         let y = if at.y + tall > height - MARGIN { at.y - tall } else { at.y };
-        Some(Anchor::At((at.x, y.max(menubar::HEIGHT)).into()))
+        Some(Anchor::At((at.x, y.max(menubar::height())).into()))
     }
 
     pub fn desktop_command(&mut self, command: Command) {

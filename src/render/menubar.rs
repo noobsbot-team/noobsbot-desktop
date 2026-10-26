@@ -1,6 +1,6 @@
-//! The menu bar (E2.2): a 24 px `bar` glass strip across the top. Left: the logo and the active app's name; right:
-//! tray icons, Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4). Every piece is kept between
-//! frames, so a frame where only the minute changed damages only the clock.
+//! The menu bar (E2.2): a 24 px `bar` glass strip (taller with larger text) across the top. Left: the logo and the
+//! active app's name; right: tray icons, Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4).
+//! Every piece is kept between frames, so a frame where only the minute changed damages only the clock.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -23,12 +23,12 @@ use crate::{
         tray::Image,
     },
     symbols::{Symbol, Symbols, Weight},
-    text::{Rendered, Style, Text},
+    text::{Rendered, Style, Text, ts},
     wm::Rect,
 };
 
-/// D: the bar's height in logical px; windows stay below it.
-pub const HEIGHT: i32 = 24;
+/// D: the bar's height in logical px at text size 1; windows stay below it.
+const HEIGHT: i32 = 24;
 const EDGE: i32 = 14;
 /// Between right-side items (E2.2).
 const GAP: i32 = 12;
@@ -39,6 +39,11 @@ const SYMBOL: u16 = 16;
 /// The app's name is ellipsised past this, and dropped when less than `MIN_APP` is free.
 const APP_WIDTH: i32 = 300;
 const MIN_APP: i32 = 40;
+
+/// The bar's height in logical px, grown with the text size.
+pub fn height() -> i32 {
+    ts(HEIGHT)
+}
 
 /// The width left for the app's name between the logo and the right group on a `width`-wide bar.
 pub fn app_room(width: i32, logo: i32, right: i32) -> i32 {
@@ -152,8 +157,8 @@ pub fn app_name(id: &str) -> String {
     })
 }
 
-/// Width, dark, glass opacity and scale: what the strip and its shadow depend on.
-type GlassKey = (i32, bool, u32, u64);
+/// Width, height, dark, glass opacity and scale: what the strip and its shadow depend on.
+type GlassKey = (i32, i32, bool, u32, u64);
 
 /// The bar's pieces, kept between frames.
 #[derive(Default)]
@@ -182,7 +187,7 @@ impl MenuBar {
     /// The pressed pill behind `item`: rounded, a little inside the bar's height. Menus line up with it.
     pub fn pill(&self, item: BarItem) -> Option<Rect> {
         let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
-        Some(Rectangle::new((area.loc.x + GAP / 2 - 6, 2).into(), (area.size.w - GAP + 12, HEIGHT - 4).into()))
+        Some(Rectangle::new((area.loc.x + GAP / 2 - 6, 2).into(), (area.size.w - GAP + 12, height() - 4).into()))
     }
 
     /// How many tray icons, from the first, didn't fit and are in the "»" menu.
@@ -217,9 +222,9 @@ impl MenuBar {
         glass_opacity: f32,
         scale: f64,
     ) -> Vec<SceneElement> {
-        let key = (width, dark, glass_opacity.to_bits(), scale.to_bits());
+        let key = (width, height(), dark, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
-            let rect = Rectangle::new((0, 0).into(), (width, HEIGHT).into());
+            let rect = Rectangle::new((0, 0).into(), (width, height()).into());
             let spec = Material::Bar.spec(dark);
             let mut glass = vec![shaders.glass(rect, Material::Bar, dark, glass_opacity, scale)];
             glass.extend(shaders.shadow(rect, spec.radius, spec.elevation, dark, scale, false));
@@ -267,12 +272,12 @@ impl MenuBar {
         let mut rects = Vec::new();
         let mut x = EDGE;
         for (piece, gap, _) in &left {
-            rects.push(Rectangle::new((x, 0).into(), (logical(piece), HEIGHT).into()));
+            rects.push(Rectangle::new((x, 0).into(), (logical(piece), height()).into()));
             x += logical(piece) + gap;
         }
         let mut x = width - EDGE - total;
         for (piece, gap, _) in &right {
-            rects.push(Rectangle::new((x, 0).into(), (logical(piece), HEIGHT).into()));
+            rects.push(Rectangle::new((x, 0).into(), (logical(piece), height()).into()));
             x += logical(piece) + gap;
         }
 
@@ -280,7 +285,7 @@ impl MenuBar {
         let items: Vec<BarItem> = left.iter().chain(&right).map(|(_, _, item)| *item).collect();
         self.hits.clear();
         for (item, rect) in items.iter().zip(&rects) {
-            let rect = Rectangle::new((rect.loc.x - GAP / 2, 0).into(), (rect.size.w + GAP, HEIGHT).into());
+            let rect = Rectangle::new((rect.loc.x - GAP / 2, 0).into(), (rect.size.w + GAP, height()).into());
             match self.hits.last_mut() {
                 Some((last, area)) if last == item => *area = area.merge(rect),
                 _ => self.hits.push((*item, rect)),
@@ -311,7 +316,7 @@ impl MenuBar {
 /// Whether an auto-hiding bar shows with the pointer `y` px below its display's top: at the very edge, or anywhere
 /// on the bar once `shown`.
 pub fn reveals(shown: bool, y: f64) -> bool {
-    (0.0..if shown { f64::from(HEIGHT) } else { 1.0 }).contains(&y)
+    (0.0..if shown { f64::from(height()) } else { 1.0 }).contains(&y)
 }
 
 /// The bar's elements moved `hidden` (0 to 1) of the way up out of sight, shadow included.
@@ -327,7 +332,7 @@ pub fn slid(renderer: &mut GlesRenderer, strip: Vec<SceneElement>, hidden: f64, 
 
 /// The part of the output windows may use: everything below the bar.
 pub fn below(area: Rect) -> Rect {
-    let cut = (HEIGHT - area.loc.y).clamp(0, area.size.h);
+    let cut = (height() - area.loc.y).clamp(0, area.size.h);
     Rectangle::new((area.loc.x, area.loc.y + cut).into(), Size::from((area.size.w, area.size.h - cut)))
 }
 
@@ -396,6 +401,18 @@ mod tests {
         // Nothing fits even with every icon gone: all of them are in the menu.
         assert_eq!(tray_overflow(600, 16, 700, &tray, 10), 4);
         assert_eq!(tray_overflow(600, 16, 700, &[], 10), 0);
+    }
+
+    #[test]
+    fn the_bar_grows_with_the_text_size() {
+        let area = Rectangle::new((0, 0).into(), (1280, 800).into());
+        assert_eq!(height(), 24);
+        crate::text::with_scale(1.5, || {
+            // A 13 px label shapes into a 24 px line at 1.5: the 36 px bar holds it with room to spare.
+            assert_eq!(height(), 36);
+            assert_eq!(below(area), Rectangle::new((0, 36).into(), (1280, 764).into()));
+            assert!(reveals(true, 30.0), "the whole taller bar keeps it shown");
+        });
     }
 
     #[test]

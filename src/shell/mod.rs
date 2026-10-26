@@ -51,7 +51,7 @@ const OSD_TIME: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// E2.7: 280 × 48 at the top right, under the bar.
 pub fn osd_rect(output_width: i32) -> Rect {
-    Rectangle::new(((output_width - MARGIN - 280).max(MARGIN), menubar::HEIGHT + DROP).into(), (280, 48).into())
+    Rectangle::new(((output_width - MARGIN - 280).max(MARGIN), menubar::height() + DROP).into(), (280, 48).into())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -246,7 +246,7 @@ pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows:
     let row_h = |row: &Option<Row>| if row.is_some() { ts(ROW) } else { SEPARATOR };
     let height = menu_height(rows);
     let (left, top) = match anchor {
-        Anchor::Below(x) => (x, menubar::HEIGHT + DROP),
+        Anchor::Below(x) => (x, menubar::height() + DROP),
         Anchor::Above(p) => (p.x - width / 2, p.y - DROP - height),
         Anchor::At(p) => (p.x, p.y),
         // To the right of the parent, its first row level with the parent's row; flipped left at the screen edge.
@@ -254,7 +254,7 @@ pub fn menu_layout(anchor: Anchor, output: Size<i32, Logical>, width: i32, rows:
         Anchor::Beside(r) => (r.loc.x + r.size.w, r.loc.y - PAD),
     };
     let x = left.min(output.w - MARGIN - width).max(MARGIN);
-    let top = top.min(output.h - MARGIN - height).max(menubar::HEIGHT + DROP);
+    let top = top.min(output.h - MARGIN - height).max(menubar::height() + DROP);
     let room = output.h - MARGIN - top - 2 * PAD;
     // The first row that still lets the last one show.
     let mut tail = 0;
@@ -398,7 +398,7 @@ impl State {
         if self.launchpad_open() || self.drawer_layout().is_some_and(|l| l.rect.to_f64().contains(location)) {
             return true;
         }
-        let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::HEIGHT);
+        let on_bar = self.backend.as_ref().is_some_and(|b| b.menu_bar.visible()) && location.y < f64::from(menubar::height());
         on_bar || self.in_popup(location) || self.dock_covers(location)
     }
 

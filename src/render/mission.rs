@@ -187,7 +187,7 @@ impl MissionView {
         const STEP: i32 = 16;
         let n = count as i32;
         let size = Size::from((n * STEP + 12, 24));
-        let pill = Rectangle::new(((width - size.w) / 2, super::menubar::HEIGHT + 8).into(), size);
+        let pill = Rectangle::new(((width - size.w) / 2, super::menubar::height() + 8).into(), size);
         let label = if dark { [1.0, 1.0, 1.0, 0.85] } else { [0.0, 0.0, 0.0, 0.85] };
         let mut list: Vec<Shape> = (0..n)
             .map(|i| {

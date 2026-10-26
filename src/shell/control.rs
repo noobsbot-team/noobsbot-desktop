@@ -178,7 +178,7 @@ pub fn media_buttons(card: Rect) -> [Rect; 3] {
 
 pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     let x = (output.w - MARGIN - WIDTH).max(MARGIN);
-    let top = menubar::HEIGHT + DROP;
+    let top = menubar::height() + DROP;
     let card = |dx: i32, y: i32, w: i32, h: i32| Rectangle::new((x + dx, y).into(), (w, h).into());
     let mut y = top + PAD;
     let network = card(PAD, y, HALF, TOP);
