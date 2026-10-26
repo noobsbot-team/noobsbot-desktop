@@ -116,18 +116,25 @@ impl Grid {
 pub fn folder_grid(grid: &Grid, n: usize) -> (Rect, Grid) {
     const PAD: i32 = 24;
     let cols = n.clamp(1, grid.cols.min(4));
-    // ponytail: past the rows a page holds, the rest of a big folder is cut off; scroll it if folders get that big.
+    // More apps than its rows hold: it pages, with dots under its grid.
     let rows = n.div_ceil(cols).clamp(1, grid.rows.saturating_sub(1).max(1));
+    let dots = if n > cols * rows { layout::DOT_STEP + 8 } else { 0 };
     let cell = grid.cells[0].size;
     let field_h = ts(layout::FIELD_H);
-    let (w, h) = (cols as i32 * cell.w + 2 * PAD, PAD + field_h + 12 + rows as i32 * cell.h + PAD);
+    let (w, h) = (cols as i32 * cell.w + 2 * PAD, PAD + field_h + 12 + rows as i32 * cell.h + dots + PAD);
     let (top, bottom) = (grid.cells[0].loc.y, grid.cells[grid.cells.len() - 1].loc.y + cell.h);
     let panel = Rectangle::new(((grid.width - w) / 2, (top + bottom - h) / 2).into(), (w, h).into());
     let y0 = panel.loc.y + PAD + field_h + 12;
     let cells =
         (0..rows as i32).flat_map(|r| (0..cols as i32).map(move |c| Rectangle::new((panel.loc.x + PAD + c * cell.w, y0 + r * cell.h).into(), cell))).collect();
     let field = Rectangle::new((panel.loc.x + PAD, panel.loc.y + PAD).into(), (w - 2 * PAD, field_h).into());
-    (panel, Grid { cols, rows, icon: grid.icon, cells, field, dots_y: 0, width: grid.width })
+    let dots_y = y0 + rows as i32 * cell.h + dots / 2;
+    (panel, Grid { cols, rows, icon: grid.icon, cells, field, dots_y, width: grid.width })
+}
+
+/// The dot at `p`; a dot is small, so its hit area reaches 6 px around it.
+fn dot_at(dots: &[Rect], p: Point<f64, Logical>) -> Option<usize> {
+    dots.iter().position(|d| Rectangle::new(d.loc - Point::from((6, 6)), d.size + Size::from((12, 12))).to_f64().contains(p))
 }
 
 /// Which way a page edge at `p` turns: -1 at the left side margin, 1 at the right.
@@ -437,6 +444,9 @@ pub struct Folder {
     pub name: TextField,
     /// The name was clicked: keys edit it.
     pub editing: bool,
+    /// The page in view, and a finger swipe on it (in screen widths).
+    pub page: usize,
+    swipe: f64,
     /// 0 → 1 as it opens (it fades in and out on the `smooth` spring).
     pub shown: Spring,
 }
@@ -571,14 +581,29 @@ impl State {
         self.launchpad.as_ref().map_or_else(Vec::new, |l| tiles(self.apps.list(), &l.order, &l.field.text))
     }
 
-    /// The open folder's panel and grid.
-    pub fn launchpad_folder(&self) -> Option<(Rect, Grid)> {
+    /// The open folder's panel, its grid, and the place in the folder of the first app on its page.
+    pub fn launchpad_folder(&self) -> Option<(Rect, Grid, usize)> {
         let i = self.launchpad.as_ref()?.open_folder()?.index;
         let n = match self.launchpad_tiles().into_iter().nth(i)? {
             Tile::Folder(_, apps) => apps.len(),
             Tile::App(_) => return None,
         };
-        Some(folder_grid(&self.launchpad_grid()?, n))
+        let (panel, inner) = folder_grid(&self.launchpad_grid()?, n);
+        let first = self.launchpad.as_ref()?.open_folder()?.page * inner.per_page();
+        Some((panel, inner, first))
+    }
+
+    /// Turns the open folder to `page`, kept within its pages.
+    fn launchpad_folder_turn(&mut self, page: usize) {
+        let n = match self.launchpad.as_ref().and_then(Launchpad::open_folder).and_then(|f| self.launchpad_tiles().into_iter().nth(f.index)) {
+            Some(Tile::Folder(_, apps)) => apps.len(),
+            _ => return,
+        };
+        let Some((_, inner, _)) = self.launchpad_folder() else { return };
+        if let Some(f) = self.launchpad.as_mut().and_then(|l| l.folder.as_mut()) {
+            f.page = page.min(pages(n, inner.per_page()) - 1);
+        }
+        self.schedule_redraw();
     }
 
     pub fn launchpad_grid(&self) -> Option<Grid> {
@@ -668,8 +693,12 @@ impl State {
         if let Some(f) = l.folder.as_mut().filter(|f| !f.closing()) {
             let typed = sym.key_char().map(String::from);
             if !f.editing {
-                if matches!(sym, Keysym::Escape | Keysym::Return | Keysym::KP_Enter) {
-                    l.shut_folder(Instant::now());
+                let page = f.page;
+                match sym {
+                    Keysym::Escape | Keysym::Return | Keysym::KP_Enter => l.shut_folder(Instant::now()),
+                    Keysym::Left | Keysym::KP_Left => return self.launchpad_folder_turn(page.saturating_sub(1)),
+                    Keysym::Right | Keysym::KP_Right => return self.launchpad_folder_turn(page + 1),
+                    _ => {}
                 }
                 return self.schedule_redraw();
             }
@@ -719,7 +748,18 @@ impl State {
         if secondary || grid.field.to_f64().contains(location) {
             return true;
         }
-        if let Some((panel, inner)) = self.launchpad_folder() {
+        if let Some((panel, inner, first)) = self.launchpad_folder() {
+            let n = match self.launchpad_tiles().into_iter().nth(self.launchpad.as_ref().and_then(Launchpad::open_folder).map_or(0, |f| f.index)) {
+                Some(Tile::Folder(_, apps)) => apps.len(),
+                _ => 0,
+            };
+            let count = pages(n, inner.per_page());
+            if count > 1
+                && let Some(dot) = dot_at(&inner.dots(count), location)
+            {
+                self.launchpad_folder_turn(dot);
+                return true;
+            }
             let Some(l) = self.launchpad.as_mut() else { return true };
             let Some(f) = l.folder.as_mut() else { return true };
             let index = f.index;
@@ -729,9 +769,10 @@ impl State {
                 f.name = TextField { caret: f.name.text.len(), all: true, ..f.name.clone() };
             }
             f.editing = on_name;
-            match inner.hit(location).filter(|_| panel.to_f64().contains(location)) {
-                Some(j) => {
-                    let grab = location - inner.icon_rect(j).loc.to_f64();
+            let hit = inner.hit(location).filter(|k| panel.to_f64().contains(location) && first + k < n);
+            match hit {
+                Some(k) => {
+                    let (j, grab) = (first + k, location - inner.icon_rect(k).loc.to_f64());
                     l.press = Some(Press {
                         index,
                         start: location,
@@ -754,8 +795,7 @@ impl State {
         let tiles = self.launchpad_tiles();
         let pages = pages(tiles.len(), grid.per_page());
         if pages > 1
-            // A dot is small: its hit area reaches 6 px around it.
-            && let Some(dot) = grid.dots(pages).iter().position(|d| Rectangle::new(d.loc - Point::from((6, 6)), d.size + Size::from((12, 12))).to_f64().contains(location))
+            && let Some(dot) = dot_at(&grid.dots(pages), location)
         {
             self.launchpad_turn(dot);
             return true;
@@ -806,10 +846,10 @@ impl State {
             return;
         }
         // In an open folder: a new place in it, or dragged off the panel, out of it and on into the grid.
-        if let (Some(j), Some((panel, inner))) = (p.inner, folder) {
+        if let (Some(j), Some((panel, inner, first))) = (p.inner, folder) {
             let Some(Entry::Folder { apps, .. }) = l.order.get_mut(p.index) else { return };
             if panel.to_f64().contains(to) {
-                if let Some(k) = inner.cell_at(to).map(|k| k.min(apps.len() - 1)).filter(|k| *k != j) {
+                if let Some(k) = inner.cell_at(to).map(|k| (first + k).min(apps.len() - 1)).filter(|k| *k != j) {
                     move_to(apps, j, k);
                     p.inner = Some(k);
                 }
@@ -902,7 +942,7 @@ impl State {
         }
         let Some(grid) = self.launchpad_grid() else { return };
         let same = match (p.inner, self.launchpad_folder()) {
-            (Some(j), Some((_, inner))) => inner.hit(p.at) == Some(j),
+            (Some(j), Some((_, inner, first))) => inner.hit(p.at).map(|k| first + k) == Some(j),
             _ => grid.hit(p.at).map(|i| page * grid.per_page() + i) == Some(p.index),
         };
         if same {
@@ -932,7 +972,7 @@ impl State {
             (Some(Tile::Folder(name, _)), None) => {
                 if let Some(l) = self.launchpad.as_mut() {
                     let name = TextField { caret: name.len(), text: name, ..Default::default() };
-                    l.folder = Some(Folder { index, name, editing: false, shown: Spring::new(0.0, 1.0, Instant::now()) });
+                    l.folder = Some(Folder { index, name, editing: false, page: 0, swipe: 0.0, shown: Spring::new(0.0, 1.0, Instant::now()) });
                 }
                 return;
             }
@@ -948,17 +988,27 @@ impl State {
             return false;
         }
         let page = self.launchpad.as_ref().map_or(0, |l| l.page);
+        // An open folder's pages turn instead.
+        let folder = self.launchpad.as_ref().and_then(Launchpad::open_folder).map(|f| f.page);
         if wheel != 0.0 {
-            self.launchpad_turn(if wheel > 0.0 { page + 1 } else { page.saturating_sub(1) });
+            match folder {
+                Some(page) => self.launchpad_folder_turn(if wheel > 0.0 { page + 1 } else { page.saturating_sub(1) }),
+                None => self.launchpad_turn(if wheel > 0.0 { page + 1 } else { page.saturating_sub(1) }),
+            }
             return true;
         }
         let (Some(grid), pages) = (self.launchpad_grid(), self.launchpad_pages()) else { return true };
         let Some(l) = self.launchpad.as_mut() else { return true };
         if dx != 0.0 && dx.abs() >= dy.abs() {
-            // Past the first and last page it only gives a little (rubber band).
-            let next = l.drag + dx / f64::from(grid.width.max(1));
-            let at = page as f64 + next;
-            l.drag = if at < 0.0 || at > (pages - 1) as f64 { l.drag + (next - l.drag) / 3.0 } else { next };
+            let step = dx / f64::from(grid.width.max(1));
+            if let Some(f) = l.folder.as_mut().filter(|_| folder.is_some()) {
+                f.swipe += step;
+            } else {
+                // Past the first and last page it only gives a little (rubber band).
+                let next = l.drag + step;
+                let at = page as f64 + next;
+                l.drag = if at < 0.0 || at > (pages - 1) as f64 { l.drag + (next - l.drag) / 3.0 } else { next };
+            }
             if let Some(token) = l.swipe_end.take() {
                 self.loop_handle.remove(token);
             }
@@ -982,6 +1032,11 @@ impl State {
 
     /// The fingers let go: on to the next page if dragged far enough, else back.
     fn launchpad_swipe_end(&mut self) {
+        // An open folder's swipe turns its page, the same way.
+        let swiped = self.launchpad.as_mut().and_then(|l| l.folder.as_mut()).map(|f| (f.page, std::mem::take(&mut f.swipe)));
+        if let Some((page, d)) = swiped.filter(|(_, d)| d.abs() > TURN) {
+            self.launchpad_folder_turn(if d > 0.0 { page + 1 } else { page.saturating_sub(1) });
+        }
         let Some(l) = self.launchpad.as_mut().filter(|l| l.drag != 0.0) else { return };
         if let Some(token) = l.swipe_end.take() {
             self.loop_handle.remove(token);
@@ -1097,6 +1152,13 @@ mod tests {
                 assert!(inner.cells.iter().all(|c| !c.overlaps(inner.field)));
             }
             assert_eq!(folder_grid(&g, 3).1.per_page(), 3, "a small folder: one row");
+            // A big one pages, its dots in the panel under its grid.
+            let (panel, inner) = folder_grid(&g, 40);
+            let count = pages(40, inner.per_page());
+            assert!(count > 1, "{w}×{h}");
+            let dots = inner.dots(count);
+            assert!(dots.iter().all(|d| panel.contains_rect(*d) && inner.cells.iter().all(|c| !c.overlaps(*d))), "{w}×{h}");
+            assert_eq!(dot_at(&dots, dots[1].loc.to_f64()), Some(1));
         }
     }
 
