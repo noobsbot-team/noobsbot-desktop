@@ -9,6 +9,8 @@ mod defaults;
 #[path = "../../src/display_info.rs"]
 mod display_info;
 mod gallery;
+#[path = "../../src/ibus.rs"]
+mod ibus;
 mod network;
 #[path = "../../src/pactl.rs"]
 mod pactl;
@@ -125,7 +127,7 @@ pub struct App {
     terminals: Vec<(autostart::Installed, String)>,
     /// Keyboard ▸ Input Sources' picker, open, with what is typed in its search field.
     picker: Option<String>,
-    /// fcitx5's input methods while it runs; read when Keyboard opens.
+    /// fcitx5's or ibus's input methods while it runs; read when Keyboard opens.
     methods: Option<xkb::Methods>,
     /// Apps in the notification history, read when Notifications opens.
     notifiers: Vec<String>,
@@ -237,9 +239,9 @@ pub enum Message {
     Sources(Vec<(String, String)>),
     /// Open (or filter) the input source picker; `None` closes it.
     Picker(Option<String>),
-    /// fcitx5's input methods, and what went wrong changing them.
+    /// The engine's input methods, and what went wrong changing them.
     Methods((Option<xkb::Methods>, Option<String>)),
-    /// An fcitx5 input method (unique name) added to its group, or taken out.
+    /// An fcitx5 or ibus input method (unique name) added to its group, or taken out.
     Method(String, bool),
     /// `keyboard.options` rewritten by a Modifier Keys dropdown.
     Options(String),
@@ -326,13 +328,19 @@ impl App {
         }
         let users = match page {
             Page::Users => Task::perform(users::read(), Message::Users),
-            Page::Keyboard => Task::perform(async { (xkb::methods().await, None) }, Message::Methods),
+            Page::Keyboard => app.read_methods(),
             Page::Notifications => Task::perform(system::widget_ids(), Message::WidgetIds),
             _ => Task::none(),
         };
         // Typing searches at once (see `type_ahead`).
         let folders = app.config.str(gallery::FOLDERS).to_owned();
         (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(folders), Message::Thumbs), users]))
+    }
+
+    /// The input-method engine's methods (Keyboard ▸ Input Sources).
+    fn read_methods(&self) -> Task<Message> {
+        let engine = ibus::engine(self.config.str("keyboard.input_method"));
+        Task::perform(async move { (xkb::methods(engine).await, None) }, Message::Methods)
     }
 
     fn retheme(&mut self) {
@@ -373,7 +381,7 @@ impl App {
                     return Task::perform(users::read(), Message::Users);
                 }
                 if page == Page::Keyboard {
-                    return Task::perform(async { (xkb::methods().await, None) }, Message::Methods);
+                    return self.read_methods();
                 }
                 if page.is_system() {
                     return Task::perform(system::read(), Message::Status);
@@ -384,6 +392,9 @@ impl App {
             Message::Choose(key, value) => {
                 self.texts.remove(&key);
                 self.save(&key, value);
+                if key == "keyboard.input_method" {
+                    return self.read_methods();
+                }
             }
             Message::Number(key, value) => self.save(key, value),
             Message::List(key, items) => self.save(key, items.into_iter().collect::<toml_edit::Array>()),
@@ -571,7 +582,7 @@ impl App {
             }
             Message::Method(id, add) => {
                 self.picker = None;
-                return Task::perform(xkb::set_method(id, add), Message::Methods);
+                return Task::perform(xkb::set_method(ibus::engine(self.config.str("keyboard.input_method")), id, add), Message::Methods);
             }
             Message::Options(options) => self.save("keyboard.options", options),
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
