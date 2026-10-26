@@ -29,6 +29,7 @@ mod pam;
 mod perms;
 mod pointer_assist;
 mod protocols;
+mod proxy;
 mod render;
 mod rules;
 mod services;
@@ -202,6 +203,9 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             let paste = new.middle_click_paste != old.middle_click_paste;
             if (new.double_click_ms != old.double_click_ms || paste) && !state.nested {
                 theme::mouse_in_background(new);
+            }
+            if config.network != state.config.network && !state.nested {
+                proxy::gsettings_in_background(&config.network);
             }
             if (config.touchpad != state.config.touchpad || config.mouse != state.config.mouse)
                 && let Some(backend::Device::Udev(udev)) = state.device.as_mut()

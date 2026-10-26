@@ -361,6 +361,20 @@ previews = "always"
 # Super for more than half a second, and Super with another modifier never count as a tap.
 super_tap = true
 
+[network]
+# Proxy for the apps the desktop starts: "none", "manual" (the servers below) or "auto" (the PAC file below).
+# Manual proxies reach apps as http_proxy, https_proxy, all_proxy (SOCKS) and no_proxy; both modes are also written
+# to the GTK proxy settings. Apps already running keep what they had.
+proxy = "none"
+# host:port of each kind of proxy; empty = none.
+proxy_http = ""
+proxy_https = ""
+proxy_socks = ""
+# Hosts and networks that skip the proxy, comma separated, e.g. "localhost, 127.0.0.0/8, .lan".
+proxy_bypass = ""
+# The proxy auto-config file's URL, e.g. "http://wpad.lan/wpad.dat".
+proxy_pac = ""
+
 # Shortcuts. Each entry is merged over the defaults; set one to "none" to free the key. Keys match in any case and
 # modifier order ("Ctrl+Super+x" is "Super+Ctrl+X"): yours replaces the default with the same keys, and of two of
 # yours with the same keys the first in sorted order is kept (a warning is logged).
