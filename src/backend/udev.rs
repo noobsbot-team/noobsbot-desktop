@@ -389,7 +389,7 @@ impl State {
         // cursor (the scanout buffer may be on another GPU, and planes hold the cursor and direct-scanout apps).
         let pixels = match frame {
             Ok(empty) if self.frame_wanted(&screen.output, !empty) => {
-                let scene: Vec<&SceneElement> = all[cursors..].iter().map(|e| &e.0).collect();
+                let scene: Vec<&SceneElement> = all[cursors..].iter().map(|e| &e.0).filter(|e| !matches!(e, SceneElement::Tint(_))).collect();
                 crate::capture::render(renderer.as_mut(), &screen.output, &scene, CLEAR)
             }
             _ => None,

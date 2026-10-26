@@ -100,10 +100,18 @@ pub fn wallpaper(event_loop: &mut EventLoop<State>, state: &State) -> Result<Wal
 
 impl State {
     /// Every element of `output`'s frame, front to back, and whether an animation needs another frame. Both backends
-    /// draw with it.
+    /// draw with it. Night Light goes in front of everything (capture.rs leaves it out).
+    pub fn frame_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
+        let (mut elements, animating) = self.scene_elements(renderer, output)?;
+        let size = self.space.output_geometry(output)?.size.to_physical_precise_round(output.current_scale().fractional_scale());
+        let (tint, fading) = self.night_light.element(&self.config.night_light, self.frame_time, size);
+        elements.splice(0..0, tint.map(SceneElement::Tint));
+        Some((elements, animating || fading))
+    }
+
     // ponytail: the shell (bar, dock, popups) is on the first output only, since its caches and hit tests are for one
     // output; a bar and dock per display (E6.2) needs a `Views` per output.
-    pub fn frame_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
+    fn scene_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
         if self.space.outputs().next() != Some(output) {
             let geo = self.space.output_geometry(output)?;
             let scale = output.current_scale().fractional_scale();
@@ -658,8 +666,10 @@ impl State {
             }
         };
         // Read back only when a screenshot or an allowed copy waits, the same way as on the real screen (udev.rs).
-        let pixels =
-            damaged.filter(|&damaged| self.frame_wanted(output, damaged)).and_then(|_| crate::capture::render(backend.renderer(), output, &elements, CLEAR));
+        let pixels = damaged.filter(|&damaged| self.frame_wanted(output, damaged)).and_then(|_| {
+            let scene: Vec<&SceneElement> = elements.iter().filter(|e| !matches!(e, SceneElement::Tint(_))).collect();
+            crate::capture::render(backend.renderer(), output, &scene, CLEAR)
+        });
         drop(elements);
 
         // Everything on this output was shown. ponytail: stamped after the swap returns, without a vblank counter;

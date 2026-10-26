@@ -30,6 +30,8 @@ pub struct Status {
     pub bluetooth: Option<(bool, String)>,
     pub dnd: bool,
     pub dark: bool,
+    /// Night Light is warming the screen now.
+    pub night: bool,
     /// Percent; `None` without a backlight.
     pub brightness: Option<u8>,
     /// Percent and muted; `None` without PipeWire.
@@ -78,6 +80,7 @@ pub enum Control {
     Bluetooth,
     Dnd,
     Dark,
+    NightLight,
     Brightness,
     Volume,
     Previous,
@@ -136,6 +139,11 @@ pub fn toggle_in(card: Rect, row: i32) -> Rect {
 /// The round toggle of the Do Not Disturb or Dark Mode tile: at its left, centred.
 pub fn tile_toggle(card: Rect) -> Rect {
     Rectangle::new((card.loc.x + 10, card.loc.y + (card.size.h - TOGGLE) / 2).into(), (TOGGLE, TOGGLE).into())
+}
+
+/// Night Light's small round toggle in the Display card: right of its title.
+pub fn night_toggle(card: Rect) -> Rect {
+    Rectangle::new((card.loc.x + card.size.w - 34, card.loc.y + 4).into(), (22, 22).into())
 }
 
 /// A slider card's track: under its title.
@@ -223,6 +231,7 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     let open = status.expanded == Some(Module::Sound) && !status.outputs.is_empty();
     let extra = if open { 2 * LIST_PAD + status.outputs.len() as i32 * LIST_ROW } else { 0 };
     let sound = slider(Control::Volume, status.volume.is_some(), extra, &mut y);
+    hits.extend(display.map(|c| (Control::NightLight, night_toggle(c))));
     let mut outputs = Vec::new();
     if let Some(c) = sound {
         hits.push((Control::SoundMore, Rectangle::new(c.loc, (c.size.w, 28).into())));
@@ -353,6 +362,7 @@ impl State {
             bluetooth,
             dnd: self.config.notifications.dnd,
             dark: crate::render::is_dark(&self.config.appearance),
+            night: self.night_light.on(&self.config.night_light),
             brightness: self.brightness,
             volume: self.sound.as_ref().map(|s| (s.output.volume, s.output.muted)),
             media: self.media.as_ref().map(|m| (m.title.clone(), m.artist.clone(), m.playing)),
@@ -453,6 +463,7 @@ impl State {
                     crate::theme::write_in_background(appearance.clone(), !nested);
                 }
             }
+            Control::NightLight => self.night_light.toggle(&self.config.night_light),
             Control::Brightness | Control::Volume => {
                 self.shell_drag = Some(control);
                 self.control_drag(location);
@@ -595,6 +606,7 @@ mod tests {
         let centre = |r: Rect| r.to_f64().loc + r.to_f64().size.downscale(2.0).to_point();
         assert_eq!(l.hit(centre(toggle_in(l.network, 1))), Some(Control::Bluetooth));
         assert_eq!(l.hit(centre(l.dark)), Some(Control::Dark));
+        assert_eq!(l.hit(centre(night_toggle(l.display.unwrap()))), Some(Control::NightLight));
         assert_eq!(l.hit(centre(media_buttons(l.media)[1])), Some(Control::PlayPause));
         assert_eq!(l.hit(centre(track_in(l.sound.unwrap()))), Some(Control::Volume));
     }
