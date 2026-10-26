@@ -40,6 +40,8 @@ pub struct Views {
     /// The banner sliding in, drawn apart from the stack under it.
     pub entering: NotificationViews,
     pub menu: MenuPopover,
+    /// The open menu's submenu.
+    pub submenu: MenuPopover,
     pub osd: OsdPopover,
     pub control: ControlCenter,
     pub alert: AlertSheet,
@@ -60,6 +62,8 @@ pub struct Views {
     pub lock: LockView,
     pub screenshot: ScreenshotView,
     pub desktop: DesktopView,
+    /// Other apps' widgets on the desktop (E8.8).
+    pub widgets: NotificationViews,
 }
 
 impl Views {
@@ -75,6 +79,7 @@ impl Views {
             notifications: NotificationViews::default(),
             entering: NotificationViews::default(),
             menu: MenuPopover::default(),
+            submenu: MenuPopover::default(),
             osd: OsdPopover::default(),
             control: ControlCenter::default(),
             alert: AlertSheet::default(),
@@ -93,6 +98,7 @@ impl Views {
             lock: LockView::default(),
             screenshot: ScreenshotView::default(),
             desktop: DesktopView::default(),
+            widgets: NotificationViews::default(),
         })
     }
 }

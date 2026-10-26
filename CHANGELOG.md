@@ -298,7 +298,7 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 - *(frame)* frame clock draws as late as safely possible before vblank, falls back after 3 misses (E1.10, E1.11)
 - *(decorations)* hovering any traffic light shows × – ⤢ on all three (E1.3, D2)
 - *(wm)* new windows fit the work area: bounds hint, and oversized ones are shrunk (E1.2)
-- *(decorations)* our macOS title bar with traffic lights, server-side via xdg-decoration and server-decoration (E1.3)
+- *(decorations)* our title bar with traffic lights, server-side via xdg-decoration and server-decoration (E1.3)
 - *(desktop)* wallpaper with built-in opal default (E1.5)
 - *(render)* glass, rounded-corner and shadow shaders (E1.4)
 - *(text)* cosmic-text labels with truncation and an LRU cache (E1.3)

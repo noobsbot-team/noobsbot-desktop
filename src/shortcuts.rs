@@ -71,6 +71,8 @@ pub enum Action {
     Eject,
     /// A row of the open tray menu, by dbusmenu id.
     TrayMenu(i32),
+    /// A click on tray item `i` from the "»" menu.
+    TrayItem(usize),
     /// Opens or closes Notification Center (Super+N).
     NotificationCenter,
     /// Opens or closes Spotlight (Super+Space, E4.3).
@@ -138,7 +140,7 @@ pub enum Action {
     Screenshot(crate::shell::screenshot::Start),
 }
 
-/// A volume or brightness key press, in percent (about macOS's 1/16 steps).
+/// A volume or brightness key press, in percent (about 1/16 steps).
 const STEP: u8 = 6;
 /// About a quarter of `STEP`.
 const FINE_STEP: u8 = 2;
@@ -412,6 +414,10 @@ impl State {
                     self.services.send(Command::TrayClicked { service: service.clone(), menu: menu.clone(), id });
                 }
             }
+            Action::TrayItem(i) => {
+                let at = self.seat.get_pointer().map(|p| self.to_output(p.current_location())).unwrap_or_default();
+                self.tray_press(i, at, false);
+            }
             Action::Power(power) => self.open_alert(power),
             Action::Switcher { back, held } => self.switcher_start(back, held),
             Action::ForceQuit => self.open_force_quit(),
@@ -428,7 +434,7 @@ impl State {
             Action::Volume(up) | Action::VolumeFine(up) => {
                 let Some(output) = self.sound.as_mut().map(|s| &mut s.output) else { return };
                 if up && output.muted {
-                    // As on macOS: turning it up unmutes.
+                    // Turning it up unmutes.
                     output.muted = false;
                     self.services.send(Command::Mute { output: true, muted: false });
                 }

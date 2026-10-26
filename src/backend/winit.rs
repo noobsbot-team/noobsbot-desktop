@@ -276,11 +276,13 @@ impl State {
         let dock_menu =
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
         let input_menu = self.input_menu_rows();
+        let overflow_menu = self.overflow_menu_rows();
         let update_ready = self.update_ready();
         let desktop_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Desktop)))
             .then(|| self.desktop_menu_rows())
             .and_then(|rows| Some((self.desktop_menu_anchor(&rows)?, rows)));
         let desktop_frame = self.desktop_frame();
+        let desktop_widgets = self.desktop_widgets();
         let drawer_frame = self.drawer_frame();
         let drawer_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Drawer)))
             .then(|| self.drawer_menu_rows())
@@ -295,6 +297,7 @@ impl State {
         let ripple = output_size.and_then(|size| self.ripple_frame(size));
         let animating = overview.as_ref().is_some_and(|o| o.animating) || slide.is_some() || ripple.is_some();
         let idle_shade = self.idle_shade();
+        let open_sub = self.open_submenu();
         let Views {
             shaders,
             wallpaper,
@@ -305,6 +308,7 @@ impl State {
             notifications,
             entering,
             menu,
+            submenu,
             osd,
             control,
             alert: sheet,
@@ -323,6 +327,7 @@ impl State {
             lock: lock_view,
             screenshot,
             desktop: desktop_view,
+            widgets: widget_view,
         } = self.backend.as_mut()?;
         // Wallpaper, layers, windows with rounded corners and shadows (E1.4, E1.5): see render::scene.
         let scale = output.current_scale().fractional_scale();
@@ -486,6 +491,7 @@ impl State {
                         batteries: &batteries,
                         dnd: self.config.notifications.dnd,
                         weather: self.weather.as_ref(),
+                        widgets: &crate::services::widgets::shown(&self.widgets, &self.config.widgets, false),
                     };
                     bar.extend(notifications.elements(
                         renderer,
@@ -517,12 +523,45 @@ impl State {
                         window_menu.clone().map(|(anchor, rows)| (rows, anchor)).unwrap_or((Vec::new(), crate::shell::Anchor::Below(0)))
                     }
                     _ => (
-                        if kind == crate::shell::Menu::Input { input_menu.clone() } else { crate::shell::menu_rows(kind, &app, tray, update_ready) },
-                        crate::shell::Anchor::Below(popup.item().and_then(|i| menu_bar.pill(i)).map_or(0, |r| r.loc.x)),
+                        match kind {
+                            crate::shell::Menu::Input => input_menu.clone(),
+                            crate::shell::Menu::Overflow => overflow_menu.clone(),
+                            _ => crate::shell::menu_rows(kind, &app, tray, update_ready),
+                        },
+                        // A tray item opened from "»" hangs from it.
+                        crate::shell::Anchor::Below(
+                            popup
+                                .item()
+                                .and_then(|i| menu_bar.pill(i))
+                                .or_else(|| menu_bar.pill(crate::render::menubar::BarItem::Overflow))
+                                .map_or(0, |r| r.loc.x),
+                        ),
                     ),
                 };
                 let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
-                bar.extend(menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, dark, accent, appearance.glass_opacity, scale));
+                let main =
+                    menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, open_sub, dark, accent, appearance.glass_opacity, scale);
+                // The submenu beside its row, in front of the menu.
+                let beside = open_sub.and_then(|i| Some((rows.get(i)?.as_ref()?.sub.clone(), menu.cell(i)?, menu.rect()?)));
+                if let Some((sub, row, parent)) = beside {
+                    let anchor =
+                        crate::shell::Anchor::Beside(smithay::utils::Rectangle::new((parent.loc.x, row.loc.y).into(), (parent.size.w, row.size.h).into()));
+                    bar.extend(submenu.elements(
+                        renderer,
+                        shaders,
+                        &mut self.text,
+                        &sub,
+                        anchor,
+                        size,
+                        hover,
+                        None,
+                        dark,
+                        accent,
+                        appearance.glass_opacity,
+                        scale,
+                    ));
+                }
+                bar.extend(main);
             }
             Some(Popup::Control) => {
                 if let Some(status) = &status {
@@ -666,6 +705,26 @@ impl State {
             let icons = desktop_view.elements(renderer, shaders, &mut self.text, &mut self.icons, frame, dark, accent, scale);
             let at = elements.len().saturating_sub(wallpaper.drawn);
             elements.splice(at..at, icons);
+        }
+        // Other apps' widgets (E8.8): with the icons, above the wallpaper.
+        if !desktop_widgets.is_empty() {
+            let widgets = crate::services::widgets::shown(&self.widgets, &self.config.widgets, true);
+            let view = View::Widgets { rects: &desktop_widgets, widgets: &widgets };
+            let cards = widget_view.elements(
+                renderer,
+                shaders,
+                &mut self.text,
+                &mut self.symbols,
+                view,
+                &self.notifications,
+                hour24,
+                dark,
+                accent,
+                appearance.glass_opacity,
+                scale,
+            );
+            let at = elements.len().saturating_sub(wallpaper.drawn);
+            elements.splice(at..at, cards);
         }
         // Locked (E6.4): only the lock screen, ours or a client's, over the wallpaper.
         // ponytail: the desktop's elements above are still built (cheap, and only on a redraw); skip them if a

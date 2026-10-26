@@ -94,7 +94,7 @@ screen_reader = false
 layout = ""
 variant = ""
 options = ""
-# Super acts as Cmd, like macOS: Super+C/V/X/Z/A/S/F/T/R/L/W/N/1…9 reach apps as Ctrl+… (plan E1.6, not applied yet).
+# Super acts as Cmd: Super+C/V/X/Z/A/S/F/T/R/L/W/N/1…9 reach apps as Ctrl+… (plan E1.6, not applied yet).
 mac_keys = false
 # Key repeat: held this many ms, then this many times a second (0 = no repeat).
 repeat_delay = 500
@@ -262,6 +262,11 @@ latitude = 0.0
 longitude = 0.0
 # "celsius" or "fahrenheit".
 units = "celsius"
+[widgets]
+# Widgets other apps show over D-Bus (org.noobsbot.Desktop.Widgets), by id. Notification Center shows them in this
+# order, then any not listed anywhere; ids in `desktop` show on the desktop instead.
+center = []
+desktop = []
 [calendar]
 # Events for Notification Center's Up Next, the calendar's dots and reminders: .ics files, folders, or "dir/*.ics".
 # Saved changes show at once. (CalDAV and Google calendars: later.)

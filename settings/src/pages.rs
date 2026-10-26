@@ -92,7 +92,7 @@ impl Page {
         matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery)
     }
 
-    /// A little space starts a new block in the sidebar, as in macOS.
+    /// A little space starts a new block in the sidebar.
     pub fn gap_before(self) -> bool {
         matches!(self, Page::Appearance | Page::Notifications | Page::General)
     }
@@ -786,7 +786,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         Page::Sound => {
             let mut parts = Vec::new();
             for (output, header, device, choices) in [(true, "Output", &status.output, &status.outputs), (false, "Input", &status.input, &status.inputs)] {
-                // More than one: pick the default, a check by the current one (macOS's device table).
+                // More than one: pick the default, a check by the current one.
                 if choices.len() > 1 {
                     let rows = choices
                         .iter()
@@ -1130,7 +1130,7 @@ impl std::fmt::Display for Rate {
     }
 }
 
-/// The scale presets (the common desktop and macOS steps).
+/// The scale presets (the common desktop steps).
 const SCALES: [f64; 5] = [1.0, 1.25, 1.5, 1.75, 2.0];
 
 /// `1.25` → `125%`, `1.333` → `133%`.

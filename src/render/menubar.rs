@@ -41,10 +41,19 @@ const APP_WIDTH: i32 = 300;
 const MIN_APP: i32 = 40;
 
 /// The width left for the app's name between the logo and the right group on a `width`-wide bar.
-// ponytail: only the left side gives way; a right group wider than the bar (portrait, many tray icons) still
-// overflows. Drop tray icons next if that shows up.
 pub fn app_room(width: i32, logo: i32, right: i32) -> i32 {
     width - 2 * EDGE - logo - LOGO_GAP - GAP - right
+}
+
+/// How many tray icons, from the left, go into the "»" item's menu so the app's name keeps `MIN_APP`: `fixed` is
+/// the rest of the right group, `tray` the icons' widths, `chevron` the "»"'s.
+pub fn tray_overflow(width: i32, logo: i32, fixed: i32, tray: &[i32], chevron: i32) -> usize {
+    (0..=tray.len())
+        .find(|&k| {
+            let more = if k > 0 { chevron + GAP } else { 0 };
+            app_room(width, logo, fixed + more + tray[k..].iter().map(|w| w + GAP).sum::<i32>()) >= MIN_APP
+        })
+        .unwrap_or(tray.len())
 }
 
 /// What the bar shows; `State::menu_bar` builds it from the service states.
@@ -67,6 +76,8 @@ pub enum BarItem {
     App,
     /// `Content::tray[i]`.
     Tray(usize),
+    /// "»": the tray icons that didn't fit.
+    Overflow,
     /// `Content::status[i]`.
     Status(usize),
     /// The keyboard layout / input method menu.
@@ -154,6 +165,8 @@ pub struct MenuBar {
     hits: Vec<(BarItem, Rect)>,
     /// The pressed pill behind the item whose popup is open, and what it was made for.
     pill: Option<((Rect, bool, u64), PixelShaderElement)>,
+    /// The first this many tray icons are in the "»" menu instead of on the bar.
+    overflow: usize,
 }
 
 impl MenuBar {
@@ -166,10 +179,15 @@ impl MenuBar {
         self.hits.iter().find(|(_, rect)| rect.to_f64().contains(location)).map(|(item, _)| *item)
     }
 
-    /// The pressed pill behind `item`: rounded, a little inside the bar's height (macOS). Menus line up with it.
+    /// The pressed pill behind `item`: rounded, a little inside the bar's height. Menus line up with it.
     pub fn pill(&self, item: BarItem) -> Option<Rect> {
         let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
         Some(Rectangle::new((area.loc.x + GAP / 2 - 6, 2).into(), (area.size.w - GAP + 12, HEIGHT - 4).into()))
+    }
+
+    /// How many tray icons, from the first, didn't fit and are in the "»" menu.
+    pub fn overflow(&self) -> usize {
+        self.overflow
     }
 
     /// The display name of app `id`, looked up once.
@@ -216,9 +234,7 @@ impl MenuBar {
         // laid out first: the app's name takes what is left of the bar, or goes when that is too little.
         let mut right = Vec::new();
         let px = (f64::from(SYMBOL) * scale).round() as u32;
-        for (i, images) in content.tray.iter().enumerate() {
-            right.push((icons.tray(images, px), GAP, BarItem::Tray(i)));
-        }
+        let tray: Vec<_> = content.tray.iter().map(|images| icons.tray(images, px)).collect();
         if let Some(code) = &content.input {
             right.push((text.label(code, Style { weight: 600, ..body }, 100, scale), GAP, BarItem::Input));
         }
@@ -232,8 +248,16 @@ impl MenuBar {
         right.push((text.label(&content.clock, body, 300, scale), 0, BarItem::Clock));
 
         let logical = |r: &Rendered| (f64::from(r.width) / scale).round() as i32;
-        let total: i32 = right.iter().map(|(piece, gap, _)| logical(piece) + gap).sum();
         let logo = symbols.get(Symbol::Logo, Weight::Regular, SYMBOL, scale, color);
+        // Tray icons that don't fit go into "»", at the left of the tray.
+        let fixed: i32 = right.iter().map(|(piece, gap, _)| logical(piece) + gap).sum();
+        let chevron = text.label("»", body, 100, scale);
+        let widths: Vec<i32> = tray.iter().map(|t| logical(t)).collect();
+        self.overflow = tray_overflow(width, logical(&logo), fixed, &widths, logical(&chevron));
+        let shown = tray.into_iter().enumerate().skip(self.overflow).map(|(i, icon)| (icon, GAP, BarItem::Tray(i)));
+        let more = (self.overflow > 0).then_some((chevron, GAP, BarItem::Overflow));
+        right = more.into_iter().chain(shown).chain(right).collect();
+        let total: i32 = right.iter().map(|(piece, gap, _)| logical(piece) + gap).sum();
         let room = app_room(width, logical(&logo), total);
         let mut left = vec![(logo, LOGO_GAP, BarItem::Logo)];
         if let Some(app) = content.app.as_ref().filter(|_| room >= MIN_APP) {
@@ -359,6 +383,19 @@ mod tests {
         assert!(reveals(true, 20.0), "shown: it stays while the pointer is on it");
         assert!(!reveals(true, 30.0));
         assert!(!reveals(true, -1.0), "above the display: another one's bottom");
+    }
+
+    #[test]
+    fn tray_icons_overflow_from_the_left() {
+        let tray = [16, 16, 16, 16];
+        // Room for all: none hidden.
+        assert_eq!(tray_overflow(1280, 16, 400, &tray, 10), 0);
+        // Tight: just enough go that the name keeps its minimum beside the "»".
+        let fixed = 1024 - 2 * EDGE - 16 - LOGO_GAP - GAP - MIN_APP - (10 + GAP) - 2 * (16 + GAP);
+        assert_eq!(tray_overflow(1024, 16, fixed, &tray, 10), 2);
+        // Nothing fits even with every icon gone: all of them are in the menu.
+        assert_eq!(tray_overflow(600, 16, 700, &tray, 10), 4);
+        assert_eq!(tray_overflow(600, 16, 700, &[], 10), 0);
     }
 
     #[test]
