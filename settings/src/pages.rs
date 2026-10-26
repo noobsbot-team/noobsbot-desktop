@@ -29,6 +29,7 @@ pub enum Page {
     Keyboard,
     Mouse,
     Trackpad,
+    Printers,
     DateTime,
     Spaces,
     Notifications,
@@ -41,7 +42,7 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 19] = [
+    pub const ALL: [Page; 20] = [
         Page::Network,
         Page::Bluetooth,
         Page::Sound,
@@ -52,6 +53,7 @@ impl Page {
         Page::Keyboard,
         Page::Mouse,
         Page::Trackpad,
+        Page::Printers,
         Page::DateTime,
         Page::Spaces,
         Page::Notifications,
@@ -75,6 +77,7 @@ impl Page {
             Page::Keyboard => "Keyboard",
             Page::Mouse => "Mouse",
             Page::Trackpad => "Trackpad",
+            Page::Printers => "Printers",
             Page::DateTime => "Date & Time",
             Page::Spaces => "Spaces",
             Page::Notifications => "Notifications",
@@ -120,6 +123,8 @@ impl Page {
             Page::Keyboard => ("keyboard", 0x8E8E93),
             Page::Mouse => ("mouse-simple", 0x8E8E93),
             Page::Trackpad => ("cursor-click", 0x8E8E93),
+            // No printer among the symbols: the nearest, a plugged-in device.
+            Page::Printers => ("plugs-connected", 0x8E8E93),
             Page::DateTime => ("clock", 0x007AFF),
             Page::Spaces => ("squares-four", 0x5856D6),
             Page::Notifications => ("bell", 0xFF3B30),
@@ -163,6 +168,7 @@ symbols![
     "info",
     "magnifying-glass",
     "user-circle",
+    "plugs-connected",
     "check",
 ];
 
@@ -1457,6 +1463,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         }
         Page::Appearance => vec![gallery(app)],
         Page::Users => users_part(app),
+        Page::Printers => printers_part(app),
         _ => Vec::new(),
     }
 }
@@ -1721,6 +1728,71 @@ fn gallery(app: &App) -> Element<'_, Message> {
         rows.push(line(t, "Folder", "", row![field, save].spacing(8).align_y(Alignment::Center).into()));
     }
     group(t, "Wallpaper", rows)
+}
+
+/// Printers: each CUPS queue with its state, Options… for default, test page, removal and its jobs; Add Printer….
+fn printers_part(app: &App) -> Vec<Element<'_, Message>> {
+    use crate::printers::{Act, suggest_name};
+    let t = app.tokens;
+    // Still reading.
+    let Some(found) = &app.printers else { return Vec::new() };
+    let Some(cups) = found else { return vec![note(t, "CUPS isn't installed: printing needs the cups package.")] };
+    let push = |label: &'static str, message: Message| button(text(label).size(12)).padding([3, 10]).style(t.push(false)).on_press(message);
+    let mut rows = Vec::new();
+    for p in &cups.printers {
+        let open = app.printer.as_ref() == Some(&p.name);
+        let state = if p.default { format!("{} · Default", p.state.name()) } else { p.state.name().to_owned() };
+        let more = push(if open { "Done" } else { "Options…" }, Message::SelectPrinter((!open).then(|| p.name.clone())));
+        rows.push(line(t, p.name.as_str(), "", row![text(state).size(12).color(t.secondary()), more].spacing(8).align_y(Alignment::Center).into()));
+        if !open {
+            continue;
+        }
+        let default: Element<'_, Message> = match p.default {
+            true => text("This printer").size(13).color(t.secondary()).into(),
+            false => push("Set as Default", Message::PrinterAct(Act::Default(p.name.clone()))).into(),
+        };
+        rows.push(line(t, "Default printer", "", default));
+        rows.push(line(t, "Test page", "", push("Print Test Page", Message::PrinterAct(Act::TestPage(p.name.clone()))).into()));
+        let jobs: Vec<_> = cups.jobs.iter().filter(|j| j.printer == p.name).collect();
+        if jobs.is_empty() {
+            rows.push(fact(t, "Queue", "No jobs".into()));
+        }
+        for j in jobs {
+            let words = format!("{} · {} · {} KB", j.id, j.user, j.size.div_ceil(1024));
+            rows.push(line(t, words, "", push("Cancel", Message::PrinterAct(Act::Cancel(j.id.clone()))).into()));
+        }
+        rows.push(line(t, "", "", push("Remove Printer", Message::PrinterAct(Act::Remove(p.name.clone()))).into()));
+    }
+    let mut parts = vec![if rows.is_empty() { note(t, "No printers yet.") } else { group(t, "Printers", rows) }];
+    match &app.devices {
+        None => parts.push(row![space().width(Length::Fill), push("Add Printer…", Message::AddPrinter(true))].into()),
+        Some(devices) => {
+            let mut rows = match devices {
+                None => vec![fact(t, "Looking for printers…", String::new())],
+                Some(found) if found.is_empty() => vec![fact(t, "None found nearby", String::new())],
+                Some(found) => found
+                    .iter()
+                    .map(|uri| {
+                        let words = column![text(suggest_name(uri)).size(13), text(uri.as_str()).size(11).color(t.secondary())].spacing(2);
+                        let add = push("Add", Message::PrinterAct(Act::Add(suggest_name(uri), uri.clone())));
+                        row![words.width(Length::Fill), add].spacing(12).align_y(Alignment::Center).padding([8, 12]).into()
+                    })
+                    .collect(),
+            };
+            let typed = app.texts.get(crate::printers::URI).map_or("", String::as_str);
+            let uri = text_input("ipp://printer.local/ipp/print", typed)
+                .on_input(|v| Message::Type(crate::printers::URI.into(), v))
+                .on_submit(Message::PrinterAct(Act::Add(suggest_name(typed.trim()), typed.trim().to_owned())))
+                .size(13)
+                .padding([3, 8])
+                .width(260)
+                .style(t.input(false));
+            rows.push(line(t, "Address", "A driverless (IPP Everywhere) printer's URI; press Return", uri.into()));
+            parts.push(group(t, "Add Printer", rows));
+            parts.push(row![space().width(Length::Fill), push("Done", Message::AddPrinter(false))].into());
+        }
+    }
+    parts
 }
 
 /// Users: who is signed in, with their picture and names, then everyone else, and Add User….
@@ -2348,6 +2420,7 @@ mod tests {
         assert_eq!(Page::parse("battery"), Some(Page::Battery));
         assert_eq!(Page::parse("privacy-security"), Some(Page::Privacy));
         assert_eq!(Page::parse("users"), Some(Page::Users));
+        assert_eq!(Page::parse("printers"), Some(Page::Printers));
         assert_eq!(Page::parse("nope"), None);
     }
 
