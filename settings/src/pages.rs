@@ -231,6 +231,7 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Sound, "Sound Effects", "sound.alert", "Alert sound", "Played when an app rings the bell", Kind::Sound),
     s(Page::Sound, "Sound Effects", "sound.alert_volume", "Alert volume", "", Kind::Slider { min: 0.0, max: 100.0, step: 5.0 }),
     s(Page::Sound, "Sound Effects", "sound.ui_sounds", "Play user interface sound effects", "Screenshots, emptying the Trash, volume keys", Kind::Toggle),
+    s(Page::Sound, "Sound Effects", "sound.startup_sound", "Play sound on startup", "Once each time you log in", Kind::Toggle),
     s(
         Page::Appearance,
         "",
