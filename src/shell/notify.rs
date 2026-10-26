@@ -144,6 +144,8 @@ pub struct Card {
     pub title: Rect,
     pub body: Rect,
     pub progress: Option<Rect>,
+    /// The body is shown (`[notifications] previews`).
+    pub preview: bool,
     /// The ✕ on the top-left corner, while hovered.
     pub close: Option<Rect>,
     /// Action buttons, while hovered: (rect, key).
@@ -151,10 +153,11 @@ pub struct Card {
 }
 
 /// A card for `n` at (`x`, `y`), `w` wide; hovered, it shows the ✕ (when `close`) and its buttons.
-pub fn card(n: &Notification, x: i32, y: i32, w: i32, hovered: bool, close: bool) -> Card {
+/// Without `preview` the body stays hidden (`[notifications] previews`).
+pub fn card(n: &Notification, x: i32, y: i32, w: i32, hovered: bool, close: bool, preview: bool) -> Card {
     let r = |dx: i32, dy: i32, rw: i32, rh: i32| Rectangle::new((x + dx, y + dy).into(), (rw, rh).into());
     let text_w = w - TEXT_X - PAD;
-    let lines = i32::from(n.body_lines.min(2));
+    let lines = if preview { i32::from(n.body_lines.min(2)) } else { 0 };
     // Text rows grow with the text size; the icon and the side padding stay.
     let (line, top, button_h) = (ts(LINE), ts(26), ts(BUTTON_H));
     let mut bottom = top + line + lines * line;
@@ -180,18 +183,19 @@ pub fn card(n: &Notification, x: i32, y: i32, w: i32, hovered: bool, close: bool
         title: r(TEXT_X, top, text_w, line),
         body: r(TEXT_X, top + line, text_w, lines * line),
         progress,
+        preview,
         close: (hovered && close).then(|| r(-6, -6, CLOSE, CLOSE)),
         actions,
     }
 }
 
 /// The banners on screen (newest on top), and the "+N more" pill under them when there are more than 3.
-pub fn banners(store: &Store, output_width: i32, osd: bool) -> (Vec<Card>, Option<(Rect, usize)>) {
+pub fn banners(store: &Store, output_width: i32, osd: bool, preview: bool) -> (Vec<Card>, Option<(Rect, usize)>) {
     let x = output_width - BANNER_RIGHT - BANNER_W;
     let mut y = menubar::height() + BANNER_TOP + if osd { OSD_SHIFT } else { 0 };
     let mut cards = Vec::new();
     for n in store.banners.iter().filter_map(|id| store.get(*id)).take(MAX_BANNERS) {
-        let card = card(n, x, y, BANNER_W, store.hovered == Some(n.id), true);
+        let card = card(n, x, y, BANNER_W, store.hovered == Some(n.id), true, preview);
         y += card.rect.size.h + GAP;
         cards.push(card);
     }
@@ -248,9 +252,20 @@ impl Center {
 }
 
 /// Notification Center for `store` on an `output`-sized screen, with `rows` calendar weeks, `up_next` upcoming
-/// events, `batteries` batteries, maybe the Weather widget and other apps' widgets (`true`: medium).
+/// events, `batteries` batteries, maybe the Weather widget and other apps' widgets (`true`: medium), bodies shown
+/// with `preview`.
 #[expect(clippy::too_many_arguments, reason = "one count per section")]
-pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize, up_next: usize, batteries: usize, weather: bool, widgets: &[bool]) -> Center {
+pub fn center(
+    store: &Store,
+    output: Size<i32, Logical>,
+    dnd: bool,
+    rows: usize,
+    up_next: usize,
+    batteries: usize,
+    weather: bool,
+    widgets: &[bool],
+    preview: bool,
+) -> Center {
     let x = output.w - MARGIN - CENTER_W;
     let top = menubar::height() + DROP;
     let rect = Rectangle::new((x, top).into(), (CENTER_W, (output.h - top - MARGIN).max(100)).into());
@@ -283,12 +298,12 @@ pub fn center(store: &Store, output: Size<i32, Logical>, dnd: bool, rows: usize,
             group.header = Some((row(inner_x + 4, y + ts(3), 200, ts(16)), row(inner_x + inner_w - ts(84), y, ts(84), head)));
             y += head + 8;
             for n in ids.iter().filter_map(|id| store.get(*id)) {
-                let card = card(n, inner_x, y, inner_w, store.hovered == Some(n.id), true);
+                let card = card(n, inner_x, y, inner_w, store.hovered == Some(n.id), true, preview);
                 y += card.rect.size.h + GAP;
                 group.cards.push(card);
             }
         } else if let Some(n) = store.get(ids[0]) {
-            let card = card(n, inner_x, y, inner_w, store.hovered == Some(n.id), false);
+            let card = card(n, inner_x, y, inner_w, store.hovered == Some(n.id), false, preview);
             let bottom = card.rect.loc.y + card.rect.size.h;
             group.close = group_hovered.then(|| row(inner_x - 6, y - 6, CLOSE, CLOSE));
             group.plate = (ids.len() > 1).then(|| row(inner_x + 10, bottom - 8, inner_w - 20, 8 + ts(PLATE)));
@@ -425,7 +440,7 @@ impl State {
         if self.center_open() {
             return (Vec::new(), None);
         }
-        banners(&self.notifications, self.output_size().w, self.osd.is_some())
+        banners(&self.notifications, self.output_size().w, self.osd.is_some(), self.previews())
     }
 
     /// Laptop battery, then Bluetooth devices that report one: (name, percent).
@@ -453,7 +468,12 @@ impl State {
         let up_next = self.calendar_view(year, month, self.config.clock.week_start.into()).1.len();
         let widgets: Vec<bool> = self.shown_widgets(false).iter().map(|w| w.medium).collect();
         let (dnd, batteries, weather) = (self.config.notifications.dnd, self.batteries().len(), self.weather.is_some());
-        Some(center(&self.notifications, self.output_size(), dnd, rows, up_next, batteries, weather, &widgets))
+        Some(center(&self.notifications, self.output_size(), dnd, rows, up_next, batteries, weather, &widgets, self.previews()))
+    }
+
+    /// Bodies shown: `[notifications] previews`, and whether the screen is locked.
+    fn previews(&self) -> bool {
+        self.config.notifications.previews.show(self.locked())
     }
 
     /// A notification from an app: dropped if its app is off (`[notification_apps]`), else stored, and shown as a
@@ -785,6 +805,14 @@ mod tests {
     }
 
     #[test]
+    fn previews_off_hide_the_body() {
+        let n = Notification { body_lines: 2, ..note(1, "Mail") };
+        let (shown, hidden) = (card(&n, 0, 0, BANNER_W, false, false, true), card(&n, 0, 0, BANNER_W, false, false, false));
+        assert!(shown.preview && shown.body.size.h > 0);
+        assert!(!hidden.preview && hidden.body.size.h == 0 && hidden.rect.size.h < shown.rect.size.h);
+    }
+
+    #[test]
     fn banner_times() {
         assert_eq!(banner_time(&note(1, "A")), Some(BANNER_TIME));
         assert_eq!(banner_time(&Notification { expire: 1500, ..note(1, "A") }), Some(Duration::from_millis(1500)));
@@ -799,7 +827,7 @@ mod tests {
             store.insert(note(id, "A"));
             store.banners.insert(0, id);
         }
-        let (cards, more) = banners(&store, 1280, false);
+        let (cards, more) = banners(&store, 1280, false, true);
         assert_eq!(cards.len(), 3);
         assert_eq!(cards[0].id, 5);
         assert_eq!(cards[0].rect, Rectangle::new((1280 - 12 - 344, 32).into(), (344, 70).into()));
@@ -807,13 +835,13 @@ mod tests {
         assert_eq!(more.map(|(_, n)| n), Some(2));
         assert!(cards.iter().all(|c| c.rect.contains_rect(c.icon) && c.rect.contains_rect(c.body) && c.close.is_none()));
         // The OSD (top 28, 48 tall) never overlaps the first banner.
-        let (moved, _) = banners(&store, 1280, true);
+        let (moved, _) = banners(&store, 1280, true, true);
         assert_eq!(moved[0].rect.loc.y, 32 + 56);
         assert!(!moved[0].rect.overlaps(super::super::osd_rect(1280)));
         // Hovered: the ✕ and the buttons appear, and the card grows to hold them.
         store.list[4].actions = vec![("default".into(), "Open".into()), ("reply".into(), "Reply".into())];
         store.hovered = Some(5);
-        let (cards, _) = banners(&store, 1280, false);
+        let (cards, _) = banners(&store, 1280, false, true);
         assert_eq!(cards[0].actions.len(), 1);
         assert!(cards[0].close.is_some() && cards[0].rect.contains_rect(cards[0].actions[0].0));
         assert_eq!(banner_hit(&cards, more, cards[0].actions[0].0.to_f64().loc + Point::from((2.0, 2.0))), Some((Some(5), false, Some("reply".into()))));
@@ -827,7 +855,7 @@ mod tests {
             store.banners.insert(0, id);
         }
         store.hovered = Some(3);
-        let lay = || (banners(&store, 1280, false).0, center(&store, Size::from((1280, 3000)), true, 6, 2, 2, true, &[true, false]));
+        let lay = || (banners(&store, 1280, false, true).0, center(&store, Size::from((1280, 3000)), true, 6, 2, 2, true, &[true, false], true));
         let (small, small_c) = lay();
         let (big, big_c) = crate::text::with_scale(1.5, lay);
         // Line heights at 1.5: headline and body 24, subheadline 21, caption 20 (19.5 rounded), title3 30.
@@ -870,7 +898,7 @@ mod tests {
             store.insert(note(id, app));
         }
         let size = Size::from((1280, 720));
-        let center = center(&store, size, true, 5, 0, 1, true, &[true]);
+        let center = center(&store, size, true, 5, 0, 1, true, &[true], true);
         assert_eq!(center.rect, Rectangle::new((1280 - 8 - 360, 28).into(), (360, 720 - 28 - 8).into()));
         assert_eq!(center.groups.iter().map(|g| (g.app.as_str(), g.count, g.cards.len())).collect::<Vec<_>>(), vec![("A", 3, 1), ("B", 1, 1)]);
         assert!(center.groups[0].plate.is_some() && center.groups[1].plate.is_none());
@@ -880,25 +908,25 @@ mod tests {
         assert!(weather.loc.y > center.calendar.0.loc.y && center.batteries.as_ref().unwrap().0.loc.y == weather.loc.y + WEATHER_H + GAP);
         let at = |r: Rect| r.to_f64().loc + Point::from((3.0, 3.0));
         assert_eq!(center.widgets[0].loc.y, center.batteries.as_ref().unwrap().0.loc.y + 68 + GAP);
-        let tall = super::center(&store, Size::from((1280, 2000)), true, 5, 0, 1, true, &[true]);
+        let tall = super::center(&store, Size::from((1280, 2000)), true, 5, 0, 1, true, &[true], true);
         assert_eq!(center_hit(&tall, at(tall.widgets[0])), Some(Hit::Widget(0)));
         assert_eq!(center_hit(&center, at(center.groups[0].cards[0].rect)), Some(Hit::Expand("A".into())));
         assert_eq!(center_hit(&center, at(center.groups[1].cards[0].rect)), Some(Hit::Card(2)));
         assert_eq!(center_hit(&center, at(center.header.unwrap().1)), Some(Hit::ClearAll));
         // Opened out: every card, newest first, and Show Less.
         store.expanded = Some("A".into());
-        let open = super::center(&store, size, false, 5, 0, 0, false, &[]);
+        let open = super::center(&store, size, false, 5, 0, 0, false, &[], true);
         assert_eq!(open.groups[0].cards.iter().map(|c| c.id).collect::<Vec<_>>(), vec![4, 3, 1]);
         assert_eq!(center_hit(&open, at(open.groups[0].header.unwrap().1)), Some(Hit::Collapse));
         // Too tall for a short screen: it scrolls, and what scrolled out is not hit.
-        let short = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false, &[]);
+        let short = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false, &[], true);
         assert!(short.max_scroll > 0);
         store.scroll = short.max_scroll;
-        let scrolled = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false, &[]);
+        let scrolled = super::center(&store, Size::from((1280, 400)), false, 5, 0, 0, false, &[], true);
         assert!(!scrolled.visible(scrolled.date));
         assert!(scrolled.visible(scrolled.calendar.0));
         // Up Next sits above the calendar, its rows inside its card.
-        let next = super::center(&store, size, false, 5, 2, 0, false, &[]);
+        let next = super::center(&store, size, false, 5, 2, 0, false, &[], true);
         let (card, rows) = next.up_next.clone().unwrap();
         assert!(rows.len() == 2 && rows.iter().all(|r| card.contains_rect(*r)) && !rows[0].overlaps(rows[1]));
         assert!(card.loc.y + card.size.h < next.calendar.0.loc.y);
