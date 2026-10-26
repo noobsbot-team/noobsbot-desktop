@@ -1448,6 +1448,12 @@ fn input_sources(app: &App) -> Vec<Element<'_, Message>> {
     if rows.is_empty() {
         rows.push(fact(t, "The system's layout", String::new()));
     }
+    // fcitx5's methods, switched with its own key.
+    for (id, name) in app.methods.iter().flat_map(|m| &m.chosen) {
+        let remove = container(small("−", Some(Message::Method(id.clone(), false)))).padding(2).style(t.field());
+        let kind = text("Input method").size(12).color(t.secondary());
+        rows.push(line(t, name.as_str(), "", row![kind, remove].spacing(8).align_y(Alignment::Center).into()));
+    }
     let add = if app.picker.is_some() { small("Done", Some(Message::Picker(None))) } else { small("+", Some(Message::Picker(Some(String::new())))) };
     rows.push(line(t, "Add an input source", "", add.into()));
     let mut parts = vec![group(t, "Input Sources", rows)];
@@ -1468,9 +1474,27 @@ fn input_sources(app: &App) -> Vec<Element<'_, Message>> {
                 button(text(&source.name).size(13)).padding([6, 12]).width(Length::Fill).style(t.sidebar_row(false)).on_press(Message::Sources(list)).into(),
             );
         }
+        match &app.methods {
+            Some(methods) => {
+                for (id, name) in methods.offered.iter().filter(|(id, name)| query.is_empty() || name.to_lowercase().contains(&query) || *id == query).take(40)
+                {
+                    let label = row![text(name).size(13), space().width(Length::Fill), text("Input method").size(12).color(t.secondary())];
+                    picks.push(
+                        button(label).padding([6, 12]).width(Length::Fill).style(t.sidebar_row(false)).on_press(Message::Method(id.clone(), true)).into(),
+                    );
+                }
+            }
+            // ponytail: fcitx5's own files aren't edited; its controller is the only way in.
+            None if fcitx_installed() => picks.push(fact(t, "Start fcitx5 to add its input methods (Pinyin, Mozc…) here", String::new())),
+            None => {}
+        }
         parts.push(group(t, "", picks));
     }
     parts
+}
+
+fn fcitx_installed() -> bool {
+    std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join("fcitx5").is_file()))
 }
 
 /// `eDP-1` → `Built-in display`, `winit` → `Nested window`, `HDMI-A-1` → `HDMI-A-1`.
