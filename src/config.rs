@@ -949,7 +949,9 @@ impl Default for Battery {
 #[serde(default)]
 pub struct Idle {
     pub dim: u32,
+    /// The screen turns off: on the power adapter, and on battery.
     pub screen_off: u32,
+    pub screen_off_on_battery: u32,
     pub sleep_on_battery: u32,
     pub sleep_on_ac: u32,
     /// Lock when the screen turns off.
@@ -962,7 +964,16 @@ pub struct Idle {
 
 impl Default for Idle {
     fn default() -> Self {
-        Self { dim: 120, screen_off: 300, sleep_on_battery: 900, sleep_on_ac: 0, lock: true, lock_delay: 0, lock_message: String::new() }
+        Self {
+            dim: 120,
+            screen_off: 300,
+            screen_off_on_battery: 180,
+            sleep_on_battery: 900,
+            sleep_on_ac: 0,
+            lock: true,
+            lock_delay: 0,
+            lock_message: String::new(),
+        }
     }
 }
 
