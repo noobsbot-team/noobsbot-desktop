@@ -229,7 +229,9 @@ const fn s(page: Page, group: &'static str, key: &'static str, label: &'static s
 /// Every setting in `config.toml` (`data/config.toml`), in page order.
 pub const SETTINGS: &[Setting] = &[
     s(Page::Sound, "Sound Effects", "sound.alert", "Alert sound", "Played when an app rings the bell", Kind::Sound),
+    s(Page::Sound, "Sound Effects", "sound.alert_volume", "Alert volume", "", Kind::Slider { min: 0.0, max: 100.0, step: 5.0 }),
     s(Page::Sound, "Sound Effects", "sound.ui_sounds", "Play user interface sound effects", "Screenshots, emptying the Trash, volume keys", Kind::Toggle),
+    s(Page::Sound, "Sound Effects", "sound.startup_sound", "Play sound on startup", "Once each time you log in", Kind::Toggle),
     s(
         Page::Appearance,
         "",
@@ -623,7 +625,7 @@ fn shown(key: &str, value: f64) -> String {
         "dock.icon_size" | "appearance.pointer_size" => format!("{value:.0} px"),
         "appearance.text_scale" => format!("{:.0}%", value * 100.0),
         "windows.spaces" if whole(key, value) == 0 => "Dynamic".into(),
-        "sound.output" | "sound.input" | "keyboard.backlight" | "display.brightness" => format!("{value:.0}%"),
+        "sound.output" | "sound.input" | "sound.alert_volume" | "keyboard.backlight" | "display.brightness" => format!("{value:.0}%"),
         "sound.balance" if value.abs() < 0.5 => "Centre".into(),
         "sound.balance" => format!("{} {:.0}", if value < 0.0 { "L" } else { "R" }, value.abs()),
         "keyboard.repeat_rate" if value < 1.0 => "Off".into(),
