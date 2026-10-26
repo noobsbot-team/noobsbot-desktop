@@ -8,6 +8,29 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/noobsbot-team/noobsbot-desktop/compare/v0.4.1...v0.5.0) - 2026-10-26
+
+### Added
+
+- *(install)* Debian 13 support, with Auto and Advanced modes
+
+### Fixed
+
+- *(install)* allow staged test runs as root
+- *(update)* name the release tarball after the CPU arch
+- *(apps)* find icons in a theme dir that has no index.theme
+- *(idle)* new idle times apply without waiting for input
+- *(lock)* darken the wallpaper on every display while locked
+- *(displays)* bring back a window left mostly on an unplugged display
+
+### Other
+
+- *(debian)* install dbus-daemon for the polkit agent test
+- *(vm)* stop the chipset watchdog resetting the guest after suspend
+- *(vm)* keep the GPU's framebuffers across suspend (no-soft-reset PCIe port)
+- *(vm)* relative mouse moves and drags across displays
+- *(vm)* a second display the tests can plug and unplug (HEADS=2, head.py)
+
 ## [0.4.1](https://github.com/anil0403/noobsbot-desktop/compare/v0.4.0...v0.4.1) - 2026-10-20
 
 ### Other
