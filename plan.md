@@ -1608,18 +1608,18 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 ### E8.1 Settings that do nothing today (fix first, S each)
 | Gap | Where | Fix |
 |---|---|---|
-| `[windows] double_click_title` is shown in Settings but ignored | `src/decorations.rs` always zooms | honour Zoom / Minimize / Nothing |
-| `[windows] snapping` is on by default, has a toggle and a README line, but nothing reads it | `src/config.rs` | build E8.5 tiling, or hide the toggle until then |
-| `[keyboard] mac_keys` toggle is parsed but never applied | `src/config.rs` only | implement the E1.6 swap or hide the toggle |
-| Window rule `opacity` is documented but not drawn | `src/state.rs` ponytail note | apply it in the renderer or drop it from the docs |
-| Minimise from apps that draw their own title bar (GTK4, libadwaita) does nothing | no `minimize_request` handler | route it to `minimise` |
-| Trackpad tap-to-click and natural scroll apply only when the device is re-plugged | `src/backend/udev.rs` | re-configure devices on config reload |
-| Green traffic light zooms; E5.1 says full screen (Alt = zoom) | `src/decorations.rs` | decide, then fix code or plan |
+| ~~`[windows] double_click_title` is shown in Settings but ignored~~ | `src/decorations.rs` | Done: Zoom / Minimise / Nothing honoured |
+| ~~`[windows] snapping` is on by default, has a toggle and a README line, but nothing reads it~~ | `src/grabs.rs` | Done: gates edge tiling while dragging (E8.5) |
+| `[keyboard] mac_keys` toggle is parsed but never applied | `src/config.rs` only | implement the E1.6 swap or hide the toggle. Partly: no Settings row any more; the key is still parsed and unused |
+| ~~Window rule `opacity` is documented but not drawn~~ | `src/render/mod.rs` | Done: fades the app's content; title bar and shadow stay solid |
+| ~~Minimise from apps that draw their own title bar (GTK4, libadwaita) does nothing~~ | `src/state.rs` | Done: `minimize_request` calls `minimise` |
+| ~~Trackpad tap-to-click and natural scroll apply only when the device is re-plugged~~ | `src/backend/udev.rs` | Done: `configure_inputs` re-applies trackpad and mouse settings on reload |
+| ~~Green traffic light zooms; E5.1 says full screen (Alt = zoom)~~ | `src/decorations.rs` | Done: green is full screen, Alt+green zooms |
 | Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow | `src/gestures.rs` | drive the transitions from the gesture progress |
-| Logo menu "System Settings…" and "About This Computer" rows are disabled | `src/shell/mod.rs` | open the Settings app (at About) |
-| Do Not Disturb is lost on restart | `src/shell/control.rs` | save it in `config.toml` |
+| ~~Logo menu "System Settings…" and "About This Computer" rows are disabled~~ | `src/shell/mod.rs` | Done: open Settings at Appearance / About |
+| ~~Do Not Disturb is lost on restart~~ | `src/shell/control.rs` | Done: saved as `[notifications] dnd` |
 | Menu bar, dock, Spaces, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one) | `src/backend/winit.rs`, `src/shell/notify.rs` | per display, notifications on the main display |
-| `show-desktop` has no default key | `data/config.toml` | Super+F11 |
+| ~~`show-desktop` has no default key~~ | `data/config.toml` | Done: Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
 Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers (later)**. Every row writes `config.toml` or
