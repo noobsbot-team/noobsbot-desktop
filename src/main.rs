@@ -465,7 +465,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         Some("osd") => state.osd = Some(shell::Osd { symbol: symbols::Symbol::SpeakerHigh, level: Some(65), text: None }),
         // The dock zoomed as if the pointer were over it, left of centre.
         Some("dock-zoom") => {
-            let size = state.space.outputs().next().and_then(|o| state.space.output_geometry(o)).map(|g| g.size).unwrap_or_default();
+            let size = state.first_geometry().unwrap_or_default().size;
             state.dock_pointer = Some((f64::from(size.w) / 2.0 - 60.0, f64::from(size.h) - 40.0).into());
         }
         // Sample LauncherEntry counts and progress bars on the default pins.
