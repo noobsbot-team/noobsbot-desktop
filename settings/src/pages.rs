@@ -462,6 +462,22 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Battery, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
+    s(
+        Page::General,
+        "Storage",
+        "housekeeping.empty_trash_days",
+        "Empty Trash items",
+        "Deleted for good this long after going to the Trash",
+        Kind::Steps(&[(0, "Never"), (7, "After 7 days"), (30, "After 30 days"), (90, "After 90 days")]),
+    ),
+    s(
+        Page::General,
+        "Storage",
+        "housekeeping.recent_days",
+        "Forget recent files",
+        "Older entries leave Recent Items",
+        Kind::Steps(&[(0, "Never"), (7, "After 7 days"), (30, "After 30 days"), (90, "After 90 days")]),
+    ),
     s(Page::General, "Software Update", "check_updates", "Check for updates daily", "Sends nothing but the version; installs at next login", Kind::Toggle),
     s(Page::General, "Session", "windows.reopen_at_login", "Reopen windows when logging back in", "Also the Log Out alert's checkbox", Kind::Toggle),
 ];

@@ -558,6 +558,8 @@ impl State {
             } else if let Some(url) = self.update.as_ref().map(|r| r.url.clone()) {
                 self.spawn(&["xdg-open".into(), url]);
             }
+        } else if id == crate::housekeep::LOW_DISK {
+            self.spawn(&["noobsbot-desktop-settings".into(), "--page".into(), "general".into()]);
         } else if !self.disk_action(id, &key) {
             self.services.send(Command::NotificationAction { id, key });
         }
