@@ -1,5 +1,5 @@
 //! The desktop's own bus name (`org.noobsbot.Desktop`): `Shortcuts.Record` lets Settings capture keys the desktop
-//! would otherwise take (E8.7).
+//! would otherwise take (E8.7); `Displays` lets the Displays page set the brightness and identify the screens.
 
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
@@ -24,9 +24,27 @@ impl Server {
     }
 }
 
-/// Serves the interface; a second desktop on the same bus (nested in a session of ours) leaves the name to the first.
+struct Displays {
+    updates: Sender<Update>,
+}
+
+#[zbus::interface(name = "org.noobsbot.Desktop.Displays")]
+impl Displays {
+    /// The built-in panel's brightness, in percent (through logind, as the brightness keys do).
+    fn set_brightness(&self, percent: u8) {
+        let _ = self.updates.send(Update::SetBrightness(percent));
+    }
+
+    /// Every display shows its name for 2 s.
+    fn identify(&self) {
+        let _ = self.updates.send(Update::Identify);
+    }
+}
+
+/// Serves the interfaces; a second desktop on the same bus (nested in a session of ours) leaves the name to the first.
 pub async fn serve(bus: &Connection, updates: &Sender<Update>) {
-    if let Err(err) = bus.object_server().at(PATH, Server { updates: updates.clone() }).await {
+    let server = bus.object_server();
+    if let Err(err) = server.at(PATH, Server { updates: updates.clone() }).await.and(server.at(PATH, Displays { updates: updates.clone() }).await) {
         return tracing::warn!("shortcut recording off: {err}");
     }
     match bus.request_name_with_flags(NAME, RequestNameFlags::DoNotQueue.into()).await {

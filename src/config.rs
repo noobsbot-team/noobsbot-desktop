@@ -15,7 +15,7 @@ use notify::{
     EventKind, RecursiveMode, Watcher,
     event::{AccessKind, AccessMode},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::rules::{AllSpaces, Layer, Length, RULE_KEYS, Rule, Space};
 
@@ -487,7 +487,7 @@ pub struct Displays {
 }
 
 /// One display's settings (E6.2); a display without an entry gets the defaults below.
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(default)]
 pub struct OutputSettings {
     /// The connector (`eDP-1`, `HDMI-A-1`, `DP-2`; `winit` when nested).
