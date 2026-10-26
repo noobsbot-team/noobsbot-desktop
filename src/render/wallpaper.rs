@@ -27,7 +27,7 @@ use zune_jpeg::{
 };
 
 use super::{SceneElement, Shaders, is_dark};
-use crate::config::Appearance;
+use crate::config::{Appearance, WallpaperFit};
 
 /// The longest side a wallpaper file may have; a bigger one is refused rather than decoded into hundreds of MB.
 const MAX_SIDE: usize = 8192;
@@ -60,17 +60,21 @@ pub struct Wallpaper {
     asked: Option<Size<i32, Buffer>>,
     texture: Option<(TextureBuffer<GlesTexture>, Size<i32, Buffer>, bool)>,
     opal: Vec<(Size<i32, Logical>, bool, PixelShaderElement)>,
+    fit: WallpaperFit,
+    /// The desktop colour around a picture that doesn't cover the output, kept like the opal gradient.
+    backdrop: Option<(Size<i32, Logical>, bool, PixelShaderElement)>,
 }
 
 impl Wallpaper {
     /// Decoded pictures come back through `tx`; hand each to `receive`.
     pub fn new(tx: Sender<Decoded>) -> Self {
-        Self { tx, wanted: None, limit: Size::default(), asked: None, texture: None, opal: Vec::new() }
+        Self { tx, wanted: None, limit: Size::default(), asked: None, texture: None, opal: Vec::new(), fit: WallpaperFit::Fill, backdrop: None }
     }
 
     /// Picks the wallpaper for `appearance` (light or dark file). A new file is decoded on a worker thread once an
     /// output's size is known; until it arrives, or if it fails, the opal gradient shows.
     pub fn set(&mut self, appearance: &Appearance) {
+        self.fit = appearance.wallpaper_fit;
         let file = if is_dark(appearance) { &appearance.wallpaper_dark } else { &appearance.wallpaper };
         let wanted = (!file.is_empty()).then(|| expand_home(file));
         if wanted == self.wanted {
@@ -110,8 +114,9 @@ impl Wallpaper {
         }
     }
 
-    /// The bottom element of an output of `size` at `scale`: the picture scaled to cover it, else the opal gradient.
-    pub fn element(&mut self, shaders: &Shaders, size: Size<i32, Logical>, scale: f64, dark: bool) -> SceneElement {
+    /// The bottom elements of an output of `size` at `scale`, front to back: the picture placed by `fit` (with the
+    /// desktop colour where it doesn't reach), else the opal gradient.
+    pub fn element(&mut self, shaders: &Shaders, size: Size<i32, Logical>, scale: f64, dark: bool) -> Vec<SceneElement> {
         let physical = size.to_f64().to_physical(scale).to_i32_round::<i32>();
         if physical.w > self.limit.w || physical.h > self.limit.h {
             self.limit = (physical.w.max(self.limit.w), physical.h.max(self.limit.h)).into();
@@ -121,19 +126,29 @@ impl Wallpaper {
             }
         }
         if let Some((texture, image_size, _)) = &self.texture {
-            let src = cover(*image_size, size);
-            return SceneElement::Texture(TextureRenderElement::from_texture_buffer((0.0, 0.0), texture, None, Some(src), Some(size), Kind::Unspecified));
+            let (src, dst) = place(self.fit, *image_size, size, scale);
+            let at = dst.loc.to_physical(scale);
+            let picture = TextureRenderElement::from_texture_buffer(at, texture, None, Some(src), Some(dst.size.to_i32_round()), Kind::Unspecified);
+            let mut out = vec![SceneElement::Texture(picture)];
+            if dst.size.to_i32_round() != size || dst.loc != (0.0, 0.0).into() {
+                if self.backdrop.as_ref().is_none_or(|(s, d, _)| (*s, *d) != (size, dark)) {
+                    let [r, g, b] = if dark { [0.11, 0.11, 0.12] } else { [0.82, 0.82, 0.84] };
+                    self.backdrop = Some((size, dark, shaders.glass_shape(Rectangle::from_size(size), [r, g, b, 1.0], 0.0, false, dark, scale)));
+                }
+                out.extend(self.backdrop.as_ref().map(|(_, _, e)| SceneElement::Shader(e.clone())));
+            }
+            return out;
         }
         // One gradient per output size (C10): resizing a shared one every frame redrew every output every frame.
         if let Some((_, _, opal)) = self.opal.iter().find(|(s, d, _)| (*s, *d) == (size, dark)) {
-            return SceneElement::Shader(opal.clone());
+            return vec![SceneElement::Shader(opal.clone())];
         }
         if self.opal.len() >= MAX_OPALS {
             self.opal.clear();
         }
         let opal = shaders.opal(Rectangle::from_size(size), dark);
         self.opal.push((size, dark, opal.clone()));
-        SceneElement::Shader(opal)
+        vec![SceneElement::Shader(opal)]
     }
 }
 
@@ -154,6 +169,28 @@ pub fn cover(image: Size<i32, Buffer>, output: Size<i32, Logical>) -> Rectangle<
     let scale = (ow / iw).max(oh / ih);
     let (w, h) = (ow / scale, oh / scale);
     Rectangle::new(((iw - w) / 2.0, (ih - h) / 2.0).into(), (w, h).into())
+}
+
+/// Where a picture of `image` px goes on an output of `output` at `scale`: the part of the picture shown, and the
+/// rectangle it fills, by `fit`.
+pub fn place(fit: WallpaperFit, image: Size<i32, Buffer>, output: Size<i32, Logical>, scale: f64) -> (Rectangle<f64, Logical>, Rectangle<f64, Logical>) {
+    let (iw, ih, ow, oh) = (f64::from(image.w).max(1.0), f64::from(image.h).max(1.0), f64::from(output.w), f64::from(output.h));
+    let whole = Rectangle::from_size((iw, ih).into());
+    let centred = |w: f64, h: f64| Rectangle::new(((ow - w) / 2.0, (oh - h) / 2.0).into(), (w, h).into());
+    match fit {
+        WallpaperFit::Fill => (cover(image, output), Rectangle::from_size((ow, oh).into())),
+        WallpaperFit::Stretch => (whole, Rectangle::from_size((ow, oh).into())),
+        WallpaperFit::Fit => {
+            let s = (ow / iw).min(oh / ih);
+            (whole, centred(iw * s, ih * s))
+        }
+        WallpaperFit::Centre => {
+            // One picture pixel per screen pixel; cropped where it is bigger than the output.
+            let (w, h) = ((iw / scale).min(ow), (ih / scale).min(oh));
+            let src = Rectangle::new(((iw - w * scale) / 2.0, (ih - h * scale) / 2.0).into(), (w * scale, h * scale).into());
+            (src, centred(w, h))
+        }
+    }
 }
 
 /// PNG by its signature, anything else as JPEG. Alpha is dropped: a wallpaper is opaque. A picture more than twice
@@ -236,6 +273,21 @@ mod tests {
         assert_eq!(src, Rectangle::new((1000.0, 0.0).into(), (1000.0, 1000.0).into()));
         // Degenerate sizes don't divide by zero.
         assert_eq!(cover((0, 0).into(), (1920, 1080).into()).size, (1.0, 1.0).into());
+    }
+
+    #[test]
+    fn fit_modes_place_the_picture() {
+        let (image, output) = (Size::from((2000, 1000)), Size::from((1000, 1000)));
+        let screen = Rectangle::from_size((1000.0, 1000.0).into());
+        assert_eq!(place(WallpaperFit::Fill, image, output, 1.0), (cover(image, output), screen));
+        assert_eq!(place(WallpaperFit::Stretch, image, output, 1.0), (Rectangle::from_size((2000.0, 1000.0).into()), screen));
+        // Fit: full width, a centred band.
+        assert_eq!(place(WallpaperFit::Fit, image, output, 1.0).1, Rectangle::new((0.0, 250.0).into(), (1000.0, 500.0).into()));
+        // Centre at 2×: a 2000 px picture is 1000 logical px, the whole width, half the height.
+        let (src, dst) = place(WallpaperFit::Centre, image, output, 2.0);
+        assert_eq!((src, dst), (Rectangle::from_size((2000.0, 1000.0).into()), Rectangle::new((0.0, 250.0).into(), (1000.0, 500.0).into())));
+        // Centre at 1×: cropped to the middle 1000 px.
+        assert_eq!(place(WallpaperFit::Centre, image, output, 1.0).0, Rectangle::new((500.0, 0.0).into(), (1000.0, 1000.0).into()));
     }
 
     fn png(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {

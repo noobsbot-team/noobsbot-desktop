@@ -72,6 +72,8 @@ pub struct Appearance {
     pub theme_apps: bool,
     /// Every movement becomes a 150 ms crossfade (D10).
     pub reduce_motion: bool,
+    /// How the wallpaper picture meets the screen.
+    pub wallpaper_fit: WallpaperFit,
     /// `auto` is dark from this hour until `dark_until` (0 … 23, local time).
     pub dark_from: u32,
     pub dark_until: u32,
@@ -106,6 +108,20 @@ impl From<WeekStart> for chrono::Weekday {
             WeekStart::Saturday => chrono::Weekday::Sat,
         }
     }
+}
+
+/// Wallpaper fit (macOS: Fill Screen, Fit to Screen, Centre, Stretch to Fill Screen).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WallpaperFit {
+    /// Covers the screen, cropping the long side.
+    Fill,
+    /// The whole picture, bands of the desktop colour beside it.
+    Fit,
+    /// At its own pixel size, in the middle.
+    #[serde(alias = "center")]
+    Centre,
+    Stretch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -555,6 +571,7 @@ impl Default for Appearance {
             wallpaper_dark: String::new(),
             theme_apps: false,
             reduce_motion: false,
+            wallpaper_fit: WallpaperFit::Fill,
             dark_from: 19,
             dark_until: 7,
         }

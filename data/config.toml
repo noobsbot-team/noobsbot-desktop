@@ -20,10 +20,12 @@ dark_until = 7
 accent = "blue"
 # Multiplies the opacity of every glass surface (0.0 … 1.0).
 glass_opacity = 1.0
-# Wallpaper picture (PNG or JPEG), scaled to fill the screen; empty = the built-in opal gradient.
+# Wallpaper picture (PNG or JPEG), placed by wallpaper_fit; empty = the built-in opal gradient.
 wallpaper = ""
 # Used in dark mode; empty = the built-in dark opal gradient.
 wallpaper_dark = ""
+# "fill" (cover the screen), "fit" (the whole picture), "centre" (its own size) or "stretch".
+wallpaper_fit = "fill"
 # The Dark Mode toggle also rewrites the Noobsbot Glass theme for Qt/KDE apps (Kvantum, colour scheme, kdeglobals),
 # like `noobsbot-desktop theme --write`. Off by default: it edits files in ~/.config and ~/.local/share.
 theme_apps = false
