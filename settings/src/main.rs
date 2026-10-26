@@ -77,6 +77,11 @@ fn type_ahead(event: iced::Event, status: iced::event::Status, _: iced::window::
 }
 
 /// `displays.json`, or nothing when the desktop isn't running (or wrote something unreadable).
+/// Take Photo's countdown: a `PhotoTick` in a second (a pool thread sleeps).
+fn tick() -> Task<Message> {
+    Task::perform(async { std::thread::sleep(std::time::Duration::from_secs(1)) }, |()| Message::PhotoTick)
+}
+
 fn read_displays() -> Vec<display_info::Display> {
     display_info::path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
 }
@@ -139,6 +144,8 @@ pub struct App {
     level: f32,
     /// The Users page's accounts; `None` until read (when the page opens).
     users: Option<users::Users>,
+    /// Users ▸ Take Photo…'s sheet, open.
+    shot: Option<users::Shot>,
 }
 
 #[derive(Clone, Debug)]
@@ -261,6 +268,12 @@ pub enum Message {
     PictureChooser,
     /// This file becomes the account's picture.
     Picture(std::path::PathBuf),
+    /// Users ▸ Take Photo… (or Retake): the countdown starts; `false` closes the sheet.
+    TakePhoto(bool),
+    /// A second of the countdown passed.
+    PhotoTick,
+    /// The camera's photo, or why not.
+    Photo(Result<iced::widget::image::Handle, String>),
     /// Users ▸ Change Password…: the fields open or close.
     PasswordForm,
     ChangePassword,
@@ -316,6 +329,7 @@ impl App {
             shortcuts: None,
             level: 0.0,
             users: None,
+            shot: None,
         };
         app.retheme();
         if page == Page::General {
@@ -489,9 +503,33 @@ impl App {
             }
             Message::Picture(file) => {
                 let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
+                self.shot = None;
                 self.texts.remove(users::PICTURES);
                 self.texts.remove(users::PICTURE_FILE);
                 return Task::perform(users::set_picture(me.path.clone(), file), Message::UsersActed);
+            }
+            Message::TakePhoto(open) => {
+                self.shot = open.then_some(users::Shot::Count(3));
+                if open {
+                    return tick();
+                }
+            }
+            Message::PhotoTick => match self.shot {
+                Some(users::Shot::Count(n)) if n > 1 => {
+                    self.shot = Some(users::Shot::Count(n - 1));
+                    return tick();
+                }
+                Some(users::Shot::Count(_)) => {
+                    let Some(camera) = self.users.as_ref().and_then(|u| u.camera.clone()) else { return Task::none() };
+                    self.shot = Some(users::Shot::Taking);
+                    return Task::perform(users::take_photo(camera), Message::Photo);
+                }
+                _ => {}
+            },
+            Message::Photo(photo) => {
+                if self.shot.is_some() {
+                    self.shot = Some(photo.map_or_else(users::Shot::Failed, users::Shot::Taken));
+                }
             }
             Message::PasswordForm => self.password_form(!self.texts.contains_key(users::PASSWORD[0])),
             Message::ChangePassword => {
