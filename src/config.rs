@@ -525,8 +525,7 @@ pub enum DockHide {
 
 impl Default for Dock {
     fn default() -> Self {
-        let items =
-            ["launchpad", "google-chrome", "com.microsoft.VSCode", "helium-browser", "dolphin", "kate", "screenshot", "kitty", "noobsbot"];
+        let items = ["launchpad", "google-chrome", "com.microsoft.VSCode", "helium-browser", "dolphin", "kate", "screenshot", "kitty", "noobsbot"];
         Self {
             items: items.map(String::from).to_vec(),
             icon_size: 84,
