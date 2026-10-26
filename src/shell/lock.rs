@@ -180,6 +180,8 @@ pub struct Layout {
     pub status: Rect,
     /// The Now Playing card, above the user block; `None` when the screen is too short for it.
     pub media: Option<Rect>,
+    /// The keyboard layout pill right of the field, with more than one layout (E8.7).
+    pub layouts: Rect,
 }
 
 pub const AVATAR: i32 = 64;
@@ -192,6 +194,7 @@ pub const MEDIA_W: i32 = 320;
 pub const MEDIA_H: i32 = 64;
 /// The album art's side in the Now Playing card.
 pub const ART: i32 = 48;
+const PILL_W: i32 = 40;
 
 pub fn layout(size: Size<i32, Logical>) -> Layout {
     let (w, h) = (size.w, size.h);
@@ -213,7 +216,13 @@ pub fn layout(size: Size<i32, Logical>) -> Layout {
     let status = Rectangle::new((w - EDGE - 200, y).into(), (200, BUTTON_H).into());
     let media = centred(MEDIA_W.min(w - 2 * EDGE), avatar_y - 16 - MEDIA_H, MEDIA_H);
     let media = (media.loc.y >= message.loc.y + message.size.h + 8).then_some(media);
-    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status, media }
+    let layouts = Rectangle::new((field.loc.x + FIELD_W + 8, field.loc.y).into(), (PILL_W, FIELD_H).into());
+    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status, layouts, media }
+}
+
+/// The layout pill's label ("EN"), shown with more than one layout.
+pub fn layout_pill(layouts: &crate::ime::Layouts) -> Option<String> {
+    layouts.list.get(layouts.active).filter(|_| layouts.list.len() > 1).map(|(code, _)| code.to_uppercase())
 }
 
 /// The Now Playing button under `location` in `card`: previous, play/pause, next (the control centre's spots).
@@ -386,6 +395,9 @@ impl State {
         {
             return self.services.send(crate::services::Command::Media { player: media.player.clone(), action });
         }
+        if layout_pill(&self.layouts).is_some() && layout.layouts.to_f64().contains(location) {
+            return self.switch_layout(None);
+        }
         let hit = Button::ALL.into_iter().zip(layout.buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(b, _)| b);
         match hit {
             Some(Button::Sleep) => self.sleep(),
@@ -553,6 +565,7 @@ mod tests {
             let media = l.media.unwrap();
             assert!((mid(media) - size.w / 2).abs() <= 1 && media.loc.y > l.message.loc.y + 15, "{size:?}");
             assert!(media.loc.y + MEDIA_H < l.avatar.loc.y, "{size:?}: the card sits above the user block");
+            assert!(l.layouts.loc.x > l.field.loc.x + FIELD_W && l.layouts.loc.x + PILL_W <= size.w && l.layouts.loc.y == l.field.loc.y);
         }
         assert_eq!(layout(Size::from((800, 400))).media, None, "no room under the clock: no card");
     }
@@ -567,5 +580,19 @@ mod tests {
         assert!(buttons.iter().all(|b| card.contains_rect(*b)), "inside the card");
         assert!(buttons[0].loc.x > card.loc.x + 8 + ART + 100, "room for the art and the words");
         assert_eq!(media_hit(card, centre(card) - Point::from((100.0, 0.0))), None, "the words take no click");
+    }
+
+    #[test]
+    fn layout_pill_label_and_hit() {
+        let mut layouts = crate::ime::Layouts { list: vec![("us".into(), "English (US)".into())], ..Default::default() };
+        assert_eq!(layout_pill(&layouts), None, "one layout: no pill");
+        layouts.list.push(("np".into(), "Nepali".into()));
+        assert_eq!(layout_pill(&layouts).as_deref(), Some("US"));
+        layouts.active = 1;
+        assert_eq!(layout_pill(&layouts).as_deref(), Some("NP"));
+        let l = layout(Size::from((1280, 800)));
+        let inside = l.layouts.to_f64().loc + Point::from((PILL_W as f64 / 2.0, FIELD_H as f64 / 2.0));
+        assert!(l.layouts.to_f64().contains(inside) && !l.field.to_f64().contains(inside));
+        assert!(!l.layouts.to_f64().contains(l.field.to_f64().loc), "the field isn't the pill");
     }
 }
