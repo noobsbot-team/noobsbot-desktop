@@ -217,85 +217,7 @@ impl State {
                 let Some(output_geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
                 self.pointer_motion(event.position_transformed(output_geo.size) + output_geo.loc.to_f64(), event.time());
             }
-            InputEvent::PointerButton { event } => {
-                let Some(pointer) = self.seat.get_pointer() else { return };
-                let serial = SERIAL_COUNTER.next_serial();
-                let state = event.state();
-                let location = pointer.current_location();
-                if self.locked() {
-                    if state == ButtonState::Pressed {
-                        self.lock_press(self.to_output(location));
-                    }
-                    // Only a client's lock surface (under the pointer, see surface_under) gets the button.
-                    pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
-                    pointer.frame(self);
-                    return;
-                }
-                if state == ButtonState::Pressed {
-                    self.desktop_blur(self.to_output(location));
-                }
-                // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
-                // pointer comes to the front.
-                if state == ButtonState::Pressed
-                    && !pointer.is_grabbed()
-                    && !self.switcher_press(location)
-                    && !self.shot_press(self.to_output(location), event.button_code() == BTN_LEFT)
-                    && !self.drawer_press(self.to_output(location), event.button_code() == BTN_RIGHT)
-                    && !self.dock_press(self.to_output(location), event.button_code())
-                    && !self.mission_press(self.to_output(location), event.button_code())
-                    && !self.shell_press(self.to_output(location), event.button_code() == BTN_RIGHT)
-                {
-                    let zone = self.zone_under(location);
-                    let bar = if zone.is_some() { None } else { self.bar_under(location) };
-                    let window = zone
-                        .as_ref()
-                        .map(|(w, _)| w.clone())
-                        .or_else(|| bar.as_ref().map(|(w, _)| w.clone()))
-                        .or_else(|| self.space.element_under(location).map(|(w, _)| w.clone()));
-                    // Bars and launchers above windows (or the wallpaper below, where no window is) take the click instead.
-                    let layer = self.layer_under(location, true).or_else(|| window.is_none().then(|| self.layer_under(location, false)).flatten());
-                    if let Some((layer, ..)) = layer {
-                        if layer.can_receive_keyboard_focus()
-                            && let Some(keyboard) = self.seat.get_keyboard()
-                        {
-                            keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
-                        }
-                    } else {
-                        self.focus_window(window.clone(), serial);
-                        // The bare desktop: its icons.
-                        if window.is_none() {
-                            self.desktop_press(self.to_output(location), event.button_code());
-                        }
-                        if let Some(window) = &window {
-                            self.ping(window);
-                        }
-                        let start_data = GrabStartData { focus: None, button: BTN_LEFT, location };
-                        // Super + drag anywhere in a window moves it (the click never reaches the app).
-                        if let Some(window) = window.clone().filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {
-                            self.start_move(window, start_data, serial);
-                        } else if let Some((window, frame)) =
-                            window.filter(|_| event.button_code() == BTN_RIGHT && self.move_key_held()).and_then(|w| Some((w.clone(), self.frame(&w)?)))
-                        {
-                            // Super + right-drag resizes from the nearest corner.
-                            self.start_resize(window, wm::nearest_corner(frame, location), start_data, serial);
-                        } else if let Some((window, edges)) = zone.filter(|_| event.button_code() == BTN_LEFT) {
-                            self.zone_press(window, edges, start_data, serial);
-                        } else if let Some((window, part)) = bar.filter(|_| event.button_code() == BTN_LEFT) {
-                            self.bar_press(window, part, start_data, serial);
-                        }
-                    }
-                }
-                if state == ButtonState::Released && event.button_code() == BTN_LEFT {
-                    self.shot_release();
-                    self.bar_release(pointer.current_location());
-                    self.mission_release(self.to_output(pointer.current_location()));
-                    self.shell_release();
-                    self.desktop_release();
-                    self.dock_release(self.to_output(pointer.current_location()));
-                }
-                pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
-                pointer.frame(self);
-            }
+            InputEvent::PointerButton { event } => self.pointer_button(event.button_code(), event.state(), event.time_msec()),
             InputEvent::PointerAxis { event } => {
                 let Some(pointer) = self.seat.get_pointer() else { return };
                 let source = event.source();
@@ -406,6 +328,86 @@ impl State {
             }
             _ => {}
         }
+    }
+
+    /// A pointer button: the shell's surfaces, click to focus, Super+drag, then the app.
+    pub fn pointer_button(&mut self, button: u32, state: ButtonState, time: u32) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        let serial = SERIAL_COUNTER.next_serial();
+        let location = pointer.current_location();
+        if self.locked() {
+            if state == ButtonState::Pressed {
+                self.lock_press(self.to_output(location));
+            }
+            // Only a client's lock surface (under the pointer, see surface_under) gets the button.
+            pointer.button(self, &ButtonEvent { button, state, serial, time });
+            pointer.frame(self);
+            return;
+        }
+        if state == ButtonState::Pressed {
+            self.desktop_blur(self.to_output(location));
+        }
+        // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
+        // pointer comes to the front.
+        if state == ButtonState::Pressed
+            && !pointer.is_grabbed()
+            && !self.switcher_press(location)
+            && !self.shot_press(self.to_output(location), button == BTN_LEFT)
+            && !self.drawer_press(self.to_output(location), button == BTN_RIGHT)
+            && !self.dock_press(self.to_output(location), button)
+            && !self.mission_press(self.to_output(location), button)
+            && !self.shell_press(self.to_output(location), button == BTN_RIGHT)
+        {
+            let zone = self.zone_under(location);
+            let bar = if zone.is_some() { None } else { self.bar_under(location) };
+            let window = zone
+                .as_ref()
+                .map(|(w, _)| w.clone())
+                .or_else(|| bar.as_ref().map(|(w, _)| w.clone()))
+                .or_else(|| self.space.element_under(location).map(|(w, _)| w.clone()));
+            // Bars and launchers above windows (or the wallpaper below, where no window is) take the click instead.
+            let layer = self.layer_under(location, true).or_else(|| window.is_none().then(|| self.layer_under(location, false)).flatten());
+            if let Some((layer, ..)) = layer {
+                if layer.can_receive_keyboard_focus()
+                    && let Some(keyboard) = self.seat.get_keyboard()
+                {
+                    keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
+                }
+            } else {
+                self.focus_window(window.clone(), serial);
+                // The bare desktop: its icons.
+                if window.is_none() {
+                    self.desktop_press(self.to_output(location), button);
+                }
+                if let Some(window) = &window {
+                    self.ping(window);
+                }
+                let start_data = GrabStartData { focus: None, button: BTN_LEFT, location };
+                // Super + drag anywhere in a window moves it (the click never reaches the app).
+                if let Some(window) = window.clone().filter(|_| button == BTN_LEFT && self.move_key_held()) {
+                    self.start_move(window, start_data, serial);
+                } else if let Some((window, frame)) =
+                    window.filter(|_| button == BTN_RIGHT && self.move_key_held()).and_then(|w| Some((w.clone(), self.frame(&w)?)))
+                {
+                    // Super + right-drag resizes from the nearest corner.
+                    self.start_resize(window, wm::nearest_corner(frame, location), start_data, serial);
+                } else if let Some((window, edges)) = zone.filter(|_| button == BTN_LEFT) {
+                    self.zone_press(window, edges, start_data, serial);
+                } else if let Some((window, part)) = bar.filter(|_| button == BTN_LEFT) {
+                    self.bar_press(window, part, start_data, serial);
+                }
+            }
+        }
+        if state == ButtonState::Released && button == BTN_LEFT {
+            self.shot_release();
+            self.bar_release(pointer.current_location());
+            self.mission_release(self.to_output(pointer.current_location()));
+            self.shell_release();
+            self.desktop_release();
+            self.dock_release(self.to_output(pointer.current_location()));
+        }
+        pointer.button(self, &ButtonEvent { button, state, serial, time });
+        pointer.frame(self);
     }
 
     /// `focus = "hover"`: the window under `location` gets the keyboard once the pointer rests there, unraised.
