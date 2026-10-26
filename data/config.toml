@@ -362,6 +362,7 @@ super_tap = true
 "XF86Eject" = "eject"
 # Launch keys open the default app for a MIME type (xdg-mime), or the first app in a .desktop category.
 "XF86WWW" = "default-app x-scheme-handler/https"
+"XF86Mail" = "default-app x-scheme-handler/mailto"
 # The display key opens System Settings › Displays (arrangement, which screens are on).
 "XF86Display" = "exec noobsbot-desktop-settings --page displays"
 # The power button asks before shutting down (the system's own power-key action is held off while the desktop runs).
