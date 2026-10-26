@@ -178,6 +178,8 @@ pub enum Message {
     Mute(bool, bool),
     /// Date & Time ▸ Set time and date automatically.
     Ntp(bool),
+    /// Privacy & Security ▸ Connectivity check.
+    Connectivity(bool),
     /// Date & Time ▸ Set: the typed date and time become the system's.
     SetTime,
     /// A device (BlueZ path): pair if need be and connect (`true`), or disconnect.
@@ -534,6 +536,7 @@ impl App {
             Message::PowerMode(profile) => return Task::perform(system::set_power_mode(profile), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
             Message::Ntp(on) => return Task::perform(system::set_ntp(on), Message::Status),
+            Message::Connectivity(on) => return Task::perform(system::set_connectivity(on), Message::Status),
             Message::SetTime => {
                 let now = chrono::Local::now();
                 let typed = |key: &str, now: String| self.texts.get(key).cloned().unwrap_or(now);

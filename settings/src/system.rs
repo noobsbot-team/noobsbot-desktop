@@ -29,6 +29,8 @@ pub struct Status {
     pub power_mode: Option<PowerMode>,
     /// The keyboard backlight in percent; `None` without one.
     pub kbd_backlight: Option<u8>,
+    /// NetworkManager's connectivity check is on; `None`: no NetworkManager, or no check address configured.
+    pub connectivity: Option<bool>,
     /// Every output and input, for the pickers.
     pub outputs: Vec<Choice>,
     pub inputs: Vec<Choice>,
@@ -110,9 +112,9 @@ pub async fn read() -> Status {
         Some(bus) => (wifi(bus).await, bluetooth(bus).await, time(bus).await, battery(bus).await, power_mode(bus).await),
         None => (None, None, None, None, None),
     };
-    let kbd_backlight = match &system {
-        Some(bus) => kbd_backlight(bus, None).await,
-        None => None,
+    let (kbd_backlight, connectivity) = match &system {
+        Some(bus) => (kbd_backlight(bus, None).await, connectivity(bus).await),
+        None => (None, None),
     };
     let pw = wpctl(&["status"]).unwrap_or_default();
     let pactl = crate::pactl::read();
@@ -130,6 +132,7 @@ pub async fn read() -> Status {
         battery,
         power_mode,
         kbd_backlight,
+        connectivity,
         outputs: section(&pw, "Sinks:"),
         inputs: section(&pw, "Sources:"),
     }
@@ -282,6 +285,24 @@ pub async fn set_bluetooth(on: bool) -> Status {
                 let _ = set_property(&bus, "org.bluez", path.as_str(), "org.bluez.Adapter1", "Powered", on.into()).await;
             }
         }
+    }
+    read().await
+}
+
+async fn connectivity(bus: &Connection) -> Option<bool> {
+    let get = |name: &'static str| property(bus, NM, "/org/freedesktop/NetworkManager", NM, name);
+    let available = bool::try_from(get("ConnectivityCheckAvailable").await.ok()?).ok()?;
+    if !available {
+        return None;
+    }
+    bool::try_from(get("ConnectivityCheckEnabled").await.ok()?).ok()
+}
+
+/// NetworkManager's connectivity check on or off (which also detects sign-in pages), then the new status. polkit may
+/// ask for the password through the desktop's agent, so the call may wait.
+pub async fn set_connectivity(on: bool) -> Status {
+    if let Ok(bus) = system(120).await {
+        let _ = set_property(&bus, NM, "/org/freedesktop/NetworkManager", NM, "ConnectivityCheckEnabled", on.into()).await;
     }
     read().await
 }
