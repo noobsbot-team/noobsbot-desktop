@@ -491,6 +491,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::LockScreen, "", "idle.lock_message", "Message on the lock screen", "Shown under the clock", Kind::Text("If found, please call …")),
     s(Page::Battery, "", "battery.show_percentage", "Show percentage", "Beside the battery in the menu bar", Kind::Toggle),
+    s(Page::Battery, "Display", "battery.dim_on_battery", "Slightly dim the display on battery", "Brighter again when plugged in", Kind::Toggle),
     s(Page::Battery, "Display", "idle.screen_off_on_battery", "On battery, turn display off after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::Battery, "Sleep", "idle.sleep_on_battery", "On battery, sleep after", "", Kind::Slider { min: 0.0, max: 3600.0, step: 60.0 }),
     s(Page::Battery, "Sleep", "idle.sleep_on_ac", "On power adapter, sleep after", "", Kind::Slider { min: 0.0, max: 7200.0, step: 300.0 }),
