@@ -5,6 +5,7 @@ mod arrange;
 mod config;
 #[path = "../../src/display_info.rs"]
 mod display_info;
+mod gallery;
 mod pages;
 mod style;
 mod system;
@@ -91,6 +92,8 @@ pub struct App {
     selected: Option<String>,
     /// A display change waiting for "Keep Changes" before it reverts.
     keep: Option<arrange::Keep>,
+    /// Appearance's wallpaper gallery, loaded on start.
+    thumbs: Vec<(std::path::PathBuf, iced::widget::image::Handle)>,
 }
 
 #[derive(Clone, Debug)]
@@ -125,6 +128,9 @@ pub enum Message {
     Revert,
     /// Half a second of "Keep these display settings?" went by.
     Tick,
+    Thumbs(Vec<(std::path::PathBuf, iced::widget::image::Handle)>),
+    /// A gallery picture (empty: the built-in opal), for light and dark mode alike.
+    Wallpaper(String),
 }
 
 impl App {
@@ -144,10 +150,11 @@ impl App {
             displays: read_displays(),
             selected: None,
             keep: None,
+            thumbs: Vec::new(),
         };
         app.retheme();
         // Typing searches at once, as in macOS (see `type_ahead`).
-        (app, Task::perform(system::read(), Message::Status))
+        (app, Task::batch([Task::perform(system::read(), Message::Status), Task::perform(gallery::load(), Message::Thumbs)]))
     }
 
     fn retheme(&mut self) {
@@ -209,6 +216,11 @@ impl App {
                 }
             }
             Message::Status(status) => self.status = status,
+            Message::Thumbs(thumbs) => self.thumbs = thumbs,
+            Message::Wallpaper(path) => {
+                self.save("appearance.wallpaper", path.as_str());
+                self.save("appearance.wallpaper_dark", path);
+            }
             Message::Wifi(on) => return Task::perform(system::set_wifi(on), Message::Status),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),

@@ -244,6 +244,18 @@ impl Tokens {
         }
     }
 
+    /// A wallpaper tile: an accent ring when chosen, a faint one on hover.
+    pub fn tile(self, selected: bool) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+        move |_, status| {
+            let edge = match (selected, status) {
+                (true, _) => self.accent,
+                (false, button::Status::Hovered) => self.separator(),
+                _ => Color::TRANSPARENT,
+            };
+            button::Style { border: Border { color: edge, width: 2.0, radius: 8.0.into() }, ..Default::default() }
+        }
+    }
+
     /// D7 toggle: track accent / `fill` × 2, white knob.
     pub fn toggle(self) -> impl Fn(&iced::Theme, toggler::Status) -> toggler::Style {
         move |_, status| {
