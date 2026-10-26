@@ -831,6 +831,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("XF86Eject", "eject"),
         ("XF86WWW", "default-app x-scheme-handler/https"),
         ("XF86Mail", "default-app x-scheme-handler/mailto"),
+        ("XF86Explorer", "default-app inode/directory"),
         ("XF86Display", "exec noobsbot-desktop-settings --page displays"),
         ("XF86PowerOff", "shut-down"),
         ("XF86Sleep", "sleep"),

@@ -653,6 +653,7 @@ mod tests {
         assert_eq!(lookup(&table, &none, Keysym::XF86_Display, false), Some(&Action::Spawn("noobsbot-desktop-settings --page displays".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_WWW, false), Some(&Action::DefaultApp("x-scheme-handler/https".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Mail, false), Some(&Action::DefaultApp("x-scheme-handler/mailto".into())));
+        assert_eq!(lookup(&table, &none, Keysym::XF86_Explorer, false), Some(&Action::DefaultApp("inode/directory".into())));
         assert_eq!(lookup(&table, &none, Keysym::XF86_Sleep, false), Some(&Action::Sleep));
         assert_eq!(lookup(&table, &mods(true, false, true), Keysym::q, false), Some(&Action::Power(Power::LogOut)));
     }
