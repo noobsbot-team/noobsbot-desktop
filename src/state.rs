@@ -373,6 +373,9 @@ impl State {
                     crate::services::Update::CloseNotification(id) => state.close_notification(id, crate::shell::notify::Reason::Closed),
                     crate::services::Update::History(list) => state.restore_notifications(list),
                     crate::services::Update::Disks(volumes) => state.disks_changed(volumes),
+                    crate::services::Update::KbdBacklight(percent) => {
+                        state.show_osd(crate::shell::Osd { symbol: crate::symbols::Symbol::Keyboard, level: Some(percent), text: None });
+                    }
                     crate::services::Update::DiskFailed { name, error } => state.disk_failed(name, error),
                     crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),

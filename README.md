@@ -265,7 +265,7 @@ settings file.
 | Super+Ctrl+Space | next keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
 | F12 | quake terminal |
-| Volume, mute, mic, brightness and media keys | as labelled, with an on-screen display |
+| Volume, mute, mic, brightness, keyboard backlight and media keys | as labelled, with an on-screen display |
 | Shift+Alt+volume keys | volume in quarter steps |
 | Power button | asks before shutting down |
 | Sleep key | lock, then sleep |
