@@ -836,13 +836,16 @@ impl State {
         let outputs: Vec<_> = self.space.outputs().cloned().collect();
         let Some(from) = self.window_output(window).and_then(|o| outputs.iter().position(|x| *x == o)) else { return };
         let to = (from as i32 + delta).rem_euclid(outputs.len() as i32) as usize;
-        self.move_to_output(window, &outputs[to]);
+        if to != from {
+            self.move_to_output(window, &outputs[to]);
+        }
     }
 
-    /// `window` to `output`'s shown Space, at the same place on it, shrunk only if it doesn't fit (`wm::fit_in`).
+    /// `window` to `output`'s shown Space, at the same place on it, shrunk only if it doesn't fit (`wm::fit_in`); on its
+    /// own display, it is pulled wholly inside.
     /// ponytail: a zoomed or tiled window keeps its state; callers that care leave it first.
     pub fn move_to_output(&mut self, window: &Window, output: &smithay::output::Output) {
-        let Some(from) = self.window_output(window).filter(|o| o != output) else { return };
+        let Some(from) = self.window_output(window) else { return };
         let (Some(a), Some(b), Some(mut frame)) = (self.output_area(&from), self.output_area(output), self.frame(window)) else { return };
         frame.loc.y -= self.window_row(window) * crate::spaces::STRIDE;
         let rect = wm::fit_in(frame, a, b);
