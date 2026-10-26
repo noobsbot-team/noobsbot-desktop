@@ -677,11 +677,13 @@ pub enum AppStyle {
 #[serde(default)]
 pub struct Desktop {
     pub icons: bool,
+    /// Mounted drives as icons too, above the files.
+    pub show_drives: bool,
 }
 
 impl Default for Desktop {
     fn default() -> Self {
-        Self { icons: true }
+        Self { icons: true, show_drives: true }
     }
 }
 

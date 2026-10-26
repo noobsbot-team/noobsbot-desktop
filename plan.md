@@ -1716,7 +1716,7 @@ Rows live on the Appearance page (E8.2). Behind them:
   inhibitors; on until logout).
 - ~~Reopen windows at login (checkbox in the Log Out alert).~~ Done: `session.toml` in the state dir; each app starts once 3 s after login and its windows go back to their Space, display and frame as they map (20 s wait).
 - Thunderbolt "Allow accessory to connect?" alert through `boltd` (G2).
-- Desktop icons for mounted drives with Eject.
+- ~~Desktop icons for mounted drives with Eject.~~ Done: drives sit first at the top right (not draggable); double-click opens the file manager, right-click has Open and Eject; `[desktop] show_drives`.
 - Housekeeping: low-disk notification, Trash and thumbnail cleanup, recent-files age.
 
 ### Not cloned (no fitting form, or not worth it)

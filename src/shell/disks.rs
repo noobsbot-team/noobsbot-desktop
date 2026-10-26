@@ -55,12 +55,19 @@ fn events<'a>(old: &[Volume], new: &'a [Volume], ejecting: &[String]) -> Vec<Eve
     events
 }
 
+impl Disks {
+    /// The mounted volumes, for the desktop's icons.
+    pub fn mounted(&self) -> impl Iterator<Item = &Volume> {
+        self.volumes.iter().flatten().filter(|v| !v.mounts.is_empty())
+    }
+}
+
 impl State {
     /// UDisks2's new list. Mounting is left to the host desktop when nested, so testing never touches real drives.
     pub fn disks_changed(&mut self, new: Vec<Volume>) {
         let Some(old) = self.disks.volumes.take() else {
             self.disks.volumes = Some(new);
-            return;
+            return self.schedule_redraw();
         };
         for event in events(&old, &new, &self.disks.ejecting) {
             match event {
@@ -76,6 +83,8 @@ impl State {
         self.disks.ejecting.retain(|d| new.iter().any(|v| v.drive == *d && !v.mounts.is_empty()));
         self.disks.shown.retain(|(id, _)| self.notifications.get(*id).is_some());
         self.disks.volumes = Some(new);
+        // Desktop icons come and go with mounts.
+        self.schedule_redraw();
     }
 
     pub fn disk_failed(&mut self, name: String, error: String) {
@@ -121,7 +130,7 @@ impl State {
     }
 
     /// Unmounts every mounted volume of `v`'s drive, then powers it off.
-    fn eject(&mut self, v: Volume) {
+    pub(crate) fn eject(&mut self, v: Volume) {
         let blocks = self.disks.volumes.iter().flatten().filter(|n| n.drive == v.drive && !n.mounts.is_empty()).map(|n| n.block.clone()).collect();
         self.disks.ejecting.push(v.drive.clone());
         self.services.send(Command::Eject { drive: v.drive, blocks, name: v.name });
