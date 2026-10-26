@@ -578,6 +578,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         }
         state.session_restore();
         state.startup_sound();
+        widget_apps();
     }
     if !command.is_empty() {
         state.spawn(&command);
@@ -591,6 +592,16 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         let _ = state.display_handle.flush_clients();
     })?;
     Ok(())
+}
+
+/// E8.8: the widget apps that ship beside this binary; each exits when the shell's bus name goes, and a thread reaps it.
+fn widget_apps() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let app = exe.with_file_name("noobsbot-desktop-widget-system");
+    match std::process::Command::new(&app).spawn() {
+        Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
+        Err(err) => tracing::info!("{}: {err}", app.display()),
+    }
 }
 
 /// E6.4: a byte a second to the session's watchdog (`noobsbot-desktop-watchdog`) from a loop timer, so a stuck loop
