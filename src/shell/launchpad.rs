@@ -25,6 +25,7 @@ use smithay::{
 use crate::{
     apps::App,
     state::State,
+    text::ts,
     ui::field::{Edit, TextField},
     wm::Rect,
 };
@@ -47,7 +48,7 @@ pub mod layout {
     pub const ICON: i32 = 80;
     pub const SMALL_ICON: i32 = 64;
     pub const NARROW: i32 = 1366;
-    /// Icon to name, and the name line (Callout).
+    /// Icon to name, and the name line (Callout). `NAME_H` and the search pill grow with the text size (`text::ts`).
     pub const NAME_GAP: i32 = 8;
     pub const NAME_H: i32 = 15;
     /// The search pill, centred at the top.
@@ -82,14 +83,14 @@ impl Grid {
     /// The icon square in cell `i` (the name sits under it).
     pub fn icon_rect(&self, i: usize) -> Rect {
         let cell = self.cells[i];
-        let block = self.icon + layout::NAME_GAP + layout::NAME_H;
+        let block = self.icon + layout::NAME_GAP + ts(layout::NAME_H);
         let (x, y) = (cell.loc.x + (cell.size.w - self.icon) / 2, cell.loc.y + (cell.size.h - block) / 2);
         Rectangle::new((x, y).into(), (self.icon, self.icon).into())
     }
 
     pub fn name_rect(&self, i: usize) -> Rect {
         let (cell, icon) = (self.cells[i], self.icon_rect(i));
-        Rectangle::new((cell.loc.x + 4, icon.loc.y + self.icon + layout::NAME_GAP).into(), (cell.size.w - 8, layout::NAME_H).into())
+        Rectangle::new((cell.loc.x + 4, icon.loc.y + self.icon + layout::NAME_GAP).into(), (cell.size.w - 8, ts(layout::NAME_H)).into())
     }
 
     /// One dot per page, centred.
@@ -118,13 +119,14 @@ pub fn folder_grid(grid: &Grid, n: usize) -> (Rect, Grid) {
     // ponytail: past the rows a page holds, the rest of a big folder is cut off; scroll it if folders get that big.
     let rows = n.div_ceil(cols).clamp(1, grid.rows.saturating_sub(1).max(1));
     let cell = grid.cells[0].size;
-    let (w, h) = (cols as i32 * cell.w + 2 * PAD, PAD + layout::FIELD_H + 12 + rows as i32 * cell.h + PAD);
+    let field_h = ts(layout::FIELD_H);
+    let (w, h) = (cols as i32 * cell.w + 2 * PAD, PAD + field_h + 12 + rows as i32 * cell.h + PAD);
     let (top, bottom) = (grid.cells[0].loc.y, grid.cells[grid.cells.len() - 1].loc.y + cell.h);
     let panel = Rectangle::new(((grid.width - w) / 2, (top + bottom - h) / 2).into(), (w, h).into());
-    let y0 = panel.loc.y + PAD + layout::FIELD_H + 12;
+    let y0 = panel.loc.y + PAD + field_h + 12;
     let cells =
         (0..rows as i32).flat_map(|r| (0..cols as i32).map(move |c| Rectangle::new((panel.loc.x + PAD + c * cell.w, y0 + r * cell.h).into(), cell))).collect();
-    let field = Rectangle::new((panel.loc.x + PAD, panel.loc.y + PAD).into(), (w - 2 * PAD, layout::FIELD_H).into());
+    let field = Rectangle::new((panel.loc.x + PAD, panel.loc.y + PAD).into(), (w - 2 * PAD, field_h).into());
     (panel, Grid { cols, rows, icon: grid.icon, cells, field, dots_y: 0, width: grid.width })
 }
 
@@ -146,16 +148,17 @@ pub fn grid(output: Size<i32, Logical>, bottom: i32) -> Grid {
     let cols = (((output.w - 2 * SIDE) / COLUMN).max(0) as usize).clamp(COLS.0, COLS.1);
     let rows = (((output.h - FIRST_ROW) / ROW + 1).max(0) as usize).clamp(ROWS.0, ROWS.1);
     let icon = if output.w < NARROW { SMALL_ICON } else { ICON };
-    let top = FIELD_Y + FIELD_H + 24;
+    let (field_w, field_h, name_h) = (ts(FIELD_W), ts(FIELD_H), ts(NAME_H));
+    let top = FIELD_Y + field_h + 24;
     let bottom = output.h - bottom - DOTS_H;
     // Cells no wider or taller than the steps above, so a big screen keeps the grid together, centred.
     let cell_w = ((output.w - 2 * SIDE) / cols as i32).clamp(1, COLUMN);
-    let cell_h = ((bottom - top) / rows as i32).min(ROW).max(icon + NAME_GAP + NAME_H);
+    let cell_h = ((bottom - top) / rows as i32).min(ROW).max(icon + NAME_GAP + name_h);
     let (x0, y0) = ((output.w - cell_w * cols as i32) / 2, top + ((bottom - top) - cell_h * rows as i32).max(0) / 2);
     let cells = (0..rows as i32)
         .flat_map(|r| (0..cols as i32).map(move |c| Rectangle::new((x0 + c * cell_w, y0 + r * cell_h).into(), (cell_w, cell_h).into())))
         .collect();
-    let field = Rectangle::new(((output.w - FIELD_W) / 2, FIELD_Y).into(), (FIELD_W, FIELD_H).into());
+    let field = Rectangle::new(((output.w - field_w) / 2, FIELD_Y).into(), (field_w, field_h).into());
     Grid { cols, rows, icon, cells, field, dots_y: bottom + DOTS_H / 2, width: output.w }
 }
 
@@ -909,6 +912,29 @@ mod tests {
         assert_eq!(edge_of(&g, (10.0, 500.0).into()), Some(-1));
         assert_eq!(edge_of(&g, (1915.0, 500.0).into()), Some(1));
         assert_eq!(edge_of(&g, (960.0, 500.0).into()), None);
+    }
+
+    #[test]
+    fn names_and_fields_grow_with_text_size() {
+        for (w, h) in [(1280, 720), (1920, 1080)] {
+            let at = |k| crate::text::with_scale(k, || grid((w, h).into(), 101));
+            let (one, big) = (at(1.0), at(1.5));
+            assert_eq!(one, grid((w, h).into(), 101), "1.0 is the default");
+            assert_eq!((big.field.size.w, big.field.size.h), (360, 42));
+            assert_eq!((big.cols, big.rows), (one.cols, one.rows), "the same apps per page");
+            crate::text::with_scale(1.5, || {
+                for i in 0..big.cells.len() {
+                    // A Callout line (15 px) at 1.5 fits the name; icon and name stay in the cell, under the field.
+                    let (icon, name) = (big.icon_rect(i), big.name_rect(i));
+                    assert!(name.size.h >= 22 && big.cells[i].contains_rect(icon) && big.cells[i].contains_rect(name), "{w}×{h} cell {i}");
+                    assert!(icon.loc.y > big.field.loc.y + big.field.size.h && name.loc.y + name.size.h < big.dots_y);
+                }
+                // The folder's name (17 / 22 px Title) fits its field at 1.5.
+                let (panel, inner) = folder_grid(&big, 9);
+                assert!(inner.field.size.h >= 33 && panel.contains_rect(inner.field) && inner.cells.iter().all(|c| !c.overlaps(inner.field)));
+                assert!(Rectangle::from_size((w, h).into()).contains_rect(panel));
+            });
+        }
     }
 
     #[test]

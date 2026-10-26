@@ -53,8 +53,8 @@ pub struct Frame<'a> {
     pub folder: Option<(Rect, &'a Grid, &'a TextField, usize)>,
 }
 
-/// Size, pages, page, shown, caret x, selection width, dark, opacity, accent, scale.
-type Key = (Size<i32, Logical>, usize, usize, u64, i32, i32, bool, u32, [u8; 3], u64);
+/// Size, search field, pages, page, shown, caret x, selection width, dark, opacity, accent, scale.
+type Key = (Size<i32, Logical>, Rect, usize, usize, u64, i32, i32, bool, u32, [u8; 3], u64);
 
 /// A picture, the rect it fills or is centred in, whether it is stretched to the rect, its alpha.
 type Piece = (Arc<Rendered>, Rect, bool, f32);
@@ -195,7 +195,7 @@ impl LaunchpadView {
             if shown_text.is_empty() { text_x } else { text_x + logical(text.label(&shown_text[..field.display_caret()], body, 4000, scale).width).min(room) };
         let selected = if field.all { w } else { 0 };
 
-        let key = (output, count, page, shown.to_bits(), caret_x, selected, dark, glass_opacity.to_bits(), accent, scale.to_bits());
+        let key = (output, f, count, page, shown.to_bits(), caret_x, selected, dark, glass_opacity.to_bits(), accent, scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             let [ar, ag, ab] = accent.map(|c| f32::from(c) / 255.0);
             let mut glass = Vec::new();
