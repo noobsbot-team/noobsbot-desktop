@@ -732,7 +732,7 @@ impl State {
             return;
         }
         let Some(path) = self.screenshots.drag_file.clone() else { return };
-        let on_dock = self.seat.get_pointer().is_some_and(|p| self.dock_covers(self.to_output(p.current_location())));
+        let on_dock = self.seat.get_pointer().is_some_and(|p| self.dock_covers(self.to_dock(self.to_output(p.current_location()))));
         if on_dock {
             *self.dock_ui.uris.lock().unwrap_or_else(|e| e.into_inner()) = Some(file_uri(&path));
             self.dock_drop();
