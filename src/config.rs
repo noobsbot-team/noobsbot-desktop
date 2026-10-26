@@ -704,6 +704,16 @@ pub struct Dock {
     pub assign: BTreeMap<String, String>,
     /// Which displays have a dock (D13).
     pub displays: DockDisplays,
+    /// A display's own pinned list, by connector name, in place of `items` (the dock menu's Separate Items on This
+    /// Display). Kept while the display is away.
+    pub outputs: BTreeMap<String, Vec<String>>,
+}
+
+impl Dock {
+    /// The pinned list of `display`'s dock: its own, else the shared `items`.
+    pub fn items_on(&self, display: Option<&str>) -> &[String] {
+        display.and_then(|d| self.outputs.get(d)).unwrap_or(&self.items)
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -1039,6 +1049,7 @@ impl Default for Dock {
             show_trash: true,
             assign: BTreeMap::new(),
             displays: DockDisplays::All,
+            outputs: BTreeMap::new(),
         }
     }
 }
@@ -1371,7 +1382,9 @@ fn warn_unknown(prefix: &str, user: &toml::Table, known: &toml::Table) {
                     }
                 }
             }
-            (Some(toml::Value::Table(known)), toml::Value::Table(user)) if !["bindings", "notification_apps", "dock.assign"].contains(&name.as_str()) => {
+            (Some(toml::Value::Table(known)), toml::Value::Table(user))
+                if !["bindings", "notification_apps", "dock.assign", "dock.outputs"].contains(&name.as_str()) =>
+            {
                 warn_unknown(&name, user, known)
             }
             _ => {}
@@ -1733,6 +1746,15 @@ mod tests {
         assert!(!c.bindings.contains_key("Super+B"));
         assert_eq!(c.bindings["Super+K"], "exec kate");
         assert_eq!(c.bindings["Super+Q"], "quit");
+    }
+
+    #[test]
+    fn dock_lists_per_display() {
+        let c = parse("[dock]\nitems = [\"kate\"]\n\n[dock.outputs]\n\"HDMI-A-1\" = [\"kitty\", \"dolphin\"]\n").unwrap();
+        assert_eq!(c.dock.items_on(Some("HDMI-A-1")), ["kitty", "dolphin"]);
+        assert_eq!(c.dock.items_on(Some("eDP-1")), ["kate"], "no list of its own: the shared one");
+        assert_eq!(c.dock.items_on(None), ["kate"]);
+        assert!(parse(DEFAULT_TOML).unwrap().dock.outputs.is_empty());
     }
 
     #[test]
