@@ -23,7 +23,7 @@ use smithay::{
 use super::{
     Material, SceneElement, Shaders,
     titlebar::{Label, keep_buffers, label_element},
-    ui::{Align, BODY, CALLOUT, State, Ui},
+    ui::{Align, BODY, CALLOUT, RED, State, Ui},
 };
 use crate::{
     shell::screenshot::{self, Hit, Mode, OPTION_ROWS, Shot, Thumb},
@@ -203,7 +203,7 @@ fn draw_toolbar(ui: &mut Ui, shot: &Shot, (can_record, recording, delay, no_thum
 
     let record = state(shot, Hit::Record, can_record);
     ui.states(bar.record, 6.0, record);
-    let (symbol, color) = if recording { (Symbol::Stop, [0xFF, 0x3B, 0x30, 255]) } else { (Symbol::Record, ui.label()) };
+    let (symbol, color) = if recording { (Symbol::Stop, RED) } else { (Symbol::Record, ui.label()) };
     let color = if record == State::Disabled { ui.tertiary() } else { color };
     ui.symbol(symbol, if recording { Weight::Fill } else { Weight::Regular }, 22, bar.record, color);
 
