@@ -462,7 +462,8 @@ impl State {
     pub fn notify(&mut self, mut n: Notification) {
         n.body_lines = self.body_lines(&n.body);
         let id = n.id;
-        let style = self.config.notification_apps.get(&n.app).copied().unwrap_or(AppStyle::Banner);
+        let rule = self.config.notification_apps.get(&n.app).copied().unwrap_or_default();
+        let style = rule.style;
         if style == AppStyle::Off {
             return self.services.send(Command::NotificationClosed { id, reason: Reason::Dismissed });
         }
