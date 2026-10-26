@@ -5,6 +5,7 @@
 
 use std::{
     cell::RefCell,
+    collections::BTreeMap,
     io::Read,
     os::fd::AsFd,
     sync::{
@@ -453,14 +454,13 @@ impl State {
         self.dock_items_on(self.dock_output().as_ref())
     }
 
-    /// `output`'s dock's items: pinned items that are installed, in config order, then running apps in the order they
-    /// started. With `[dock] current_workspace_only`, only the current Space's apps and windows: with a dock on every
-    /// display, that display's.
+    /// `output`'s dock's items: pinned items that are installed, in the order of its list (`dock_list`), then running
+    /// apps in the order they started. With `[dock] current_workspace_only`, only the current Space's apps and
+    /// windows: with a dock on every display, that display's.
     pub fn dock_items_on(&self, output: Option<&Output>) -> Vec<Item> {
         let dock = &self.config.dock;
-        let output = output.filter(|_| dock.displays == DockDisplays::All);
         let mut items: Vec<Item> = Vec::new();
-        for name in &dock.items {
+        for name in self.dock_list(output) {
             if name == TRASH_KEY {
                 continue;
             }
@@ -470,6 +470,8 @@ impl State {
                 items.push(Item { key: app.id.clone(), app: Some(app.clone()), windows: Vec::new() });
             }
         }
+        let dragging = output.is_none_or(|o| self.dock_output().as_ref() == Some(o));
+        let output = output.filter(|_| dock.displays == DockDisplays::All);
         let mut windows: Vec<Window> = self.space.elements().rev().chain(self.hidden.iter().map(|(w, _)| w)).cloned().collect();
         windows.retain(|w| !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w, output)));
         windows.sort_by_key(seen);
@@ -498,7 +500,8 @@ impl State {
         if dock.show_trash {
             items.push(Item { key: TRASH_KEY.to_owned(), app: None, windows: Vec::new() });
         }
-        self.dock_ui.preview(items)
+        // Only the dock the pointer is on makes room for a dragged icon.
+        if dragging { self.dock_ui.preview(items) } else { items }
     }
 
     /// The displays with a dock (`[dock] displays`), the main one first.
@@ -1226,11 +1229,45 @@ pub fn set_items(text: &str, items: &[String]) -> String {
     config::set_array(text, "dock", "items", items)
 }
 
-/// `map` as a one-line TOML inline table.
-fn inline_table(map: &std::collections::BTreeMap<String, String>) -> String {
-    let q = |s: &str| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""));
-    let pairs: Vec<String> = map.iter().map(|(k, v)| format!("{} = {}", q(k), q(v))).collect();
+/// `s` as a TOML string.
+fn quote(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// `pairs` (key, TOML value) as a one-line TOML inline table.
+fn inline(pairs: impl Iterator<Item = (String, String)>) -> String {
+    let pairs: Vec<String> = pairs.map(|(k, v)| format!("{} = {v}", quote(&k))).collect();
     if pairs.is_empty() { "{}".to_owned() } else { format!("{{ {} }}", pairs.join(", ")) }
+}
+
+/// `map` as a one-line TOML inline table.
+fn inline_table(map: &BTreeMap<String, String>) -> String {
+    inline(map.iter().map(|(k, v)| (k.clone(), quote(v))))
+}
+
+/// A config.toml edit.
+pub type Edit = Box<dyn FnOnce(&str) -> String + Send>;
+
+/// `text` with `[dock] outputs` set to `lists`, all on one line: a hand-written `[dock.outputs]` table goes, not
+/// duplicated.
+pub fn set_outputs(text: &str, lists: &BTreeMap<String, Vec<String>>) -> String {
+    let table = inline(lists.iter().map(|(k, v)| (k.clone(), format!("[{}]", v.iter().map(|s| quote(s)).collect::<Vec<_>>().join(", ")))));
+    config::set_key(&config::set_section(text, "dock.outputs", ""), "dock", "outputs", &table)
+}
+
+/// Puts `items` in `display`'s dock list (its own, else the shared `[dock] items`); returns the edit that saves it.
+pub fn store_pins(dock: &mut config::Dock, display: Option<&str>, items: Vec<String>) -> Edit {
+    match display.and_then(|d| dock.outputs.get_mut(d)) {
+        Some(list) => {
+            *list = items;
+            let lists = dock.outputs.clone();
+            Box::new(move |text| set_outputs(text, &lists))
+        }
+        None => {
+            dock.items = items.clone();
+            Box::new(move |text| set_items(text, &items))
+        }
+    }
 }
 
 /// The URIs of a `text/uri-list` (comments and blank lines skipped).
@@ -1248,10 +1285,19 @@ impl State {
         }
     }
 
-    /// The pinned icons on the dock: (index in `[dock] items`, item key), left to right.
+    /// `output`'s dock's pinned list: the display's own (`[dock] outputs`), else `[dock] items`.
+    fn dock_list(&self, output: Option<&Output>) -> &[String] {
+        self.config.dock.items_on(output.map(|o| o.name()).as_deref())
+    }
+
+    /// The pinned icons on the dock: (index in its list, item key), left to right.
     pub(crate) fn dock_pinned(&self) -> Vec<(usize, String)> {
+        self.dock_pinned_on(self.dock_output().as_ref())
+    }
+
+    fn dock_pinned_on(&self, output: Option<&Output>) -> Vec<(usize, String)> {
         let mut pinned: Vec<(usize, String)> = Vec::new();
-        for (i, name) in self.config.dock.items.iter().enumerate() {
+        for (i, name) in self.dock_list(output).iter().enumerate() {
             if let Some(key) = self.pin_key(name).filter(|k| !pinned.iter().any(|(_, p)| p == k)) {
                 pinned.push((i, key));
             }
@@ -1438,17 +1484,22 @@ impl State {
         });
     }
 
-    /// Moves `key` to pinned slot `to`, or unpins it, and saves `[dock] items`.
+    /// Moves `key` to pinned slot `to` of the dock the pointer is on, or unpins it there, and saves its list.
     pub fn dock_repin(&mut self, key: &str, to: Option<usize>) {
-        let shown: Vec<usize> = self.dock_pinned().iter().map(|(i, _)| *i).collect();
-        let drop: Vec<usize> = self.config.dock.items.iter().enumerate().filter(|(_, n)| self.pin_key(n).as_deref() == Some(key)).map(|(i, _)| i).collect();
-        let items = repin(&self.config.dock.items, &shown, key, &drop, to);
-        if items == self.config.dock.items {
+        self.dock_repin_on(self.dock_output(), key, to);
+    }
+
+    /// `dock_repin` on `output`'s dock: its own list (`[dock] outputs`), else `[dock] items`.
+    fn dock_repin_on(&mut self, output: Option<Output>, key: &str, to: Option<usize>) {
+        let list = self.dock_list(output.as_ref()).to_vec();
+        let shown: Vec<usize> = self.dock_pinned_on(output.as_ref()).iter().map(|(i, _)| *i).collect();
+        let drop: Vec<usize> = list.iter().enumerate().filter(|(_, n)| self.pin_key(n).as_deref() == Some(key)).map(|(i, _)| i).collect();
+        let items = repin(&list, &shown, key, &drop, to);
+        if items == list {
             return;
         }
-        let saved = items.clone();
-        self.dock_save(move |text| set_items(text, &saved));
-        self.config.dock.items = items;
+        let edit = store_pins(&mut self.config.dock, output.map(|o| o.name()).as_deref(), items);
+        self.dock_save(edit);
         self.schedule_redraw();
     }
 
@@ -1884,6 +1935,35 @@ mod tests {
         let saved: toml::Table = toml::from_str(&saved).unwrap();
         assert_eq!(saved["dock"]["assign"]["kitty"].as_str(), Some("DP-1:2"));
         assert_eq!(saved["clock"]["hour24"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn pins_go_to_the_displays_own_list() {
+        let v = |names: &[&str]| names.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let mut dock = config::parse(config::DEFAULT_TOML).unwrap().dock;
+        dock.outputs.insert("HDMI-A-1".into(), v(&["kitty"]));
+        let shared = dock.items.clone();
+        // A display with its own list: only that list changes, saved as one `outputs` line.
+        let edit = store_pins(&mut dock, Some("HDMI-A-1"), v(&["kitty", "kate"]));
+        assert_eq!(dock.items, shared);
+        let saved = config::parse(&edit(config::DEFAULT_TOML)).unwrap().dock;
+        assert_eq!(saved.items_on(Some("HDMI-A-1")), ["kitty", "kate"]);
+        assert_eq!(saved.items, shared);
+        // Any other display (or none known): the shared list.
+        for display in [Some("eDP-1"), None] {
+            let edit = store_pins(&mut dock, display, v(&["dolphin"]));
+            let saved = config::parse(&edit(config::DEFAULT_TOML)).unwrap().dock;
+            assert_eq!((saved.items.as_slice(), dock.items.as_slice()), (&v(&["dolphin"])[..], &v(&["dolphin"])[..]));
+            assert_eq!(dock.outputs["HDMI-A-1"], ["kitty", "kate"]);
+        }
+        // A hand-written `[dock.outputs]` table is replaced, not duplicated; quotes survive.
+        let text = "[dock]\nzoom = true\n\n[dock.outputs]\n\"DP-1\" = [\"a\"]\n\n[clock]\nhour24 = true\n";
+        let lists = BTreeMap::from([("DP-1".to_owned(), v(&["say \"hi\""])), ("HDMI-A-1".to_owned(), Vec::new())]);
+        let saved = set_outputs(text, &lists);
+        assert_eq!(saved.matches("outputs").count(), 1, "{saved}");
+        let back = config::parse(&saved).unwrap();
+        assert_eq!(back.dock.outputs, lists);
+        assert_eq!(saved.parse::<toml::Table>().unwrap()["clock"]["hour24"].as_bool(), Some(true));
     }
 
     #[test]
