@@ -323,7 +323,7 @@ impl State {
         let mission = self.mission.as_ref()?;
         let output = self.space.output_geometry(on)?;
         let all = mission.all;
-        let first = self.space.outputs().next() == Some(on);
+        let docked = self.dock_outputs().contains(on);
         let windows: Vec<Window> = self
             .space
             .elements()
@@ -336,8 +336,8 @@ impl State {
             .collect();
         let frames: Vec<Rect> = windows.iter().filter_map(|w| self.frame(w)).map(|f| Rectangle::new(f.loc - output.loc, f.size)).collect();
         let (expanded, dynamic) = (mission.expanded && mission.output == on.name(), self.config.windows.spaces == 0);
-        // The dock is on the first display only.
-        let bottom = output.size.h - if first { crate::shell::dock::reserve(&self.config.dock) } else { 0 };
+        // Above this display's dock, if it has one.
+        let bottom = output.size.h - if docked { crate::shell::dock::reserve(&self.config.dock) } else { 0 };
         let top = area_top();
         let area = Rectangle::new((GAP, top).into(), (output.size.w - 2 * GAP, bottom - top - GAP / 2).into());
         let key = self.output_key(on);

@@ -440,11 +440,27 @@ impl State {
         location - origin.to_f64()
     }
 
-    /// The display the open popup shows on: a bar popup on its bar's (`bar_output`), the others on the first.
+    /// The display the open popup shows on: a bar popup on its bar's (`bar_output`), the dock's menu on its dock's
+    /// (`dock_output`), the others on the first.
     pub fn popup_output(&self) -> Option<smithay::output::Output> {
+        if self.popup == Some(Popup::Menu(Menu::Dock)) {
+            return self.dock_output();
+        }
         let first = self.space.outputs().next();
         let bar = self.bar_output.as_ref().filter(|o| self.space.outputs().any(|x| x == *o));
         if self.popup.is_some_and(|p| p.item().is_none()) { first } else { bar.or(first) }.cloned()
+    }
+
+    /// The display the alert shows on: the focused window's, else the pointer's (D13).
+    pub fn alert_output(&self) -> Option<smithay::output::Output> {
+        let window = self.focused_window().and_then(|w| self.space.element_geometry(&w));
+        self.display_with(window.map(|g| g.loc + Point::from((g.size.w / 2, g.size.h / 2))))
+    }
+
+    /// `location` (first-output-relative) relative to the alert's display.
+    fn to_alert(&self, location: Point<f64, Logical>) -> Point<f64, Logical> {
+        let origin = |o: Option<smithay::output::Output>| o.and_then(|o| self.space.output_geometry(&o)).map_or((0, 0).into(), |g| g.loc);
+        location + origin(self.space.outputs().next().cloned()).to_f64() - origin(self.alert_output()).to_f64()
     }
 
     /// The size of the popup's display, which Notification Center and Control Center are laid out in.
@@ -502,7 +518,7 @@ impl State {
 
     /// Whether the shell, not an app, owns the pointer at `location` (output-relative): the bar, an open popup or the dock.
     pub fn shell_covers(&self, location: Point<f64, Logical>) -> bool {
-        let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(location));
+        let on_alert = self.alert.is_some() && self.backend.as_ref().and_then(|b| b.alert.rect()).is_some_and(|r| r.to_f64().contains(self.to_alert(location)));
         if on_alert || self.on_banner(location) || self.mission_open() || self.osk_panel().is_some_and(|r| r.to_f64().contains(location)) {
             return true;
         }
@@ -520,14 +536,14 @@ impl State {
         }
         // The screenshot thumbnail, unless it is being dragged (then the app under it is the drop target).
         let on_thumbnail = !self.screenshots.dragging && self.thumbnail_rect().is_some_and(|r| r.to_f64().contains(location));
-        on_thumbnail || self.menu_bar_at(location).is_some() || self.in_popup(location) || self.dock_covers(location)
+        on_thumbnail || self.menu_bar_at(location).is_some() || self.in_popup(location) || self.dock_covers(self.to_dock(location))
     }
 
     /// A press at `location` (output-relative); `secondary`: the right button. `true`: the shell took it, so no
     /// window gets focus or the click.
     pub fn shell_press(&mut self, location: Point<f64, Logical>, secondary: bool) -> bool {
         // The alert is above everything else.
-        if self.alert.is_some() && self.alert_press(location) {
+        if self.alert.is_some() && self.alert_press(self.to_alert(location)) {
             return true;
         }
         if self.banner_press(location)

@@ -499,7 +499,7 @@ impl State {
             && !self.switcher_press(location)
             && !self.shot_press(self.to_output(location), button == BTN_LEFT)
             && !self.drawer_press(self.to_output(location), button == BTN_RIGHT)
-            && !self.dock_press(self.to_output(location), button)
+            && !self.dock_press(self.to_dock(self.to_output(location)), button)
             && !self.mission_press(location, button)
             && !self.shell_press(self.to_output(location), button == BTN_RIGHT)
         {
@@ -554,7 +554,7 @@ impl State {
             self.shell_release();
             self.desktop_release();
             self.launchpad_release();
-            self.dock_release(self.to_output(pointer.current_location()));
+            self.dock_release(self.to_dock(self.to_output(pointer.current_location())));
         }
         pointer.button(self, &ButtonEvent { button, state, serial, time });
         pointer.frame(self);
@@ -652,7 +652,7 @@ impl State {
                 {
                     return;
                 }
-                if shell && (self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(pos, page_wheel)) {
+                if shell && (self.notify_scroll(pos, amount(Axis::Horizontal), amount(Axis::Vertical)) || self.dock_scroll(self.to_dock(pos), page_wheel)) {
                     return;
                 }
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);
@@ -796,10 +796,11 @@ impl State {
     /// Top/overlay layer surfaces, then windows, then bottom/background layer surfaces; nothing over the menu bar or
     /// an open popup, which the shell draws itself.
     pub fn surface_under(&self, location: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        // Locked: only a client's lock surface, covering the output.
+        // Locked: only a client's lock surface, the one covering the display under the pointer.
         if let Some(lock) = &self.lock {
-            let origin = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map(|g| g.loc.to_f64()).unwrap_or_default();
-            return lock.client_surface().map(|s| (s.wl_surface().clone(), origin));
+            let output = self.space.output_under(location).next()?;
+            let origin = self.space.output_geometry(output)?.loc.to_f64();
+            return lock.surface_on(output).map(|s| (s.wl_surface().clone(), origin));
         }
         if self.shell_covers(self.to_output(location)) || self.switcher_covers(location) {
             return None;

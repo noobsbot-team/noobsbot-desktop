@@ -321,8 +321,10 @@ impl State {
         self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or_else(Default::default, |g| g.loc)
     }
 
+    /// `window`'s frame relative to its display, as the frame of its display draws it (render::scene).
     fn window_frame(&self, window: &Window) -> Option<Rectangle<f64, Logical>> {
-        motion::window_frame(&self.space, window, self.output_loc())
+        let loc = self.window_output(window).and_then(|o| self.space.output_geometry(&o)).map_or_else(|| self.output_loc(), |g| g.loc);
+        motion::window_frame(&self.space, window, loc)
     }
 
     /// Where `window` is drawn right now: mid-motion, as a ghost, or at its frame.
@@ -356,17 +358,19 @@ impl State {
         }
     }
 
-    /// Where `window` minimises to: its tile's thumbnail (the next tile while it is still shown), else its app's dock
-    /// icon, or the bottom centre without a shown dock.
+    /// Where `window` minimises to, relative to its display: its tile's thumbnail (the next tile while it is still
+    /// shown), else its app's dock icon, on that display's dock; or the bottom centre without a shown dock there.
     // ponytail: un-minimising grows out of the last tile's place, not the one it had; the tile is gone by then.
     fn dock_target(&self, window: &Window) -> Rectangle<f64, Logical> {
-        let mut items = self.dock_items();
+        let output = self.window_output(window).or_else(|| self.space.outputs().next().cloned());
+        let docked = output.clone().filter(|o| self.dock_outputs().contains(o) && self.dock_shown_on(o));
+        let mut items = self.dock_items_on(output.as_ref());
         let tile = crate::shell::dock::is_minimised(window) && !self.config.dock.minimise_into_icon;
         if tile && !items.iter().any(|i| i.is_tile() && i.windows.contains(window)) {
             items.push(crate::shell::dock::Item { key: "minimised:next".into(), app: None, windows: vec![window.clone()] });
         }
         let frame = self.window_frame(window).map(|f| f.size);
-        let icon = self.dock_layout(&items).filter(|_| self.dock_shown()).and_then(|l| {
+        let icon = docked.and_then(|o| self.dock_layout_on(&o, &items)).and_then(|l| {
             let i = items.iter().position(|i| i.is_tile() == tile && i.windows.contains(window))?;
             let icon = l.icons.get(i).copied()?;
             Some(match frame.filter(|_| tile) {
@@ -375,7 +379,7 @@ impl State {
             })
         });
         icon.unwrap_or_else(|| {
-            let size = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)).map_or_else(Default::default, |g| g.size);
+            let size = output.and_then(|o| self.space.output_geometry(&o)).map_or_else(Default::default, |g| g.size);
             Rectangle::new((f64::from(size.w) / 2.0 - 32.0, f64::from(size.h) - 64.0).into(), (64.0, 64.0).into())
         })
     }

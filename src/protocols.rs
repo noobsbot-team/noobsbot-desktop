@@ -125,10 +125,11 @@ impl State {
         self.switcher_motion(host);
         self.hover_focus(host);
         self.shell_motion(self.to_output(current), self.to_output(host));
-        self.dock_motion(self.to_output(current), self.to_output(host));
+        self.dock_follow(self.to_output(host));
+        self.dock_motion(self.to_dock(self.to_output(current)), self.to_dock(self.to_output(host)));
         self.desktop_motion(self.to_output(host));
         self.mission_motion(host);
-        self.hot_corner_motion(self.to_output(host));
+        self.hot_corner_motion(host);
         self.bar_motion(host);
         let under = self.surface_under(current);
 
