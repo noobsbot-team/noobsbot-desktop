@@ -225,7 +225,9 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   file id per line.
 - **Spaces and Mission Control:** Super+Left/Right or a three-finger swipe switches Space. Super+Up (or swipe up)
   shows every window and the Spaces bar, where + adds a Space. Super+Down (or swipe down) shows the current app's
-  windows.
+  windows. There, arrows or Tab pick a window, Return or Space opens it, Delete or Super+W closes it, Ctrl+Left/Right
+  switch Space, and Ctrl+Up (or the button at the bar's left end) shows every Space as a tile: click one to go there,
+  drag a window onto one to move it.
 - **App switcher:** hold Super and press Tab.
 - **Screenshots:** Super+Shift+3 (whole screen), Super+Shift+4 (drag a region), Super+Shift+5 (toolbar with options).
   They are saved to `~/Pictures/Screenshots` and copied to the clipboard.
