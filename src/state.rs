@@ -1416,6 +1416,7 @@ impl ServerDndGrabHandler for State {
     }
 
     fn dropped(&mut self, _seat: Seat<Self>) {
+        self.dock_drag_ended();
         // `cancelled` follows at once when no app took it; decide after.
         self.loop_handle.insert_idle(|state| state.thumbnail_dropped());
     }

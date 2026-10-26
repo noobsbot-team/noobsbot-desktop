@@ -1533,8 +1533,11 @@ impl State {
         self.dock_ui.spring = None;
     }
 
-    /// An app's drag moved to `to`: resting on an icon arms its spring.
+    /// An app's drag (or the screenshot thumbnail's) moved to `to`: resting on an icon arms its spring.
     fn dock_spring_motion(&mut self, to: Point<f64, Logical>) {
+        if self.screenshots.dragging {
+            self.dock_ui.spring.get_or_insert_default();
+        }
         if self.dock_ui.spring.is_none() {
             return;
         }
