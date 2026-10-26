@@ -1647,19 +1647,24 @@ calls the system service, and applies live.
 
 ### E8.3 Dock: the per-window jobs of a window list (priority 1)
 The dock stays per app, by design. Every per-window job a taskbar does gets a surface of our own instead:
-- **Window previews:** hover (or long-press) an icon with several windows → a glass strip of live thumbnails above it,
+- ~~**Window previews:** hover (or long-press) an icon with several windows → a glass strip of live thumbnails above it,
   click to focus, × or middle-click to close, hovering a thumbnail fades the other windows. Reuses Mission Control's
-  thumbnails and `close_button`.
+  thumbnails and `close_button`.~~ Done: hover an icon with several windows; ✕ or middle-click closes, the hovered
+  window's surroundings dim (`src/shell/dock.rs` `Peek`, `src/render/dock.rs`). Long-press is not built.
 - **Minimised windows** as thumbnail tiles after a separator at the dock's right end (E3); the minimise animation
   lands on the tile. Built; `[dock] minimise_into_icon` turns them off.
 - **One dock per display** with its own filtering (D13, E3).
-- **Super+1…9** focuses, cycles or opens the n-th dock app, Super+Shift+n opens a new window, and holding Super shows
-  number pills over the icons. Space keys move to Super+Ctrl+1…9, so Ctrl+1…9 stays with apps (browser tabs).
+- ~~**Super+1…9** focuses, cycles or opens the n-th dock app, Super+Shift+n opens a new window, and holding Super shows
+  number pills over the icons. Space keys move to Super+Ctrl+1…9, so Ctrl+1…9 stays with apps (browser tabs).~~ Done:
+  `dock-app` / `dock-app-new` actions, number pills, Spaces on Super+Ctrl+1…9.
 - **Right-click menu:** Options ▸ Assign To (All Spaces / This Space / None), Move to Display, Open at Login; Close
-  Others; recent files of the app (`recently-used.xbel`); ◆ next to minimised windows.
-- **Spring-loading:** a file dragged over an icon brings that app's window up (App Exposé when it has several).
+  Others; recent files of the app (`recently-used.xbel`); ◆ next to minimised windows. Built: Open at Login, Keep in
+  Dock, Show in Files, recent files, ◆, Close / Close All (Options inline). Missing: Assign To, Move to Display, Close
+  Others.
+- **Spring-loading:** a file dragged over an icon brings that app's window up (App Exposé when it has several). Not built.
 - **Config:** `[dock] click = "toggle" | "cycle"`, `middle = "new" | "close"`, scroll on / off / reverse, Shift-click
-  new window, cycle across apps.
+  new window, cycle across apps. Built: `click`, `middle`, `scroll`, Shift/Ctrl-click new window, with Settings rows.
+  Missing: cycle across apps.
 - **Later, if asked:** `[dock] mode = "windows"`, one icon per window with the title as tooltip.
 
 ### E8.4 Appearance and themes (priority 1)
