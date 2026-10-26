@@ -689,14 +689,11 @@ trait AgentManager {
     fn register(&self, identifier: &str) -> zbus::Result<()>;
 }
 
-/// Serves the secret agent at the path NetworkManager calls and registers it.
-// ponytail: registered once; if NetworkManager restarts, password prompts need a desktop restart.
+/// Serves the secret agent at the path NetworkManager calls and registers it, again whenever NetworkManager restarts.
 pub async fn serve_agent(bus: &Connection, updates: &Sender<Update>, answer: &super::Answer<Option<String>>) {
-    let result = async {
-        bus.object_server().at("/org/freedesktop/NetworkManager/SecretAgent", SecretAgent { updates: updates.clone(), answer: answer.clone() }).await?;
-        AgentManagerProxy::new(bus).await?.register("org.noobsbot.desktop").await
-    };
-    if let Err(err) = result.await {
-        tracing::warn!("Wi-Fi password agent off: {err}");
+    let agent = SecretAgent { updates: updates.clone(), answer: answer.clone() };
+    if let Err(err) = bus.object_server().at("/org/freedesktop/NetworkManager/SecretAgent", agent).await {
+        return tracing::warn!("Wi-Fi password agent off: {err}");
     }
+    super::keep_registered(bus, SERVICE, "Wi-Fi password agent", || async { AgentManagerProxy::new(bus).await?.register("org.noobsbot.desktop").await }).await;
 }
