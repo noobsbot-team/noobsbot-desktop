@@ -36,6 +36,7 @@ pub struct Config {
     pub check_updates: bool,
     pub appearance: Appearance,
     pub night_light: NightLight,
+    pub accessibility: Accessibility,
     pub keyboard: Keyboard,
     pub touchpad: Touchpad,
     pub mouse: Mouse,
@@ -111,6 +112,24 @@ pub struct NightLight {
 impl Default for NightLight {
     fn default() -> Self {
         Self { enabled: false, temperature: 3400, schedule: NightSchedule::Custom, from: 19, until: 7 }
+    }
+}
+
+/// Accessibility (E8.6).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Accessibility {
+    /// Shaking the pointer briefly makes it bigger.
+    pub shake_to_find: bool,
+    /// Resting the pointer this long clicks; 0 = off.
+    pub dwell_click_ms: u32,
+    /// Holding the primary button still this long gives a secondary click instead; 0 = off.
+    pub hold_secondary_ms: u32,
+}
+
+impl Default for Accessibility {
+    fn default() -> Self {
+        Self { shake_to_find: true, dwell_click_ms: 0, hold_secondary_ms: 0 }
     }
 }
 
@@ -412,6 +431,7 @@ impl Default for Config {
             check_updates: true,
             appearance: Appearance::default(),
             night_light: NightLight::default(),
+            accessibility: Accessibility::default(),
             keyboard: Keyboard::default(),
             touchpad: Touchpad::default(),
             mouse: Mouse::default(),
