@@ -313,6 +313,12 @@ impl MenuBar {
     }
 }
 
+/// `at` (global) relative to the display at `geo`, when it is on that display's bar.
+pub fn on_bar(geo: Rect, at: smithay::utils::Point<f64, smithay::utils::Logical>) -> Option<smithay::utils::Point<f64, smithay::utils::Logical>> {
+    let local = at - geo.loc.to_f64();
+    (geo.to_f64().contains(at) && local.y < f64::from(height())).then_some(local)
+}
+
 /// Whether an auto-hiding bar shows with the pointer `y` px below its display's top: at the very edge, or anywhere
 /// on the bar once `shown`.
 pub fn reveals(shown: bool, y: f64) -> bool {
@@ -362,6 +368,26 @@ mod tests {
         assert_eq!(volume(&sound(10, false)), Symbol::SpeakerNone);
         assert_eq!(volume(&sound(0, false)), Symbol::SpeakerMuted);
         assert_eq!(volume(&sound(89, true)), Symbol::SpeakerMuted);
+    }
+
+    #[test]
+    fn a_second_displays_bar_hits_in_its_own_coordinates() {
+        // The second display sits right of a 1280 px first one; its clock is at its right edge.
+        let second = Rectangle::new((1280, 0).into(), (1920, 1080).into());
+        let bar = MenuBar {
+            hits: vec![
+                (BarItem::Logo, Rectangle::new((0, 0).into(), (40, height()).into())),
+                (BarItem::Clock, Rectangle::new((1800, 0).into(), (120, height()).into())),
+            ],
+            ..Default::default()
+        };
+        let hit = |x: f64, y: f64| on_bar(second, (x, y).into()).and_then(|at| bar.hit(at));
+        assert_eq!(hit(1280.0 + 1900.0, 10.0), Some(BarItem::Clock));
+        assert_eq!(hit(1290.0, 5.0), Some(BarItem::Logo));
+        assert_eq!(on_bar(second, (1290.0, 5.0).into()), Some((10.0, 5.0).into()));
+        // Below its bar, or on the first display: not this bar.
+        assert_eq!(on_bar(second, (1290.0, f64::from(height()) + 1.0).into()), None);
+        assert_eq!(on_bar(second, (20.0, 5.0).into()), None);
     }
 
     #[test]
