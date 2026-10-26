@@ -381,6 +381,18 @@ mod tests {
     }
 
     #[test]
+    fn a_move_clamps_to_the_display_under_the_pointer() {
+        let (main, right, left) = (rect(0, 24, 1920, 1056), rect(1920, 24, 1280, 776), rect(-1920, 24, 1920, 1056));
+        let window = |x, y| rect(x, y, 400, 300);
+        assert_eq!(move_to(window(2500, 300), main, &[], false), (1880, 300).into(), "the first display alone stops it");
+        assert_eq!(move_to(window(2500, 300), right, &[], false), (2500, 300).into(), "on the right one it goes on");
+        assert_eq!(move_to(window(3500, 900), right, &[], false), (3160, 760).into(), "40 px stay on the right one");
+        assert_eq!(move_to(window(-1500, 300), left, &[], false), (-1500, 300).into(), "a negative origin");
+        assert_eq!(move_to(window(-2500, 0), left, &[], false), (-2280, 24).into(), "title bar kept below its menu bar");
+        assert_eq!(move_to(window(1915, 300), right, &[], true), (1920, 300).into(), "its edge is magnetic");
+    }
+
+    #[test]
     fn left_edge_resize_keeps_right_edge_pinned() {
         let start = rect(100, 100, 400, 300);
         let edges = Edges { left: true, ..Default::default() };
