@@ -23,6 +23,7 @@ mod input;
 mod mission;
 mod pam;
 mod perms;
+mod pointer_assist;
 mod protocols;
 mod render;
 mod rules;

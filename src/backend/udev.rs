@@ -429,7 +429,7 @@ impl State {
             }
             Err(err) => tracing::warn!("{}: render: {err}", screen.output.name()),
         }
-        if animating {
+        if animating || self.pointer_assist.animating(self.frame_time) {
             screen.again = true;
         }
         if let Some(damaged) = damaged {
@@ -447,33 +447,39 @@ impl State {
         }
         let scale = output.current_scale().fractional_scale();
         let at = (location - geo.loc.to_f64()).to_physical(scale);
-        match &self.protocols.cursor {
-            CursorImageStatus::Hidden => Vec::new(),
-            CursorImageStatus::Surface(surface) => {
+        // Shaken (shake to find), the theme's arrow grows in place of an app's own cursor too.
+        let grow = self.pointer_assist.shake.scale(self.frame_time);
+        let icon = match &self.protocols.cursor {
+            CursorImageStatus::Hidden => return Vec::new(),
+            CursorImageStatus::Surface(surface) if grow <= 1.0 => {
                 let hotspot = with_states(surface, |s| s.data_map.get::<CursorImageSurfaceData>().and_then(|d| d.lock().ok().map(|d| d.hotspot)));
                 let at = (at - hotspot.unwrap_or_default().to_f64().to_physical(scale)).to_i32_round();
-                render_elements_from_surface_tree(renderer, surface, at, scale, 1.0, Kind::Cursor).into_iter().map(SceneElement::Surface).collect()
+                let surface = render_elements_from_surface_tree(renderer, surface, at, scale, 1.0, Kind::Cursor).into_iter().map(SceneElement::Surface);
+                return surface.collect();
             }
-            CursorImageStatus::Named(icon) => {
-                let px = (f64::from(cursor::size(self.config.appearance.pointer_size)) * scale).round() as u32;
-                let entry = cache.entry((*icon, px)).or_insert_with(|| {
-                    let names: Vec<&str> = [icon.name()].into_iter().chain(icon.alt_names().iter().copied()).chain(["default", "left_ptr"]).collect();
-                    let image = cursor::load(&names, px)?;
-                    let (w, h) = (image.size.0 as i32, image.size.1 as i32);
-                    let buffer = MemoryRenderBuffer::from_slice(&image.pixels, Fourcc::Argb8888, (w, h), 1, Transform::Normal, None);
-                    Some((buffer, Point::from((image.hotspot.0 as i32, image.hotspot.1 as i32)), Size::from((w, h))))
-                });
-                let Some((buffer, hotspot, size)) = entry else { return Vec::new() };
-                // Drawn 1:1 in physical px: the theme's picture nearest the scaled size, never resampled.
-                let logical = size.to_f64().to_logical(scale).to_i32_round();
-                let src = Rectangle::from_size(size.to_f64().to_logical(1.0));
-                MemoryRenderBufferRenderElement::from_buffer(renderer, at - hotspot.to_f64(), buffer, None, Some(src), Some(logical), Kind::Cursor)
-                    .ok()
-                    .map(SceneElement::Memory)
-                    .into_iter()
-                    .collect()
-            }
-        }
+            CursorImageStatus::Surface(_) => CursorIcon::Default,
+            CursorImageStatus::Named(icon) => *icon,
+        };
+        let base = f64::from(cursor::size(self.config.appearance.pointer_size)) * scale;
+        // Growing: the theme's biggest fitting picture, resampled down to the size of the moment.
+        let px = (base * if grow > 1.0 { crate::pointer_assist::SHAKE_GROW } else { 1.0 }).round() as u32;
+        let entry = cache.entry((icon, px)).or_insert_with(|| {
+            let names: Vec<&str> = [icon.name()].into_iter().chain(icon.alt_names().iter().copied()).chain(["default", "left_ptr"]).collect();
+            let image = cursor::load(&names, px)?;
+            let (w, h) = (image.size.0 as i32, image.size.1 as i32);
+            let buffer = MemoryRenderBuffer::from_slice(&image.pixels, Fourcc::Argb8888, (w, h), 1, Transform::Normal, None);
+            Some((buffer, Point::from((image.hotspot.0 as i32, image.hotspot.1 as i32)), Size::from((w, h))))
+        });
+        let Some((buffer, hotspot, size)) = entry else { return Vec::new() };
+        // Drawn 1:1 in physical px: the theme's picture nearest the scaled size, never resampled (unless growing).
+        let factor = if grow > 1.0 { grow * base / f64::from(size.w) } else { 1.0 };
+        let logical = size.to_f64().upscale(factor).to_logical(scale).to_i32_round();
+        let src = Rectangle::from_size(size.to_f64().to_logical(1.0));
+        MemoryRenderBufferRenderElement::from_buffer(renderer, at - hotspot.to_f64().upscale(factor), buffer, None, Some(src), Some(logical), Kind::Cursor)
+            .ok()
+            .map(SceneElement::Memory)
+            .into_iter()
+            .collect()
     }
 
     fn vblank(&mut self, node: DrmNode, crtc: crtc::Handle, meta: Option<&DrmEventMetadata>) {
