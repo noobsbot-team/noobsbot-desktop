@@ -222,6 +222,7 @@ impl State {
             .then(|| self.window_menu_rows())
             .and_then(|rows| Some((self.window_menu_anchor()?, rows)));
         let open_sub = self.open_submenu();
+        let cursor = self.menu_cursor.filter(|(p, sub, _)| Some(*p) == self.popup && (open_sub.is_some() || !sub));
         let (now, scale) = (self.frame_time, output.current_scale().fractional_scale());
         let appearance = &self.config.appearance;
         let (dark, reduce, hour24) = (render::is_dark(appearance), appearance.reduce_motion, self.config.clock.format.hour24);
@@ -319,8 +320,13 @@ impl State {
                     ),
                 };
                 let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
-                let main =
-                    menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, open_sub, dark, accent, appearance.glass_opacity, scale);
+                // The keyboard's row is lit instead of the pointer's, which goes nowhere.
+                let (hover, lit, sub_lit) = match cursor {
+                    Some((_, false, i)) => ((f64::MIN, f64::MIN).into(), Some(i), None),
+                    Some((_, true, j)) => ((f64::MIN, f64::MIN).into(), open_sub, Some(j)),
+                    None => (hover, open_sub, None),
+                };
+                let main = menu.elements(renderer, shaders, &mut self.text, &rows, anchor, size, hover, lit, dark, accent, appearance.glass_opacity, scale);
                 // The submenu beside its row, in front of the menu.
                 let beside = open_sub.and_then(|i| Some((rows.get(i)?.as_ref()?.sub.clone(), menu.cell(i)?, menu.rect()?)));
                 if let Some((sub, row, parent)) = beside {
@@ -334,7 +340,7 @@ impl State {
                         anchor,
                         size,
                         hover,
-                        None,
+                        sub_lit,
                         dark,
                         accent,
                         appearance.glass_opacity,

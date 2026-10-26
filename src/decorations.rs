@@ -239,7 +239,8 @@ pub enum Command {
     KeepOnTop,
     /// Space n, from 0.
     ToSpace(usize),
-    ToDisplay,
+    /// Display n, in `space.outputs()` order.
+    ToDisplay(usize),
     Close,
 }
 
@@ -261,9 +262,9 @@ pub const TILES: [(&str, wm::Edges); 8] = {
 };
 
 /// The window menu: `full` (a full-screen window) greys what would move or resize it; Keep on Top ticked while
-/// `on_top`; Move & Resize and Move to open submenus: the tiles, and `spaces` (name, can move there) then Next Display
-/// with more than one of `displays`.
-pub fn menu_rows(full: bool, on_top: bool, spaces: &[(String, bool)], displays: usize) -> Vec<Option<crate::shell::Row>> {
+/// `on_top`; Move & Resize and Move to open submenus: the tiles, and `spaces` (name, can move there) then the other
+/// `displays` (index, name) by name, or Next Display when there is one other (greyed with none).
+pub fn menu_rows(full: bool, on_top: bool, spaces: &[(String, bool)], displays: &[(usize, String)]) -> Vec<Option<crate::shell::Row>> {
     let row = |label: &str, shortcut, command: Option<Command>| {
         Some(crate::shell::Row { sub: Vec::new(), label: label.to_owned(), shortcut, action: command.map(crate::shortcuts::Action::WindowMenu) })
     };
@@ -271,7 +272,11 @@ pub fn menu_rows(full: bool, on_top: bool, spaces: &[(String, bool)], displays: 
     let free = |command| (!full).then_some(command);
     let tiles = TILES.iter().enumerate().map(|(i, (name, ..))| row(name, "", free(Command::Tile(i)))).collect();
     let mut places: Vec<_> = spaces.iter().enumerate().map(|(i, (name, can))| row(name, "", (*can && !full).then_some(Command::ToSpace(i)))).collect();
-    places.extend([None, row("Next Display", "", (displays > 1).then_some(Command::ToDisplay))]);
+    places.push(None);
+    match displays {
+        [] | [_] => places.push(row("Next Display", "", displays.first().map(|(i, _)| Command::ToDisplay(*i)))),
+        _ => places.extend(displays.iter().map(|(i, name)| row(name, "", Some(Command::ToDisplay(*i))))),
+    }
     vec![
         row("Minimize", "", free(Command::Minimise)),
         row("Zoom", "", free(Command::Zoom)),
@@ -287,6 +292,15 @@ pub fn menu_rows(full: bool, on_top: bool, spaces: &[(String, bool)], displays: 
         None,
         row("Close", "", Some(Command::Close)),
     ]
+}
+
+/// A display's name in menus: the laptop's own panel, else its EDID model, else its connector (`HDMI-A-1`).
+fn display_name(connector: &str, model: &str) -> String {
+    match model {
+        _ if crate::display_info::built_in(connector) => "Built-in Display".into(),
+        "" | "Unknown" => connector.to_owned(),
+        _ => model.to_owned(),
+    }
 }
 
 impl State {
@@ -307,7 +321,15 @@ impl State {
         let (names, _) = self.desk_names_at(&key);
         // Not its own Space, nor another window's full-screen Space.
         let spaces: Vec<_> = names.into_iter().enumerate().map(|(i, n)| (n, i != here && list.get(i).is_none_or(Option::is_none))).collect();
-        menu_rows(full, on_top, &spaces, self.space.outputs().count())
+        let own = self.window_output(&window);
+        let displays: Vec<_> = self
+            .space
+            .outputs()
+            .enumerate()
+            .filter(|(_, o)| Some(*o) != own.as_ref())
+            .map(|(i, o)| (i, display_name(&o.name(), &o.physical_properties().model)))
+            .collect();
+        menu_rows(full, on_top, &spaces, &displays)
     }
 
     pub fn window_menu_anchor(&self) -> Option<crate::shell::Anchor> {
@@ -328,7 +350,10 @@ impl State {
             Command::Fullscreen => self.toggle_fullscreen(&window),
             Command::KeepOnTop => self.keep_on_top(&window),
             Command::ToSpace(n) => self.move_window_to_space(&window, n),
-            Command::ToDisplay => self.move_to_display(&window, 1),
+            Command::ToDisplay(to) => {
+                let from = self.window_output(&window).and_then(|o| self.space.outputs().position(|x| *x == o)).unwrap_or(0);
+                self.move_to_display(&window, to as i32 - from as i32);
+            }
             Command::Close => self.close_window(&window),
         }
     }
@@ -401,7 +426,7 @@ mod tests {
     #[test]
     fn window_menu_rows() {
         let spaces = [("Desktop 1".to_owned(), false), ("Desktop 2".to_owned(), true)];
-        let rows = menu_rows(false, true, &spaces, 1);
+        let rows = menu_rows(false, true, &spaces, &[]);
         // Submenu rows are found too.
         let all = |rows: &[Option<crate::shell::Row>]| {
             rows.iter().flatten().flat_map(|r| std::iter::once(r.clone()).chain(r.sub.iter().flatten().cloned())).collect::<Vec<_>>()
@@ -414,13 +439,24 @@ mod tests {
         assert_eq!(find(&rows, "Move & Resize").sub.len(), TILES.len());
         assert_eq!(find(&rows, "Move to").sub.len(), 4, "two spaces, a separator, Next Display");
         assert_eq!(find(&rows, "Keep on Top").shortcut, "✓");
-        assert_eq!(find(&menu_rows(false, false, &spaces, 1), "Keep on Top").shortcut, "");
+        assert_eq!(find(&menu_rows(false, false, &spaces, &[]), "Keep on Top").shortcut, "");
         let greyed = |rows: &[Option<crate::shell::Row>]| all(rows).into_iter().filter(|r| r.action.is_none()).map(|r| r.label).collect::<Vec<_>>();
         assert_eq!(greyed(&rows), ["Move & Resize", "Move to", "Desktop 1", "Next Display"]);
         assert_eq!(find(&rows, "Desktop 2").action, Some(crate::shortcuts::Action::WindowMenu(Command::ToSpace(1))));
-        assert!(find(&menu_rows(false, false, &spaces, 2), "Next Display").action.is_some());
+        let one = [(1, "DELL U2720Q".to_owned())];
+        assert_eq!(find(&menu_rows(false, false, &spaces, &one), "Next Display").action, Some(crate::shortcuts::Action::WindowMenu(Command::ToDisplay(1))));
+        // Two or more others: each by name, in display order, and no Next Display.
+        let two = [(0, "Built-in Display".to_owned()), (2, "HDMI-A-1".to_owned())];
+        let to = find(&menu_rows(false, false, &spaces, &two), "Move to").sub;
+        let names: Vec<_> = to.iter().map(|r| r.as_ref().map(|r| r.label.as_str())).collect();
+        assert_eq!(names, [Some("Desktop 1"), Some("Desktop 2"), None, Some("Built-in Display"), Some("HDMI-A-1")]);
+        assert_eq!(to[4].as_ref().unwrap().action, Some(crate::shortcuts::Action::WindowMenu(Command::ToDisplay(2))));
+        assert_eq!(
+            (display_name("eDP-1", "Unknown"), display_name("DP-2", "Unknown"), display_name("DP-2", "LG HDR 4K")),
+            ("Built-in Display".into(), "DP-2".into(), "LG HDR 4K".into())
+        );
         // Full screen: only Exit Full Screen, Keep on Top, displays and Close stay.
-        let full = menu_rows(true, false, &spaces, 2);
+        let full = menu_rows(true, false, &spaces, &one);
         assert!(find(&full, "Exit Full Screen").action.is_some());
         assert_eq!(all(&full).iter().filter(|r| r.action.is_some()).count(), 4);
     }
