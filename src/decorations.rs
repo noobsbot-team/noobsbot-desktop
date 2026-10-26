@@ -127,7 +127,8 @@ impl State {
         None
     }
 
-    /// A press on a title bar: the lights act on release (macOS), the title moves the window or, double-clicked, zooms it.
+    /// A press on a title bar: the lights act on release (macOS), the title moves the window or, double-clicked, does
+    /// `windows.double_click_title` (zoom by default).
     pub fn bar_press(&mut self, window: Window, part: Part, start_data: GrabStartData<Self>, serial: Serial) {
         if part != Part::Title {
             self.zones.bar_press = Some((window, part));
@@ -135,7 +136,11 @@ impl State {
         }
         let double = self.zones.last_title_press.take().is_some_and(|(at, w)| at.elapsed() < wm::DOUBLE_CLICK && w == window);
         if double {
-            self.toggle_zoom(&window);
+            match self.config.windows.double_click_title {
+                crate::config::TitleAction::Zoom => self.toggle_zoom(&window),
+                crate::config::TitleAction::Minimise => self.minimise(vec![window]),
+                crate::config::TitleAction::Nothing => {}
+            }
             return;
         }
         self.zones.last_title_press = Some((Instant::now(), window.clone()));
