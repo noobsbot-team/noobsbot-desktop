@@ -1226,16 +1226,24 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
     let Some(users) = &app.users else { return Vec::new() };
     let Some(me) = &users.me else { return vec![group(t, "", vec![fact(t, "AccountsService isn't running", String::new())])] };
     let head =
-        row![picture(t, me, 64.0), column![text(&me.name).size(17).font(font(Weight::Semibold)), text(&me.login).size(12).color(t.secondary())].spacing(2),]
+        row![picture(t, me, 64.0), column![text(me.shown()).size(17).font(font(Weight::Semibold)), text(&me.login).size(12).color(t.secondary())].spacing(2),]
             .spacing(14)
             .align_y(Alignment::Center);
-    let mut parts = vec![container(head).padding([0, 4]).into()];
+    let name = app.texts.get(crate::users::NAME).unwrap_or(&me.name);
+    let name = text_input(&me.login, name)
+        .on_input(|v| Message::Type(crate::users::NAME.into(), v))
+        .on_submit(Message::Submit(crate::users::NAME.into()))
+        .size(13)
+        .padding([3, 8])
+        .width(200)
+        .style(t.input(false));
+    let mut parts = vec![container(head).padding([0, 4]).into(), group(t, "", vec![line(t, "Full name", "Press Return to save", name.into())])];
     if !users.others.is_empty() {
         let rows = users
             .others
             .iter()
             .map(|a| {
-                let words = column![text(&a.name).size(13), text(&a.login).size(11).color(t.secondary())].spacing(2);
+                let words = column![text(a.shown()).size(13), text(&a.login).size(11).color(t.secondary())].spacing(2);
                 row![picture(t, a, 32.0), words].spacing(10).align_y(Alignment::Center).padding([6, 12]).into()
             })
             .collect();
