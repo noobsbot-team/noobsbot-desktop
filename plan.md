@@ -1766,7 +1766,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   title bar (with its own window buttons) and its own light/dark setting. The window still gets our rounded corners,
   shadow, dock icon, Mission Control and gestures, like every other window.
 - **Installed by:** `helium-browser-bin` (AUR; official signed release tarballs from github.com/imputnet/helium-linux).
-  Updates come with the AUR package (Helium's own auto-update is macOS/Windows only).
+  Updates come with the AUR package (Helium's own auto-update doesn't cover Linux).
 
 ## F3. File manager → **Dolphin**
 - **Why:** owner choice (R7). Fast; tabs, split view, previews; network shares, phones (MTP) and archives via KIO.
@@ -1789,7 +1789,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
 - **Design / where you find it:**
   | Task | Where | Tool |
   |---|---|---|
-  | Free space at a glance | Dolphin status bar + sidebar; Settings ▸ About ▸ **Storage** bar (M7, macOS-style coloured usage bar) | udisks2 |
+  | Free space at a glance | Dolphin status bar + sidebar; Settings ▸ About ▸ **Storage** bar (M7, coloured usage bar) | udisks2 |
   | Format a USB stick / SD card (exFAT, FAT32, NTFS, ext4) | right-click the drive in Dolphin → Format, or Partition Manager | Partition Manager |
   | Create / resize / move / delete partitions, change labels, mount points | **Partition Manager** (Spotlight: "Disk") | Partition Manager |
   | Drive health (SMART: temperature, bad sectors, hours used) | Partition Manager ▸ SMART Status; low-health notification (E4.1) | smartmontools |
@@ -1801,7 +1801,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   `btrfs-progs`, `e2fsprogs` (ext4). The disk-full warning lives in Noobsbot Desktop's `services/disks.rs`.
 - **Why these:** Partition Manager and Filelight are **Qt apps like Dolphin and Kate**, so they share the libraries
   already installed (only ~8 MB extra) and get the same Noobsbot Glass theme (E2.9). Partition Manager does everything
-  macOS Disk Utility does, plus resizing. Filelight is the clearest "what uses my space" view.
+  a disk utility should, plus resizing. Filelight is the clearest "what uses my space" view.
   **Rejected:** GTK disk tools (GTK4/libadwaita: extra GTK libraries, its own title bar, see L2); GParted (GTK3, runs
   as root with X11, poor fit on Wayland).
 - **Milestone:** packages installed in M6 (`install.sh`); disk-full warning M4 (with notifications); Storage bar M7.
@@ -1809,7 +1809,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
   filling a test disk past 90% raises the warning.
 
 ## F6. Resource monitor → **System Monitor** (`plasma-systemmonitor`) + **btop** + Noobsbot Desktop's Force Quit window
-- **What it is:** see what's using CPU, memory, GPU, disk and network, and stop apps that hang (macOS Activity Monitor
+- **What it is:** see what's using CPU, memory, GPU, disk and network, and stop apps that hang (an Activity Monitor
   + Force Quit).
 - **Design / where you find it:**
   | Need | Where | Tool |
@@ -1824,7 +1824,7 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
 - **Why these:** System Monitor is the one the owner already keeps in the dock today (dock2), it's Qt like the
   other apps (same look, shared libraries), and it covers everything Activity Monitor does, including GPU.
   btop is tiny and great in the terminal. Force Quit is built into Noobsbot Desktop because the compositor already knows
-  every window and its process. It works even when everything else is busy, and looks exactly like macOS.
+  every window and its process. It works even when everything else is busy, and looks like the rest of the desktop.
   **Rejected:** Mission Center (good, but GTK4/libadwaita: extra libraries and its own title bar); GTK system
   monitors (another desktop's look); htop (btop is nicer and still small).
 - **Milestone:** apps installed in M6; Force Quit + "not responding" in M4; System widget M4 (optional).
@@ -1838,7 +1838,7 @@ Image viewer (gwenview), video player (mpv), PDF viewer (okular), office, email.
 
 ## G1. Why we write no drivers
 Drivers live **inside the Linux kernel** and device **firmware** comes from `linux-firmware`. If a device works on
-Linux, it works on Noobsbot Desktop. Our job is the standard **services** above the drivers plus a macOS-style UI for each.
+Linux, it works on Noobsbot Desktop. Our job is the standard **services** above the drivers plus a glass UI for each.
 `install.sh` detects hardware and installs only what that machine needs.
 
 ## G2. Hardware table
@@ -1942,10 +1942,10 @@ Debian names verified 2026-10-26 (on arm64; the x86-only ones by name).
 | Other languages | **Noto Sans / Serif** | covers almost every script | — |
 | CJK | **Noto CJK** | complete coverage | — |
 | Emoji | **Noto Color Emoji** | full colour, free | Apple Color Emoji (license) |
-| App icons | **WhiteSur icon theme** | high-quality macOS Big Sur-style, large coverage | Apple icons (license), Papirus (not macOS-like) |
+| App icons | **WhiteSur icon theme** | high-quality squircle style, large coverage | Apple icons (license), Papirus (doesn't match the design) |
 | Symbols | **Phosphor Icons** (MIT) | consistent line icons with regular + fill weights, close to SF Symbols in feel | SF Symbols (license), mixed theme symbolics (inconsistent) |
-| Cursors | **WhiteSur cursors** | matching macOS-style cursors | — |
-| Qt apps (Dolphin, Kate, …) | **our "Noobsbot Glass" Kvantum theme + colour scheme** (derived from WhiteSur Kvantum) + qt6ct, generated from Part D tokens (E2.9) | the same glassy macOS look as the desktop, light/dark + accent in sync | Breeze (another desktop's look), plain WhiteSur (not our exact tokens) |
+| Cursors | **WhiteSur cursors** | cursors matching the icons | — |
+| Qt apps (Dolphin, Kate, …) | **our "Noobsbot Glass" Kvantum theme + colour scheme** (derived from WhiteSur Kvantum) + qt6ct, generated from Part D tokens (E2.9) | the same glassy look as the desktop, light/dark + accent in sync | Breeze (another desktop's look), plain WhiteSur (not our exact tokens) |
 | GTK dialogs | **WhiteSur-gtk recoloured to Part D** (E2.9) | same colours for file pickers (solid; GTK can't do translucency) | Adwaita (another desktop's look) |
 | Icon fallback | `hicolor` + `breeze-icons` (comes with Dolphin) | never a missing icon | — |
 | Wallpapers | **our own** set (D11) | Apple wallpapers are copyrighted | — |
