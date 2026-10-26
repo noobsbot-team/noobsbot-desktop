@@ -508,8 +508,11 @@ impl State {
     }
 
     /// The pointer moved to `location` (first-output-relative): onto another display's dock, that one becomes
-    /// `dock_output`, and the one it left stops zooming and hovering.
+    /// `dock_output`, and the one it left stops zooming and hovering. An open dock menu keeps its dock.
     pub fn dock_follow(&mut self, location: Point<f64, Logical>) {
+        if self.popup == Some(crate::shell::Popup::Menu(crate::shell::Menu::Dock)) {
+            return;
+        }
         let Some(first) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
         let at = location + first.loc.to_f64();
         let docks = self.dock_outputs();
@@ -712,9 +715,10 @@ impl State {
         match builtin {
             Builtin::Launchpad => self.toggle_launchpad(),
             Builtin::AppDrawer => {
-                // The drawer opens above its icon.
+                // The drawer opens above its icon; from another display's dock, in its corner on the first.
                 let items = self.dock_items();
-                let at = items.iter().position(|i| i.key == key).zip(self.dock_layout(&items)).map(|(i, l)| {
+                let first = self.dock_output().as_ref() == self.space.outputs().next();
+                let at = items.iter().position(|i| i.key == key).zip(self.dock_layout(&items)).filter(|_| first).map(|(i, l)| {
                     let (left, right) = l.columns[i];
                     (((left + right) / 2.0).round() as i32, l.icons[i].loc.y.round() as i32).into()
                 });
