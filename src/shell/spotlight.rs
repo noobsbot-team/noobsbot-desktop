@@ -1,16 +1,18 @@
 //! Spotlight (E4.3): Super+Space opens a search box over everything; typing ranks the installed apps (exact, prefix,
 //! word prefix, substring, then fuzzy, so "hlm" finds Helium) and evaluates arithmetic ("12*7" → "= 84"). ↑/↓ select,
 //! Enter launches the app or copies the answer, Esc clears the text and then closes. The app index is in memory, so a
-//! keystroke costs one pass over a few hundred names and no disk access.
-// ponytail: Files and Settings results are not searched yet: files need an index (Open-4), settings the Settings app
-// (M7). Add a `Hit` variant and a source in `results` for each then; Super+Enter (show in Dolphin) comes with files.
+//! keystroke costs one pass over a few hundred names and no disk access. Every Settings page and setting is matched
+//! too; Enter opens Settings on its page.
+// ponytail: Files results are not searched yet (Open-4); Super+Enter (show in the file manager) comes with them.
 
 use smithay::{
     input::keyboard::{Keysym, ModifiersState},
     utils::{Logical, Point, Rectangle, Size},
 };
 
-use crate::{apps::App, state::State, text::ts, ui::field::Edit, ui::field::TextField, wm::Rect};
+use std::sync::LazyLock;
+
+use crate::{apps::App, state::State, symbols::Symbol, text::ts, ui::field::Edit, ui::field::TextField, wm::Rect};
 
 /// Most rows shown (E4.3).
 pub const MAX_ROWS: usize = 8;
@@ -60,6 +62,59 @@ pub enum Hit {
     App(App),
     /// The calculator's answer, formatted.
     Answer(String),
+    Setting(&'static Setting),
+}
+
+/// A Settings page, or one row of it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Setting {
+    /// What is matched and shown: the page's name, or the row's label.
+    pub label: String,
+    /// The page's name, `--page` slug, symbol and squircle colour.
+    pub page: &'static str,
+    pub slug: String,
+    pub symbol: Symbol,
+    pub color: u32,
+}
+
+/// Every Settings page, then every row of its `SETTINGS` table, read from the Settings app's source so the list
+/// can't drift from it (the shell doesn't link the Settings crate).
+pub static SETTINGS: LazyLock<Vec<Setting>> = LazyLock::new(|| parse_settings(include_str!("../../settings/src/pages.rs")));
+
+/// `pages.rs`: its `Page::name` arms (`Page::Wifi => "Wi-Fi",`), `Page::icon` arms (`Page::Wifi => ("wifi-high",
+/// 0x007AFF),`) and the `SETTINGS` rows (`s(Page::Sound, "group", "key", "Label", …)`, one line or spread over
+/// several). Pages whose symbol the shell lacks are left out (a test checks there are none).
+pub fn parse_settings(src: &'static str) -> Vec<Setting> {
+    let (mut names, mut icons) = (Vec::new(), Vec::new());
+    for (variant, rhs) in src.lines().filter_map(|l| l.trim().strip_prefix("Page::")?.split_once(" => ")) {
+        if let Some(name) = rhs.strip_prefix('"').and_then(|r| r.strip_suffix("\",")) {
+            names.push((variant, name));
+        } else if let Some((file, color)) = rhs.strip_prefix("(\"").and_then(|r| r.strip_suffix("),")?.split_once("\", 0x")) {
+            icons.push((variant, file, color));
+        }
+    }
+    let page = |variant: &str| {
+        let &(_, name) = names.iter().find(|(v, _)| *v == variant)?;
+        let &(_, file, color) = icons.iter().find(|(v, ..)| *v == variant)?;
+        let slug = name.to_lowercase().replace(" & ", "-").replace(' ', "-");
+        Some(Setting { label: name.into(), page: name, slug, symbol: Symbol::named(file)?, color: u32::from_str_radix(color, 16).ok()? })
+    };
+    let mut out: Vec<Setting> = names.iter().filter_map(|(v, _)| page(v)).collect();
+    let table = src.split_once("pub const SETTINGS: &[Setting] = &[").and_then(|(_, t)| t.split_once("\n];")).map_or("", |(t, _)| t);
+    for row in table.split("\n    s(").skip(1) {
+        let Some((variant, rest)) = row.trim_start().strip_prefix("Page::").and_then(|r| r.split_once(',')) else { continue };
+        // The string literals in order: group, key, label.
+        let Some(label) = rest.split('"').skip(1).step_by(2).nth(2) else { continue };
+        out.extend(page(variant).filter(|p| p.label != label).map(|p| Setting { label: label.into(), ..p }));
+    }
+    out
+}
+
+impl Setting {
+    /// A row's title says its page: "Alert sound — Sound".
+    pub fn title(&self) -> String {
+        if self.label == self.page { self.label.clone() } else { format!("{} — {}", self.label, self.page) }
+    }
 }
 
 impl Hit {
@@ -67,6 +122,7 @@ impl Hit {
         match self {
             Hit::App(app) => app.name.clone(),
             Hit::Answer(answer) => format!("= {answer}"),
+            Hit::Setting(setting) => setting.title(),
         }
     }
 
@@ -75,6 +131,7 @@ impl Hit {
         match self {
             Hit::App(_) => "Application",
             Hit::Answer(_) => "Calculator",
+            Hit::Setting(_) => "System Settings",
         }
     }
 }
@@ -152,19 +209,40 @@ pub fn app_score(app: &App, query: &str) -> Option<i32> {
     score(&app.name, query).max(by_program)
 }
 
-/// The rows for `query`: the calculator's answer first when it is arithmetic (it's the top hit), then launchable apps
-/// best first (shorter names win ties, so "Kate" beats "Kate Sessions"), at most `MAX_ROWS`.
-// ponytail: one linear scan per keystroke (a few hundred apps, well under a millisecond); an incremental matcher
-// (nucleo) only if the index grows to thousands.
-pub fn results(apps: &[App], query: &str) -> Vec<Hit> {
+/// Most Settings rows; Files keep `FILES` rows free under the apps, so their late answer never moves a row above them.
+const SETTINGS_ROWS: usize = 2;
+const FILES: usize = 3;
+
+/// The rows for `query`, grouped as E4.3 orders them: the top hit (the calculator's answer when it is arithmetic,
+/// else the best app or setting, an app on a tie), the other apps best first (shorter names win ties, so "Kate"
+/// beats "Kate Sessions"), then `files`, then settings. At most `MAX_ROWS`. Apps and settings don't depend on
+/// `files`, so files arriving later only push down the settings under them.
+// ponytail: one linear scan per keystroke (a few hundred apps and settings, well under a millisecond); an incremental
+// matcher (nucleo) only if the index grows to thousands.
+pub fn results(apps: &[App], files: &[Hit], query: &str) -> Vec<Hit> {
     let query = fold(query.trim());
     if query.is_empty() {
         return Vec::new();
     }
-    let mut out: Vec<Hit> = calculate(&query).map(|v| Hit::Answer(format_number(v))).into_iter().collect();
+    let answer = calculate(&query).map(|v| Hit::Answer(format_number(v)));
     let mut ranked: Vec<(i32, &App)> = apps.iter().filter(|a| !a.no_display).filter_map(|a| Some((app_score(a, &query)?, a))).collect();
     ranked.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then(a.name.len().cmp(&b.name.len())).then_with(|| a.name.cmp(&b.name)));
-    out.extend(ranked.into_iter().map(|(_, a)| Hit::App(a.clone())));
+    let mut settings: Vec<(i32, &'static Setting)> = SETTINGS.iter().filter_map(|s| Some((score(&s.label, &query)?, s))).collect();
+    settings.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then(a.label.len().cmp(&b.label.len())));
+    settings.truncate(SETTINGS_ROWS);
+    let room = MAX_ROWS - FILES - settings.len() - usize::from(answer.is_some());
+    let mut apps: Vec<(i32, Hit)> = ranked.into_iter().take(room).map(|(s, a)| (s, Hit::App(a.clone()))).collect();
+    let mut settings: Vec<(i32, Hit)> = settings.into_iter().map(|(s, h)| (s, Hit::Setting(h))).collect();
+    let top = match (answer, apps.first(), settings.first()) {
+        (Some(answer), ..) => Some(answer),
+        (None, Some((a, _)), Some((s, _))) if s > a => Some(settings.remove(0).1),
+        (None, Some(_), _) => Some(apps.remove(0).1),
+        (None, None, Some(_)) => Some(settings.remove(0).1),
+        (None, None, None) => None,
+    };
+    let mut out: Vec<Hit> = top.into_iter().chain(apps.into_iter().map(|(_, h)| h)).collect();
+    out.extend(files.iter().take(FILES).cloned());
+    out.extend(settings.into_iter().map(|(_, h)| h));
     out.truncate(MAX_ROWS);
     out
 }
@@ -278,7 +356,7 @@ impl State {
 
     /// The rows for the current text.
     pub fn spotlight_results(&self) -> Vec<Hit> {
-        self.spotlight.as_ref().map(|s| results(self.apps.list(), &s.field.text)).unwrap_or_default()
+        self.spotlight.as_ref().map(|s| results(self.apps.list(), &[], &s.field.text)).unwrap_or_default()
     }
 
     /// The layout for `count` rows, above the dock.
@@ -318,7 +396,7 @@ impl State {
         true
     }
 
-    /// Launches the app (as the dock does) or copies the answer; then Spotlight closes.
+    /// Launches the app (as the dock does), copies the answer or opens Settings on the page; then Spotlight closes.
     fn spotlight_open(&mut self, hit: Hit) {
         self.close_spotlight();
         match hit {
@@ -331,6 +409,9 @@ impl State {
             Hit::Answer(answer) => {
                 let seat = self.seat.clone();
                 self.clipboard.set_text(&self.display_handle, &seat, &answer);
+            }
+            Hit::Setting(setting) => {
+                self.spawn(&["noobsbot-desktop-settings".into(), "--page".into(), setting.slug.clone()]);
             }
         }
     }
@@ -363,6 +444,11 @@ mod tests {
         hits.iter().map(Hit::title).collect()
     }
 
+    /// The app and calculator rows only.
+    fn apps_of(hits: &[Hit]) -> Vec<String> {
+        names(&hits.iter().filter(|h| !matches!(h, Hit::Setting(_))).cloned().collect::<Vec<_>>())
+    }
+
     #[test]
     fn ranking_tiers() {
         assert_eq!(score("Kate", "kate"), Some(1000));
@@ -391,14 +477,66 @@ mod tests {
             app("Helium", "helium-browser"),
             hidden,
         ];
-        assert_eq!(names(&results(&apps, "Kate")), ["Kate", "Kate Sessions"]);
-        assert_eq!(names(&results(&apps, "hlm")), ["Helium"]);
+        assert_eq!(apps_of(&results(&apps, &[], "Kate")), ["Kate", "Kate Sessions"]);
+        assert_eq!(apps_of(&results(&apps, &[], "hlm")), ["Helium"]);
         // By program prefix: "helium-browser".
-        assert_eq!(names(&results(&apps, "helium-b")), ["Helium"]);
-        assert!(results(&apps, "").is_empty());
-        assert!(results(&apps, "   ").is_empty());
-        let many: Vec<App> = (0..20).map(|i| app(&format!("App {i}"), "x")).collect();
-        assert_eq!(results(&many, "app").len(), MAX_ROWS);
+        assert_eq!(apps_of(&results(&apps, &[], "helium-b")), ["Helium"]);
+        assert!(results(&apps, &[], "").is_empty());
+        assert!(results(&apps, &[], "   ").is_empty());
+        // Apps leave room for files and settings.
+        let many: Vec<App> = (0..20).map(|i| app(&format!("Zq {i}"), "x")).collect();
+        assert_eq!(results(&many, &[], "zq").len(), MAX_ROWS - FILES);
+    }
+
+    #[test]
+    fn settings_come_from_the_settings_app() {
+        let src = include_str!("../../settings/src/pages.rs");
+        let pages: Vec<&Setting> = SETTINGS.iter().filter(|s| s.label == s.page).collect();
+        // Every page, with its symbol (a page missing here lacks a `Symbol`), and a slug its `Page::parse` takes.
+        let all = src.split_once("pub const ALL: [Page; ").and_then(|(_, r)| r.split_once(']')).map(|(n, _)| n.parse::<usize>().unwrap());
+        assert_eq!(Some(pages.len()), all);
+        for (page, slug) in [("Wi-Fi", "wi-fi"), ("Desktop & Dock", "desktop-dock"), ("Date & Time", "date-time"), ("Lock Screen", "lock-screen")] {
+            assert_eq!(pages.iter().find(|p| p.page == page).map(|p| p.slug.as_str()), Some(slug));
+        }
+        // Every `SETTINGS` row (bar the few named as their page: Appearance, Trackpad, Spaces), one line or several.
+        let rows = SETTINGS.len() - pages.len();
+        let table = src.split_once("pub const SETTINGS").unwrap().1.split_once("\n];").unwrap().0;
+        assert!(rows > 100 && rows + 3 >= table.matches("\n    s(").count(), "{rows}");
+        let mode = SETTINGS.iter().find(|s| s.label == "Alert sound").unwrap();
+        assert_eq!((mode.page, mode.slug.as_str(), mode.symbol, mode.title().as_str()), ("Sound", "sound", Symbol::SpeakerHigh, "Alert sound — Sound"));
+        assert!(SETTINGS.iter().any(|s| s.label == "Auto: sunset to sunrise" && s.page == "Appearance"), "a row spread over lines");
+    }
+
+    #[test]
+    fn settings_match_and_group() {
+        let titles = |q| names(&results(&[], &[], q));
+        assert_eq!(titles("bluetooth")[0], "Bluetooth");
+        assert_eq!(titles("date")[0], "Date & Time");
+        assert_eq!(results(&[], &[], "wifi")[0].kind(), "System Settings");
+        assert!(titles("alert").contains(&"Alert sound — Sound".to_string()));
+        // An app wins a tie for the top hit; a better setting takes it.
+        let apps = [app("Bluetooth", "blueman"), app("Bluetooth Manager", "blueman-manager")];
+        let hits = results(&apps, &[], "bluetooth");
+        assert!(matches!(hits[0], Hit::App(_)) && matches!(hits.last(), Some(Hit::Setting(_))));
+        let hits = results(&[app("Bluetooth Manager", "blueman-manager")], &[], "bluetooth");
+        assert!(matches!(hits[0], Hit::Setting(_)) && matches!(hits[1], Hit::App(_)));
+    }
+
+    #[test]
+    fn groups_keep_their_order_and_files_move_only_settings() {
+        let apps: Vec<App> = (0..20).map(|i| app(&format!("Sound {i}"), "x")).collect();
+        let file = |n: &str| Hit::Answer(n.into());
+        let before = results(&apps, &[], "sound");
+        let files = [file("a"), file("b"), file("c"), file("d")];
+        let after = results(&apps, &files, "sound");
+        assert_eq!(after.len(), MAX_ROWS);
+        // The Sound page is the top hit, then the apps, unchanged by the files; files next (at most FILES), then the
+        // other settings.
+        assert!(matches!(&before[0], Hit::Setting(s) if s.label == "Sound"));
+        let stable = 1 + before[1..].iter().take_while(|h| matches!(h, Hit::App(_))).count();
+        assert_eq!((stable, before[..stable] == after[..stable]), (MAX_ROWS - FILES - 1, true));
+        assert_eq!(after[stable..stable + FILES], files[..FILES]);
+        assert!(after[stable + FILES..].iter().all(|h| matches!(h, Hit::Setting(_))));
     }
 
     #[test]
@@ -421,7 +559,7 @@ mod tests {
         assert_eq!(format_number(0.1 + 0.2), "0.3");
         assert_eq!(format_number(-0.0), "0");
         let apps = [app("Kate", "kate")];
-        assert_eq!(names(&results(&apps, "12*7")), ["= 84"]);
+        assert_eq!(names(&results(&apps, &[], "12*7")), ["= 84"]);
     }
 
     #[test]
