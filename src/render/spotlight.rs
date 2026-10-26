@@ -31,7 +31,7 @@ const FALLBACK_ICON: &str = "application-x-executable";
 
 /// Hits, selection, field, layout, dark, accent, opacity, scale.
 type Key = (Vec<Hit>, usize, TextField, Layout, bool, [u8; 3], u32, u64);
-/// Glass front to back, text pieces (centred in their rects), app icons (stretched to theirs).
+/// Glass front to back, text pieces (centred in their rects), app and file icons (stretched to theirs).
 type Drawn = (Key, Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>, Vec<(Arc<Rendered>, Rect)>);
 
 #[derive(Default)]
@@ -84,6 +84,13 @@ impl SpotlightPanel {
                     Hit::App(app) => app_icons
                         .push((icons.get(&app.icon, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| super::dock::placeholder(px)), icon)),
                     Hit::Answer(_) => ui.symbol(Symbol::Calculator, Weight::Regular, 24, icon, main),
+                    Hit::File(file) => app_icons.push((
+                        icons
+                            .get(&file.icon, px)
+                            .or_else(|| icons.get(crate::shell::desktop::FALLBACK_ICON, px))
+                            .unwrap_or_else(|| super::dock::placeholder(px)),
+                        icon,
+                    )),
                     // The page's symbol on its colour, as in the Settings sidebar.
                     Hit::Setting(setting) => {
                         let [_, r, g, b] = setting.color.to_be_bytes().map(|c| f32::from(c) / 255.0);

@@ -2,15 +2,27 @@
 //! word prefix, substring, then fuzzy, so "hlm" finds Helium) and evaluates arithmetic ("12*7" → "= 84"). ↑/↓ select,
 //! Enter launches the app or copies the answer, Esc clears the text and then closes. The app index is in memory, so a
 //! keystroke costs one pass over a few hundred names and no disk access. Every Settings page and setting is matched
-//! too; Enter opens Settings on its page.
-// ponytail: Files results are not searched yet (Open-4); Super+Enter (show in the file manager) comes with them.
+//! too; Enter opens Settings on its page. Files come from the recent files and `plocate` (Open-4: no index of our
+//! own), asked on a worker thread once typing pauses; they arrive under the apps without moving them.
 
 use smithay::{
     input::keyboard::{Keysym, ModifiersState},
     utils::{Logical, Point, Rectangle, Size},
 };
 
-use std::sync::LazyLock;
+use std::{
+    path::Path,
+    sync::{
+        LazyLock,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
+
+use smithay::reexports::calloop::{
+    channel,
+    timer::{TimeoutAction, Timer},
+};
 
 use crate::{apps::App, state::State, symbols::Symbol, text::ts, ui::field::Edit, ui::field::TextField, wm::Rect};
 
@@ -57,12 +69,22 @@ pub fn layout(output: Size<i32, Logical>, bottom: i32, count: usize) -> Layout {
 
 /// One result row.
 #[derive(Debug, Clone, PartialEq)]
-#[expect(clippy::large_enum_variant, reason = "at most MAX_ROWS of them, rebuilt per keystroke")]
 pub enum Hit {
     App(App),
     /// The calculator's answer, formatted.
     Answer(String),
     Setting(&'static Setting),
+    File(File),
+}
+
+/// A file or folder found for the query.
+#[derive(Debug, Clone, PartialEq)]
+pub struct File {
+    pub path: String,
+    /// Its type (`image/png`), "Folder", or "Document" when the extension says nothing.
+    pub kind: String,
+    /// An icon name from the theme.
+    pub icon: String,
 }
 
 /// A Settings page, or one row of it.
@@ -123,15 +145,17 @@ impl Hit {
             Hit::App(app) => app.name.clone(),
             Hit::Answer(answer) => format!("= {answer}"),
             Hit::Setting(setting) => setting.title(),
+            Hit::File(file) => name_of(&file.path).into(),
         }
     }
 
     /// The kind, on the right of the row.
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &str {
         match self {
             Hit::App(_) => "Application",
             Hit::Answer(_) => "Calculator",
             Hit::Setting(_) => "System Settings",
+            Hit::File(file) => &file.kind,
         }
     }
 }
@@ -247,6 +271,110 @@ pub fn results(apps: &[App], files: &[Hit], query: &str) -> Vec<Hit> {
     out
 }
 
+/// Quiet time after a keystroke before files are asked for.
+pub const DEBOUNCE: Duration = Duration::from_millis(150);
+
+/// The files shown and the latest keystroke's ticket: a search starts only if its keystroke is still the latest once
+/// `DEBOUNCE` has passed, and its answer is kept only if nothing was typed since.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Files {
+    pub hits: Vec<Hit>,
+    ticket: u64,
+}
+
+/// Tickets are unique across openings, so an answer meant for a closed Spotlight never lands in the next one.
+static TICKETS: AtomicU64 = AtomicU64::new(1);
+
+impl Files {
+    /// A keystroke: the files shown no longer match; returns its ticket.
+    pub fn typed(&mut self) -> u64 {
+        self.hits.clear();
+        self.ticket = TICKETS.fetch_add(1, Ordering::Relaxed);
+        self.ticket
+    }
+
+    /// Whether `ticket` is still the latest keystroke's.
+    pub fn due(&self, ticket: u64) -> bool {
+        ticket == self.ticket
+    }
+
+    /// Shows `hits` if they answer the latest keystroke; `false` if they are stale and dropped.
+    pub fn answer(&mut self, ticket: u64, hits: Vec<Hit>) -> bool {
+        let fresh = self.due(ticket);
+        if fresh {
+            self.hits = hits;
+        }
+        fresh
+    }
+}
+
+/// The row to select once rows change around it: the same result where it went, else the same place.
+pub fn reselect(before: &[Hit], selected: usize, after: &[Hit]) -> usize {
+    before.get(selected).and_then(|h| after.iter().position(|a| a == h)).unwrap_or(selected).min(after.len().saturating_sub(1))
+}
+
+/// The last part of `path`.
+fn name_of(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
+}
+
+/// Whether `path` is inside `home` with no hidden (dot) folder or file on the way.
+pub fn shown_in_home(path: &str, home: &str) -> bool {
+    let inside = path.strip_prefix(home).and_then(|r| r.strip_prefix('/')).filter(|r| !r.is_empty());
+    inside.is_some_and(|r| !r.split('/').any(|part| part.starts_with('.')))
+}
+
+/// `locate`'s output (one path a line, matched anywhere in the path) narrowed to the shown files in `home` whose own
+/// name has `query` (folded), best match first, then shorter paths.
+pub fn parse_locate(out: &str, home: &str, query: &str) -> Vec<String> {
+    let mut found: Vec<(i32, &str)> = out
+        .lines()
+        .filter(|p| shown_in_home(p, home))
+        .filter_map(|p| Some((score(name_of(p), query).filter(|_| fold(name_of(p)).contains(query))?, p)))
+        .collect();
+    found.sort_by(|(sa, a), (sb, b)| sb.cmp(sa).then(a.len().cmp(&b.len())));
+    found.into_iter().map(|(_, p)| p.to_owned()).collect()
+}
+
+/// Up to `FILES` paths for `text`: recent files that match (newest first), then `plocate`'s (or `locate`'s) in the
+/// home folder. Without either, only the recent ones. Runs on a worker thread.
+// ponytail: `locate` is asked for 200 paths and the hidden ones dropped after, so a home full of dot-folder matches
+// can crowd real files out; a `--regex` that skips them if that shows up.
+fn find_files(text: &str) -> Vec<String> {
+    let query = fold(text);
+    let home = std::env::var("HOME").unwrap_or_default();
+    let (_, uris) = crate::shell::dock::recent_items(&std::fs::read_to_string(crate::shell::dock::recent_path()).unwrap_or_default());
+    let mut out: Vec<String> =
+        uris.iter().filter_map(|u| crate::apps::file_path(u)).filter(|p| score(name_of(p), &query).is_some() && Path::new(p).exists()).take(FILES).collect();
+    for program in ["plocate", "locate"] {
+        match std::process::Command::new(program).args(["-i", "-A", "-l", "200", "--", &format!("{home}/"), text]).output() {
+            Ok(done) => {
+                let located = parse_locate(&String::from_utf8_lossy(&done.stdout), &home, &query);
+                out.extend(located.into_iter().filter(|p| !out.contains(p)).collect::<Vec<_>>());
+                break;
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => {
+                tracing::warn!("spotlight: {program}: {err}");
+                break;
+            }
+        }
+    }
+    out.truncate(FILES);
+    out
+}
+
+/// `path` as a row: its type and icon by extension, or a folder.
+fn file_hit(path: String, mime: &crate::shell::desktop::Mime) -> Hit {
+    let (kind, icon) = if Path::new(&path).is_dir() {
+        ("Folder".to_owned(), "folder".to_owned())
+    } else {
+        let icon = mime.icons(name_of(&path)).into_iter().find(|i| crate::apps::find_icon(i).is_some());
+        (mime.of(name_of(&path)).unwrap_or("Document").to_owned(), icon.unwrap_or_else(|| crate::shell::desktop::FALLBACK_ICON.into()))
+    };
+    Hit::File(File { path, kind, icon })
+}
+
 /// `input` as arithmetic: + − × ÷ (also * / x), ^ powers, parentheses, decimals. `None` unless it is an expression
 /// (a bare number isn't) with a finite value.
 pub fn calculate(input: &str) -> Option<f64> {
@@ -334,6 +462,7 @@ pub struct Spotlight {
     pub field: TextField,
     /// The selected row; 0 is the top hit.
     pub selected: usize,
+    pub files: Files,
 }
 
 impl State {
@@ -356,7 +485,7 @@ impl State {
 
     /// The rows for the current text.
     pub fn spotlight_results(&self) -> Vec<Hit> {
-        self.spotlight.as_ref().map(|s| results(self.apps.list(), &[], &s.field.text)).unwrap_or_default()
+        self.spotlight.as_ref().map(|s| results(self.apps.list(), &s.files.hits, &s.field.text)).unwrap_or_default()
     }
 
     /// The layout for `count` rows, above the dock.
@@ -379,7 +508,11 @@ impl State {
             Keysym::Up | Keysym::KP_Up => open.selected = open.selected.saturating_sub(1),
             Keysym::Down | Keysym::KP_Down => open.selected = (open.selected + 1).min(last),
             _ => match open.field.key(sym, typed.as_deref(), mods.ctrl) {
-                Edit::Changed => open.selected = 0,
+                Edit::Changed => {
+                    open.selected = 0;
+                    let ticket = open.files.typed();
+                    self.spotlight_ask_files(ticket, open.field.text.trim().to_owned());
+                }
                 Edit::Moved | Edit::Ignored => {}
                 Edit::Cancel if open.field.text.is_empty() => return self.close_spotlight(),
                 Edit::Cancel => open = Spotlight::default(),
@@ -396,7 +529,56 @@ impl State {
         true
     }
 
-    /// Launches the app (as the dock does), copies the answer or opens Settings on the page; then Spotlight closes.
+    /// After `DEBOUNCE` with nothing typed since keystroke `ticket`, looks for files named like `text` on a worker
+    /// thread; the answer shows only if still nothing was typed.
+    fn spotlight_ask_files(&mut self, ticket: u64, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        let waited = self.loop_handle.insert_source(Timer::from_duration(DEBOUNCE), move |_, _, state| {
+            if state.spotlight.as_ref().is_some_and(|s| s.files.due(ticket)) {
+                state.spotlight_find_files(ticket, text.clone());
+            }
+            TimeoutAction::Drop
+        });
+        let _ = waited.inspect_err(|err| tracing::warn!("spotlight files: {err}"));
+    }
+
+    fn spotlight_find_files(&mut self, ticket: u64, text: String) {
+        static MIME: LazyLock<crate::shell::desktop::Mime> = LazyLock::new(crate::shell::desktop::Mime::load);
+        let (tx, rx) = channel::channel();
+        // The channel goes once the worker drops its end.
+        let inserted = self.loop_handle.insert_source(rx, move |event, _, state| {
+            if let channel::Event::Msg(hits) = event {
+                state.spotlight_files(ticket, hits);
+            }
+        });
+        if let Err(err) = inserted {
+            return tracing::warn!("spotlight files: {err}");
+        }
+        let spawned = std::thread::Builder::new().name("spotlight-files".into()).spawn(move || {
+            let _ = tx.send(find_files(&text).into_iter().map(|p| file_hit(p, &MIME)).collect::<Vec<_>>());
+        });
+        let _ = spawned.inspect_err(|err| tracing::warn!("spotlight files: {err}"));
+    }
+
+    /// Files for keystroke `ticket`: shown if it is still the latest, keeping the selection on the same row.
+    fn spotlight_files(&mut self, ticket: u64, hits: Vec<Hit>) {
+        let before = self.spotlight_results();
+        let Some(open) = self.spotlight.as_mut() else { return };
+        if !open.files.answer(ticket, hits) {
+            return;
+        }
+        let selected = open.selected;
+        let after = self.spotlight_results();
+        if let Some(open) = self.spotlight.as_mut() {
+            open.selected = reselect(&before, selected, &after);
+        }
+        self.schedule_redraw();
+    }
+
+    /// Launches the app (as the dock does), copies the answer, opens Settings on the page or opens the file with its
+    /// app; then Spotlight closes.
     fn spotlight_open(&mut self, hit: Hit) {
         self.close_spotlight();
         match hit {
@@ -412,6 +594,9 @@ impl State {
             }
             Hit::Setting(setting) => {
                 self.spawn(&["noobsbot-desktop-settings".into(), "--page".into(), setting.slug.clone()]);
+            }
+            Hit::File(file) => {
+                self.spawn(&["xdg-open".into(), file.path]);
             }
         }
     }
@@ -537,6 +722,48 @@ mod tests {
         assert_eq!((stable, before[..stable] == after[..stable]), (MAX_ROWS - FILES - 1, true));
         assert_eq!(after[stable..stable + FILES], files[..FILES]);
         assert!(after[stable + FILES..].iter().all(|h| matches!(h, Hit::Setting(_))));
+    }
+
+    #[test]
+    fn locate_output_keeps_shown_home_files_named_like_the_query() {
+        assert!(shown_in_home("/home/u/Documents/report.pdf", "/home/u"));
+        assert!(!shown_in_home("/home/u/.cache/report.pdf", "/home/u"), "hidden folder");
+        assert!(!shown_in_home("/home/u/notes/.report.pdf", "/home/u"), "hidden file");
+        assert!(!shown_in_home("/home/user2/report.pdf", "/home/u"), "another home sharing the prefix");
+        assert!(!shown_in_home("/home/u", "/home/u") && !shown_in_home("/usr/share/report", "/home/u"));
+        let out = "/home/u/Reports/old/a.txt\n/home/u/.local/report.txt\n/usr/share/report.txt\n/home/u/Docs/Q3 Report.pdf\n/home/u/report\n";
+        // Matched by the file's own name (not "Reports/" above it), exact before substring.
+        assert_eq!(parse_locate(out, "/home/u", "report"), ["/home/u/report", "/home/u/Docs/Q3 Report.pdf"]);
+        assert!(parse_locate("", "/home/u", "report").is_empty());
+    }
+
+    #[test]
+    fn file_answers_wait_for_quiet_and_drop_stale_ones() {
+        let mut files = Files::default();
+        let first = files.typed();
+        let second = files.typed();
+        // Only the latest keystroke's timer searches.
+        assert!(!files.due(first) && files.due(second));
+        let hit = |n: &str| Hit::File(File { path: format!("/home/u/{n}"), kind: "Folder".into(), icon: "folder".into() });
+        assert!(!files.answer(first, vec![hit("old")]) && files.hits.is_empty(), "a stale answer is dropped");
+        assert!(files.answer(second, vec![hit("new")]));
+        assert_eq!(names(&files.hits), ["new"]);
+        // Typing again hides the answer until the next one.
+        let third = files.typed();
+        assert!(files.hits.is_empty() && !files.answer(second, vec![hit("new")]) && files.due(third));
+        // Another opening's tickets never match.
+        assert!(!Files::default().due(third) && !Spotlight::default().files.due(third));
+    }
+
+    #[test]
+    fn selection_stays_on_its_row_as_files_arrive() {
+        let (a, b, c, f) = (Hit::Answer("a".into()), Hit::Answer("b".into()), Hit::Answer("c".into()), Hit::Answer("f".into()));
+        let before = [a.clone(), b.clone(), c.clone()];
+        let after = [a.clone(), b.clone(), f.clone(), c.clone()];
+        assert_eq!(reselect(&before, 1, &after), 1, "above the files: unchanged");
+        assert_eq!(reselect(&before, 2, &after), 3, "a setting under them moves down with them");
+        assert_eq!(reselect(&before, 2, &[a.clone(), f]), 1, "gone: same place, within the rows");
+        assert_eq!(reselect(&before, 0, &[]), 0);
     }
 
     #[test]
