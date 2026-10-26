@@ -147,7 +147,7 @@ middle_click_paste = true
 
 [hot_corners]
 # Rest the pointer in a screen corner for a moment to trigger an action (any action from [bindings] below, like
-# mission-control, app-expose, show-desktop, launchpad, notification-center), or "none".
+# mission-control, app-expose, show-desktop, launchpad, notification-center, lock, display-off), or "none".
 top_left = "none"
 top_right = "none"
 bottom_left = "none"

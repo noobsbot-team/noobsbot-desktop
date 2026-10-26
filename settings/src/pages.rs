@@ -169,11 +169,25 @@ pub fn squircle<'a>(page: Page, size: f32) -> Element<'a, Message> {
 /// Off or a wait, for dwell and hold clicks.
 const DWELL: &[(i64, &str)] = &[(0, "Off"), (500, "0.5 s"), (1000, "1 s"), (1500, "1.5 s"), (2000, "2 s")];
 
+/// What a hot corner can do: an action name from `[bindings]`, and its label.
+const CORNER_ACTIONS: &[(&str, &str)] = &[
+    ("none", "Nothing"),
+    ("mission-control", "Mission Control"),
+    ("app-expose", "App Exposé"),
+    ("show-desktop", "Desktop"),
+    ("launchpad", "Launchpad"),
+    ("notification-center", "Notification Center"),
+    ("lock", "Lock Screen"),
+    ("display-off", "Turn Display Off"),
+];
+
 #[derive(Clone, Copy, Debug)]
 pub enum Kind {
     Toggle,
     /// Value written, label shown.
     Choice(&'static [(&'static str, &'static str)]),
+    /// As `Choice`, in a dropdown (too many for segments); a value not listed shows as written.
+    Menu(&'static [(&'static str, &'static str)]),
     Slider {
         min: f64,
         max: f64,
@@ -400,6 +414,10 @@ pub const SETTINGS: &[Setting] = &[
         "",
         Kind::Choice(&[("zoom", "Zoom"), ("minimise", "Minimise"), ("nothing", "Nothing")]),
     ),
+    s(Page::Dock, "Hot Corners", "hot_corners.top_left", "Top left", "", Kind::Menu(CORNER_ACTIONS)),
+    s(Page::Dock, "Hot Corners", "hot_corners.top_right", "Top right", "", Kind::Menu(CORNER_ACTIONS)),
+    s(Page::Dock, "Hot Corners", "hot_corners.bottom_left", "Bottom left", "", Kind::Menu(CORNER_ACTIONS)),
+    s(Page::Dock, "Hot Corners", "hot_corners.bottom_right", "Bottom right", "", Kind::Menu(CORNER_ACTIONS)),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_rate", "Key repeat rate", "", Kind::Slider { min: 0.0, max: 60.0, step: 1.0 }),
     s(Page::Keyboard, "Key repeat", "keyboard.repeat_delay", "Delay until repeat", "", Kind::Slider { min: 150.0, max: 1500.0, step: 50.0 }),
     s(Page::Keyboard, "Modifier keys", "keyboard.options", "Caps Lock key", "", Kind::XkbOption(crate::xkb::is_caps, crate::xkb::CAPS)),
@@ -606,6 +624,13 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
     match setting.kind {
         Kind::Toggle => toggle(t, app.config.bool(key), move |on| Message::Toggle(key, on)),
         Kind::Choice(options) => choice(t, app.config.str(key), options, key),
+        Kind::Menu(options) => {
+            let current = app.config.str(key);
+            let selected = options.iter().find(|o| o.0 == current).map(|&(v, l)| Labelled(v, l));
+            let pick =
+                pick_list(options.iter().map(|&(v, l)| Labelled(v, l)).collect::<Vec<_>>(), selected, move |c: Labelled| Message::Choose(key.into(), c.0));
+            pick.placeholder(current).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()
+        }
         Kind::Steps(steps) => {
             let current = app.config.num(key) as i64;
             segments(t, steps.iter().map(|&(n, label)| (label.to_owned(), current == n, Message::Number(key, n))).collect())
