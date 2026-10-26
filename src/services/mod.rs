@@ -52,7 +52,7 @@ pub enum Update {
     Bluetooth(Option<bluetooth::Bluetooth>),
     /// `None`: power-profiles-daemon isn't running.
     Profiles(Option<profiles::Profiles>),
-    /// Percent; `None` without a backlight (desktop monitors).
+    /// Percent; `None` without a backlight or DDC/CI monitor.
     Brightness(Option<u8>),
     /// `None`: no output device, or PipeWire isn't running.
     Sound(Option<sound::Sound>),
@@ -273,7 +273,7 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         .await
         .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing and tray hidden: {err}"))
         .ok();
-    brightness::send_current(&updates);
+    brightness::start(&updates);
     let (pairing, secret, entry, admin) = (Answer::default(), Answer::default(), Answer::default(), Answer::default());
     if let (true, Some(bus)) = (agents, &system)
         && !polkit::serve(bus, &updates, &admin).await
@@ -415,7 +415,7 @@ async fn handle(
         match (command, system, session) {
             (Command::Timezone(zone), Some(bus), _) => set_timezone(bus, &zone).await,
             (Command::PowerProfile(profile), Some(bus), _) => profiles::set(bus, &profile).await,
-            (Command::Brightness(percent), Some(bus), _) => brightness::set(bus, percent, updates).await,
+            (Command::Brightness(percent), bus, _) => brightness::set(bus, percent, updates).await,
             (Command::KbdBacklight(change), Some(bus), _) => power::kbd_backlight(bus, change, updates).await,
             (Command::KbdBacklightIdle(off), Some(bus), _) => power::kbd_idle(bus, off, &mut kbd_saved).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
