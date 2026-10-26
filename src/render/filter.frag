@@ -1,4 +1,4 @@
-// Zoom and colour filters (E8.6): the composed frame, through `filter`: 0 none, 1 invert, 2 invert keeping hue,
+// Zoom and colour filters (E8.6): the composed frame, through `mode`: 0 none, 1 invert, 2 invert keeping hue,
 // 3 greyscale. Smithay's texture shader with one more step; colours are premultiplied.
 
 //_DEFINES_
@@ -26,21 +26,21 @@ varying vec2 v_coords;
 uniform float tint;
 #endif
 
-uniform float filter;
+uniform float mode;
 
 void main() {
     vec4 color = texture2D(tex, v_coords);
 #if defined(NO_ALPHA)
     color.a = 1.0;
 #endif
-    if (filter == 1.0) {
+    if (mode == 1.0) {
         color.rgb = color.a - color.rgb;
-    } else if (filter == 2.0) {
+    } else if (mode == 2.0) {
         // Lightness flipped, hue and saturation kept: every channel moves by the same amount.
         float hi = max(color.r, max(color.g, color.b));
         float lo = min(color.r, min(color.g, color.b));
         color.rgb += color.a - hi - lo;
-    } else if (filter == 3.0) {
+    } else if (mode == 3.0) {
         color.rgb = vec3(dot(color.rgb, vec3(0.2126, 0.7152, 0.0722)));
     }
     color *= alpha;

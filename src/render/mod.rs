@@ -210,7 +210,7 @@ impl Shaders {
                 &floats(&["scale", "margin", "offset_y", "sigma", "radius", "opacity", "hairline"]),
             )?,
             opal: renderer.compile_custom_pixel_shader(include_str!("opal.frag"), &opal)?,
-            filter: renderer.compile_custom_texture_shader(include_str!("filter.frag"), &floats(&["filter"]))?,
+            filter: renderer.compile_custom_texture_shader(include_str!("filter.frag"), &floats(&["mode"]))?,
             contrast: false,
         })
     }
