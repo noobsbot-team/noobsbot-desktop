@@ -117,6 +117,13 @@ speed = 0.0
 secondary_click = "two-fingers"
 # Scrolling: "two-fingers", "edge" (one finger along the right or bottom edge) or "none".
 scroll_method = "two-fingers"
+# Each system gesture on or off: swipe between Spaces, swipe up for Mission Control, down for App Exposé, pinch for
+# Launchpad, spread to show the desktop.
+gesture_spaces = true
+gesture_mission_control = true
+gesture_app_expose = true
+gesture_launchpad = true
+gesture_show_desktop = true
 # Tap, then drag with the finger down; drag_lock keeps the drag going through a short lift.
 tap_to_drag = true
 drag_lock = false
