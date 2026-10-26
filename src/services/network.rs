@@ -24,6 +24,9 @@ pub struct Network {
     pub networks: Vec<WifiNetwork>,
     /// Saved VPN and WireGuard connections, by name.
     pub vpns: Vec<Vpn>,
+    /// Behind a captive portal (NetworkManager's connectivity check was redirected): the check's URL, which the portal
+    /// sends to its sign-in page.
+    pub portal: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -74,6 +77,11 @@ trait Manager {
     fn set_wireless_enabled(&self, on: bool) -> zbus::Result<()>;
     #[zbus(property)]
     fn primary_connection(&self) -> zbus::Result<OwnedObjectPath>;
+    /// `NM_CONNECTIVITY_*`: 3 = portal.
+    #[zbus(property)]
+    fn connectivity(&self) -> zbus::Result<u32>;
+    #[zbus(property)]
+    fn connectivity_check_uri(&self) -> zbus::Result<String>;
     fn activate_connection(&self, connection: &ObjectPath<'_>, device: &ObjectPath<'_>, specific_object: &ObjectPath<'_>) -> zbus::Result<OwnedObjectPath>;
     fn deactivate_connection(&self, active: &ObjectPath<'_>) -> zbus::Result<()>;
     fn add_and_activate_connection(
@@ -267,7 +275,11 @@ async fn read(bus: &Connection) -> Option<Network> {
     for vpn in &mut vpns {
         vpn.active = active_of(&objects, &vpn.path);
     }
-    Some(Network { wifi_enabled, link, networks, vpns })
+    let portal = match manager.connectivity().await {
+        Ok(PORTAL) => Some(manager.connectivity_check_uri().await.ok().filter(|u| !u.is_empty()).unwrap_or_else(|| "http://nmcheck.gnome.org".into())),
+        _ => None,
+    };
+    Some(Network { wifi_enabled, link, networks, vpns, portal })
 }
 
 async fn link(bus: &Connection, path: OwnedObjectPath) -> zbus::Result<Link> {
@@ -280,6 +292,40 @@ async fn link(bus: &Connection, path: OwnedObjectPath) -> zbus::Result<Link> {
         "802-3-ethernet" => Link::Ethernet,
         _ => Link::Other(active.id().await?),
     })
+}
+
+/// `NM_CONNECTIVITY_PORTAL`.
+const PORTAL: u32 = 3;
+/// The "Sign in to …" notification's id (replaced, not stacked).
+pub const PORTAL_NOTICE: u32 = 0xFFFA_0000;
+
+/// A captive portal appeared (`Some(true)`) or went (`Some(false)`) between two network states.
+pub fn portal_changed(old: Option<&Network>, new: Option<&Network>) -> Option<bool> {
+    let behind = |n: Option<&Network>| n.is_some_and(|n| n.portal.is_some());
+    (behind(old) != behind(new)).then(|| behind(new))
+}
+
+/// "Sign in to <network>"; clicking it opens the portal (`State::invoke`).
+pub fn portal_notice(network: &Network) -> super::notifications::Notification {
+    let name = match &network.link {
+        Link::Wifi { ssid, .. } => ssid.clone(),
+        Link::Other(name) => name.clone(),
+        Link::Ethernet | Link::None => "the network".into(),
+    };
+    let icon = "network-wireless";
+    super::notifications::Notification {
+        id: PORTAL_NOTICE,
+        app: "Network".into(),
+        icon_name: icon.into(),
+        icon: super::notifications::load_icon(icon).map(std::sync::Arc::new),
+        summary: format!("Sign in to {name}"),
+        body: "This network needs you to sign in before it reaches the internet.".into(),
+        actions: vec![("default".into(), String::new())],
+        urgency: 1,
+        expire: -1,
+        time: chrono::Local::now().timestamp(),
+        ..Default::default()
+    }
 }
 
 /// The active connection of the saved connection at `path`.
@@ -362,6 +408,26 @@ mod tests {
         let objects: ManagedObjects = HashMap::from([(path("/a/1"), active)]);
         assert_eq!(active_of(&objects, "/s/7").as_deref(), Some("/a/1"));
         assert_eq!(active_of(&objects, "/s/8"), None);
+    }
+
+    #[test]
+    fn portal_appears_and_goes() {
+        let network = |portal: Option<&str>| Network {
+            wifi_enabled: true,
+            link: Link::Wifi { ssid: "Cafe".into(), bars: 3 },
+            networks: Vec::new(),
+            vpns: Vec::new(),
+            portal: portal.map(Into::into),
+        };
+        let (free, portal) = (network(None), network(Some("http://check.example/")));
+        assert_eq!(portal_changed(Some(&free), Some(&portal)), Some(true));
+        assert_eq!(portal_changed(None, Some(&portal)), Some(true));
+        assert_eq!(portal_changed(Some(&portal), Some(&portal)), None);
+        assert_eq!(portal_changed(Some(&portal), Some(&free)), Some(false));
+        assert_eq!(portal_changed(Some(&portal), None), Some(false));
+        assert_eq!(portal_changed(Some(&free), Some(&free)), None);
+        let notice = portal_notice(&portal);
+        assert_eq!((notice.summary.as_str(), notice.id), ("Sign in to Cafe", PORTAL_NOTICE));
     }
 
     #[test]

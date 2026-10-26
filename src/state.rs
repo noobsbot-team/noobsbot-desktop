@@ -408,7 +408,15 @@ impl State {
                 match update {
                     crate::services::Update::Battery(battery) => state.battery_changed(battery),
                     crate::services::Update::Peripherals(list) => state.peripherals = list.unwrap_or_default(),
-                    crate::services::Update::Network(network) => state.network = network,
+                    crate::services::Update::Network(network) => {
+                        use crate::services::network::{PORTAL_NOTICE, portal_changed, portal_notice};
+                        match (portal_changed(state.network.as_ref(), network.as_ref()), network.as_ref()) {
+                            (Some(true), Some(n)) => state.notify(portal_notice(n)),
+                            (Some(false), _) => state.close_notification(PORTAL_NOTICE, crate::services::notifications::Reason::Closed),
+                            _ => {}
+                        }
+                        state.network = network;
+                    }
                     crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,
                     crate::services::Update::Profiles(profiles) => state.profiles = profiles,
                     crate::services::Update::Brightness(brightness) => state.brightness = brightness,
