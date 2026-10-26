@@ -305,6 +305,17 @@ pub fn take_out(order: &mut Vec<Entry>, folder: usize, j: usize) -> Option<usize
     Some(folder + 1)
 }
 
+/// Names the folder at `i` `name` (trimmed). `false`: not a folder, or a blank name (the old one stays).
+pub fn rename(order: &mut [Entry], i: usize, name: &str) -> bool {
+    match order.get_mut(i) {
+        Some(Entry::Folder { name: saved, .. }) if !name.trim().is_empty() => {
+            name.trim().clone_into(saved);
+            true
+        }
+        _ => false,
+    }
+}
+
 fn order_file() -> std::path::PathBuf {
     super::drawer::state_file("launchpad.json")
 }
@@ -419,6 +430,23 @@ impl Spring {
     }
 }
 
+/// An open folder's panel.
+pub struct Folder {
+    /// Its place in the order.
+    pub index: usize,
+    pub name: TextField,
+    /// The name was clicked: keys edit it.
+    pub editing: bool,
+    /// 0 → 1 as it opens (it fades in and out on the `smooth` spring).
+    pub shown: Spring,
+}
+
+impl Folder {
+    pub fn closing(&self) -> bool {
+        self.shown.to == 0.0
+    }
+}
+
 /// A finger swipe that ends past this share of a page turns it.
 const TURN: f64 = 0.12;
 /// No scroll event for this long ends a swipe (for devices that send no scroll stop).
@@ -442,8 +470,8 @@ pub struct Launchpad {
     moves: HashMap<String, (Point<f64, Logical>, Spring)>,
     /// The edge timer is running (`launchpad_edge`).
     edge: bool,
-    /// The open folder: its place in the order, and its name being edited.
-    pub folder: Option<(usize, TextField)>,
+    /// The open folder (or the one fading out).
+    pub folder: Option<Folder>,
 }
 
 impl Launchpad {
@@ -512,7 +540,21 @@ impl Launchpad {
     }
 
     pub fn animating(&self, now: Instant) -> bool {
-        !self.shown.done(now) || !self.slide.done(now) || self.moves.values().any(|(_, s)| !s.done(now))
+        let folder = self.folder.as_ref().is_some_and(|f| !f.shown.done(now));
+        folder || !self.shown.done(now) || !self.slide.done(now) || self.moves.values().any(|(_, s)| !s.done(now))
+    }
+
+    /// The open folder, not one fading out.
+    pub fn open_folder(&self) -> Option<&Folder> {
+        self.folder.as_ref().filter(|f| !f.closing())
+    }
+
+    /// Fades the open folder out.
+    fn shut_folder(&mut self, now: Instant) {
+        if let Some(f) = self.folder.as_mut() {
+            f.shown.go(0.0, now);
+            f.editing = false;
+        }
     }
 
     /// Slides to `page`, kept within `pages`.
@@ -531,7 +573,7 @@ impl State {
 
     /// The open folder's panel and grid.
     pub fn launchpad_folder(&self) -> Option<(Rect, Grid)> {
-        let i = self.launchpad.as_ref()?.folder.as_ref()?.0;
+        let i = self.launchpad.as_ref()?.open_folder()?.index;
         let n = match self.launchpad_tiles().into_iter().nth(i)? {
             Tile::Folder(_, apps) => apps.len(),
             Tile::App(_) => return None,
@@ -582,6 +624,9 @@ impl State {
     pub fn launchpad_frame(&mut self, now: Instant) {
         if let Some(l) = self.launchpad.as_mut() {
             l.moves.retain(|_, (_, s)| !s.done(now));
+            if l.folder.as_ref().is_some_and(|f| f.closing() && f.shown.done(now)) {
+                l.folder = None;
+            }
         }
         let Some(l) = self.launchpad.as_ref() else { return };
         if l.closing() && l.shown.done(now) {
@@ -619,17 +664,18 @@ impl State {
     /// empty, Return opens the first match, Esc clears the search, then closes.
     pub fn launchpad_key(&mut self, sym: Keysym, ctrl: bool) {
         let Some(l) = self.launchpad.as_mut() else { return };
-        // An open folder: typing renames it; Return or Esc closes it.
-        if let Some((i, name)) = l.folder.as_mut() {
+        // An open folder: Return or Esc closes it; with its name clicked, typing renames it and they end that.
+        if let Some(f) = l.folder.as_mut().filter(|f| !f.closing()) {
             let typed = sym.key_char().map(String::from);
-            match name.key(sym, typed.as_deref(), ctrl) {
-                Edit::Submit | Edit::Cancel => l.folder = None,
-                Edit::Changed if !name.text.trim().is_empty() => {
-                    if let Some(Entry::Folder { name: saved, .. }) = l.order.get_mut(*i) {
-                        *saved = name.text.trim().to_owned();
-                        save_order(&l.order);
-                    }
+            if !f.editing {
+                if matches!(sym, Keysym::Escape | Keysym::Return | Keysym::KP_Enter) {
+                    l.shut_folder(Instant::now());
                 }
+                return self.schedule_redraw();
+            }
+            match f.name.key(sym, typed.as_deref(), ctrl) {
+                Edit::Submit | Edit::Cancel => f.editing = false,
+                Edit::Changed if rename(&mut l.order, f.index, &f.name.text) => save_order(&l.order),
                 _ => {}
             }
             return self.schedule_redraw();
@@ -675,7 +721,14 @@ impl State {
         }
         if let Some((panel, inner)) = self.launchpad_folder() {
             let Some(l) = self.launchpad.as_mut() else { return true };
-            let index = l.folder.as_ref().map_or(0, |(i, _)| *i);
+            let Some(f) = l.folder.as_mut() else { return true };
+            let index = f.index;
+            // A click on the name edits it (all selected); anywhere else ends that.
+            let on_name = inner.field.to_f64().contains(location);
+            if on_name && !f.editing {
+                f.name = TextField { caret: f.name.text.len(), all: true, ..f.name.clone() };
+            }
+            f.editing = on_name;
             match inner.hit(location).filter(|_| panel.to_f64().contains(location)) {
                 Some(j) => {
                     let grab = location - inner.icon_rect(j).loc.to_f64();
@@ -692,7 +745,7 @@ impl State {
                     });
                 }
                 // Outside the panel: closes the folder.
-                None if !panel.to_f64().contains(location) => l.folder = None,
+                None if !panel.to_f64().contains(location) => l.shut_folder(Instant::now()),
                 None => {}
             }
             self.schedule_redraw();
@@ -765,7 +818,8 @@ impl State {
             let before = l.order.clone();
             let Some(at) = take_out(&mut l.order, p.index, j) else { return };
             p.before = Some(before);
-            (p.index, p.inner, l.folder) = (at, None, None);
+            (p.index, p.inner) = (at, None);
+            l.shut_folder(Instant::now());
             // Its place keeps it on screen: the page it is on.
             let page = at / grid.per_page().max(1);
             let pages = pages(l.order.len(), grid.per_page());
@@ -877,7 +931,8 @@ impl State {
             },
             (Some(Tile::Folder(name, _)), None) => {
                 if let Some(l) = self.launchpad.as_mut() {
-                    l.folder = Some((index, TextField { caret: name.len(), text: name, ..Default::default() }));
+                    let name = TextField { caret: name.len(), text: name, ..Default::default() };
+                    l.folder = Some(Folder { index, name, editing: false, shown: Spring::new(0.0, 1.0, Instant::now()) });
                 }
                 return;
             }
@@ -1174,6 +1229,17 @@ mod tests {
         assert_eq!(take_out(&mut order, 1, 0), Some(2));
         assert_eq!(order, ["x", "c", "a", "b"].map(|id| Entry::App(id.into())), "a folder of one dissolves");
         assert_eq!(take_out(&mut order, 0, 0), None, "not a folder");
+    }
+
+    #[test]
+    fn renames_a_folder() {
+        let mut order = vec![Entry::App("kate".into()), Entry::Folder { name: "Games".into(), apps: vec!["a".into(), "b".into()] }];
+        assert!(rename(&mut order, 1, "  Fun  "));
+        assert!(matches!(&order[1], Entry::Folder { name, .. } if name == "Fun"), "trimmed");
+        assert!(!rename(&mut order, 1, "   "), "a blank name keeps the old one");
+        assert!(matches!(&order[1], Entry::Folder { name, .. } if name == "Fun"));
+        assert!(!rename(&mut order, 0, "X"), "not a folder");
+        assert!(!rename(&mut order, 5, "X"));
     }
 
     #[test]
