@@ -18,11 +18,15 @@ use smithay::{
     utils::{IsAlive, Logical, Point, SERIAL_COUNTER},
 };
 
+use std::time::{Duration, Instant};
+
 use crate::{
     config::Keyboard,
     gestures::Kind,
+    shell::Osd,
     shortcuts::{self, Action},
     state::State,
+    symbols::Symbol,
     wm::{self, Edges},
 };
 
@@ -39,6 +43,165 @@ pub const BTN_RIGHT: u32 = 0x111;
 pub fn xkb(keyboard: &Keyboard) -> XkbConfig<'_> {
     let options = (!keyboard.options.is_empty()).then(|| keyboard.options.clone());
     XkbConfig { layout: &keyboard.layout, variant: &keyboard.variant, options, ..Default::default() }
+}
+
+/// Evdev codes of Ctrl, Shift, Alt and Super, left and right.
+const MODIFIERS: [u32; 8] = [29, 97, 42, 54, 56, 100, 125, 126];
+const SHIFTS: [u32; 2] = [42, 54];
+
+/// Whether `code` is a modifier key, by its place on the keyboard. ponytail: a modifier moved by an xkb option (Caps
+/// as Ctrl) doesn't stick; ask the keymap if that's ever wanted.
+fn is_modifier(code: Keycode) -> bool {
+    MODIFIERS.contains(&code.raw().wrapping_sub(8))
+}
+
+/// Sticky, slow and bounce keys (E8.6): what happens to a key before the keymap sees it.
+#[derive(Default)]
+pub struct AccessKeys {
+    /// Sticky: modifiers tapped once (held for the next key) and twice (held until tapped again). Their release was
+    /// kept from the keymap, so they are still down there.
+    latched: Vec<Keycode>,
+    locked: Vec<Keycode>,
+    /// The modifier pressed with no other key since, so its release is a tap.
+    tap: Option<Keycode>,
+    /// Shift taps in a row and the last one, for the five-press toggle.
+    shifts: (u8, Option<Instant>),
+    /// Slow: keys pressed and when, not yet held long enough.
+    slow: Vec<(Keycode, Instant)>,
+    /// Bounce: the last key let go and when.
+    released: Option<(Keycode, Instant)>,
+    /// Presses bounce keys dropped; their release is dropped too.
+    bounced: Vec<Keycode>,
+    /// Mouse keys: the keypad keys held (evdev codes), since when, and whether the timer moving the pointer runs.
+    mouse_held: Vec<u32>,
+    mouse_since: Option<Instant>,
+}
+
+impl AccessKeys {
+    /// Sticky keys: `None` drops the event (a latched modifier stays down); `Some(codes)` passes it on, then the
+    /// modifiers in `codes` are let go.
+    pub fn sticky(&mut self, code: Keycode, pressed: bool, on: bool) -> Option<Vec<Keycode>> {
+        if !on {
+            return Some(Vec::new());
+        }
+        let held = self.latched.contains(&code) || self.locked.contains(&code);
+        if !is_modifier(code) {
+            if pressed {
+                self.tap = None;
+                return Some(std::mem::take(&mut self.latched));
+            }
+            return Some(Vec::new());
+        }
+        if pressed {
+            self.tap = Some(code);
+            return (!held).then(Vec::new);
+        }
+        if self.tap.take() != Some(code) {
+            // Held with another key: an ordinary chord, unless it was already stuck.
+            return (!held).then(Vec::new);
+        }
+        if let Some(i) = self.locked.iter().position(|c| *c == code) {
+            self.locked.remove(i);
+            return Some(Vec::new());
+        }
+        match self.latched.iter().position(|c| *c == code) {
+            Some(i) => self.locked.push(self.latched.remove(i)),
+            None => self.latched.push(code),
+        }
+        None
+    }
+
+    /// Every stuck modifier, now let go (sticky keys turned off).
+    pub fn unstick(&mut self) -> Vec<Keycode> {
+        self.tap = None;
+        let mut all = std::mem::take(&mut self.latched);
+        all.append(&mut self.locked);
+        all
+    }
+
+    /// The stuck modifiers, for the OSD: latched, then locked.
+    pub fn stuck(&self) -> (Vec<Keycode>, Vec<Keycode>) {
+        (self.latched.clone(), self.locked.clone())
+    }
+
+    /// True on the fifth Shift tap in a row, each within a second of the last.
+    pub fn five_shifts(&mut self, code: Keycode, pressed: bool, now: Instant) -> bool {
+        let shift = SHIFTS.contains(&code.raw().wrapping_sub(8));
+        if pressed && !shift {
+            self.shifts = (0, None);
+        }
+        if pressed || !shift {
+            return false;
+        }
+        let quick = self.shifts.1.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_secs(1));
+        self.shifts = (if quick { self.shifts.0 + 1 } else { 1 }, Some(now));
+        if self.shifts.0 < 5 {
+            return false;
+        }
+        self.shifts = (0, None);
+        true
+    }
+
+    /// Bounce keys: false drops the event (a press too soon after the same key went up, and its release).
+    pub fn bounce(&mut self, code: Keycode, pressed: bool, now: Instant, window: Duration) -> bool {
+        if pressed {
+            let bounced = self.released.is_some_and(|(c, t)| c == code && now.saturating_duration_since(t) < window);
+            if bounced {
+                self.bounced.push(code);
+            }
+            return !bounced;
+        }
+        if let Some(i) = self.bounced.iter().position(|c| *c == code) {
+            self.bounced.swap_remove(i);
+            return false;
+        }
+        self.released = Some((code, now));
+        true
+    }
+
+    /// Slow keys: a press waits for `slow_fire`; false drops the release of a key let go before it counted.
+    pub fn slow_press(&mut self, code: Keycode, now: Instant) {
+        self.slow.retain(|(c, _)| *c != code);
+        self.slow.push((code, now));
+    }
+
+    pub fn slow_release(&mut self, code: Keycode) -> bool {
+        let before = self.slow.len();
+        self.slow.retain(|(c, _)| *c != code);
+        self.slow.len() == before
+    }
+
+    /// The press made at `at` is still held: it counts now.
+    pub fn slow_fire(&mut self, code: Keycode, at: Instant) -> bool {
+        let before = self.slow.len();
+        self.slow.retain(|e| *e != (code, at));
+        self.slow.len() != before
+    }
+}
+
+/// How often mouse keys move the pointer while a key is held.
+const MOUSE_TICK: Duration = Duration::from_millis(16);
+
+/// Keypad 7 8 9 / 4 6 / 1 2 3 (evdev codes) as a step on each axis.
+fn mouse_direction(evdev: u32) -> Option<(i8, i8)> {
+    Some(match evdev {
+        71 => (-1, -1),
+        72 => (0, -1),
+        73 => (1, -1),
+        75 => (-1, 0),
+        77 => (1, 0),
+        79 => (-1, 1),
+        80 => (0, 1),
+        81 => (1, 1),
+        _ => return None,
+    })
+}
+
+/// One tick's move for the keypad keys `held`: 1 px at first for fine placing, speeding up to 20 px over a second.
+fn mouse_step(held: &[u32], held_for: Duration) -> Point<f64, Logical> {
+    let (x, y) = held.iter().filter_map(|c| mouse_direction(*c)).fold((0i8, 0i8), |(x, y), (dx, dy)| (x + dx, y + dy));
+    let speed = 1.0 + 19.0 * held_for.as_secs_f64().min(1.0);
+    (f64::from(x.signum()) * speed, f64::from(y.signum()) * speed).into()
 }
 
 /// Pointer state of our resize zones.
@@ -135,6 +298,282 @@ impl State {
         }
     }
 
+    /// A key from the keyboard, through bounce, slow, mouse and sticky keys (E8.6), to `key`.
+    fn key_event(&mut self, code: Keycode, key_state: KeyState, time: u32) {
+        let (pressed, now) = (key_state == KeyState::Pressed, Instant::now());
+        let a11y = &self.config.accessibility;
+        let (bounce, slow) = (Duration::from_millis(a11y.bounce_keys_ms.into()), Duration::from_millis(a11y.slow_keys_ms.into()));
+        if !self.access.bounce(code, pressed, now, bounce) {
+            return;
+        }
+        if !slow.is_zero() && pressed {
+            self.access.slow_press(code, now);
+            let timer = self.loop_handle.insert_source(Timer::from_duration(slow), move |_, _, state| {
+                if state.access.slow_fire(code, now) {
+                    state.key_counted(code, KeyState::Pressed, time.wrapping_add(slow.as_millis() as u32));
+                }
+                TimeoutAction::Drop
+            });
+            if let Err(err) = timer {
+                tracing::warn!("slow keys: {err}");
+            }
+            return;
+        }
+        if pressed || self.access.slow_release(code) {
+            self.key_counted(code, key_state, time);
+        }
+    }
+
+    /// A key that counts: mouse keys take the keypad, sticky keys hold modifiers, the rest goes to `key`.
+    fn key_counted(&mut self, code: Keycode, key_state: KeyState, time: u32) {
+        let pressed = key_state == KeyState::Pressed;
+        if self.config.accessibility.mouse_keys && self.mouse_key(code, pressed, time) {
+            return;
+        }
+        if self.config.accessibility.sticky_keys_shortcut && self.access.five_shifts(code, pressed, Instant::now()) {
+            let on = !self.config.accessibility.sticky_keys;
+            self.config.accessibility.sticky_keys = on;
+            crate::config::save_key("accessibility", "sticky_keys", if on { "true" } else { "false" });
+            self.show_osd(Osd { symbol: Symbol::Keyboard, level: None, text: Some(format!("Sticky Keys {}", if on { "On" } else { "Off" })) });
+            if !on {
+                for c in self.access.unstick() {
+                    self.key(c, KeyState::Released, time);
+                }
+            }
+        }
+        let before = self.access.stuck();
+        let Some(release) = self.access.sticky(code, pressed, self.config.accessibility.sticky_keys) else {
+            self.sticky_osd(before);
+            return;
+        };
+        self.key(code, key_state, time);
+        for c in release {
+            self.key(c, KeyState::Released, time);
+        }
+        self.sticky_osd(before);
+    }
+
+    /// The OSD names the stuck modifiers when they change.
+    fn sticky_osd(&mut self, before: (Vec<Keycode>, Vec<Keycode>)) {
+        let (latched, locked) = self.access.stuck();
+        if (latched.clone(), locked.clone()) == before {
+            return;
+        }
+        let name = |c: &Keycode| match c.raw().wrapping_sub(8) {
+            29 | 97 => "Control",
+            42 | 54 => "Shift",
+            56 | 100 => "Option",
+            _ => "Super",
+        };
+        let mut words: Vec<String> = latched.iter().map(|c| name(c).to_owned()).collect();
+        words.extend(locked.iter().map(|c| format!("{} (locked)", name(c))));
+        let text = if words.is_empty() { "Modifiers released".to_owned() } else { words.join(" + ") };
+        self.show_osd(Osd { symbol: Symbol::Keyboard, level: None, text: Some(text) });
+    }
+
+    /// A key to the shell, its shortcuts and the focused app.
+    fn key(&mut self, code: Keycode, key_state: KeyState, time: u32) {
+        let Some(keyboard) = self.seat.get_keyboard() else { return };
+        let serial = SERIAL_COUNTER.next_serial();
+        let inhibited = self.shortcuts_inhibited();
+        let super_down = self.super_tap.down();
+        let action = keyboard.input::<Option<Action>, _>(self, code, key_state, serial, time, |state, mods, key| {
+            let code = key.raw_code();
+            let logo = matches!(key.modified_sym(), Keysym::Super_L | Keysym::Super_R);
+            state.super_tap.key(logo, key_state == KeyState::Pressed, !mods.ctrl && !mods.alt && !mods.shift, std::time::Instant::now());
+            if key_state == KeyState::Released {
+                if state.key_repeat.as_ref().is_some_and(|(c, _)| *c == code) {
+                    state.stop_repeat();
+                }
+                state.switcher_release(mods);
+                // The release of a shortcut key never reaches the app, which never saw the press.
+                return match state.suppressed.iter().position(|c| *c == code) {
+                    Some(i) => {
+                        state.suppressed.swap_remove(i);
+                        FilterResult::Intercept(None)
+                    }
+                    None => FilterResult::Forward,
+                };
+            }
+            // A new press ends the repeat of the last one, as on the app side.
+            state.stop_repeat();
+            // Ctrl+Alt+F1…F12 on the real screen switch virtual terminals, whatever is open.
+            if state.switch_vt(key.modified_sym()) {
+                state.suppressed.push(code);
+                return FilterResult::Intercept(None);
+            }
+            let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
+            if state.shell_key(key.modified_sym(), raw, mods) {
+                state.suppressed.push(code);
+                state.start_repeat(code, key.modified_sym(), raw, *mods);
+                return FilterResult::Intercept(None);
+            }
+            // Locked: the lock screen took every key, or its client's lock surface gets them.
+            if state.locked() {
+                return FilterResult::Forward;
+            }
+            // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
+            let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
+            match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
+                Some(action) => {
+                    state.suppressed.push(code);
+                    FilterResult::Intercept(Some(action))
+                }
+                None => FilterResult::Forward,
+            }
+        });
+        self.switcher_settle();
+        // Super pressed or let go alone: the dock's number pills come or go (E8.3).
+        if self.super_tap.down() != super_down {
+            self.schedule_redraw();
+        }
+        // A lone Super tap (its release goes on to the app, which saw the press).
+        if std::mem::take(&mut self.super_tap.fired) && self.config.app_drawer.super_tap && !inhibited && !self.locked() && self.alert.is_none() {
+            self.run_action(Action::AppDrawer);
+        }
+        match action {
+            Some(Some(action)) => self.run_action(action),
+            // A key the app gets: is it still answering (E4.7)?
+            None if key_state == KeyState::Pressed => {
+                if let Some(window) = self.focused_window() {
+                    self.ping(&window);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A pointer button, from the device or mouse keys.
+    pub fn pointer_button(&mut self, button: u32, state: ButtonState, time: u32) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        let serial = SERIAL_COUNTER.next_serial();
+        let location = pointer.current_location();
+        if self.locked() {
+            if state == ButtonState::Pressed {
+                self.lock_press(self.to_output(location));
+            }
+            // Only a client's lock surface (under the pointer, see surface_under) gets the button.
+            pointer.button(self, &ButtonEvent { button, state, serial, time });
+            pointer.frame(self);
+            return;
+        }
+        if state == ButtonState::Pressed {
+            self.desktop_blur(self.to_output(location));
+        }
+        // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
+        // pointer comes to the front.
+        if state == ButtonState::Pressed
+            && !pointer.is_grabbed()
+            && !self.switcher_press(location)
+            && !self.shot_press(self.to_output(location), button == BTN_LEFT)
+            && !self.drawer_press(self.to_output(location), button == BTN_RIGHT)
+            && !self.dock_press(self.to_output(location), button)
+            && !self.mission_press(self.to_output(location), button)
+            && !self.shell_press(self.to_output(location), button == BTN_RIGHT)
+        {
+            let zone = self.zone_under(location);
+            let bar = if zone.is_some() { None } else { self.bar_under(location) };
+            let window = zone
+                .as_ref()
+                .map(|(w, _)| w.clone())
+                .or_else(|| bar.as_ref().map(|(w, _)| w.clone()))
+                .or_else(|| self.space.element_under(location).map(|(w, _)| w.clone()));
+            // Bars and launchers above windows (or the wallpaper below, where no window is) take the click instead.
+            let layer = self.layer_under(location, true).or_else(|| window.is_none().then(|| self.layer_under(location, false)).flatten());
+            if let Some((layer, ..)) = layer {
+                if layer.can_receive_keyboard_focus()
+                    && let Some(keyboard) = self.seat.get_keyboard()
+                {
+                    keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
+                }
+            } else {
+                self.focus_window(window.clone(), serial);
+                // The bare desktop: its icons.
+                if window.is_none() {
+                    self.desktop_press(self.to_output(location), button);
+                }
+                if let Some(window) = &window {
+                    self.ping(window);
+                }
+                let start_data = GrabStartData { focus: None, button: BTN_LEFT, location };
+                // Super + drag anywhere in a window moves it (the click never reaches the app).
+                if let Some(window) = window.clone().filter(|_| button == BTN_LEFT && self.move_key_held()) {
+                    self.start_move(window, start_data, serial);
+                } else if let Some((window, frame)) =
+                    window.filter(|_| button == BTN_RIGHT && self.move_key_held()).and_then(|w| Some((w.clone(), self.frame(&w)?)))
+                {
+                    // Super + right-drag resizes from the nearest corner.
+                    self.start_resize(window, wm::nearest_corner(frame, location), start_data, serial);
+                } else if let Some((window, edges)) = zone.filter(|_| button == BTN_LEFT) {
+                    self.zone_press(window, edges, start_data, serial);
+                } else if let Some((window, part)) = bar.filter(|_| button == BTN_LEFT) {
+                    self.bar_press(window, part, start_data, serial);
+                }
+            }
+        }
+        if state == ButtonState::Released && button == BTN_LEFT {
+            self.shot_release();
+            self.bar_release(pointer.current_location());
+            self.mission_release(self.to_output(pointer.current_location()));
+            self.shell_release();
+            self.desktop_release();
+            self.dock_release(self.to_output(pointer.current_location()));
+        }
+        pointer.button(self, &ButtonEvent { button, state, serial, time });
+        pointer.frame(self);
+    }
+
+    /// Mouse keys (E8.6): true when `code` is a keypad key they took.
+    fn mouse_key(&mut self, code: Keycode, pressed: bool, time: u32) -> bool {
+        let evdev = code.raw().wrapping_sub(8);
+        let click = |state: &mut Self, button, states: &[ButtonState]| {
+            for s in states {
+                state.pointer_button(button, *s, time);
+            }
+        };
+        match evdev {
+            76 | 55 | 82 | 83 if !pressed => {}
+            76 => click(self, BTN_LEFT, &[ButtonState::Pressed, ButtonState::Released]),
+            55 => click(self, BTN_RIGHT, &[ButtonState::Pressed, ButtonState::Released]),
+            82 => click(self, BTN_LEFT, &[ButtonState::Pressed]),
+            83 => click(self, BTN_LEFT, &[ButtonState::Released]),
+            _ if mouse_direction(evdev).is_some() => {
+                self.access.mouse_held.retain(|c| *c != evdev);
+                if !pressed {
+                    return true;
+                }
+                self.access.mouse_held.push(evdev);
+                if self.access.mouse_since.is_none() {
+                    self.access.mouse_since = Some(Instant::now());
+                    self.mouse_keys_step();
+                    let timer = self.loop_handle.insert_source(Timer::from_duration(MOUSE_TICK), |_, _, state| {
+                        if state.access.mouse_held.is_empty() {
+                            state.access.mouse_since = None;
+                            return TimeoutAction::Drop;
+                        }
+                        state.mouse_keys_step();
+                        TimeoutAction::ToDuration(MOUSE_TICK)
+                    });
+                    if let Err(err) = timer {
+                        tracing::warn!("mouse keys: {err}");
+                    }
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// One tick of the pointer moving under held keypad keys.
+    fn mouse_keys_step(&mut self) {
+        let held_for = self.access.mouse_since.map_or(Duration::ZERO, |t| t.elapsed());
+        let delta = mouse_step(&self.access.mouse_held, held_for);
+        if delta != Point::default() {
+            let utime = Duration::from(self.protocols.clock.now()).as_micros() as u64;
+            self.relative_motion(delta, utime);
+        }
+    }
+
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         self.idle_activity();
         // Clicks, scrolls and gestures with Super held aren't a Super tap; moving the pointer is fine.
@@ -142,160 +581,12 @@ impl State {
             self.super_tap.cancel();
         }
         match event {
-            InputEvent::Keyboard { event } => {
-                let Some(keyboard) = self.seat.get_keyboard() else { return };
-                let serial = SERIAL_COUNTER.next_serial();
-                let key_state = event.state();
-                let inhibited = self.shortcuts_inhibited();
-                let super_down = self.super_tap.down();
-                let action = keyboard.input::<Option<Action>, _>(self, event.key_code(), key_state, serial, event.time_msec(), |state, mods, key| {
-                    let code = key.raw_code();
-                    let logo = matches!(key.modified_sym(), Keysym::Super_L | Keysym::Super_R);
-                    state.super_tap.key(logo, key_state == KeyState::Pressed, !mods.ctrl && !mods.alt && !mods.shift, std::time::Instant::now());
-                    if key_state == KeyState::Released {
-                        if state.key_repeat.as_ref().is_some_and(|(c, _)| *c == code) {
-                            state.stop_repeat();
-                        }
-                        state.switcher_release(mods);
-                        // The release of a shortcut key never reaches the app, which never saw the press.
-                        return match state.suppressed.iter().position(|c| *c == code) {
-                            Some(i) => {
-                                state.suppressed.swap_remove(i);
-                                FilterResult::Intercept(None)
-                            }
-                            None => FilterResult::Forward,
-                        };
-                    }
-                    // A new press ends the repeat of the last one, as on the app side.
-                    state.stop_repeat();
-                    // Ctrl+Alt+F1…F12 on the real screen switch virtual terminals, whatever is open.
-                    if state.switch_vt(key.modified_sym()) {
-                        state.suppressed.push(code);
-                        return FilterResult::Intercept(None);
-                    }
-                    let raw = key.raw_latin_sym_or_raw_current_sym().unwrap_or(key.modified_sym());
-                    if state.shell_key(key.modified_sym(), raw, mods) {
-                        state.suppressed.push(code);
-                        state.start_repeat(code, key.modified_sym(), raw, *mods);
-                        return FilterResult::Intercept(None);
-                    }
-                    // Locked: the lock screen took every key, or its client's lock surface gets them.
-                    if state.locked() {
-                        return FilterResult::Forward;
-                    }
-                    // An app that inhibits shortcuts (a VM, remote desktop) gets every key.
-                    let Some(sym) = key.raw_latin_sym_or_raw_current_sym().filter(|_| !inhibited) else { return FilterResult::Forward };
-                    match shortcuts::lookup(&state.bindings, mods, sym, state.nested).cloned() {
-                        Some(action) => {
-                            state.suppressed.push(code);
-                            FilterResult::Intercept(Some(action))
-                        }
-                        None => FilterResult::Forward,
-                    }
-                });
-                self.switcher_settle();
-                // Super pressed or let go alone: the dock's number pills come or go (E8.3).
-                if self.super_tap.down() != super_down {
-                    self.schedule_redraw();
-                }
-                // A lone Super tap (its release goes on to the app, which saw the press).
-                if std::mem::take(&mut self.super_tap.fired) && self.config.app_drawer.super_tap && !inhibited && !self.locked() && self.alert.is_none() {
-                    self.run_action(Action::AppDrawer);
-                }
-                match action {
-                    Some(Some(action)) => self.run_action(action),
-                    // A key the app gets: is it still answering (E4.7)?
-                    None if key_state == KeyState::Pressed => {
-                        if let Some(window) = self.focused_window() {
-                            self.ping(&window);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            InputEvent::Keyboard { event } => self.key_event(event.key_code(), event.state(), event.time_msec()),
             InputEvent::PointerMotionAbsolute { event } => {
                 let Some(output_geo) = self.space.outputs().next().and_then(|o| self.space.output_geometry(o)) else { return };
                 self.pointer_motion(event.position_transformed(output_geo.size) + output_geo.loc.to_f64(), event.time());
             }
-            InputEvent::PointerButton { event } => {
-                let Some(pointer) = self.seat.get_pointer() else { return };
-                let serial = SERIAL_COUNTER.next_serial();
-                let state = event.state();
-                let location = pointer.current_location();
-                if self.locked() {
-                    if state == ButtonState::Pressed {
-                        self.lock_press(self.to_output(location));
-                    }
-                    // Only a client's lock surface (under the pointer, see surface_under) gets the button.
-                    pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
-                    pointer.frame(self);
-                    return;
-                }
-                if state == ButtonState::Pressed {
-                    self.desktop_blur(self.to_output(location));
-                }
-                // The menu bar and its popups take their clicks; elsewhere, click to focus: the window under the
-                // pointer comes to the front.
-                if state == ButtonState::Pressed
-                    && !pointer.is_grabbed()
-                    && !self.switcher_press(location)
-                    && !self.shot_press(self.to_output(location), event.button_code() == BTN_LEFT)
-                    && !self.drawer_press(self.to_output(location), event.button_code() == BTN_RIGHT)
-                    && !self.dock_press(self.to_output(location), event.button_code())
-                    && !self.mission_press(self.to_output(location), event.button_code())
-                    && !self.shell_press(self.to_output(location), event.button_code() == BTN_RIGHT)
-                {
-                    let zone = self.zone_under(location);
-                    let bar = if zone.is_some() { None } else { self.bar_under(location) };
-                    let window = zone
-                        .as_ref()
-                        .map(|(w, _)| w.clone())
-                        .or_else(|| bar.as_ref().map(|(w, _)| w.clone()))
-                        .or_else(|| self.space.element_under(location).map(|(w, _)| w.clone()));
-                    // Bars and launchers above windows (or the wallpaper below, where no window is) take the click instead.
-                    let layer = self.layer_under(location, true).or_else(|| window.is_none().then(|| self.layer_under(location, false)).flatten());
-                    if let Some((layer, ..)) = layer {
-                        if layer.can_receive_keyboard_focus()
-                            && let Some(keyboard) = self.seat.get_keyboard()
-                        {
-                            keyboard.set_focus(self, Some(layer.wl_surface().clone()), serial);
-                        }
-                    } else {
-                        self.focus_window(window.clone(), serial);
-                        // The bare desktop: its icons.
-                        if window.is_none() {
-                            self.desktop_press(self.to_output(location), event.button_code());
-                        }
-                        if let Some(window) = &window {
-                            self.ping(window);
-                        }
-                        let start_data = GrabStartData { focus: None, button: BTN_LEFT, location };
-                        // Super + drag anywhere in a window moves it (the click never reaches the app).
-                        if let Some(window) = window.clone().filter(|_| event.button_code() == BTN_LEFT && self.move_key_held()) {
-                            self.start_move(window, start_data, serial);
-                        } else if let Some((window, frame)) =
-                            window.filter(|_| event.button_code() == BTN_RIGHT && self.move_key_held()).and_then(|w| Some((w.clone(), self.frame(&w)?)))
-                        {
-                            // Super + right-drag resizes from the nearest corner.
-                            self.start_resize(window, wm::nearest_corner(frame, location), start_data, serial);
-                        } else if let Some((window, edges)) = zone.filter(|_| event.button_code() == BTN_LEFT) {
-                            self.zone_press(window, edges, start_data, serial);
-                        } else if let Some((window, part)) = bar.filter(|_| event.button_code() == BTN_LEFT) {
-                            self.bar_press(window, part, start_data, serial);
-                        }
-                    }
-                }
-                if state == ButtonState::Released && event.button_code() == BTN_LEFT {
-                    self.shot_release();
-                    self.bar_release(pointer.current_location());
-                    self.mission_release(self.to_output(pointer.current_location()));
-                    self.shell_release();
-                    self.desktop_release();
-                    self.dock_release(self.to_output(pointer.current_location()));
-                }
-                pointer.button(self, &ButtonEvent { button: event.button_code(), state, serial, time: event.time_msec() });
-                pointer.frame(self);
-            }
+            InputEvent::PointerButton { event } => self.pointer_button(event.button_code(), event.state(), event.time_msec()),
             InputEvent::PointerAxis { event } => {
                 let Some(pointer) = self.seat.get_pointer() else { return };
                 let source = event.source();

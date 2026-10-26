@@ -122,6 +122,8 @@ pub struct State {
     pub suppressed: Vec<Keycode>,
     /// The key a shell surface is seeing held down (D14), and the timer repeating it.
     pub key_repeat: Option<(Keycode, RegistrationToken)>,
+    /// Sticky, slow, bounce and mouse keys (E8.6).
+    pub access: crate::input::AccessKeys,
     /// Minimised and hidden windows with where they were.
     pub hidden: Vec<(Window, Point<i32, Logical>)>,
     /// The pid of the `noobsbot --quake` the quake action started; its window gets `rules::QUAKE_ID`.
@@ -437,6 +439,7 @@ impl State {
             config,
             suppressed: Vec::new(),
             key_repeat: None,
+            access: Default::default(),
             hidden: Vec::new(),
             quake: None,
             zones: Default::default(),
