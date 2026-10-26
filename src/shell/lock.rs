@@ -371,7 +371,7 @@ impl State {
     }
 
     /// The lock screen's layout on the first output.
-    fn lock_layout(&self) -> Option<Layout> {
+    pub(crate) fn lock_layout(&self) -> Option<Layout> {
         let output = self.space.outputs().next()?;
         Some(layout(self.space.output_geometry(output)?.size))
     }
