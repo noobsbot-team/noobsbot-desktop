@@ -47,7 +47,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::state::State;
 
-const USAGE: &str = "usage: noobsbot-desktop [--nested] [--greeter] [--test-scene] [--show notification|notification-center|calendar-events|weather|fades|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|alert-polkit|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|emoji|emoji-search|launchpad|launchpad-search|app-drawer|app-drawer-search|app-drawer-menu|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|greeter|greeter-users|greeter-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail|desktop|desktop-menu|desktop-rename] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]";
+const USAGE: &str = "usage: noobsbot-desktop [--nested] [--greeter] [--test-scene] [--show notification|notification-center|calendar-events|weather|fades|logo-menu|app-menu|input-menu|control|control-sound|control-wifi|control-bluetooth|osd|alert|alert-pair|alert-code|alert-wifi|alert-pin|alert-polkit|dock-zoom|dock-badges|dock-menu|gallery|switcher|force-quit|spotlight|spotlight-calc|emoji|emoji-search|launchpad|launchpad-search|app-drawer|app-drawer-search|app-drawer-menu|mission-control|mission-control-bar|hot-corner|update|lock|lock-typing|lock-wrong|greeter|greeter-users|greeter-wrong|screenshot-toolbar|screenshot-region|screenshot-window|screenshot-options|screenshot-thumbnail|desktop|desktop-menu|desktop-rename] [-- command [args...]]\n       noobsbot-desktop theme --write [--gsettings]\n       noobsbot-desktop --update";
 
 /// `1.3.0 (Opal) · 2026-10-17 · a1b2c3d` (E6.13); the date and commit come from the release build (release.yml).
 // ponytail: the codename is fixed until 2.0 (Pearl) exists.
@@ -77,6 +77,10 @@ fn main() {
     // `dock --import-plank`: the one-time Plank importer (E3.1).
     if std::env::args().nth(1).as_deref() == Some("dock") {
         std::process::exit(shell::plank::cli(std::env::args().skip(2)));
+    }
+    // `--update` (or `update`): Software Update from a terminal (E6.13), no compositor.
+    if matches!(std::env::args().nth(1).as_deref(), Some("--update" | "update")) {
+        std::process::exit(services::update::cli(config::load(&config::path()).update.channel));
     }
     // `--trusted <command>`: runs it on the trusted socket of the running desktop (E6.11).
     if std::env::args().nth(1).as_deref() == Some("--trusted") {
