@@ -1275,17 +1275,25 @@ fn network_part<'a>(app: &'a App, wifi: &'a crate::system::Wifi) -> Vec<Element<
         line(t, v.name.as_str(), if v.active.is_some() { "Connected" } else { "" }, toggle(t, v.active.is_some(), move |_| Message::Vpn(vpn.clone())))
     });
     let mut vpns: Vec<_> = vpns.collect();
-    let typed = app.texts.get(crate::network::WIREGUARD).map_or("", String::as_str);
-    let field = text_input("/path/to/wg0.conf", typed)
-        .on_input(|v| Message::Type(crate::network::WIREGUARD.into(), v))
-        .on_submit(Message::ImportWireGuard)
-        .size(13)
-        .padding([3, 8])
-        .width(180)
-        .style(t.input(false));
-    let import =
-        button(text("Import").size(12)).padding([3, 10]).style(t.push(false)).on_press_maybe((!typed.trim().is_empty()).then_some(Message::ImportWireGuard));
-    vpns.push(line(t, "Import WireGuard", "A wg-quick .conf file", row![field, import].spacing(8).align_y(Alignment::Center).into()));
+    // The file chooser; the path field only when there is no portal.
+    let import: Element<'_, Message> = match app.texts.get(crate::network::WIREGUARD) {
+        Some(typed) => {
+            let field = text_input("/path/to/wg0.conf", typed)
+                .on_input(|v| Message::Type(crate::network::WIREGUARD.into(), v))
+                .on_submit(Message::ImportWireGuard)
+                .size(13)
+                .padding([3, 8])
+                .width(180)
+                .style(t.input(false));
+            let import = button(text("Import").size(12))
+                .padding([3, 10])
+                .style(t.push(false))
+                .on_press_maybe((!typed.trim().is_empty()).then_some(Message::ImportWireGuard));
+            row![field, import].spacing(8).align_y(Alignment::Center).into()
+        }
+        None => button(text("Import…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::OpenFile(crate::network::WIREGUARD)).into(),
+    };
+    vpns.push(line(t, "Import WireGuard", "A wg-quick .conf file", import));
     parts.push(group(t, "VPN", vpns));
     if let Some(k) = net.known.iter().find(|k| app.texts.get(&format!("{}path", crate::network::DETAILS)) == Some(&k.path)) {
         parts.push(connection_details(app, k));
@@ -1417,9 +1425,9 @@ fn gallery(app: &App) -> Element<'_, Message> {
         let picture = iced::widget::image(handle.clone()).width(w).height(h).border_radius(5.0);
         tiles.push(tile(picture.into(), path.to_string_lossy().into_owned()));
     }
-    // "+ Add Folder…" opens a path field under the pictures; its pictures join the gallery.
+    // "+ Add Folder…" opens the folder chooser (a path field under the pictures without a portal); its pictures join the gallery.
     let add = container(text("+ Add Folder…").size(12)).center_x(w).center_y(h);
-    tiles.push(button(add).padding(3).style(t.tile(false)).on_press(Message::Type(crate::gallery::ADD.into(), String::new())).into());
+    tiles.push(button(add).padding(3).style(t.tile(false)).on_press(Message::OpenFile(crate::gallery::ADD)).into());
     let grid = row(tiles).spacing(8).wrap().vertical_spacing(8);
     let mut rows = vec![container(grid).padding(12).width(Length::Fill).into()];
     if let Some(path) = app.texts.get(crate::gallery::ADD) {
@@ -1473,21 +1481,30 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
         let go = button(text("Change Password").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::ChangePassword);
         rows.push(line(t, "", "", go.into()));
     }
-    if let Some(typed) = app.texts.get(crate::users::PICTURE_FILE) {
-        // The wallpaper gallery's pictures, then any file by its path.
+    if app.texts.contains_key(crate::users::PICTURES) {
+        // The wallpaper gallery's pictures, then any file from the chooser (by its path without a portal).
         let tiles = app.thumbs.iter().map(|(path, handle)| {
             let tile = iced::widget::image(handle.clone()).width(48).height(48).content_fit(iced::ContentFit::Cover).border_radius(24.0);
             button(tile).padding(2).style(t.tile(false)).on_press(Message::Picture(path.clone())).into()
         });
         rows.insert(1, container(row(tiles).spacing(8).wrap().vertical_spacing(8)).padding(12).into());
-        let file = text_input("/path/to/picture.png", typed)
-            .on_input(|v| Message::Type(crate::users::PICTURE_FILE.into(), v))
-            .on_submit(Message::Picture(typed.trim().into()))
-            .size(13)
-            .padding([3, 8])
-            .width(260)
-            .style(t.input(false));
-        rows.insert(2, line(t, "Other picture", "A PNG or JPEG file; press Return", file.into()));
+        let other = match app.texts.get(crate::users::PICTURE_FILE) {
+            Some(typed) => {
+                let file = text_input("/path/to/picture.png", typed)
+                    .on_input(|v| Message::Type(crate::users::PICTURE_FILE.into(), v))
+                    .on_submit(Message::Picture(typed.trim().into()))
+                    .size(13)
+                    .padding([3, 8])
+                    .width(260)
+                    .style(t.input(false));
+                line(t, "Other picture", "A PNG or JPEG file; press Return", file.into())
+            }
+            None => {
+                let choose = button(text("Choose…").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::OpenFile(crate::users::PICTURE_FILE));
+                line(t, "Other picture", "A PNG or JPEG file", choose.into())
+            }
+        };
+        rows.insert(2, other);
     }
     let mut parts = vec![container(head).padding([0, 4]).into(), group(t, "", rows)];
     if !users.others.is_empty() {

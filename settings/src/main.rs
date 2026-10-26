@@ -3,6 +3,7 @@
 
 mod arrange;
 mod autostart;
+mod chooser;
 mod config;
 mod defaults;
 #[path = "../../src/display_info.rs"]
@@ -270,6 +271,10 @@ pub enum Message {
     DeleteUser(Option<String>),
     /// The alert's choice: `true` deletes the home folder too.
     DeleteUserNow(bool),
+    /// The file chooser opens for the path field with this `texts` key.
+    OpenFile(&'static str),
+    /// It answered: the path goes where that field's would; no portal shows the field.
+    Chosen(&'static str, chooser::Chosen),
 }
 
 impl App {
@@ -447,12 +452,14 @@ impl App {
             Message::Thumbs(thumbs) => self.thumbs = thumbs,
             Message::Users(users) => self.users = Some(users),
             Message::PictureChooser => {
-                if self.texts.remove(users::PICTURE_FILE).is_none() {
-                    self.texts.insert(users::PICTURE_FILE.into(), String::new());
+                self.texts.remove(users::PICTURE_FILE);
+                if self.texts.remove(users::PICTURES).is_none() {
+                    self.texts.insert(users::PICTURES.into(), String::new());
                 }
             }
             Message::Picture(file) => {
                 let Some(me) = self.users.as_ref().and_then(|u| u.me.as_ref()) else { return Task::none() };
+                self.texts.remove(users::PICTURES);
                 self.texts.remove(users::PICTURE_FILE);
                 return Task::perform(users::set_picture(me.path.clone(), file), Message::UsersActed);
             }
@@ -574,6 +581,27 @@ impl App {
                 return Task::perform(network::change(move |bus| network::update_ip(bus, path, ip4, ip6)), Message::Status);
             }
             Message::Vpn(vpn) => return Task::perform(network::change(move |bus| network::vpn_switch(bus, vpn)), Message::Status),
+            Message::OpenFile(key) => {
+                let (title, directory, filter) = match key {
+                    users::PICTURE_FILE => ("Choose a Picture", false, Some(chooser::IMAGES)),
+                    gallery::ADD => ("Add a Wallpaper Folder", true, None),
+                    _ => ("Import WireGuard", false, Some(chooser::WIREGUARD)),
+                };
+                return Task::perform(chooser::open(title, directory, filter), move |chosen| Message::Chosen(key, chosen));
+            }
+            Message::Chosen(key, Err(())) => {
+                self.texts.insert(key.into(), String::new());
+            }
+            Message::Chosen(_, Ok(None)) => {}
+            Message::Chosen(key, Ok(Some(path))) => {
+                // ponytail: non-UTF-8 paths are lossy here, as when typed.
+                self.texts.insert(key.into(), path.to_string_lossy().into_owned());
+                return self.update(match key {
+                    users::PICTURE_FILE => Message::Picture(path),
+                    network::WIREGUARD => Message::ImportWireGuard,
+                    _ => Message::Submit(key.into()),
+                });
+            }
             Message::ImportWireGuard => {
                 let Some(path) = self.texts.remove(network::WIREGUARD) else { return Task::none() };
                 return Task::perform(network::change(move |bus| network::import_wireguard(bus, path)), Message::Status);

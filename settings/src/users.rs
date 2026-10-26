@@ -74,7 +74,9 @@ pub async fn set(path: String, method: &'static str, value: String) -> (Users, O
     (read().await, error)
 }
 
-/// "Change Picture…": its path field, as a text key; open while the key is there.
+/// "Change Picture…": its pictures, as a text key; open while the key is there.
+pub const PICTURES: &str = "users.pictures";
+/// Its path field, shown when there is no file chooser.
 pub const PICTURE_FILE: &str = "users.picture";
 
 /// `file` becomes the account's picture: cut square into `~/.face`, which AccountsService then copies.
