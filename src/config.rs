@@ -794,7 +794,8 @@ pub enum AppStyle {
 }
 
 /// One app's `[notification_apps]` rule: a style alone (`"alert"`), or a table with the switches as well
-/// (`{ style = "alert", sound = false, badge = false, center = false }`); missing switches are on.
+/// (`{ style = "alert", sound = false, badge = false, center = false, lock = true }`); missing switches are on, except
+/// `lock`, which is off (the lock screen shows only a count unless an app is allowed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(from = "RuleToml")]
 pub struct AppRule {
@@ -805,11 +806,13 @@ pub struct AppRule {
     pub badge: bool,
     /// Kept in Notification Center; off, it goes with its banner.
     pub center: bool,
+    /// Listed on the lock screen (title, and body with `previews = "always"`), not only counted.
+    pub lock: bool,
 }
 
 impl Default for AppRule {
     fn default() -> Self {
-        Self { style: AppStyle::Banner, sound: true, badge: true, center: true }
+        Self { style: AppStyle::Banner, sound: true, badge: true, center: true, lock: false }
     }
 }
 
@@ -826,6 +829,8 @@ enum RuleToml {
         badge: bool,
         #[serde(default = "yes")]
         center: bool,
+        #[serde(default)]
+        lock: bool,
     },
 }
 
@@ -837,7 +842,7 @@ impl From<RuleToml> for AppRule {
     fn from(rule: RuleToml) -> Self {
         match rule {
             RuleToml::Style(style) => AppRule { style, ..Default::default() },
-            RuleToml::Table { style, sound, badge, center } => AppRule { style, sound, badge, center },
+            RuleToml::Table { style, sound, badge, center, lock } => AppRule { style, sound, badge, center, lock },
         }
     }
 }
@@ -1609,13 +1614,13 @@ mod tests {
     #[test]
     fn notification_app_rules() {
         let config: Config = toml::from_str(
-            "[notification_apps]\nMail = \"alert\"\nChat = { style = \"none\", sound = false }\n\"org.x.Y\" = { center = false, badge = false }\n",
+            "[notification_apps]\nMail = \"alert\"\nChat = { style = \"none\", sound = false, lock = true }\n\"org.x.Y\" = { center = false, badge = false }\n",
         )
         .unwrap();
         let rule = |app: &str| config.notification_apps[app];
         assert_eq!(rule("Mail"), AppRule { style: AppStyle::Alert, ..Default::default() });
-        assert_eq!(rule("Chat"), AppRule { style: AppStyle::None, sound: false, badge: true, center: true });
-        assert_eq!(rule("org.x.Y"), AppRule { style: AppStyle::Banner, sound: true, badge: false, center: false });
+        assert_eq!(rule("Chat"), AppRule { style: AppStyle::None, sound: false, badge: true, center: true, lock: true });
+        assert_eq!(rule("org.x.Y"), AppRule { style: AppStyle::Banner, sound: true, badge: false, center: false, lock: false });
         assert!(toml::from_str::<Config>("[notification_apps]\nX = \"loud\"\n").is_err());
     }
 

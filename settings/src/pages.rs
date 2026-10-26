@@ -34,13 +34,14 @@ pub enum Page {
     Notifications,
     Battery,
     LockScreen,
+    Privacy,
     General,
     Users,
     About,
 }
 
 impl Page {
-    pub const ALL: [Page; 18] = [
+    pub const ALL: [Page; 19] = [
         Page::Wifi,
         Page::Bluetooth,
         Page::Sound,
@@ -56,6 +57,7 @@ impl Page {
         Page::Notifications,
         Page::Battery,
         Page::LockScreen,
+        Page::Privacy,
         Page::General,
         Page::Users,
         Page::About,
@@ -78,6 +80,7 @@ impl Page {
             Page::Notifications => "Notifications",
             Page::Battery => "Battery",
             Page::LockScreen => "Lock Screen",
+            Page::Privacy => "Privacy & Security",
             Page::General => "General",
             Page::Users => "Users",
             Page::About => "About",
@@ -92,7 +95,7 @@ impl Page {
 
     /// Pages that read the system services when opened.
     pub fn is_system(self) -> bool {
-        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery)
+        matches!(self, Page::Wifi | Page::Bluetooth | Page::Sound | Page::DateTime | Page::Battery | Page::Privacy)
     }
 
     /// A little space starts a new block in the sidebar.
@@ -118,6 +121,7 @@ impl Page {
             Page::Notifications => ("bell", 0xFF3B30),
             Page::Battery => ("battery-high", 0x34C759),
             Page::LockScreen => ("lock-simple", 0x3A3A3C),
+            Page::Privacy => ("lock-simple", 0x007AFF),
             Page::General => ("gear-six", 0x8E8E93),
             Page::Users => ("user-circle", 0xFF9500),
             Page::About => ("info", 0x8E8E93),
@@ -820,13 +824,14 @@ fn choice<'a>(t: Tokens, current: &str, options: &'static [(&'static str, &'stat
 const APP_STYLES: &[(&str, &str)] = &[("banner", "Banners"), ("alert", "Alerts"), ("none", "None")];
 
 /// One app's `[notification_apps]` rule, as the desktop reads it: a style alone, or a table with switches (missing
-/// ones on).
+/// ones on, but `lock` off).
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppRule {
     pub style: String,
     pub sound: bool,
     pub badge: bool,
     pub center: bool,
+    pub lock: bool,
 }
 
 impl AppRule {
@@ -834,12 +839,13 @@ impl AppRule {
         let table = value.and_then(toml_edit::Value::as_inline_table);
         let style = value.and_then(toml_edit::Value::as_str).or_else(|| table?.get("style")?.as_str()).unwrap_or("banner");
         let switch = |key| table.and_then(|t| t.get(key)?.as_bool()).unwrap_or(true);
-        AppRule { style: style.to_owned(), sound: switch("sound"), badge: switch("badge"), center: switch("center") }
+        let lock = table.and_then(|t| t.get("lock")?.as_bool()).unwrap_or(false);
+        AppRule { style: style.to_owned(), sound: switch("sound"), badge: switch("badge"), center: switch("center"), lock }
     }
 
-    /// As written: the style alone while every switch is on, else a table.
+    /// As written: the style alone while every switch is as by default, else a table.
     pub fn value(&self) -> toml_edit::Value {
-        if self.sound && self.badge && self.center {
+        if self.sound && self.badge && self.center && !self.lock {
             return self.style.as_str().into();
         }
         let mut table = toml_edit::InlineTable::new();
@@ -847,6 +853,7 @@ impl AppRule {
         table.insert("sound", self.sound.into());
         table.insert("badge", self.badge.into());
         table.insert("center", self.center.into());
+        table.insert("lock", self.lock.into());
         table.into()
     }
 }
@@ -888,14 +895,15 @@ fn notifying_apps(app: &App) -> Vec<Element<'_, Message>> {
         }
         let styles = APP_STYLES.iter().map(|&(value, label)| (label.to_owned(), rule.style == value, set(&|r| r.style = value.into()))).collect();
         rows.push(line(t, "Style", "Alerts stay until dismissed; None keeps them in Notification Center only", segments(t, styles)));
-        let switches: [(&str, bool, Switch); 3] = [
-            ("Play sound", rule.sound, |r| &mut r.sound),
-            ("Badge app icon", rule.badge, |r| &mut r.badge),
-            ("Show in Notification Center", rule.center, |r| &mut r.center),
+        let switches: [(&str, &str, bool, Switch); 4] = [
+            ("Play sound", "", rule.sound, |r| &mut r.sound),
+            ("Badge app icon", "", rule.badge, |r| &mut r.badge),
+            ("Show in Notification Center", "", rule.center, |r| &mut r.center),
+            ("Show on lock screen", "Its titles under the clock; texts too with previews Always", rule.lock, |r| &mut r.lock),
         ];
-        for (label, on, field) in switches {
+        for (label, help, on, field) in switches {
             let (yes, no) = (set(&|r| *field(r) = true), set(&|r| *field(r) = false));
-            rows.push(line(t, label, "", toggle(t, on, move |v| if v { yes.clone() } else { no.clone() })));
+            rows.push(line(t, label, help, toggle(t, on, move |v| if v { yes.clone() } else { no.clone() })));
         }
     }
     vec![group(t, "Applications", rows)]
@@ -1136,6 +1144,36 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             parts
         }
         Page::LockScreen => vec![note(t, "Videos and calls keep the display awake.")],
+        Page::Privacy => {
+            let check = match status.connectivity {
+                Some(on) => line(
+                    t,
+                    "Connectivity check",
+                    "NetworkManager asks a web address whether the internet is reachable; off also stops Wi-Fi sign-in page detection",
+                    toggle(t, on, Message::Connectivity),
+                ),
+                None => fact(t, "Connectivity check", "Off in NetworkManager's configuration".into()),
+            };
+            let mut parts = vec![group(t, "Network", vec![check])];
+            for (device, label) in crate::system::DEVICES {
+                let rows: Vec<_> = status
+                    .grants
+                    .iter()
+                    .filter(|g| g.device == device)
+                    .map(|g| {
+                        let app = g.app.clone();
+                        line(t, g.app.as_str(), "", toggle(t, g.allowed, move |on| Message::Grant(device.into(), app.clone(), on)))
+                    })
+                    .collect();
+                if !rows.is_empty() {
+                    parts.push(group(t, label, rows));
+                }
+            }
+            if status.grants.is_empty() {
+                parts.push(note(t, "Sandboxed apps that ask for the camera or microphone show here, each with Allow."));
+            }
+            parts
+        }
         Page::Appearance => vec![gallery(app)],
         Page::Users => users_part(app),
         _ => Vec::new(),
@@ -1822,13 +1860,16 @@ mod tests {
 
     #[test]
     fn app_rules_read_and_write_both_forms() {
-        let doc: toml_edit::DocumentMut = "a = \"alert\"\nb = { style = \"none\", badge = false }\n".parse().unwrap();
+        let doc: toml_edit::DocumentMut = "a = \"alert\"\nb = { style = \"none\", badge = false }\nc = { lock = true }\n".parse().unwrap();
         let a = AppRule::read(doc.get("a").and_then(toml_edit::Item::as_value));
-        assert_eq!(a, AppRule { style: "alert".into(), sound: true, badge: true, center: true });
+        assert_eq!(a, AppRule { style: "alert".into(), sound: true, badge: true, center: true, lock: false });
         assert_eq!(a.value().as_str(), Some("alert"), "every switch on: the style alone");
         let b = AppRule::read(doc.get("b").and_then(toml_edit::Item::as_value));
-        assert_eq!(b, AppRule { style: "none".into(), sound: true, badge: false, center: true });
+        assert_eq!(b, AppRule { style: "none".into(), sound: true, badge: false, center: true, lock: false });
         assert_eq!(AppRule::read(Some(&b.value())), b);
+        let c = AppRule::read(doc.get("c").and_then(toml_edit::Item::as_value));
+        assert!(c.lock && c.value().is_inline_table(), "lock on: a table");
+        assert_eq!(AppRule::read(Some(&c.value())), c);
         assert_eq!(AppRule::read(None).style, "banner");
     }
 
@@ -1846,6 +1887,7 @@ mod tests {
         assert_eq!(Page::parse("date-time"), Some(Page::DateTime));
         assert_eq!(Page::parse("wi-fi"), Some(Page::Wifi));
         assert_eq!(Page::parse("battery"), Some(Page::Battery));
+        assert_eq!(Page::parse("privacy-security"), Some(Page::Privacy));
         assert_eq!(Page::parse("users"), Some(Page::Users));
         assert_eq!(Page::parse("nope"), None);
     }

@@ -511,9 +511,9 @@ impl State {
         if !rule.center {
             n.transient = true;
         }
-        // Locked: no banner, only the count on the lock screen (privacy).
+        // Locked: no banner; listed on the lock screen if its app allows, else only counted (privacy).
         if let Some(lock) = self.lock.as_mut() {
-            lock.missed += 1;
+            lock.arrived(crate::shell::lock::listed(&n, rule.lock, self.config.notifications.previews));
         }
         let dnd = self.config.notifications.dnd;
         let covered = !self.config.notifications.full_screen && self.menu_bar().is_none();

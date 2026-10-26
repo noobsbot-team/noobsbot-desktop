@@ -21,6 +21,8 @@ use smithay::{
 };
 
 use crate::{
+    config::Previews,
+    services::notifications::Notification,
     shell::alert::Power,
     state::State,
     text::ts,
@@ -60,8 +62,10 @@ pub struct Lock {
     pub wrong: Option<Instant>,
     /// PAM is checking; its answer comes through this channel source.
     pub checking: Option<RegistrationToken>,
-    /// Notifications that arrived while locked; only their count shows (privacy).
+    /// Notifications that arrived while locked and aren't listed; only their count shows (privacy).
     pub missed: usize,
+    /// Notifications listed under the clock, newest first (`listed`), at most `MAX_LISTED`.
+    pub listed: Vec<Listed>,
     /// logind waits for the lock frame before the machine sleeps (E6.5).
     pub sleep_pending: bool,
     pub hover: Option<Button>,
@@ -75,6 +79,27 @@ pub struct Lock {
     pub surfaces: Vec<LockSurface>,
     /// Greeter mode (E7.2): users, sessions, greetd's last error.
     pub greeter: Option<crate::shell::greeter::Greeter>,
+}
+
+/// A notification on the lock screen: its app, title, and body (empty unless previews are Always).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Listed {
+    pub app: String,
+    pub title: String,
+    pub body: String,
+}
+
+/// The lock screen lists this many notifications; older ones join the count.
+pub const MAX_LISTED: usize = 3;
+
+/// The privacy rule: `n` is listed only when its app allows it (`[notification_apps]` `lock`) and previews aren't
+/// Never; its body only with previews Always. `None`: only counted.
+pub fn listed(n: &Notification, allowed: bool, previews: Previews) -> Option<Listed> {
+    (allowed && previews != Previews::Never).then(|| Listed {
+        app: n.app.clone(),
+        title: n.summary.clone(),
+        body: if previews == Previews::Always { n.body.clone() } else { String::new() },
+    })
 }
 
 /// What a key did on the lock screen.
@@ -98,6 +123,20 @@ impl std::fmt::Debug for Key {
 }
 
 impl Lock {
+    /// A notification that arrived while locked: listed (newest first, the oldest then counted), or counted.
+    pub fn arrived(&mut self, listed: Option<Listed>) {
+        match listed {
+            Some(l) => {
+                self.listed.insert(0, l);
+                if self.listed.len() > MAX_LISTED {
+                    self.listed.pop();
+                    self.missed += 1;
+                }
+            }
+            None => self.missed += 1,
+        }
+    }
+
     pub fn new() -> Self {
         Self { field: TextField::secure(), ..Self::default() }
     }
@@ -169,6 +208,8 @@ pub fn shake_offset(t: Duration) -> i32 {
 pub struct Layout {
     pub date: Rect,
     pub clock: Rect,
+    /// The listed notifications' cards under the clock, as many as fit.
+    pub cards: [Option<Rect>; MAX_LISTED],
     pub missed: Rect,
     /// `[idle] lock_message`.
     pub message: Rect,
@@ -196,9 +237,12 @@ pub const MEDIA_H: i32 = 64;
 /// The album art's side in the Now Playing card.
 pub const ART: i32 = 48;
 const PILL_W: i32 = 40;
+/// A listed notification's card.
+const CARD_W: i32 = 360;
 
 /// Rows, buttons, the field and the Now Playing card grow with the text size (E8.4); the picture and gaps stay.
-pub fn layout(size: Size<i32, Logical>) -> Layout {
+/// `listed`: the notifications listed under the clock, each a card of app and title (and body, if any has one).
+pub fn layout(size: Size<i32, Logical>, listed: &[Listed]) -> Layout {
     let (w, h) = (size.w, size.h);
     let centred = |width: i32, y: i32, height: i32| Rectangle::new(((w - width) / 2, y).into(), (width, height).into());
     let (title_h, clock_h, callout_h, headline_h) = (ts(22), ts(100), ts(15), ts(16));
@@ -206,11 +250,18 @@ pub fn layout(size: Size<i32, Logical>) -> Layout {
     let top = (h / 10).max(32);
     let date = centred(w.min(600), top, title_h);
     let clock = centred(w.min(600), top + title_h, clock_h);
-    let missed = centred(w.min(600), clock.loc.y + clock_h + 8, callout_h);
-    let message = centred(w.min(600), missed.loc.y + ts(20), callout_h);
-    // The user block sits in the lower third, above the buttons.
+    // The user block sits in the lower third, above the buttons; cards that would push it down are left out.
     let block = AVATAR + 12 + headline_h + 16 + field_h + 8 + callout_h;
-    let avatar_y = (h * 64 / 100).min(h - EDGE - button_h - 24 - block).max(missed.loc.y + 40);
+    let avatar_top = (h * 64 / 100).min(h - EDGE - button_h - 24 - block);
+    let bodies = listed.iter().any(|l| !l.body.is_empty());
+    let card_h = 8 + callout_h + 2 + headline_h + if bodies { 2 + headline_h } else { 0 } + 8;
+    let below_clock = clock.loc.y + clock_h + 8;
+    let fit = (0..=listed.len().min(MAX_LISTED)).rev().find(|&n| below_clock + n as i32 * (card_h + 6) + 40 <= avatar_top).unwrap_or(0);
+    let card_w = ts(CARD_W).min(w - 2 * EDGE);
+    let cards = std::array::from_fn(|i| (i < fit).then(|| centred(card_w, below_clock + i as i32 * (card_h + 6), card_h)));
+    let missed = centred(w.min(600), below_clock + fit as i32 * (card_h + 6), callout_h);
+    let message = centred(w.min(600), missed.loc.y + ts(20), callout_h);
+    let avatar_y = avatar_top.max(missed.loc.y + 40);
     let avatar = centred(AVATAR, avatar_y, AVATAR);
     let name = centred(w.min(400), avatar_y + AVATAR + 12, headline_h);
     let field = centred(field_w, name.loc.y + headline_h + 16, field_h);
@@ -223,7 +274,7 @@ pub fn layout(size: Size<i32, Logical>) -> Layout {
     let media = centred(ts(MEDIA_W).min(w - 2 * EDGE), avatar_y - 16 - media_h, media_h);
     let media = (media.loc.y >= message.loc.y + message.size.h + 8).then_some(media);
     let layouts = Rectangle::new((field.loc.x + field_w + 8, field.loc.y).into(), (ts(PILL_W), field_h).into());
-    Layout { date, clock, missed, message, avatar, name, field, hint, buttons, status, layouts, media }
+    Layout { date, clock, cards, missed, message, avatar, name, field, hint, buttons, status, layouts, media }
 }
 
 /// The layout pill's label ("EN"), shown with more than one layout.
@@ -373,7 +424,7 @@ impl State {
     /// The lock screen's layout on the first output.
     pub(crate) fn lock_layout(&self) -> Option<Layout> {
         let output = self.space.outputs().next()?;
-        Some(layout(self.space.output_geometry(output)?.size))
+        Some(layout(self.space.output_geometry(output)?.size, self.lock.as_ref().map_or(&[], |l| l.listed.as_slice())))
     }
 
     /// The pointer moved while locked (`location` output-relative): the bottom buttons hover.
@@ -559,7 +610,7 @@ mod tests {
     #[test]
     fn layout_is_centred_and_ordered() {
         for size in [Size::from((1280, 800)), Size::from((1920, 1080)), Size::from((800, 600))] {
-            let l = layout(size);
+            let l = layout(size, &[]);
             let mid = |r: Rect| r.loc.x + r.size.w / 2;
             assert!([l.date, l.clock, l.avatar, l.name, l.field].iter().all(|r| (mid(*r) - size.w / 2).abs() <= 1), "{size:?}");
             assert!(l.date.loc.y < l.clock.loc.y && l.clock.loc.y + 100 <= l.missed.loc.y && l.missed.loc.y < l.avatar.loc.y);
@@ -573,13 +624,48 @@ mod tests {
             assert!(media.loc.y + MEDIA_H < l.avatar.loc.y, "{size:?}: the card sits above the user block");
             assert!(l.layouts.loc.x > l.field.loc.x + FIELD_W && l.layouts.loc.x + PILL_W <= size.w && l.layouts.loc.y == l.field.loc.y);
         }
-        assert_eq!(layout(Size::from((800, 400))).media, None, "no room under the clock: no card");
+        assert_eq!(layout(Size::from((800, 400)), &[]).media, None, "no room under the clock: no card");
+    }
+
+    #[test]
+    fn listed_only_when_allowed_and_body_only_with_previews_always() {
+        let n = Notification { app: "Mail".into(), summary: "Lunch?".into(), body: "Friday at noon".into(), ..Default::default() };
+        let l = listed(&n, true, Previews::Always).unwrap();
+        assert_eq!((l.app.as_str(), l.title.as_str(), l.body.as_str()), ("Mail", "Lunch?", "Friday at noon"));
+        assert_eq!(listed(&n, true, Previews::Unlocked).unwrap().body, "", "the title only");
+        assert_eq!(listed(&n, true, Previews::Never), None, "previews never: only counted");
+        assert_eq!(listed(&n, false, Previews::Always), None, "the app isn't allowed: only counted");
+        let mut lock = Lock::new();
+        for title in ["a", "b", "c", "d"] {
+            lock.arrived(listed(&Notification { summary: title.into(), ..n.clone() }, true, Previews::Never));
+            lock.arrived(listed(&Notification { summary: title.into(), ..n.clone() }, true, Previews::Unlocked));
+        }
+        let titles: Vec<_> = lock.listed.iter().map(|l| l.title.as_str()).collect();
+        assert_eq!((titles, lock.missed), (vec!["d", "c", "b"], 5), "newest first; the oldest joins the count");
+    }
+
+    #[test]
+    fn listed_cards_sit_under_the_clock_as_far_as_they_fit() {
+        let l = |body: &str| Listed { app: "Mail".into(), title: "Lunch?".into(), body: body.into() };
+        let three = [l(""), l(""), l("")];
+        for size in [Size::from((1280, 800)), Size::from((1920, 1080))] {
+            let (plain, lay) = (layout(size, &[]), layout(size, &three));
+            let cards: Vec<Rect> = lay.cards.into_iter().flatten().collect();
+            assert_eq!(cards.len(), 3, "{size:?}");
+            assert!(cards[0].loc.y >= lay.clock.loc.y + lay.clock.size.h && cards.windows(2).all(|c| c[0].loc.y + c[0].size.h < c[1].loc.y));
+            assert!(cards.iter().all(|c| (c.loc.x + c.size.w / 2 - size.w / 2).abs() <= 1));
+            assert!(lay.missed.loc.y >= cards[2].loc.y + cards[2].size.h && lay.avatar == plain.avatar, "{size:?}: the user block stays put");
+            let tall = layout(size, &[l("Friday at noon")]).cards[0].unwrap();
+            assert!(tall.size.h > cards[0].size.h, "a body adds a line");
+        }
+        let short = layout(Size::from((800, 600)), &three);
+        assert!(short.cards.iter().flatten().count() < 3 && short.missed.loc.y + 40 <= short.avatar.loc.y, "a short screen lists fewer");
     }
 
     #[test]
     fn layout_grows_with_the_text_size() {
         let size = Size::from((1920, 1080));
-        let (small, l) = (layout(size), crate::text::with_scale(1.5, || layout(size)));
+        let (small, l) = (layout(size, &[]), crate::text::with_scale(1.5, || layout(size, &[])));
         // Line heights at 1.5: Title 2 33, Display 150, Callout 23 (22.5 rounded), Headline and Body 24.
         assert!(l.date.size.h >= 33 && l.clock.size.h >= 150 && l.missed.size.h >= 23 && l.message.size.h >= 23);
         assert!(l.date.loc.y + l.date.size.h <= l.clock.loc.y && l.clock.loc.y + l.clock.size.h <= l.missed.loc.y);
@@ -597,7 +683,7 @@ mod tests {
     #[test]
     fn media_buttons_hit() {
         use crate::services::media::Action;
-        let card = layout(Size::from((1280, 800))).media.unwrap();
+        let card = layout(Size::from((1280, 800)), &[]).media.unwrap();
         let centre = |r: Rect| Point::from((f64::from(r.loc.x + r.size.w / 2), f64::from(r.loc.y + r.size.h / 2)));
         let buttons = crate::shell::control::media_buttons(card);
         assert_eq!(buttons.map(|b| media_hit(card, centre(b))), [Some(Action::Previous), Some(Action::PlayPause), Some(Action::Next)]);
@@ -614,7 +700,7 @@ mod tests {
         assert_eq!(layout_pill(&layouts).as_deref(), Some("US"));
         layouts.active = 1;
         assert_eq!(layout_pill(&layouts).as_deref(), Some("NP"));
-        let l = layout(Size::from((1280, 800)));
+        let l = layout(Size::from((1280, 800)), &[]);
         let inside = l.layouts.to_f64().loc + Point::from((PILL_W as f64 / 2.0, FIELD_H as f64 / 2.0));
         assert!(l.layouts.to_f64().contains(inside) && !l.field.to_f64().contains(inside));
         assert!(!l.layouts.to_f64().contains(l.field.to_f64().loc), "the field isn't the pill");
