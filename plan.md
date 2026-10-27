@@ -1694,8 +1694,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   and a deliberately broken 1.3.1 is rolled back automatically.
 - **Built:** release-plz and the release workflows (`release-plz.toml`, `.github/workflows/`), signed tarballs,
   `src/services/update.rs` (with `curl`, not `ureq`), `src/bin/update-helper.rs`, the watchdog and rollback in the
-  session wrapper, the Settings page above. Not yet: the Report button on "was rolled back"; installing at the next
-  login without a click (Restart to Update and Update Now install it).
+  session wrapper (its "was rolled back" notification has Report, which opens a new issue), the Settings page above.
+  Not yet: installing at the next login without a click (Restart to Update and Update Now install it; it needs the
+  helper's polkit action to allow the active session without a password, an owner's call).
 
 **M6 hardware covered:** GPU (real), monitors, HDMI/USB-C displays, sleep/lid/power button, webcam (via portal),
 phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
