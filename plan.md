@@ -436,6 +436,9 @@ glass windows with traffic lights.
   real session. The protocol list is what modern apps (Helium, Qt, GTK, games, VMs, noobsbot) need to run fully.
 - **Done when:** noobsbot-terminal and Helium run inside it with working keyboard, mouse, clipboard and
   copy/paste between them.
+- **Done:** every protocol listed is served (`src/state.rs`, `src/protocols.rs`, `src/decorations.rs`; dmabuf v4
+  feedback in `src/backend/mod.rs`; explicit sync in `src/sync.rs` where the render node supports it); the clipboard
+  outlives its app (`src/clipboard.rs`).
 
 ### E1.2 Windows & window management
 - **What it is:** where windows go and how they move, resize, focus, minimise and zoom.
@@ -492,6 +495,11 @@ glass windows with traffic lights.
   without flicker; a window being resized by its left edge keeps its content pinned to the right while a
   deliberately slow test app (`sleep 200 ms` per frame) catches up; dragging follows the pointer with no visible lag
   at 120 Hz; magnetic edges and both modifiers work (unit tests for the anchor and sticking math).
+- **Built:** `src/wm.rs` (placement, magnetic edges, resize maths, double-click edge grow, tiling), `src/grabs.rs`
+  (move and resize grabs, Alt symmetric and Shift aspect resize, one configure outstanding), activation-gated focus
+  (`src/state.rs`), remembered frames (`src/sheets.rs`), the snapping preview (shown on arrival, E8.5). Not yet: the
+  frame drawn at the new size while a slow app catches up (only its last buffer is anchored); Mission Control from a
+  3-finger swipe with a window in hand; a display unplug cancelling a drag or resize (the lock does).
 
 ### E1.3 Title bars & traffic lights
 - **What it is:** the bar on top of every window with close / minimise / zoom buttons.
@@ -514,6 +522,8 @@ glass windows with traffic lights.
   every scale. Apps that refuse server-side decorations (GTK4/libadwaita) keep their own (see L2).
 - **Done when:** noobsbot, Dolphin and Kate show our title bar (Helium keeps its own, see F2), and the
   lights work.
+- **Done:** `src/render/titlebar.rs` (28 px bar, SDF lights, glyphs on hover, grey when unfocused) through both
+  decoration protocols (`src/decorations.rs`); the hover glyphs are text, not SDF.
 
 ### E1.4 Glass, corners & shadow shaders
 - **What it is:** the visual engine for Part D materials.
@@ -528,6 +538,7 @@ glass windows with traffic lights.
   per-pixel shadows; re-measure at 4K in M6.*
 - **Done when:** a test scene shows every material in light and dark, matching the mockup; GPU time per frame
   under 1 ms on an Intel iGPU at 1080p.
+- **Built:** `src/render/glass.frag`, `rounded.frag` and `shadow.frag`; shadows stay per pixel, as measured (PERF.md).
 
 ### E1.5 Wallpaper & desktop
 - **What it is:** the background picture.
@@ -535,6 +546,8 @@ glass windows with traffic lights.
 - **Built with:** `png` + `zune-jpeg` decoders → one GPU texture, scaled once per output size.
 - **Why:** small decoders instead of the large `image` crate (less code and RAM); decoding happens once, never per frame.
 - **Done when:** the wallpaper shows and switches with dark mode.
+- **Done:** `src/render/wallpaper.rs` (decoded once on a worker, a light and a dark picture, crossfaded on the
+  switch).
 
 ### E1.6 Keyboard & first shortcuts
 - **What it is:** typing in apps, plus desktop shortcuts.
@@ -567,6 +580,8 @@ glass windows with traffic lights.
 - **Why:** xkbcommon is the Linux standard, the same layout data as every desktop. Configurable bindings let
   the owner change anything without recompiling.
 - **Done when:** typing works in every layout set in config; every M1 shortcut works.
+- **Done:** `src/shortcuts.rs`, `src/input.rs` (no stuck modifiers), the system keyboard layout with `[keyboard]`
+  overrides, `[bindings]` in `data/config.toml`.
 
 ### E1.7 Touchpad & mouse basics
 - **What it is:** pointer, clicking, scrolling and app gestures.
@@ -585,6 +600,8 @@ glass windows with traffic lights.
 - **Why:** libinput is the Linux standard for touchpads, with tuned palm rejection and acceleration.
   Passing 2-finger gestures to apps keeps browser pinch-zoom working.
 - **Done when:** tap, right-click, natural scroll and pinch-zoom in Helium work on a real touchpad.
+- **Done:** tap, natural scroll and the click method on the real screen (`src/backend/udev.rs`, `[touchpad]`); pinches
+  and swipes the desktop doesn't use go to apps (`pointer-gestures`).
 
 ### E1.8 Settings file
 - **What it is:** `~/.config/noobsbot-desktop/config.toml`.
@@ -596,6 +613,9 @@ glass windows with traffic lights.
   debounced 200 ms and the **last good config stays** until the file parses again. Unknown keys warn, never fail.
 - **Done when:** changing accent colour, glass opacity or a shortcut applies without restart; a deliberately broken
   config starts the desktop with defaults and a notification.
+- **Built:** `src/config.rs` (commented defaults in `data/config.toml`, unknown keys warned, the last good config kept
+  when the file breaks, atomic saves, live reload after a 300 ms debounce). Not yet: a notification with the line
+  number for a broken file (it is only logged).
 
 ### E1.9 Window rules
 - **What it is:** per-app rules in `config.toml`, so the desktop remembers how an app's windows behave.
@@ -607,6 +627,8 @@ glass windows with traffic lights.
 - **Why:** several elements need it (E2.8 quake placement, E5.1 Assign To Space, picture-in-picture staying on top);
   one mechanism instead of special cases.
 - **Done when:** the quake-terminal rule and a picture-in-picture-on-top rule both work from config alone.
+- **Done:** `src/rules.rs` (every key above, titles by regex), with the quake and picture-in-picture rules in
+  `data/config.toml`.
 
 ### E1.10 Frame scheduling & input latency (why it feels instant)
 - **What it is:** the rule for *when* we read input, *when* we draw and *when* the picture reaches the screen. This is
@@ -638,6 +660,9 @@ glass windows with traffic lights.
 - **Done when:** a 240 fps phone-camera test of a drag shows the window moving within 1 frame (+ ≤ 2 ms) of the
   pointer; idle CPU 0%; frame-time log stays under budget with 10 windows; no frame is missed while an app is
   deliberately frozen.
+- **Built:** `src/frame.rs` `FrameClock` (draws at vblank − estimate − 1 ms, falls back after missed frames), frame
+  callbacks and presentation feedback in both backends, the hardware cursor plane and direct scanout on udev; the
+  latency figures are PERF.md's to prove.
 
 ### E1.11 Robustness rules (never crash, never block, never leak)
 - **What it is:** the engineering rules that apply to every line of the compositor from M1. Each one is a known way
@@ -657,6 +682,10 @@ glass windows with traffic lights.
   | **Memory and CPU are measured, not hoped for** | | `PERF.md` per milestone + a 24 h soak test in M6 (RSS must not grow) |
 - **Done when:** the fuzzing client and a frozen D-Bus service (`kill -STOP` on NetworkManager) leave the desktop
   fully usable; suspend/resume 20 times in a row on Intel and NVIDIA without a restart; the 24 h soak test holds RSS flat.
+- **Built:** `scripts/fuzz-client.py`, 2 s D-Bus timeouts, GPU reset recovery (`src/backend/udev.rs`), the panic hook,
+  notification rate limits, a capped clipboard, LRU text and icon caches, xwayland-satellite restarted
+  (`src/xwayland.rs`). Not yet: the icon disk cache (icons are rasterised into memory only); a notification when a
+  helper stops being restarted (it is only logged).
 
 **M1 hardware covered:** GPU (nested), keyboard, touchpad, mouse.
 **M1 done when:** all elements pass; idle CPU **0%**; RAM **< 60 MB**; mockup review passed.
