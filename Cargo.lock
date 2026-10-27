@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "noobsbot-desktop"
-version = "1.0.0-beta.1"
+version = "1.0.0"
 dependencies = [
  "accesskit",
  "accesskit_unix",
