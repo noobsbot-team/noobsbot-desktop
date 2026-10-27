@@ -2438,7 +2438,7 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
     if !about.is_empty() {
         rows.push(fact(t, "Display", about));
     }
-    if let Some(level) = app.brightness.filter(|_| d.built_in) {
+    if let Some(level) = d.brightness {
         let value = app.drafts.get("display.brightness").copied().unwrap_or(f64::from(level));
         rows.push(line(t, "Brightness", "", slider_row(t, "display.brightness", 1.0..=100.0, 1.0, value)));
     }
