@@ -59,17 +59,20 @@ trait Device {
 }
 
 /// For good: each `Some(user)` on `wanted` verifies that user's finger until a match, `TRIES` no-matches, or the
-/// next message (`None`: unlocked or asleep).
-pub async fn serve(updates: &Sender<Update>, wanted: async_channel::Receiver<Option<String>>) {
+/// next message (`None`: unlocked or asleep). Every update carries its message's tag.
+pub async fn serve(updates: &Sender<Update>, wanted: async_channel::Receiver<(u64, Option<String>)>) {
     let mut next = wanted.recv().await;
-    while let Ok(user) = next {
+    while let Ok((tag, user)) = next {
         next = match user {
             Some(user) => {
                 let session = async {
-                    if let Err(err) = verify(&user, updates).await {
+                    let send = |state| {
+                        let _ = updates.send(Update::Fingerprint(tag, state));
+                    };
+                    if let Err(err) = verify(&user, send).await {
                         tracing::debug!("fingerprint: {err}");
                     }
-                    let _ = updates.send(Update::Fingerprint(Verify::Off));
+                    send(Verify::Off);
                     future::pending().await
                 };
                 future::or(session, wanted.recv()).await
@@ -80,7 +83,7 @@ pub async fn serve(updates: &Sender<Update>, wanted: async_channel::Receiver<Opt
 }
 
 /// One lock's verify. Without fprintd, a reader or an enrolled finger, it ends at once.
-async fn verify(user: &str, updates: &Sender<Update>) -> zbus::Result<()> {
+async fn verify(user: &str, send: impl Fn(Verify)) -> zbus::Result<()> {
     let bus = super::connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into(), FPRINT_TIMEOUT).await?;
     let path = ManagerProxy::new(&bus).await?.get_default_device().await?;
     let device = DeviceProxy::builder(&bus).path(path)?.build().await?;
@@ -91,14 +94,14 @@ async fn verify(user: &str, updates: &Sender<Update>) -> zbus::Result<()> {
     device.claim(user).await?;
     // Only fprintd's own signals: the stream checks the sender.
     let mut statuses = device.receive_verify_status().await?;
-    let _ = updates.send(Update::Fingerprint(Verify::Waiting));
+    send(Verify::Waiting);
     for _ in 0..TRIES {
         device.verify_start("any").await?;
         loop {
             let Some(signal) = statuses.next().await else { return Ok(()) };
             let args = signal.args()?;
             let Some(state) = status(args.result) else { return Ok(()) };
-            let _ = updates.send(Update::Fingerprint(state));
+            send(state);
             if state == Verify::Match {
                 return Ok(());
             }
