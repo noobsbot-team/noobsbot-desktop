@@ -702,6 +702,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   and `~/.local/share/applications` through `notify` so newly installed apps appear without a restart.
 - **Why:** see C6, C8. Every later element is assembled from these, so the design stays identical everywhere.
 - **Done when:** a "component gallery" test screen shows every D8 component in light and dark, matching the mockup.
+- **Built:** `src/text.rs` (cosmic-text, tabular digits, an LRU of rendered labels instead of a glyph atlas),
+  `src/render/ui.rs` and the gallery (`src/render/components.rs`, `--show gallery`), `src/symbols.rs`, the app index
+  and icon threads (`src/apps.rs`). Not yet: the icon disk cache (E1.11).
 
 ### E2.2 Menu bar
 - **What it is:** the bar across the top of every screen.
@@ -728,6 +731,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Why:** this is the menu-bar layout of the design (R1). StatusNotifierItem is the tray standard modern apps use.
 - **Done when:** every item opens its menu (the battery its menu; Wi-Fi, Bluetooth, volume their module); tray icons from apps appear and their menus work; Sleep/Restart/
   Shut Down/Log Out work.
+- **Built:** `src/render/menubar.rs`, `src/shell/mod.rs` (logo, app and status menus), the tray host
+  (`src/services/tray.rs`), power actions through logind with the 60 s alert (`src/shell/alert.rs`). Not yet: a count
+  badge on Software Update… (the row becomes "Restart to Update…" instead).
 
 ### E2.3 Control Center
 - **What it is:** quick controls in one glass panel, opened from ⊞ in the menu bar.
@@ -777,6 +783,10 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   | Dark mode | our theme (D2) | built in |
 - **Done when:** every control changes the real system state, and changes made elsewhere (e.g. unplugging
   headphones) update the panel live with no polling.
+- **Done:** `src/shell/control.rs` and `src/render/control.rs`: the NetworkManager secret agent, the BlueZ agent,
+  logind brightness, PipeWire followed with `pw-dump --monitor` and set with `wpctl` (no `pipewire` crate, E1.11),
+  MPRIS, UPower, and power-profiles-daemon's profiles under Power mode's ▾ (`Module::Power`); the panel opens on a
+  `snappy` fade and scale and fades out over 150 ms.
 
 ### E2.4 Clock
 - **What it is:** date and time at the right end of the menu bar.
@@ -788,6 +798,8 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   date library.
 - **Done when:** the time is correct after boot; it redraws exactly once per minute (once per second only when
   seconds are switched on), aligned to the minute boundary on the monotonic clock (E1.11).
+- **Done:** `src/clock.rs` (formats, tests), a timer on the minute (or second) boundary (`src/state.rs`), tabular
+  digits; a click opens Notification Center.
 
 ### E2.5 Calendar
 - **What it is:** a month calendar (a popover in M2, then the calendar widget inside Notification Center from M4).
@@ -808,10 +820,13 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
     the month title returns to today. Built: the swipe follows the fingers 1:1 with the next month sliding in beside,
     then a `gesture` spring turns it past 30% of the card or on a flick, else back; ‹ ›, the title and ←/→ slide on
     `smooth`; both grids are cut at the card's edge; reduce motion turns the month at once.
-  - Later (optional): event dots under days, from local `.ics` files, then CalDAV/Google.
+  - ~~Later (optional): event dots under days, from local `.ics` files~~, then CalDAV/Google. Done: dots from
+    `[calendar] files` (`src/ical.rs`, `src/events.rs`, E7.2). Not yet: CalDAV/Google.
 - **Built with:** `chrono` (date math); our widgets.
 - **Why:** pure date math, so no calendar library or service is needed until events are added.
 - **Done when:** the correct month grid for any month and year, including leap years (unit tested).
+- **Done:** `src/calendar.rs` (grid, locale week start, week numbers, leap years tested), `src/render/calendar.rs`,
+  the slides and swipe in `src/shell/notify.rs`.
 
 ### E2.6 Time zone & date settings (backend)
 - **What it is:** setting the time zone and automatic time.
@@ -821,6 +836,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   schedule (default 19:00–07:00). `geoclue` (BeaconDB backend) is an optional package, off by default.
 - **Why:** standard; changing the zone needs no terminal; no feature silently depends on a dead service. (UI in M7.)
 - **Done when:** changing `timezone` in config updates the system zone and the clock immediately.
+- **Done:** `SetTimezone` on `org.freedesktop.timedate1` when `timezone` changes (`src/services/mod.rs`), NTP and the
+  time in Settings (`settings/src/system.rs`), dark mode on the 19:00–07:00 schedule; the clock shows the new zone at
+  its next redraw.
 
 ### E2.7 On-screen display (OSD) for media keys
 - **What it is:** the small indicator when you press volume / brightness / mute keys.
@@ -830,6 +848,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   the OSD is visible, banners move down by 56 px (spring `snappy`), so the two never overlap.
 - **Built with:** key events from libinput; PipeWire (`wpctl`) / logind brightness.
 - **Done when:** volume, brightness, mute and play/pause keys all work and show the OSD.
+- **Built:** `src/render/osd.rs`, shown 1.5 s (`OSD_TIME`), for every media key in `src/shortcuts.rs`; a held volume
+  key costs one `wpctl` call per 30 ms (`src/services/sound.rs` `coalesce`, E1.11). Not yet: banners jump the 56 px
+  under the OSD instead of springing.
 
 ### E2.8 Quake terminal hotkey
 - **What it is:** F12 (configurable) drops noobsbot-terminal down from the top, on any Space.
@@ -840,6 +861,8 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Why:** reuses the owner's existing feature; no change to noobsbot needed. F12 is also Helium's DevTools key: while
   the desktop owns F12, DevTools still opens with Ctrl+Shift+I; the key is configurable.
 - **Done when:** F12 slides it in and out at once (a fade with reduce motion), on top of fullscreen apps too.
+- **Built:** F12 shows and hides it (`toggle_quake`, starting `noobsbot --quake` when it isn't running), placed by the
+  quake `[[rules]]` entry (`space = "all"`, `layer = "overlay"`). Not yet: square top corners (all four are rounded).
 
 ### E2.9 Universal glass theme for apps (Dolphin, Kate & every other app)
 - **What it is:** apps that aren't drawn by Noobsbot Desktop (Dolphin, Kate, Partition Manager, System Monitor,
@@ -897,6 +920,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Done when (M2):** Dolphin and Kate match the approved mockups in light and dark; **(M6):** Partition Manager, System
   Monitor and Filelight too; the sidebar is glassy (or solid if the L8 fallback was taken), the content area readable (contrast ≥ 4.5:1); changing the accent recolours the desktop
   and these apps together.
+- **Done:** `src/theme.rs` (`noobsbot-desktop theme --write`: the Kvantum theme, Qt colour schemes, kdeglobals,
+  gtk-3.0 / gtk-4.0 css, gsettings), rewritten on an accent or mode change; the session wrapper sets the Qt style
+  variables. The look against the mockups isn't checked here.
 
 **M2 hardware covered:** Wi-Fi, Ethernet, Bluetooth, sound (speakers, mic, headphones, HDMI, Bluetooth audio),
 brightness, battery, media/function keys.
