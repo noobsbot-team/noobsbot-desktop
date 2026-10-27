@@ -1,8 +1,9 @@
 //! A small iCalendar (`.ics`, RFC 5545) reader for calendar events (E7.2): VEVENTs with SUMMARY, LOCATION,
 //! DTSTART/DTEND/DURATION (UTC, floating, TZID or all-day), a simple RRULE (FREQ DAILY/WEEKLY/MONTHLY/YEARLY with
-//! INTERVAL, COUNT, UNTIL, BYDAY) and VALARM TRIGGERs, and the occurrences and alarms they make.
-// ponytail: no EXDATE, RECURRENCE-ID overrides, BYMONTH/BYMONTHDAY/BYSETPOS or YEARLY BYDAY; add them when real
-// calendars need them. CalDAV (and Google) sync is later: it would fetch into the same `.ics` files.
+//! INTERVAL, COUNT, UNTIL, BYDAY), EXDATE, RECURRENCE-ID overrides (moved, renamed or cancelled occurrences) and VALARM
+//! TRIGGERs, and the occurrences and alarms they make.
+// ponytail: no RDATE, RANGE=THISANDFUTURE, BYMONTH/BYMONTHDAY/BYSETPOS or YEARLY BYDAY, and an override only finds its
+// event in the same file (CalDAV's cache is one file); add them when real calendars need them.
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
@@ -153,6 +154,13 @@ pub struct Event {
     length: TimeDelta,
     rule: Option<Rule>,
     alarms: Vec<Trigger>,
+    uid: String,
+    /// An override's RECURRENCE-ID: the start (unix seconds) of its event's occurrence it replaces.
+    replaces: Option<i64>,
+    /// Starts (unix seconds) that don't happen: EXDATEs and the occurrences overrides replace.
+    skip: Vec<i64>,
+    /// STATUS:CANCELLED.
+    cancelled: bool,
 }
 
 /// One time an event happens, in unix seconds.
@@ -214,7 +222,7 @@ impl Event {
             if o.start >= to {
                 return false;
             }
-            if o.end > from || o.start >= from {
+            if (o.end > from || o.start >= from) && !self.skip.contains(&o.start) {
                 out.push(o);
             }
             true
@@ -313,6 +321,12 @@ pub fn parse(text: &str) -> Vec<Event> {
             }
         }
     }
+    // An override replaces its occurrence of the event with the same UID; a cancelled one only removes it.
+    let replaced: Vec<(String, i64)> = events.iter().filter(|e| !e.uid.is_empty()).filter_map(|e| Some((e.uid.clone(), e.replaces?))).collect();
+    for e in events.iter_mut().filter(|e| e.replaces.is_none()) {
+        e.skip.extend(replaced.iter().filter(|(uid, _)| *uid == e.uid).map(|(_, t)| t));
+    }
+    events.retain(|e| !e.cancelled);
     events
 }
 
@@ -374,6 +388,13 @@ fn date_time(value: &str, params: &Params, zones: &mut HashMap<String, Zone>) ->
         (false, None) => Zone::Local,
     };
     Some((t, zone, false))
+}
+
+/// An EXDATE or RECURRENCE-ID value in unix seconds; a floating time is in `zone`, the event's.
+fn instant(value: &str, params: &Params, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<i64> {
+    let (t, z, date) = date_time(value, params, zones)?;
+    let floating = !date && z != Zone::Utc && param(params, "TZID").is_none();
+    Some(if floating { zone } else { &z }.timestamp(t))
 }
 
 /// `[+-]P[nW][nD][T[nH][nM][nS]]` in seconds.
@@ -485,8 +506,27 @@ fn event(props: &[(String, Params, String)], zones: &mut HashMap<String, Zone>) 
             Some(if param(p, "RELATED") == Some("END") { Trigger::End(secs) } else { Trigger::Start(secs) })
         })
         .collect();
+    let mut skip = Vec::new();
+    for (_, p, v) in props.iter().filter(|(n, _, _)| n == "EXDATE") {
+        skip.extend(v.split(',').filter_map(|v| instant(v, p, &zone, zones)));
+    }
+    let replaces = get("RECURRENCE-ID").and_then(|(_, p, v)| instant(v, p, &zone, zones));
+    let cancelled = get("STATUS").is_some_and(|(_, _, v)| v.trim().eq_ignore_ascii_case("CANCELLED"));
     let text = |name: &str| get(name).map(|(_, _, v)| unescape(v)).unwrap_or_default();
-    Some(Event { summary: text("SUMMARY"), location: text("LOCATION"), all_day, start, zone, length: length.max(TimeDelta::zero()), rule, alarms })
+    Some(Event {
+        summary: text("SUMMARY"),
+        location: text("LOCATION"),
+        all_day,
+        start,
+        zone,
+        length: length.max(TimeDelta::zero()),
+        rule,
+        alarms,
+        uid: text("UID"),
+        replaces,
+        skip,
+        cancelled,
+    })
 }
 
 /// The `.ics` files `entry` names: a file, a directory (its `.ics` files), or a `dir/*.ics`-style pattern with one `*`
@@ -660,6 +700,58 @@ mod tests {
         assert_eq!(s.len(), 2);
         let all = one("DTSTART:20261018T000000Z\r\nRRULE:FREQ=YEARLY;UNTIL=20281018");
         assert_eq!(starts(&all, "2020-01-01 00:00", "2040-01-01 00:00").len(), 3);
+    }
+
+    /// Every occurrence's start and summary in `events`, in order.
+    fn occurrences(events: &[Event]) -> Vec<(i64, &str)> {
+        let mut out: Vec<(i64, &str)> = events.iter().flat_map(|e| e.between(0, i64::MAX / 2)).map(|o| (o.start, o.event.summary.as_str())).collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn exdates_skip_occurrences() {
+        // Weekly from Tuesday 6 October; the 13th is skipped but still counts towards COUNT.
+        let e = one("DTSTART:20261006T170000Z\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEXDATE:20261013T170000Z");
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-01-01 00:00"), [utc("2026-10-06 17:00"), utc("2026-10-20 17:00")]);
+        // A comma list and a second EXDATE.
+        let e = one("DTSTART:20261006T170000Z\r\nRRULE:FREQ=WEEKLY;COUNT=5\r\nEXDATE:20261013T170000Z,20261020T170000Z\r\nEXDATE:20261103T170000Z");
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-01-01 00:00"), [utc("2026-10-06 17:00"), utc("2026-10-27 17:00")]);
+    }
+
+    #[test]
+    fn all_day_exdate() {
+        let e = one("DTSTART;VALUE=DATE:20261019\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEXDATE;VALUE=DATE:20261020");
+        let midnight = |d| Zone::Local.timestamp(date(2026, 10, d));
+        let s: Vec<i64> = e.between(0, i64::MAX / 2).iter().map(|o| o.start).collect();
+        assert_eq!(s, [midnight(19), midnight(21)]);
+    }
+
+    #[test]
+    fn exdate_with_tzid() {
+        if !Path::new("/usr/share/zoneinfo/America/New_York").exists() {
+            return;
+        }
+        // 9:00 New York each Friday: the 6 November one (14:00 UTC, after the change) is skipped, given in its own
+        // zone; a floating EXDATE is in the event's zone too.
+        let e = one(
+            "DTSTART;TZID=America/New_York:20261030T090000\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nEXDATE;TZID=America/New_York:20261106T090000\r\nEXDATE:20261120T090000",
+        );
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-01-01 00:00"), [utc("2026-10-30 13:00"), utc("2026-11-13 14:00")]);
+    }
+
+    #[test]
+    fn overrides_move_and_cancel_occurrences() {
+        let master = "BEGIN:VEVENT\nUID:sync@x\nSUMMARY:Sync\nDTSTART:20261006T170000Z\nDTEND:20261006T173000Z\nRRULE:FREQ=WEEKLY;COUNT=3\nEND:VEVENT\n";
+        // Before its event in the file: the 13th moves to Wednesday morning, renamed.
+        let moved = "BEGIN:VEVENT\nUID:sync@x\nRECURRENCE-ID:20261013T170000Z\nSUMMARY:Sync (moved)\nDTSTART:20261014T090000Z\nEND:VEVENT\n";
+        let events = parse(&format!("{moved}{master}"));
+        assert_eq!(occurrences(&events), [(utc("2026-10-06 17:00"), "Sync"), (utc("2026-10-14 09:00"), "Sync (moved)"), (utc("2026-10-20 17:00"), "Sync")]);
+        // A cancelled one only removes it; another UID's override doesn't touch it.
+        let cancelled = "BEGIN:VEVENT\nUID:sync@x\nRECURRENCE-ID:20261020T170000Z\nSTATUS:CANCELLED\nDTSTART:20261020T170000Z\nEND:VEVENT\n";
+        let other = "BEGIN:VEVENT\nUID:other@x\nRECURRENCE-ID:20261006T170000Z\nSUMMARY:Other\nDTSTART:20261007T170000Z\nEND:VEVENT\n";
+        let events = parse(&format!("{master}{cancelled}{other}"));
+        assert_eq!(occurrences(&events), [(utc("2026-10-06 17:00"), "Sync"), (utc("2026-10-07 17:00"), "Other"), (utc("2026-10-13 17:00"), "Sync")]);
     }
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDateTime {
