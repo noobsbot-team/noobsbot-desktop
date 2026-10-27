@@ -13,7 +13,7 @@ use smithay::{
     },
 };
 
-use crate::{spaces, state::State, wm::Rect};
+use crate::{config::quote, spaces, state::State, wm::Rect};
 
 /// Saved windows wait this long for their app to map them.
 const WAIT: Duration = Duration::from_secs(20);
@@ -54,11 +54,6 @@ struct File {
 
 pub fn path() -> std::path::PathBuf {
     crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").join("noobsbot-desktop/session.toml")
-}
-
-/// A TOML basic string: JSON's escapes are a subset of TOML's.
-fn quote(s: &str) -> String {
-    serde_json::to_string(s).unwrap_or_default()
 }
 
 pub fn format(entries: &[Entry]) -> String {
