@@ -678,6 +678,7 @@ impl State {
             tray,
             status: status.into_iter().flatten().collect(),
             input: self.input_item(),
+            space: None,
             clock: crate::clock::text(&chrono::Local::now(), self.config.clock.format),
         })
     }
@@ -690,7 +691,24 @@ impl State {
         if on.as_ref().map_or(!first, |o| o != output) {
             content.app = None;
         }
+        content.space = self.bar_space(output);
         Some(content)
+    }
+
+    /// The bar's Space item on `output` (`[menu_bar] space_indicator`): its own Spaces, or the shared set.
+    fn bar_space(&self, output: &smithay::output::Output) -> Option<crate::render::menubar::Space> {
+        use crate::{config::SpaceIndicator, render::menubar::Space};
+        let desks = self.spaces.outputs.get(&self.output_key(output));
+        let (count, current) = desks.map_or((usize::from(self.config.windows.spaces.max(1)), 0), |d| (d.list.len(), d.current));
+        Some(match self.config.menu_bar.space_indicator {
+            SpaceIndicator::Off => return None,
+            SpaceIndicator::Dots => Space::Dots { count, current },
+            SpaceIndicator::Number => match desks.and_then(|d| d.list.get(current)?.as_ref()) {
+                Some(full) => Space::App(self.app_id(full).unwrap_or_else(|| "Fullscreen".into())),
+                // Fullscreen Spaces aren't counted: the desktops are numbered as Mission Control names them.
+                None => Space::Number(desks.map_or(1, |d| d.list[..=current].iter().filter(|w| w.is_none()).count())),
+            },
+        })
     }
 
     /// The window's app id; noobsbot and others set none, so then its program's name, read once per window.
