@@ -619,6 +619,10 @@ mod tests {
         assert_eq!(revert_to(&v("1.3.0"), installed(), 30 * day), None, "too late");
         assert_eq!(revert_to(&v("1.1.0"), installed(), day), None, "nothing older");
         assert_eq!(revert_to(&v("1.4.0"), installed(), day), Some(v("1.4.0-beta.1")));
+        // SemVer precedence, not string order: rc.1 is older than the final, beta.10 newer than beta.2.
+        let pre = || [v("1.0.0-beta.2"), v("1.0.0-rc.1"), v("1.0.0-beta.10")];
+        assert_eq!(revert_to(&v("1.0.0"), pre(), day), Some(v("1.0.0-rc.1")));
+        assert_eq!(revert_to(&v("1.0.0-rc.1"), pre(), day), Some(v("1.0.0-beta.10")));
     }
 
     #[test]
