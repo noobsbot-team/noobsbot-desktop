@@ -137,7 +137,10 @@ fn clean(settings: &Housekeeping) {
             match config::save_atomic_if(&path, &pruned, || modified() == read) {
                 Ok(false) => {}
                 Ok(true) => break,
-                Err(err) => break tracing::warn!("{}: {err}", path.display()),
+                Err(err) => {
+                    tracing::warn!("{}: {err}", path.display());
+                    break;
+                }
             }
         }
     }
