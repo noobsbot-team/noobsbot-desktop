@@ -8,6 +8,7 @@ pub mod bolt;
 pub mod brightness;
 pub mod disks;
 pub mod fcitx;
+pub mod fingerprint;
 pub mod launcher;
 pub mod login;
 pub mod media;
@@ -108,6 +109,8 @@ pub enum Update {
     Inhibitors(Vec<login::Inhibitor>),
     /// Every widget other processes set (`org.noobsbot.Desktop.Widgets`), in the order they came.
     Widgets(Vec<widgets::Widget>),
+    /// The lock screen's fingerprint verify, after `Command::Fingerprint`.
+    Fingerprint(fingerprint::Verify),
 }
 
 /// Requests from the frame loop.
@@ -242,6 +245,8 @@ pub enum Command {
         owner: String,
         id: String,
     },
+    /// The lock screen shows (this user's fingers are verified) or went or the machine sleeps (`None`).
+    Fingerprint(Option<String>),
 }
 
 pub struct Services {
@@ -275,12 +280,12 @@ type KeyMonitor = (Arc<Mutex<a11y::Monitor>>, async_channel::Receiver<(Vec<Strin
 
 async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>, agents: bool, (monitor, keys): KeyMonitor) {
     // A missing bus leaves its states at `None` (hidden) in the frame loop, so there is nothing to send.
-    let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into())
+    let system = connect("DBUS_SYSTEM_BUS_ADDRESS", "/run/dbus/system_bus_socket".into(), TIMEOUT)
         .await
         .inspect_err(|err| tracing::warn!("system bus unavailable, system status hidden: {err}"))
         .ok();
     let runtime = std::env::var("XDG_RUNTIME_DIR").unwrap_or_default();
-    let session = connect("DBUS_SESSION_BUS_ADDRESS", format!("{runtime}/bus"))
+    let session = connect("DBUS_SESSION_BUS_ADDRESS", format!("{runtime}/bus"), TIMEOUT)
         .await
         .inspect_err(|err| tracing::warn!("session bus unavailable, Now Playing and tray hidden: {err}"))
         .ok();
@@ -317,16 +322,18 @@ async fn run(updates: Sender<Update>, commands: async_channel::Receiver<Command>
         }
     };
     let clients = future::zip(future::zip(system_clients, session_clients), logind);
-    future::zip(clients, handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing, &secret, &entry, &admin)).await;
+    let (fingers, wanted) = async_channel::unbounded();
+    let handled = handle(system.as_ref(), session.as_ref(), commands, &updates, &pairing, &secret, &entry, &admin, &fingers);
+    future::zip(clients, future::zip(handled, fingerprint::serve(&updates, wanted))).await;
 }
 
 /// Connects on this thread. zbus's own connect runs on the `blocking` crate's pool, whose idle thread (1.7.0) wakes
 /// every 500 ms for the life of the process, which would break the zero-idle-wakeup budget (Part I).
-async fn connect(variable: &str, fallback: String) -> zbus::Result<Connection> {
+async fn connect(variable: &str, fallback: String, timeout: Duration) -> zbus::Result<Connection> {
     let address = std::env::var(variable).unwrap_or_default();
     let path = address.strip_prefix("unix:path=").map_or(fallback.as_str(), |rest| rest.split(',').next().unwrap_or(rest));
     let socket = UnixStream::connect(path)?;
-    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(TIMEOUT).build().await
+    zbus::connection::Builder::async_io_unix_stream(socket).method_timeout(timeout).build().await
 }
 
 /// A client's whole life: `read` now, and again after every signal from `service` under `path` (properties, objects
@@ -408,7 +415,7 @@ async fn relay<'a, T, F>(
     }
 }
 
-#[expect(clippy::too_many_arguments, reason = "one answer slot per agent")]
+#[expect(clippy::too_many_arguments, reason = "one answer slot per agent, and the fingerprint verify's")]
 async fn handle(
     system: Option<&Connection>,
     session: Option<&Connection>,
@@ -418,6 +425,7 @@ async fn handle(
     secret: &Answer<Option<String>>,
     entry: &Answer<Option<String>>,
     admin: &Answer<polkit::Reply>,
+    fingers: &async_channel::Sender<Option<String>>,
 ) {
     // The keyboard backlight's level before idleness turned it off.
     let mut kbd_saved = None;
@@ -472,6 +480,9 @@ async fn handle(
             }
             (Command::ScreenReader(on), _, Some(bus)) => a11y::set_status(bus, on).await,
             (Command::WidgetActivated { owner, id }, _, Some(bus)) => widgets::activated(bus, &owner, &id).await,
+            (Command::Fingerprint(user), ..) => {
+                let _ = fingers.try_send(user);
+            }
             // Its bus is down, which `run` has logged.
             _ => {}
         }
