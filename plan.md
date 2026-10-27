@@ -1705,9 +1705,14 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   and a deliberately broken 1.3.1 is rolled back automatically.
 - **Built:** release-plz and the release workflows (`release-plz.toml`, `.github/workflows/`), signed tarballs,
   `src/services/update.rs` (with `curl`, not `ureq`), `src/bin/update-helper.rs`, the watchdog and rollback in the
-  session wrapper (its "was rolled back" notification has Report, which opens a new issue), the Settings page above.
-  Not yet: installing at the next login without a click (Restart to Update and Update Now install it; it needs the
-  helper's polkit action to allow the active session without a password, an owner's call).
+  session wrapper (its "was rolled back" notification has Report, which opens a new issue), the Settings page above,
+  and installing at the next login without a click (opt-in, `[update] install_at_login`, Settings ▸ General ▸ Software
+  Update ▸ "Install updates automatically at login"): while a verified download waits, the compositor leaves
+  `install-at-login` in its state dir; the session wrapper then runs `noobsbot-desktop-update --verified` before the
+  compositor starts, through a second polkit action (`org.noobsbot.desktop.update.verified`, `allow_active` = `yes`,
+  picked by that first argument). That mode takes no other argument: it finds the caller's own download, checks its
+  signature and refuses anything not newer, as the password path does; the new version then starts with "Updated to
+  x.y.z", under the same rollback. Existing installs need `install.sh --update` once for the new action and wrapper.
 
 **M6 hardware covered:** GPU (real), monitors, HDMI/USB-C displays, sleep/lid/power button, webcam (via portal),
 phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
