@@ -245,9 +245,9 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
 - **Quake terminal:** F12 drops a terminal down from the top of the screen.
 - **Desktop icons:** files in `~/Desktop` appear on the wallpaper. Drag to arrange, double-click to open,
   right-click for Open, Rename, Move to Trash and New Folder. Mounted drives show at the top right, with Eject.
-- **Calendar events:** put `.ics` files in `~/.local/share/noobsbot-desktop/calendars/`, or add a CalDAV calendar
-  (URL, user and app password) in System Settings ▸ Date & Time. They show in Up Next, as dots in the calendar, and as
-  reminders.
+- **Calendar events:** put `.ics` files in `~/.local/share/noobsbot-desktop/calendars/`, or add a CalDAV account
+  (server address, user and app password) in System Settings ▸ Date & Time. They show in Up Next, as dots in the
+  calendar, and as reminders.
 - **USB drives:** appear in a notification with Open and Eject.
 - **Typing other languages:** Super+Ctrl+Space switches keyboard layout. With fcitx5 installed, its input methods
   (Nepali, Hindi, Chinese, Japanese, Korean…) appear in the input menu too, and Super+Ctrl+Space cycles them instead.
@@ -350,7 +350,7 @@ and shows a notification with the line.
 | `[notification_apps]` | per app: banners, alerts, Notification Center only or off; sound, dock badge, kept in Notification Center, shown on the lock screen (`lock`) |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
 | `[widgets]` | order of other apps' widgets in Notification Center, which go on the desktop instead, and which are hidden; the World Clock's time zones (`clocks`) |
-| `[calendar]` | which `.ics` files to show; CalDAV calendars (`caldav`: URL and user, the password in the keyring) |
+| `[calendar]` | which `.ics` files to show; CalDAV accounts (`caldav`: a server address, whose calendars are found, or one calendar's URL; the user; the password in the keyring) |
 | `[update]` | stable or beta updates; `install_at_login`: an admin's verified download installs at the next login without the password, never a beta or a reverted version (off by default) |
 | `[desktop]` | desktop icons on or off, mounted drives among them (`show_drives`) |
 | `[network]` | proxy for the apps the desktop starts: none, manual (HTTP, HTTPS, SOCKS, bypass list) or automatic (PAC URL); also written to the GTK proxy settings |
