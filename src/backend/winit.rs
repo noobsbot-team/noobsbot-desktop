@@ -687,8 +687,8 @@ impl State {
                 front.extend(views.ghosts.iter().filter(|g| g.output == *output).map(|g| g.element(renderer, &views.shaders, now, scale)));
                 let appearance = &self.config.appearance;
                 let mission = views.missions.entry(output.name()).or_default();
-                if let Some((count, current)) = indicator {
-                    front.extend(mission.indicator(&views.shaders, count, current, geo.size.w, dark, appearance.glass_opacity, scale));
+                if let Some(indicator) = indicator {
+                    front.extend(mission.indicator(renderer, &views.shaders, indicator, geo.size.w, dark, appearance.glass_opacity, scale));
                 }
                 let windows = match (&overview, &slide) {
                     (Some(overview), _) => {
@@ -808,8 +808,8 @@ impl State {
         if let Some(picker) = &self.emoji {
             bar.extend(emoji_view.elements(renderer, shaders, &mut self.text, &mut self.symbols, picker, dark, accent, appearance.glass_opacity, scale));
         }
-        if let Some((count, current)) = indicator {
-            bar.extend(mission.indicator(shaders, count, current, width, dark, appearance.glass_opacity, scale));
+        if let Some(indicator) = indicator {
+            bar.extend(mission.indicator(renderer, shaders, indicator, width, dark, appearance.glass_opacity, scale));
         }
         bar.extend(ripple);
         let mark = bar.len();

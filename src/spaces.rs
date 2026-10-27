@@ -20,7 +20,7 @@ use smithay::{
 };
 
 use crate::{
-    anim::{GESTURE, SMOOTH, Spring},
+    anim::{Anim, Curve, FADE_OUT, GESTURE, SMOOTH, Spring},
     rules,
     state::State,
     wm::Rect,
@@ -127,6 +127,8 @@ pub struct Spaces {
     pub slide: Option<Slide>,
     /// The indicator pill is up; its hide timer.
     pub hud: Option<RegistrationToken>,
+    /// The indicator fading out once its time is up.
+    pub hud_out: Option<Anim>,
     /// Whose Spaces the indicator shows.
     pub hud_key: String,
     /// A moved window held against a side edge, with the timer that switches Spaces.
@@ -444,22 +446,31 @@ impl State {
         }
         let hide = self.loop_handle.insert_source(Timer::from_duration(HUD_TIME), |_, _, state| {
             state.spaces.hud = None;
-            state.schedule_redraw();
+            let fade = Anim::new(Curve::Ease(FADE_OUT));
+            state.spaces.hud_out = Some(fade);
+            state.animate(&fade);
             TimeoutAction::Drop
         });
         self.spaces.hud = hide.inspect_err(|err| tracing::warn!("Space indicator timer: {err}")).ok();
+        self.spaces.hud_out = None;
         self.spaces.hud_key = key.to_owned();
         self.schedule_redraw();
     }
 
-    /// The indicator on `output`, while it is up there: (Space count, shown Space).
-    pub fn space_indicator(&mut self, output: &Output) -> Option<(usize, usize)> {
+    /// The indicator on `output`, while it is up there: (Space count, shown Space, opacity as it fades out).
+    pub fn space_indicator(&mut self, output: &Output) -> Option<(usize, usize, f64)> {
         let key = self.output_key(output);
-        if self.spaces.hud.is_none() || key != self.spaces.hud_key {
+        let now = self.frame_time;
+        let alpha = match self.spaces.hud_out {
+            _ if self.spaces.hud.is_some() => 1.0,
+            Some(fade) if !fade.done(now) => 1.0 - fade.progress(now),
+            _ => return None,
+        };
+        if key != self.spaces.hud_key {
             return None;
         }
         let d = self.desks_at(&key);
-        Some((d.list.len(), d.current))
+        Some((d.list.len(), d.current, alpha))
     }
 
     /// Super+← / → and the 3-finger swipe: the neighbouring Space of the display under the pointer.
