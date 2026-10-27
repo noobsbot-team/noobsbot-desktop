@@ -467,8 +467,9 @@ impl State {
         self.config.windows.reopen_at_login = on;
         let path = crate::config::path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        if let Err(err) = crate::config::save_atomic(&path, &crate::config::set_key(&text, "windows", "reopen_at_login", &on.to_string())) {
+        let saved = crate::config::read_config(&path)
+            .and_then(|text| crate::config::save_atomic(&path, &crate::config::set_key(&text, "windows", "reopen_at_login", &on.to_string())));
+        if let Err(err) = saved {
             tracing::warn!("{}: {err}", path.display());
         }
         self.schedule_redraw();

@@ -252,8 +252,17 @@ pub fn cli(args: impl Iterator<Item = String>) -> i32 {
         eprintln!("{USAGE}");
         return if args.iter().any(|a| a == "-h" || a == "--help") { 0 } else { 2 };
     }
+    // Through a dotfiles symlink: the rename replaces the real file, not the link.
     let path = config::path();
-    let text = fs::read_to_string(&path).unwrap_or_else(|_| config::DEFAULT_TOML.to_owned());
+    let path = fs::canonicalize(&path).unwrap_or(path);
+    let text = match config::read_config(&path) {
+        Ok(text) if text.is_empty() => config::DEFAULT_TOML.to_owned(),
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!("dock: reading {}: {err}", path.display());
+            return 1;
+        }
+    };
     let (dock, keys, new) = match import_into(&text, &config::xdg_dir("XDG_CONFIG_HOME", ".config")) {
         Ok(imported) => imported,
         Err(err) => {

@@ -111,10 +111,11 @@ fn remember(key: &str, exe: &str, allow: bool, allowed: &mut Vec<String>, denied
     }
     let path = config::path();
     let path = std::fs::canonicalize(&path).unwrap_or(path);
-    let text = std::fs::read_to_string(&path).unwrap_or_default();
-    let text = config::set_array(&text, "privacy", key, allowed);
-    let text = config::set_array(&text, "privacy", &format!("{key}_denied"), denied);
-    if let Err(err) = config::save_atomic(&path, &text) {
+    let saved = config::read_config(&path).and_then(|text| {
+        let text = config::set_array(&text, "privacy", key, allowed);
+        config::save_atomic(&path, &config::set_array(&text, "privacy", &format!("{key}_denied"), denied))
+    });
+    if let Err(err) = saved {
         tracing::warn!("{}: {err}", path.display());
     }
 }
