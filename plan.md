@@ -1613,8 +1613,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why:** fcitx5 is the best-maintained Wayland IME; these two protocols are what Qt 6, GTK 4 and Chromium speak.
 - **Done when:** Nepali can be typed in Kate, Helium and noobsbot-terminal with the candidate popup next to the cursor.
 - **Built:** `src/ime.rs` (text-input-v3 and input-method-v2, the popup next to the cursor, layouts and fcitx5 methods
-  in the keyboard menu), `src/services/fcitx.rs`, `src/ibus.rs`, `XMODIFIERS` in the session wrapper. Not yet:
-  Super+Ctrl+Space cycling input methods (it cycles layouts); `install.sh` offering the fcitx5 set (it prints a hint).
+  in the keyboard menu), `src/services/fcitx.rs`, `src/ibus.rs`, `XMODIFIERS` in the session wrapper,
+  Super+Ctrl+Space cycling the engine's methods while it lists several (else the layouts), `install.sh --advanced`
+  offering the fcitx5 set.
 
 ### E6.13 Versioning, releases & Software Update (auto-updating)
 - **What it is:** how a version number is born, how a release is built, and how every installed desktop learns about
