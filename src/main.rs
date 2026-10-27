@@ -156,6 +156,13 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     config::watch(&config_path, move |config| tx.send(config).is_ok());
     event_loop.handle().insert_source(rx, |event, _, state| {
         if let channel::Event::Msg(config) = event {
+            let config = match config {
+                Ok(config) => {
+                    state.close_notification(config::BROKEN_NOTICE, services::notifications::Reason::Dismissed);
+                    config
+                }
+                Err(err) => return state.notify(config::broken_notice(&err)),
+            };
             // Our own saves (dock pins, icon size, appearance mode) come back through the watcher already applied.
             if config == state.config {
                 return;
