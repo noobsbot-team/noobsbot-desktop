@@ -274,7 +274,7 @@ impl State {
             return true;
         }
         let touchpad = &self.config.touchpad;
-        self.gesture = Tracker::begin(kind, fingers, touchpad.swipe_fingers, touchpad.gesture_sensitivity, time);
+        self.gesture = Tracker::begin(kind, fingers, touchpad.effective_swipe_fingers(), touchpad.gesture_sensitivity, time);
         self.gesture.is_some()
     }
 
