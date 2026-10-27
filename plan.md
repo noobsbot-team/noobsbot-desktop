@@ -1366,8 +1366,14 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Done when:** boots into Noobsbot Desktop on Intel, AMD and (with `nvidia-open`) NVIDIA; VT switch and back works; an
   Intel + NVIDIA laptop drives its dGPU HDMI port; QEMU without 3D acceleration still boots to a usable desktop.
 - **Built:** `src/backend/udev.rs` (libseat, libinput, GBM, `DrmCompositor`, a second GPU's monitor through
-  `MultiRenderer`, the GPU from `[display] gpu` else the boot VGA device, VT switching). Not yet: the pixman renderer;
-  without 3D, Mesa's software EGL driver (llvmpipe) runs the shaders instead.
+  `MultiRenderer`, the GPU from `[display] gpu` else the boot VGA device, VT switching). Software fallback: with no
+  driver for the GPU (simpledrm, QEMU without virgl) Mesa picks kms_swrast/llvmpipe by itself; a primary GPU whose
+  GBM, EGL display, context or shell shaders fail is started once more on it (`GBM_BACKEND=dri`,
+  `GBM_ALWAYS_SOFTWARE`, `LIBGL_ALWAYS_SOFTWARE`, inherited by apps). llvmpipe runs every shader, glass included;
+  either way the log says "using software rendering" and a notification says graphics acceleration isn't available.
+  Not yet: the pixman renderer, only for a system without Mesa (the shell's elements are all GLES: `SceneElement`
+  over `GlesRenderer` with its own shader elements, ~30 files under `src/render`); fbdev-only machines (efifb, no
+  DRM device); a GPU reset that won't come back still exits rather than going software. Untested on hardware.
 
 ### E6.2 Displays & multiple monitors
 - **What it is:** monitors, resolution, scaling, refresh rate, Night Shift.
