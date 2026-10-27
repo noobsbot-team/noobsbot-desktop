@@ -58,6 +58,12 @@ pub fn commits(d: f64, full: f64, v: f64) -> bool {
     !back && d.abs() >= MIN_TRAVEL && (v.abs() >= FLICK || d.abs() >= COMMIT * full)
 }
 
+/// Does a pinch let go `p` of a whole pinch along (in −, out +), moving at `v` of one per ms, commit? Half way, or
+/// on a flick, as a swipe does (`commits`, a whole pinch counted as a whole swipe).
+pub fn pinch_commits(p: f64, v: f64) -> bool {
+    commits(p * FULL, FULL / (2.0 * COMMIT), v * FULL)
+}
+
 /// `x` past an end, given back as a rubber band: a third as far at first, never more than `RUBBER`.
 pub fn rubber(x: f64) -> f64 {
     RUBBER * x / (x.abs() + 3.0 * RUBBER)
@@ -96,9 +102,10 @@ pub struct Tracker {
     dx: f64,
     dy: f64,
     scale: f64,
-    /// Smoothed velocity, units per ms, and the time of the last update.
+    /// Smoothed velocity, units per ms (a pinch's in whole pinches per ms), and the time of the last update.
     vx: f64,
     vy: f64,
+    vs: f64,
     last: u32,
 }
 
@@ -121,6 +128,7 @@ impl Tracker {
             scale: 1.0,
             vx: 0.0,
             vy: 0.0,
+            vs: 0.0,
             last: time,
         })
     }
@@ -131,6 +139,7 @@ impl Tracker {
         let dt = f64::from(time.wrapping_sub(self.last).max(1));
         self.vx = (self.vx + dx / dt) / 2.0;
         self.vy = (self.vy + dy / dt) / 2.0;
+        self.vs = (self.vs + (scale - self.scale) * self.sensitivity / PINCH / dt) / 2.0;
         (self.dx, self.dy, self.scale, self.last) = (self.dx + dx, self.dy + dy, scale, time);
         if self.horizontal.is_none() && self.dx.hypot(self.dy) >= MIN_TRAVEL {
             self.horizontal = Some(self.dx.abs() >= self.dy.abs());
@@ -140,6 +149,13 @@ impl Tracker {
     /// The fingers' speed (units per ms) when let go at `time`: 0 if they had stopped.
     pub fn speed(&self, time: u32) -> (f64, f64) {
         if time.wrapping_sub(self.last) > STILL_MS { (0.0, 0.0) } else { (self.vx, self.vy) }
+    }
+
+    /// A pinch so far, in whole pinches (in −, out +, scaled by sensitivity), and its speed per ms when let go at
+    /// `time`: 0 if the fingers had stopped.
+    pub fn pinch(&self, time: u32) -> (f64, f64) {
+        let v = if time.wrapping_sub(self.last) > STILL_MS { 0.0 } else { self.vs };
+        ((self.scale - 1.0) * self.sensitivity / PINCH, v)
     }
 
     /// Swipe travel so far, scaled by sensitivity.
@@ -153,12 +169,8 @@ impl Tracker {
             return None;
         }
         if self.kind == Kind::Pinch {
-            let change = (self.scale - 1.0) * self.sensitivity;
-            return match change {
-                c if c <= -PINCH / 2.0 => Some(Gesture::Launchpad),
-                c if c >= PINCH / 2.0 => Some(Gesture::ShowDesktop),
-                _ => None,
-            };
+            let (p, v) = self.pinch(time);
+            return pinch_commits(p, v).then_some(if p < 0.0 { Gesture::Launchpad } else { Gesture::ShowDesktop });
         }
         let horizontal = self.horizontal.unwrap_or(self.dx.abs() >= self.dy.abs());
         let (vx, vy) = self.speed(time);
@@ -518,6 +530,15 @@ mod tests {
     }
 
     #[test]
+    fn pinch_commits_past_half_or_on_a_flick() {
+        assert!(pinch_commits(-0.55, 0.0) && pinch_commits(0.55, 0.0), "past half, let go still");
+        assert!(!pinch_commits(-0.45, 0.0), "short of half: back");
+        assert!(pinch_commits(0.2, 0.01), "a flick out");
+        assert!(!pinch_commits(0.7, -0.002), "past half, but heading back");
+        assert!(!pinch_commits(0.03, 0.05), "a twitch");
+    }
+
+    #[test]
     fn rubber_band_gives_a_little_and_never_much() {
         assert_eq!(rubber(0.0), 0.0);
         assert!((rubber(0.03) - 0.01).abs() < 0.002, "a third as far at first: {}", rubber(0.03));
@@ -554,14 +575,22 @@ mod tests {
 
     #[test]
     fn pinches() {
+        // Pinched to `scale` in one step, let go once the fingers stopped.
         let pinch = |scale: f64| {
             let mut t = Tracker::begin(Kind::Pinch, 4, 3, 1.0, 0).unwrap();
             t.update(10, 0.0, 0.0, scale);
-            t.end(20, false)
+            t.end(200, false)
         };
         assert_eq!(pinch(0.6), Some(Gesture::Launchpad));
         assert_eq!(pinch(1.4), Some(Gesture::ShowDesktop));
         assert_eq!(pinch(0.9), None);
+        // The same short pinch, let go while moving fast: a flick.
+        let mut t = Tracker::begin(Kind::Pinch, 4, 3, 1.0, 0).unwrap();
+        for (i, scale) in [0.97, 0.94, 0.9].into_iter().enumerate() {
+            t.update(10 * (i as u32 + 1), 0.0, 0.0, scale);
+        }
+        assert!((t.pinch(35).0 + 0.2).abs() < 1e-9, "a fifth of a whole pinch in");
+        assert_eq!(t.end(35, false), Some(Gesture::Launchpad));
         let mut t = Tracker::begin(Kind::Pinch, 4, 3, 1.0, 0).unwrap();
         t.update(10, 0.0, 0.0, 0.5);
         assert_eq!(t.end(20, true), None, "cancelled by libinput");
