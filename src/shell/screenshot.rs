@@ -895,7 +895,7 @@ impl State {
     }
 
     /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts recording the toolbar's
-    /// display, else the pointer's, into ~/Videos, or stops it.
+    /// display (its dragged region in Region mode), else the pointer's, into ~/Videos, or stops it.
     pub fn toggle_recording(&mut self) {
         if self.screenshots.recording.is_some() {
             self.stop_recording();
@@ -917,7 +917,11 @@ impl State {
         let output = if toolbar { self.overlay_output(self.screenshots.output.as_ref()) } else { self.pointer_output() };
         let output = output.ok_or("no display")?;
         let frame = output.current_transform().transform_size(output.current_mode().ok_or("no display mode")?.size);
-        let region = even_crop(Rectangle::from_size(frame), frame).ok_or("the display is too small")?;
+        // The toolbar's dragged region in Region mode, else the whole display.
+        let area = self.screenshots.shot.as_ref().filter(|s| toolbar && s.mode == Mode::Region).and_then(|s| s.region);
+        let scale = output.current_scale().fractional_scale();
+        let rect = area.map_or(Rectangle::from_size(frame), |r| r.to_f64().to_physical(scale).to_i32_round());
+        let region = even_crop(rect, frame).ok_or("the area is too small")?;
         let dir = user_dir("VIDEOS", "Videos");
         std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         let path = file_name(&dir, "Screen Recording", "mp4", &chrono::Local::now());
