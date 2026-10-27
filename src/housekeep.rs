@@ -1,5 +1,5 @@
 //! Housekeeping (E8.8): a low-disk notification checked hourly, and once a day, off the frame thread, old Trash
-//! items, unused thumbnails and old recent-files entries cleared.
+//! items, unused thumbnails and cached icons, and old recent-files entries cleared.
 
 use std::{
     fs,
@@ -23,6 +23,8 @@ const HOUR: Duration = Duration::from_secs(3600);
 const DAY: Duration = Duration::from_secs(86_400);
 /// Thumbnails not opened for this long are removed.
 const THUMBNAIL_AGE: Duration = Duration::from_secs(90 * 86_400);
+/// Cached icons (`apps::icon_cache`) not drawn for this long are removed.
+const ICON_AGE: Duration = Duration::from_secs(30 * 86_400);
 
 /// Under 5% or 2 GB free.
 fn low(free: u64, total: u64) -> bool {
@@ -105,7 +107,9 @@ fn clean(settings: &Housekeeping) {
         let cutoff = chrono::Local::now().naive_local() - chrono::Duration::days(settings.empty_trash_days.into());
         trash::dirs().iter().for_each(|d| trash::empty_before(d, cutoff));
     }
-    remove_thumbnails(&config::xdg_dir("XDG_CACHE_HOME", ".cache").join("thumbnails"));
+    let cache = config::xdg_dir("XDG_CACHE_HOME", ".cache");
+    remove_unused(&cache.join("thumbnails"), THUMBNAIL_AGE);
+    remove_unused(&cache.join("noobsbot-desktop/icons"), ICON_AGE);
     if settings.recent_days > 0 {
         let path = crate::shell::dock::recent_path();
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(settings.recent_days.into())).format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -116,13 +120,13 @@ fn clean(settings: &Housekeeping) {
     }
 }
 
-/// Thumbnails in each size folder not opened (nor made) within `THUMBNAIL_AGE`.
-fn remove_thumbnails(thumbnails: &Path) {
-    let Ok(sizes) = fs::read_dir(thumbnails) else { return };
+/// Files in each folder of `dir` (thumbnail sizes, icon cache versions) not opened (nor made) within `age`.
+fn remove_unused(dir: &Path, age: Duration) {
+    let Ok(sizes) = fs::read_dir(dir) else { return };
     for file in sizes.flatten().filter_map(|d| fs::read_dir(d.path()).ok()).flatten().flatten() {
         let Ok(m) = file.metadata() else { continue };
         let used = m.accessed().into_iter().chain(m.modified()).max().unwrap_or(SystemTime::now());
-        if m.is_file() && used.elapsed().is_ok_and(|age| age > THUMBNAIL_AGE) {
+        if m.is_file() && used.elapsed().is_ok_and(|unused| unused > age) {
             let _ = fs::remove_file(file.path());
         }
     }
