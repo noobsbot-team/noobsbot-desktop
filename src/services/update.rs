@@ -40,6 +40,7 @@ const ARCH: &str = std::env::consts::ARCH;
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Channel {
+    /// Stable releases, or the newest pre-release while there is none yet (1.0.0's).
     #[default]
     Stable,
     /// Pre-releases (`1.4.0-beta.2`) too.
