@@ -1033,7 +1033,7 @@ Goal: everything that informs you and helps you find things.
     |---|---|---|
     | Calendar | month grid (E2.5); later "Up Next" events | `chrono`; later `.ics` / CalDAV |
     | Batteries | laptop + Bluetooth devices (headphones, mouse) | UPower |
-    | World Clock (optional) | 1–4 cities, analogue mini faces | `chrono-tz` |
+    | World Clock (optional) | Built: after Weather, a row per city in `[widgets] clocks` (off while empty): its time in the clock's 12/24 h format, then the day and offset from here ("Tomorrow, +5:45"); redrawn on the menu-bar clock's minute tick | the system zoneinfo, read as `.ics` TZIDs are (no `chrono-tz`) |
     | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open) | `/proc`, `/sys` |
     | Weather (optional, later) | needs an online weather API, so off by default | later decision |
   - "Edit Widgets…" (under the widgets) opens Settings ▸ Notifications, which shows, hides and reorders other apps' widgets (`[widgets]`) for Notification Center and the desktop.

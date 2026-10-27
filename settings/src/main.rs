@@ -551,6 +551,21 @@ impl App {
                         files.push(value.to_owned());
                         self.save("calendar.files", files.into_iter().collect::<toml_edit::Array>());
                     }
+                } else if key == pages::CLOCK_ADD {
+                    if value.trim().is_empty() {
+                        return Task::none();
+                    }
+                    // The first zone the city names, as Date & Time's picker takes on Return.
+                    let Some(zone) = system::matching_zones(&value).next() else {
+                        self.error = Some(format!("“{}” isn't a city or time zone", value.trim()));
+                        self.texts.insert(key, value);
+                        return Task::none();
+                    };
+                    let mut zones: Vec<&str> = self.config.list("widgets.clocks");
+                    if !zones.contains(&zone) {
+                        zones.push(zone);
+                        self.save("widgets.clocks", zones.into_iter().collect::<toml_edit::Array>());
+                    }
                 } else if let Some(path) = key.strip_prefix(system::RENAME) {
                     return Task::perform(system::rename_device(path.to_owned(), value.trim().to_owned()), Message::Acted);
                 } else if let Some(pages::Kind::Degrees(limit)) = pages::setting(&key).map(|s| s.kind) {
@@ -764,6 +779,9 @@ impl App {
                 return Task::perform(network::change(move |bus| network::update_ip(bus, path, ip4, ip6)), Message::Status);
             }
             Message::Vpn(vpn) => return Task::perform(network::change(move |bus| network::vpn_switch(bus, vpn)), Message::Status),
+            Message::OpenFile(pages::CLOCK_ADD) => {
+                self.texts.insert(pages::CLOCK_ADD.into(), String::new());
+            }
             Message::OpenFile(key) => {
                 let (title, directory, filter) = match key {
                     users::PICTURE_FILE => ("Choose a Picture", false, Some(chooser::IMAGES)),

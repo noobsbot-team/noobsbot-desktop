@@ -292,6 +292,7 @@ impl State {
                         batteries: &batteries,
                         dnd: self.config.notifications.dnd,
                         weather: self.weather.as_ref(),
+                        clocks: &self.clocks,
                         widgets: &crate::services::widgets::shown(&self.widgets, &self.config.widgets, false),
                     };
                     popups.extend(notifications.elements(

@@ -48,6 +48,15 @@ impl Zone {
             }
         }
     }
+
+    /// Seconds east of UTC at unix time `t`.
+    pub fn offset(&self, t: i64) -> i32 {
+        match self {
+            Zone::Utc => 0,
+            Zone::Local => Local.timestamp_opt(t, 0).single().map_or(0, |d| d.offset().local_minus_utc()),
+            Zone::Tz(tz) => tz.offset(t),
+        }
+    }
 }
 
 /// A compiled zoneinfo (TZif) file: UTC offsets and when they start.
