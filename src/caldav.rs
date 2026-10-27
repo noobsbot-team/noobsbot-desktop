@@ -114,6 +114,16 @@ fn elements<'a>(xml: &'a str, name: &str) -> Vec<&'a str> {
     out
 }
 
+/// An `<href>` from a reply to `base`: as it is when it's a whole URL, else a path on `base`'s server.
+fn resolve(base: &str, href: &str) -> String {
+    if href.contains("://") {
+        return href.to_owned();
+    }
+    let host = base.find("://").map_or(0, |i| i + 3);
+    let origin = &base[..base[host..].find('/').map_or(base.len(), |i| host + i)];
+    format!("{origin}/{}", href.trim_start_matches('/'))
+}
+
 /// `&lt;`, `&amp;`, `&#13;`, `&#xD;`… as their characters; a stray `&` stays.
 fn unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -185,6 +195,17 @@ END:VCALENDAR]]></C:calendar-data>
         assert!(data[0].contains("SUMMARY:Tom & Jerry <3 \"live\"\r\n"));
         assert!(data[1].contains("SUMMARY:A & B <raw>\n") && data[1].ends_with("END:VCALENDAR"));
         assert!(calendar_data("<d:multistatus xmlns:d=\"DAV:\"/>").is_empty());
+    }
+
+    #[test]
+    fn hrefs_resolve_on_the_server() {
+        let base = "https://cloud.example.com:8443/remote.php/dav/";
+        assert_eq!(resolve(base, "/remote.php/dav/principals/users/me/"), "https://cloud.example.com:8443/remote.php/dav/principals/users/me/");
+        assert_eq!(resolve(base, "calendars/me/"), "https://cloud.example.com:8443/calendars/me/");
+        assert_eq!(resolve(base, "https://p42-caldav.example.net:443/123/calendars/"), "https://p42-caldav.example.net:443/123/calendars/");
+        assert_eq!(resolve("https://dav.example.org", "/.well-known/caldav"), "https://dav.example.org/.well-known/caldav");
+        // Typed without a scheme: curl's `--proto-default https` adds it.
+        assert_eq!(resolve("dav.example.org/me/", "/.well-known/caldav"), "dav.example.org/.well-known/caldav");
     }
 
     #[test]
