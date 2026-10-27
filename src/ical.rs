@@ -295,8 +295,8 @@ impl Rule {
     /// Whether the rule picks day `d` of one of its periods; `start` is DTSTART's date, for what the rule leaves out.
     fn matches(&self, d: NaiveDate, start: NaiveDate) -> bool {
         // Without BYMONTHDAY or BYDAY a rule keeps DTSTART's weekday (weekly), day of the month (monthly) or date
-        // (yearly). Yearly rules don't read BYDAY.
-        let plain = (self.by_day.is_empty() || self.freq == Freq::Yearly) && self.by_month_day.is_empty();
+        // (yearly).
+        let plain = self.by_day.is_empty() && self.by_month_day.is_empty();
         let month = match self.freq {
             _ if !self.by_month.is_empty() => self.by_month.contains(&d.month()),
             Freq::Yearly if plain => d.month() == start.month(),
@@ -311,15 +311,18 @@ impl Rule {
             Freq::Monthly | Freq::Yearly if plain => d.day() == start.day(),
             _ => true,
         };
-        // An ordinal counts in the month: `2MO` is the second Monday, `-1FR` the last Friday. Daily and weekly rules
-        // have none.
+        // An ordinal counts in the month, or in the year for a yearly rule without BYMONTH: `2MO` is the second
+        // Monday, `-1FR` the last Friday. Daily and weekly rules have none.
+        let (first, last) = match self.freq {
+            Freq::Yearly if self.by_month.is_empty() => (d.with_ordinal(1).unwrap_or(d), NaiveDate::from_ymd_opt(d.year(), 12, 31).unwrap_or(d)),
+            _ => (first, last),
+        };
         let nth = |n: i32| match n {
             _ if n == 0 || matches!(self.freq, Freq::Daily | Freq::Weekly) => true,
             n if n > 0 => (d - first).num_days() / 7 + 1 == i64::from(n),
             n => (last - d).num_days() / 7 + 1 == -i64::from(n),
         };
         let weekday = match self.freq {
-            Freq::Yearly => true,
             _ if !self.by_day.is_empty() => self.by_day.iter().any(|&(n, wd)| d.weekday() == wd && nth(n)),
             Freq::Weekly if plain => d.weekday() == start.weekday(),
             _ => true,
@@ -786,6 +789,26 @@ mod tests {
             let e = one(&format!("DTSTART:20261020T090000Z\r\nRRULE:FREQ=MONTHLY;BYMONTHDAY={bad}"));
             assert_eq!(starts(&e, "2026-01-01 00:00", "2030-01-01 00:00").len(), 1, "{bad}");
         }
+    }
+
+    #[test]
+    fn byday_expands_yearly_rules_and_limits_with_bymonthday() {
+        // The last Sunday of March.
+        let e = one("DTSTART:20260329T010000Z\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU;COUNT=3");
+        assert_eq!(starts(&e, "2026-01-01 00:00", "2030-01-01 00:00"), [utc("2026-03-29 01:00"), utc("2027-03-28 01:00"), utc("2028-03-26 01:00")]);
+        // Without BYMONTH an ordinal counts in the year: the 20th Monday, the last Friday.
+        let e = one("DTSTART:19970519T090000Z\r\nRRULE:FREQ=YEARLY;BYDAY=20MO;COUNT=3");
+        assert_eq!(starts(&e, "1997-01-01 00:00", "2000-01-01 00:00"), [utc("1997-05-19 09:00"), utc("1998-05-18 09:00"), utc("1999-05-17 09:00")]);
+        let e = one("DTSTART:20260101T090000Z\r\nRRULE:FREQ=YEARLY;BYDAY=-1FR;COUNT=2");
+        assert_eq!(starts(&e, "2026-01-01 00:00", "2028-06-01 00:00"), [utc("2026-12-25 09:00"), utc("2027-12-31 09:00")]);
+        // Every Thursday in March.
+        let e = one("DTSTART:20270304T090000Z\r\nRRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=TH");
+        assert_eq!(starts(&e, "2027-01-01 00:00", "2028-01-01 00:00").len(), 4);
+        // With BYMONTHDAY, BYDAY only limits: every Friday the 13th.
+        let e = one("DTSTART:20260101T090000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13;COUNT=3");
+        assert_eq!(starts(&e, "2026-01-01 00:00", "2028-01-01 00:00"), [utc("2026-02-13 09:00"), utc("2026-03-13 09:00"), utc("2026-11-13 09:00")]);
+        let e = one("DTSTART:20260101T090000Z\r\nRRULE:FREQ=YEARLY;BYDAY=FR;BYMONTHDAY=13;COUNT=3");
+        assert_eq!(starts(&e, "2026-01-01 00:00", "2028-01-01 00:00"), [utc("2026-02-13 09:00"), utc("2026-03-13 09:00"), utc("2026-11-13 09:00")]);
     }
 
     #[test]
