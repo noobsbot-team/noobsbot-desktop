@@ -8,7 +8,7 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
-## [0.7.0](https://github.com/noobsbot-team/noobsbot-desktop/compare/v0.6.0...v0.7.0) - 2026-10-27
+## [1.0.0](https://github.com/noobsbot-team/noobsbot-desktop/compare/v0.6.0...v1.0.0) - 2026-10-27 · Opal
 
 ### Added
 
