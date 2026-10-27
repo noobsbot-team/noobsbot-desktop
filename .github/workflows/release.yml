@@ -1,6 +1,7 @@
-# Builds, checks, signs and attaches the release tarball (E6.13). Called by release-plz.yml right after release-plz
-# tags a version (tags pushed with the default GITHUB_TOKEN start no workflows, so the call is how it runs), or on a
-# `v*` tag pushed with any other token.
+# Builds, checks, signs and publishes the release tarball of a `v*` tag (E6.13). version.yml runs it on each version's
+# tag right after making it (tags pushed with the default GITHUB_TOKEN start no workflows, so that is how it runs); a
+# tag pushed with any other token starts it too. The version is set from the tag before building, since a beta is only
+# a tag. Publishing makes a release "latest"; a beta stays a pre-release, never "latest".
 #
 # One tarball for Arch and Debian: it is built on Debian 13, the oldest system supported (glibc 2.41; Arch's is
 # newer, and a program built against an older glibc runs on a newer one). Before it is signed, it must start on both.
@@ -14,23 +15,13 @@ name: Release
 on:
   push:
     tags: ["v*"]
-  workflow_call:
-    inputs:
-      tag:
-        type: string
-        required: true
-    secrets:
-      # Not required: when it lives in the `release` environment, the publish job reads it from there.
-      MINISIGN_SECRET_KEY:
-        required: false
-      MINISIGN_PASSWORD:
-        required: false
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  TAG: ${{ inputs.tag || github.ref_name }}
+  TAG: ${{ github.ref_name }}
 
 jobs:
   build:
@@ -47,8 +38,8 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TAG }}
+      # A beta's tag is on a commit that still has the last release's version (a run on a branch stops here).
+      - run: .github/set-version.sh "$TAG"
       - name: Build
         run: |
           export NOOBSBOT_COMMIT="$(git -c safe.directory='*' rev-parse --short HEAD)"
@@ -139,7 +130,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           cd dist
-          # release-plz has already made the release with the changelog as notes; a hand-pushed tag has none yet.
-          case "$TAG" in *-*) pre=--prerelease ;; *) pre= ;; esac
-          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes $pre
+          # version.yml has already made the draft release; a hand-pushed tag has none yet.
+          case "$TAG" in *-*) pre=--prerelease latest=false ;; *) pre= latest=true ;; esac
+          gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes --draft $pre
           gh release upload "$TAG" --clobber *.tar.zst SHA256SUMS *.minisig
+          # Published only once its files are there, so the updater never sees it without them.
+          gh release edit "$TAG" --draft=false --latest=$latest
