@@ -41,8 +41,8 @@ const SYMBOL: u16 = 20;
 /// The app's name is ellipsised past this, and dropped when less than `MIN_APP` is free.
 const APP_WIDTH: i32 = 375;
 const MIN_APP: i32 = 50;
-/// Body a step up (13 / 16 → 16 / 20) for the taller bar; its labels are this, or this at 600.
-const BODY: Style = Style { size: 16, line_height: 20, ..ui::BODY };
+/// Body a step up (13 / 16 → 16 / 20) for the taller bar, at medium weight; its names and numbers are this at 700.
+const BODY: Style = Style { size: 16, line_height: 20, weight: 500, ..ui::BODY };
 /// The Space dots' size and the step from one to the next.
 const DOT: i32 = 8;
 const DOT_STEP: i32 = 13;
@@ -300,10 +300,10 @@ impl MenuBar {
         let px = (f64::from(SYMBOL) * scale).round() as u32;
         let tray: Vec<_> = content.tray.iter().map(|images| icons.tray(images, px)).collect();
         match &content.space {
-            Some(Space::Number(n)) => right.push((text.label(&n.to_string(), Style { weight: 600, ..body }, 100, scale), ts(GAP), BarItem::Space)),
+            Some(Space::Number(n)) => right.push((text.label(&n.to_string(), Style { weight: 700, ..body }, 100, scale), ts(GAP), BarItem::Space)),
             Some(Space::App(id)) => {
                 let name = self.names.entry(id.clone()).or_insert_with(|| app_name(id));
-                right.push((text.label(name, Style { weight: 600, ..body }, 150, scale), ts(GAP), BarItem::Space));
+                right.push((text.label(name, Style { weight: 700, ..body }, 150, scale), ts(GAP), BarItem::Space));
             }
             Some(Space::Dots { count, .. }) => {
                 let w = (f64::from(dots(*count).1) * scale).round() as u32;
@@ -316,7 +316,7 @@ impl MenuBar {
             None => {}
         }
         if let Some(code) = &content.input {
-            right.push((text.label(code, Style { weight: 600, ..body }, 100, scale), ts(GAP), BarItem::Input));
+            right.push((text.label(code, Style { weight: 700, ..body }, 100, scale), ts(GAP), BarItem::Input));
         }
         for (i, item) in content.status.iter().enumerate() {
             if let Some(t) = &item.text {
@@ -345,7 +345,7 @@ impl MenuBar {
         let mut left = vec![(logo, LOGO_GAP, BarItem::Logo)];
         if let Some(app) = content.app.as_ref().filter(|_| room >= ts(MIN_APP)) {
             let name = self.names.entry(app.clone()).or_insert_with(|| app_name(app));
-            left.push((text.label(name, Style { color, weight: 600, ..BODY }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
+            left.push((text.label(name, Style { color, weight: 700, ..BODY }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
         }
         let mut rects = Vec::new();
         let mut x = EDGE;
