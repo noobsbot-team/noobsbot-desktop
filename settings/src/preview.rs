@@ -57,8 +57,8 @@ fn pinch(from: f32, to: f32) -> Gesture {
 /// The gesture Trackpad row `key` shows, with the finger counts and methods the settings have now; `None`: a row
 /// without one.
 pub fn gesture(key: &str, config: &Config) -> Option<Gesture> {
-    // As the desktop reads it (src/gestures.rs): 4, else 3.
-    let fingers = if config.num("touchpad.swipe_fingers") == 4.0 { 4 } else { 3 };
+    // As the desktop reads it (src/config.rs `effective_swipe_fingers`): 4, or while three-finger drag is on; else 3.
+    let fingers = if config.num("touchpad.swipe_fingers") == 4.0 || config.bool("touchpad.three_finger_drag") { 4 } else { 3 };
     Some(match key {
         "touchpad.tap_to_click" => tap(1, (0.5, 0.5)),
         "touchpad.secondary_click" => match config.str(key) {
@@ -72,6 +72,7 @@ pub fn gesture(key: &str, config: &Config) -> Option<Gesture> {
             _ => swipe(2, (0.0, -0.5)),
         },
         "touchpad.tap_to_drag" | "touchpad.drag_lock" => Gesture { tap: true, ..swipe(1, (0.5, 0.0)) },
+        "touchpad.three_finger_drag" => swipe(3, (0.5, 0.0)),
         "touchpad.swipe_fingers" | "touchpad.gesture_spaces" => swipe(fingers, (-0.3, 0.0)),
         "touchpad.gesture_mission_control" => swipe(fingers, (0.0, -0.5)),
         "touchpad.gesture_app_expose" => swipe(fingers, (0.0, 0.5)),
@@ -233,13 +234,18 @@ mod tests {
         assert_eq!(fingers("touchpad.gesture_launchpad", &defaults), Some(4));
         assert_eq!(gesture("touchpad.gesture_mission_control", &defaults).map(|g| g.slide), Some((0.0, -0.5)));
         assert_eq!(gesture("touchpad.speed", &defaults), None);
+        assert_eq!(fingers("touchpad.three_finger_drag", &defaults), Some(3));
 
         let path = dir.join("config.toml");
         std::fs::write(&path, "[touchpad]\nswipe_fingers = 4\nsecondary_click = \"off\"\nscroll_method = \"edge\"\n").unwrap();
-        let (config, _) = Config::load(path);
+        let (config, _) = Config::load(path.clone());
         assert_eq!(fingers("touchpad.gesture_app_expose", &config), Some(4));
         assert_eq!(fingers("touchpad.natural_scroll", &config), Some(1));
         assert_eq!(gesture("touchpad.secondary_click", &config), None);
+
+        std::fs::write(&path, "[touchpad]\nthree_finger_drag = true\n").unwrap();
+        let (config, _) = Config::load(path);
+        assert_eq!(fingers("touchpad.gesture_spaces", &config), Some(4), "three-finger drag holds three fingers");
         let _ = std::fs::remove_dir_all(dir);
     }
 }
