@@ -446,8 +446,12 @@ impl State {
         self.seat.get_pointer().is_some_and(|p| p.is_grabbed())
     }
 
-    /// The pointer moved to `at` (global): resting in an active corner of any display for `DELAY` triggers it.
+    /// The pointer moved to `at` (global): resting in an active corner of any display for `DELAY` triggers it. Never
+    /// while locked (E6.4).
     pub fn hot_corner_motion(&mut self, at: Point<f64, Logical>) {
+        if self.locked() {
+            return;
+        }
         let outputs: Vec<smithay::output::Output> = self.space.outputs().cloned().collect();
         let screens: Vec<Rect> = outputs.iter().filter_map(|o| self.space.output_geometry(o)).collect();
         let hit = hot_corner(&screens, at).filter(|(_, c)| self.corner_action(*c).is_some());
@@ -469,7 +473,8 @@ impl State {
         let timer = self.loop_handle.insert_source(Timer::from_duration(DELAY), |_, _, state| {
             state.corners.timer = None;
             let dragging = state.dragging();
-            if let Some(corner) = state.corners.due(dragging, Instant::now())
+            if !state.locked()
+                && let Some(corner) = state.corners.due(dragging, Instant::now())
                 && let Some(action) = state.corner_action(corner)
             {
                 state.corners.ripple = Some((corner, Instant::now()));
