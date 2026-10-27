@@ -146,8 +146,8 @@ first and follow it. Also:
 
 1. Set the version from the tag (a beta is only a tag), build the Linux tarball on Debian 13 and check that it loads
    on Arch and Debian.
-2. Sign it once the owner approves the `release` environment, and upload the tarball, `SHA256SUMS` and the
-   signatures.
+2. Sign it (after the owner approves, if the `release` environment has required reviewers), and upload the tarball,
+   `SHA256SUMS` and the signatures.
 3. Publish the draft. A release is marked "latest"; a beta never is, and stays a pre-release.
 
 The update check (Settings ▸ General ▸ Software Update, `[update] channel`):

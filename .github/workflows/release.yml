@@ -6,10 +6,10 @@
 # One tarball for Arch and Debian: it is built on Debian 13, the oldest system supported (glibc 2.41; Arch's is
 # newer, and a program built against an older glibc runs on a newer one). Before it is signed, it must start on both.
 #
-# Secrets, in the `release` environment (not the repository's): MINISIGN_SECRET_KEY = the whole minisign secret key
+# Repository secrets (scripts/setup-release-signing.sh sets them): MINISIGN_SECRET_KEY = the whole minisign secret key
 # file; MINISIGN_PASSWORD = its password (leave unset for a key made with `minisign -G -W`). The matching public key is
-# compiled into the updater. Only the publish job, which signs, runs in that environment, so its protection rules
-# (required reviewers, `v*` tags only) gate every signing.
+# compiled into the updater. Only the publish job, which signs, runs in the `release` environment: give it required
+# reviewers (Settings ▸ Environments) to approve every signing, each beta's too.
 name: Release
 
 on:
