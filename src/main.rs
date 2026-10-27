@@ -613,6 +613,8 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         let _ = state.display_handle.flush_clients();
     });
     xwayland::quitting();
+    // Apps still open don't close one by one, so their frames are remembered here.
+    state.remember_open_frames();
     // Log out, the login screen's session started, the nested window closed, SIGTERM: settings saved just now are kept.
     config::flush();
     ran?;

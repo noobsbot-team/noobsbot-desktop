@@ -1,6 +1,7 @@
 //! Sheets and remembered frames (E8.5). A sheet is a modal dialog hung under its parent's title bar: it stacks directly
 //! above the parent, moves with it, takes the parent's focus clicks and is dragged by dragging the parent. An app's
-//! last window leaves its frame in `$XDG_STATE_HOME/noobsbot-desktop/window-frames`; its next first window opens there.
+//! last window (or, when the desktop quits, its topmost one) leaves its frame in
+//! `$XDG_STATE_HOME/noobsbot-desktop/window-frames`; its next first window opens there.
 //! The geometry is in wm.rs.
 
 use smithay::{
@@ -116,24 +117,41 @@ impl State {
 
     /// An app's last window is closing: remember its frame (the untiled one for a tiled, zoomed or full-screen window).
     pub fn remember_frame(&mut self, window: &Window) {
-        if window.toplevel().is_none_or(|t| t.parent().is_some()) {
-            return;
+        if self.app_id(window).is_some_and(|app| self.other_app_windows(&app, window) == 0) {
+            self.remember_frames([window]);
         }
-        let Some(app) = self.app_id(window) else { return };
-        if self.other_app_windows(&app, window) > 0 {
-            return;
-        }
-        let Some(mut frame) = self.restore_frame(window).or_else(|| self.frame(window)) else { return };
-        frame.loc.y -= self.window_row(window) * crate::spaces::STRIDE;
-        let outputs = self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.name())));
-        let Some(display) = crate::displays::mostly_on(frame, outputs) else { return };
-        if frame.size.w <= 0 || frame.size.h <= 0 {
-            return;
-        }
+    }
+
+    /// The desktop is quitting (log out, shut down, a signal) with apps open: each app's topmost window is remembered, as
+    /// if it had closed last.
+    pub fn remember_open_frames(&self) {
+        self.remember_frames(self.space.elements().rev());
+    }
+
+    /// Remembers the frames of `windows`, the first of each app's; not dialogs or the quake terminal.
+    fn remember_frames<'a>(&self, windows: impl IntoIterator<Item = &'a Window>) {
         let path = frames_path();
         let mut frames = wm::parse_frames(&std::fs::read_to_string(&path).unwrap_or_default());
-        frames.retain(|(a, ..)| *a != app);
-        frames.push((app, display, frame));
+        let mut done = Vec::new();
+        for window in windows {
+            if window.toplevel().is_none_or(|t| t.parent().is_some()) || self.is_quake(window) {
+                continue;
+            }
+            let Some(app) = self.app_id(window).filter(|app| !done.contains(app)) else { continue };
+            let Some(mut frame) = self.restore_frame(window).or_else(|| self.frame(window)) else { continue };
+            frame.loc.y -= self.window_row(window) * crate::spaces::STRIDE;
+            let outputs = self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.name())));
+            let Some(display) = crate::displays::mostly_on(frame, outputs) else { continue };
+            if frame.size.w <= 0 || frame.size.h <= 0 {
+                continue;
+            }
+            frames.retain(|(a, ..)| *a != app);
+            frames.push((app.clone(), display, frame));
+            done.push(app);
+        }
+        if done.is_empty() {
+            return;
+        }
         let saved = path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(&path, wm::format_frames(&frames)));
         if let Err(err) = saved {
             tracing::warn!("window frames: {err}");
