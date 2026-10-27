@@ -242,7 +242,8 @@ pub struct State {
     pub display_revert: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Displays ▸ Identify shows each display's name until this timer ends it.
     pub identify: Option<smithay::reexports::calloop::RegistrationToken>,
-    /// The set of displays connected at the last `apply_displays` (`displays::layout_key`).
+    /// The set of displays connected at the last `apply_displays` (`displays::layout_key`); empty until the first,
+    /// which reads the set the desktop last ran with.
     pub layout_key: String,
     /// The laptop's lid is closed (libinput's lid switch): clamshell when another display is on.
     pub lid_closed: bool,
