@@ -2704,10 +2704,14 @@ mod tests {
     #[test]
     fn desktop_version() {
         assert!(semver_like(version()), "{}", version());
+        assert!(semver_like("1.0.0-beta.10") && semver_like("1.0.0-rc.1") && semver_like("1.10.0"));
+        assert!(!semver_like("1.0") && !semver_like("1.0.0beta") && !semver_like("1.0.0-"));
     }
 
+    /// `MAJOR.MINOR.PATCH`, then maybe a pre-release (`-beta.1`).
     fn semver_like(v: &str) -> bool {
-        v.split('.').count() == 3 && v.split('.').all(|p| p.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        let (core, pre) = v.split_once('-').map_or((v, None), |(core, pre)| (core, Some(pre)));
+        core.split('.').count() == 3 && core.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) && pre != Some("")
     }
 
     #[test]
