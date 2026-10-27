@@ -423,6 +423,7 @@ glass windows with traffic lights.
 - **Built with:** Smithay (Wayland protocols: `wl_compositor`, `wl_subcompositor`, `wl_shm`, `linux-dmabuf`,
   `wl_seat`, `wl_output`, `xdg_shell`, `xdg-decoration`, `viewporter`, `fractional-scale`,
   `presentation-time`, `xdg-activation`, `wl_data_device` + `primary-selection` for the clipboard and drag-and-drop,
+  `ext-data-control` (clipboard managers and Shared Clipboard; trusted clients only, see E6.11),
   `xdg-foreign` + `xdg-dialog` (dialogs parented to the right window, e.g. the file picker over Helium),
   `relative-pointer` + `pointer-constraints` (games, Google Maps, VMs), `keyboard-shortcuts-inhibit` (VMs, remote
   desktop), `cursor-shape`, `wlr-layer-shell` (third-party bars and launchers keep working), `tearing-control` (games),
@@ -432,6 +433,7 @@ glass windows with traffic lights.
   calloop; **winit backend** (runs as a window).
   - **Clipboard persistence:** Wayland drops the clipboard when the source app quits; we keep it. The compositor
     keeps a copy of the last clipboard contents (up to 10 MB, `clipboard.rs`) so copy → quit the app → paste works.
+    A clipboard set through `ext-data-control` is kept the same way once its client quits.
 - **Why:** Smithay + calloop (C3, C7); the winit backend lets us develop without logging out or risking the
   real session. The protocol list is what modern apps (Helium, Qt, GTK, games, VMs, noobsbot) need to run fully.
 - **Done when:** noobsbot-terminal and Helium run inside it with working keyboard, mouse, clipboard and
@@ -1597,9 +1599,10 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   library), the installer builds that release from source. Watch Arch soname bumps of the linked libraries.
 
 ### E6.11 Privileged protocols & permissions
-- **What it is:** some Wayland protocols let a client **record the screen, read every window title, inject input or
-  re-arrange monitors** (`wlr-screencopy`, `ext-image-copy-capture`, `wlr-output-management`, `ext-workspace`,
-  `ext-foreign-toplevel-list`, `virtual-keyboard`, `virtual-pointer`, `wlr-layer-shell`, `keyboard-shortcuts-inhibit`).
+- **What it is:** some Wayland protocols let a client **record the screen, read every window title, inject input,
+  read the clipboard or re-arrange monitors** (`wlr-screencopy`, `ext-image-copy-capture`, `wlr-output-management`,
+  `ext-workspace`, `ext-foreign-toplevel-list`, `virtual-keyboard`, `virtual-pointer`, `ext-data-control`,
+  `wlr-layer-shell`, `keyboard-shortcuts-inhibit`).
   Exposed to everyone, any app or script becomes a screen recorder or keylogger with no prompt.
 - **Design:** We ask "‹App› would like to record this computer's screen". These globals are only
   advertised to **trusted clients** (the portals, xwayland-satellite, our Settings app, anything started with
@@ -1622,7 +1625,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   layer-shell, output management, ext-workspace, foreign-toplevel-list and shortcuts-inhibit stay open to every
   unsandboxed client. Gating them would break ordinary bars, launchers and `wlr-randr`, unsandboxed apps already run
   as the user (with its files and its programs), and Flatpak apps never see them
-  (security-context).
+  (security-context). `ext-data-control` is offered only to clients of the trusted socket, with no alert: a clipboard
+  watcher is started on purpose, and the clipboard often holds passwords.
 
 ### E6.12 Input methods (typing Nepali, Hindi, CJK)
 - **What it is:** the Noto fonts (Part H) let the desktop *show* Devanagari and CJK; this lets the owner *type* them.
