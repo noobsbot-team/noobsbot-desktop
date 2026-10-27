@@ -451,7 +451,8 @@ impl State {
                     self.close_window(&window);
                 }
             }
-            // ponytail: closes the app's windows and lets the app decide to exit; a real quit comes with app tracking (M3).
+            // ponytail: closes the app's windows and lets the app decide to exit; one that stays running
+            // without windows (a tray app) isn't signalled.
             Action::QuitApp => self.app_windows(focused.as_ref()).iter().filter_map(|w| w.toplevel()).for_each(|t| t.send_close()),
             Action::Minimise => self.minimise(focused.into_iter().collect()),
             Action::Zoom => {
@@ -651,7 +652,7 @@ impl State {
             Action::ScreenRecord => {
                 let was = self.screenshots.recording.is_some();
                 self.toggle_recording();
-                // Nothing in the menu bar shows it yet, so say so.
+                // The menu bar shows the timer while it runs; the OSD says what the key did.
                 let (symbol, text) = match (was, self.screenshots.recording.is_some()) {
                     (_, true) => (Symbol::Record, "Recording"),
                     (true, false) => (Symbol::Stop, "Recording Stopped"),
@@ -682,7 +683,7 @@ impl State {
         let (program, args) = command.split_first()?;
         self.activation_state.retain_tokens(|_, data| data.timestamp.elapsed() < crate::wm::ACTIVATION_TIMEOUT);
         let token = self.activation_state.create_external_token(None).0.to_string();
-        // ponytail: fire and forget; supervised launching lives in apps.rs (M3).
+        // ponytail: fire and forget, nothing restarts it; callers that need the process keep its pid (quake, Orca).
         let mut command = std::process::Command::new(program);
         command.args(args).env("WAYLAND_DISPLAY", &self.socket_name).env("XDG_ACTIVATION_TOKEN", &token).env("DESKTOP_STARTUP_ID", &token);
         command.env("XCURSOR_SIZE", crate::backend::cursor::size(self.config.appearance.pointer_size).to_string());

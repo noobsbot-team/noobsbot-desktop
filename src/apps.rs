@@ -1,5 +1,5 @@
 //! The app index (E2.1): `.desktop` entries from the XDG data dirs, kept current with `notify`, and their icons from
-//! the icon theme (WhiteSur first), rasterised on first use. The dock uses it today; Spotlight and Launchpad (M4) too.
+//! the icon theme (WhiteSur first), rasterised on first use. The dock, Spotlight and Launchpad use it.
 
 use std::{
     collections::{HashMap, HashSet},
