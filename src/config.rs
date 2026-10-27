@@ -752,8 +752,6 @@ pub struct Dock {
     pub cycle_across_apps: bool,
     /// How a window goes into the dock and comes back (E5.5).
     pub minimise_effect: MinimiseEffect,
-    /// The Trash at the dock's right end, after a separator (E8.8).
-    pub show_trash: bool,
     /// Options ▸ Assign To, per dock app (item key): `"all"` (every Space) or `"<display>:<n>"` (its new windows
     /// open on Space n of that display).
     pub assign: BTreeMap<String, String>,
@@ -1115,7 +1113,6 @@ impl Default for Dock {
             scroll: DockScroll::On,
             cycle_across_apps: false,
             minimise_effect: MinimiseEffect::Scale,
-            show_trash: true,
             assign: BTreeMap::new(),
             displays: DockDisplays::All,
             outputs: BTreeMap::new(),

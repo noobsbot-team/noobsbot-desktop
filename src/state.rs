@@ -504,10 +504,6 @@ impl State {
                 state.schedule_redraw();
             }
         })?;
-        // The dock's Trash turns full or empty as files come and go (E8.8).
-        let (trash_tx, trash_rx) = channel::channel();
-        crate::shell::trash::watch(move || trash_tx.send(()).is_ok());
-        handle.insert_source(trash_rx, |_, _, state| state.schedule_redraw())?;
         // The dock's print-queue icon comes and goes with the jobs.
         let (print_tx, print_rx) = channel::channel();
         crate::shell::dock::watch_print_queue(move || print_tx.send(()).is_ok());

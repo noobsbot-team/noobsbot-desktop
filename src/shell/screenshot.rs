@@ -869,7 +869,7 @@ impl State {
         }
     }
 
-    /// No app took the drag: on the dock it is dropped there (the Trash trashes it); elsewhere the thumbnail comes
+    /// No app took the drag: on the dock it is dropped there (the app it lands on opens it); elsewhere the thumbnail comes
     /// back for another 5 s.
     pub fn thumbnail_cancelled(&mut self) {
         if !std::mem::take(&mut self.screenshots.dragging) {
