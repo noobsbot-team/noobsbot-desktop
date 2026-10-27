@@ -1558,7 +1558,9 @@ impl XdgActivationHandler for State {
     }
 
     /// Only the focused app may hand out tokens (a click or key in it opened something); we make our own in `spawn`.
+    /// Expired ones go first, as in `spawn`, so the table never grows.
     fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
+        self.activation_state.retain_tokens(|_, data| data.timestamp.elapsed() < wm::ACTIVATION_TIMEOUT);
         let focused = self.seat.get_keyboard().and_then(|k| k.current_focus());
         focused.and_then(|f| f.client()).is_some_and(|c| data.client_id == Some(c.id()))
     }
