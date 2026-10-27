@@ -28,7 +28,7 @@ pub const BANNER_W: i32 = 344;
 /// Banners keep this far from the right edge and from the bar.
 const BANNER_RIGHT: i32 = 12;
 const BANNER_TOP: i32 = 8;
-/// While the OSD shows, banners move down by this much (E2.7).
+/// While the OSD shows, banners spring down by this much (E2.7).
 const OSD_SHIFT: i32 = 56;
 const GAP: i32 = 8;
 pub const MAX_BANNERS: usize = 3;
@@ -79,6 +79,8 @@ pub struct Store {
     swipe: Option<Swipe>,
     /// The calendar's grid moving between months.
     slide: Option<Slide>,
+    /// The banners springing down out of the OSD's way (1) or back up (0).
+    dodge: Option<crate::spaces::Tween>,
 }
 
 /// A banner following two fingers sideways, then springing off or back once they lift.
@@ -301,10 +303,11 @@ pub fn card(n: &Notification, x: i32, y: i32, w: i32, hovered: bool, close: bool
     }
 }
 
-/// The banners on screen (newest on top), and the "+N more" pill under them when there are more than 3.
-pub fn banners(store: &Store, output_width: i32, osd: bool, preview: bool) -> (Vec<Card>, Option<(Rect, usize)>) {
+/// The banners on screen (newest on top), `dodge` (0 → 1) of the way down under the OSD, and the "+N more" pill under
+/// them when there are more than 3.
+pub fn banners(store: &Store, output_width: i32, dodge: f64, preview: bool) -> (Vec<Card>, Option<(Rect, usize)>) {
     let x = output_width - BANNER_RIGHT - BANNER_W;
-    let mut y = menubar::height() + BANNER_TOP + if osd { OSD_SHIFT } else { 0 };
+    let mut y = menubar::height() + BANNER_TOP + (dodge * f64::from(OSD_SHIFT)).round() as i32;
     let mut cards = Vec::new();
     for n in store.banners.iter().filter_map(|id| store.get(*id)).take(MAX_BANNERS) {
         let card = card(n, x, y, BANNER_W, store.hovered == Some(n.id), true, preview);
@@ -580,7 +583,10 @@ impl State {
         if self.center_open() {
             return (Vec::new(), None);
         }
-        let (mut cards, more) = banners(&self.notifications, self.first_geometry().map_or(0, |g| g.size.w), self.osd.is_some(), self.previews());
+        // Springing out of the OSD's way; an OSD set without `banners_dodge` (`--show`) moves them at once.
+        let osd = f64::from(u8::from(self.osd.is_some()));
+        let dodge = self.notifications.dodge.filter(|d| d.target() == osd).map_or(osd, |d| d.value(self.frame_time));
+        let (mut cards, more) = banners(&self.notifications, self.first_geometry().map_or(0, |g| g.size.w), dodge, self.previews());
         // Reduce motion: it stays put, and goes or stays when the fingers lift.
         if let Some(s) = self.notifications.swipe.filter(|_| !self.config.appearance.reduce_motion)
             && let Some(card) = cards.iter_mut().find(|c| c.id == s.id)
@@ -588,6 +594,18 @@ impl State {
             card.shift(s.offset(self.frame_time).round() as i32);
         }
         (cards, more)
+    }
+
+    /// The OSD came up (`shown`) or went: the banners spring down out of its way, or back up (E2.7).
+    pub fn banners_dodge(&mut self, shown: bool) {
+        let to = f64::from(u8::from(shown));
+        if self.notifications.dodge.is_some_and(|d| d.target() == to) {
+            return;
+        }
+        let now = Instant::now();
+        let from = self.notifications.dodge.map_or(1.0 - to, |d| d.value(now));
+        self.notifications.dodge = Some(crate::spaces::Tween::eased(from, to, self.config.appearance.reduce_motion));
+        crate::anim::extend(&mut self.anim_until, now + SMOOTH.settle());
     }
 
     /// Laptop battery, then Bluetooth devices that report one, then UPower's other peripherals: (name, percent).
@@ -1196,7 +1214,7 @@ mod tests {
             store.insert(note(id, "A"));
             store.banners.insert(0, id);
         }
-        let (cards, more) = banners(&store, 1280, false, true);
+        let (cards, more) = banners(&store, 1280, 0.0, true);
         assert_eq!(cards.len(), 3);
         assert_eq!(cards[0].id, 5);
         assert_eq!(cards[0].rect, Rectangle::new((1280 - 12 - 344, 32).into(), (344, 70).into()));
@@ -1204,13 +1222,14 @@ mod tests {
         assert_eq!(more.map(|(_, n)| n), Some(2));
         assert!(cards.iter().all(|c| c.rect.contains_rect(c.icon) && c.rect.contains_rect(c.body) && c.close.is_none()));
         // The OSD (top 28, 48 tall) never overlaps the first banner.
-        let (moved, _) = banners(&store, 1280, true, true);
+        let (moved, _) = banners(&store, 1280, 1.0, true);
         assert_eq!(moved[0].rect.loc.y, 32 + 56);
+        assert_eq!(banners(&store, 1280, 0.5, true).0[0].rect.loc.y, 32 + 28, "half way down its spring");
         assert!(!moved[0].rect.overlaps(super::super::osd_rect(1280)));
         // Hovered: the ✕ and the buttons appear, and the card grows to hold them.
         store.list[4].actions = vec![("default".into(), "Open".into()), ("reply".into(), "Reply".into())];
         store.hovered = Some(5);
-        let (cards, _) = banners(&store, 1280, false, true);
+        let (cards, _) = banners(&store, 1280, 0.0, true);
         assert_eq!(cards[0].actions.len(), 1);
         assert!(cards[0].close.is_some() && cards[0].rect.contains_rect(cards[0].actions[0].0));
         assert_eq!(banner_hit(&cards, more, cards[0].actions[0].0.to_f64().loc + Point::from((2.0, 2.0))), Some((Some(5), false, Some("reply".into()))));
@@ -1224,7 +1243,7 @@ mod tests {
             store.banners.insert(0, id);
         }
         store.hovered = Some(3);
-        let lay = || (banners(&store, 1280, false, true).0, center(&store, Size::from((1280, 3000)), true, (6, false), 2, 2, true, 0, &[true, false], true));
+        let lay = || (banners(&store, 1280, 0.0, true).0, center(&store, Size::from((1280, 3000)), true, (6, false), 2, 2, true, 0, &[true, false], true));
         let (small, small_c) = lay();
         let (big, big_c) = crate::text::with_scale(1.5, lay);
         // Line heights at 1.5: headline and body 24, subheadline 21, caption 20 (19.5 rounded), title3 30.
