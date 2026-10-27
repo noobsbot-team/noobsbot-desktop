@@ -225,6 +225,9 @@ week_numbers = false
 # Hide the menu bar until the pointer touches the top of the screen (or a menu is open); zoomed windows then use the
 # full height.
 auto_hide = false
+# The current Space beside the status items: "off", "number" (or a fullscreen app's name) or "dots" (one per Space on
+# that display, the current one filled). A click opens Mission Control.
+space_indicator = "off"
 
 [dock]
 # Pinned apps, left to right: desktop-file names (kate), app ids or commands. Apps that aren't installed are

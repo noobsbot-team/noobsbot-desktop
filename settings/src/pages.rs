@@ -475,6 +475,14 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Dock, "Menu Bar", "menu_bar.auto_hide", "Automatically hide and show the menu bar", "Shows when the pointer touches the top edge", Kind::Toggle),
     s(
         Page::Dock,
+        "Menu Bar",
+        "menu_bar.space_indicator",
+        "Show the current Space",
+        "A click opens Mission Control",
+        Kind::Choice(&[("off", "Off"), ("number", "Number"), ("dots", "Dots")]),
+    ),
+    s(
+        Page::Dock,
         "Windows",
         "windows.move_modifier",
         "Drag windows with",
