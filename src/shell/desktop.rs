@@ -52,6 +52,8 @@ const DRAG_START: f64 = 4.0;
 const FOLDER: &str = "folder";
 /// Drawn when the theme has no icon for a file's type.
 pub const FALLBACK_ICON: &str = "text-x-generic";
+/// Drawn for a launcher whose own icon the theme lacks.
+const APP_ICON: &str = "application-x-executable";
 
 /// A file on the desktop, or a mounted drive.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,7 +62,7 @@ pub struct Entry {
     pub name: String,
     /// An icon-theme name (or path) for `apps::Icons`.
     pub icon: String,
-    /// A drive's label, shown instead of `name`.
+    /// A drive's label or a launcher's app name, shown instead of `name`.
     pub label: Option<String>,
 }
 
@@ -288,7 +290,8 @@ impl Mime {
     }
 }
 
-/// The visible files of `dir`, by name (dotfiles and `~` backups hidden, as in Dolphin), with their icons.
+/// The visible files of `dir`, by name (dotfiles and `~` backups hidden, as in Dolphin), with their icons; a launcher
+/// (see `apps::launcher`) shows its app's name and icon.
 fn scan(dir: &Path, mime: &Mime, found: &mut HashMap<String, bool>) -> Vec<Entry> {
     let mut has = |name: &str| *found.entry(name.to_owned()).or_insert_with(|| crate::apps::find_icon(name).is_some());
     let mut entries: Vec<Entry> = std::fs::read_dir(dir)
@@ -299,6 +302,10 @@ fn scan(dir: &Path, mime: &Mime, found: &mut HashMap<String, bool>) -> Vec<Entry
             let name = e.file_name().into_string().ok()?;
             if name.starts_with('.') || name.ends_with('~') {
                 return None;
+            }
+            if let Some(app) = crate::apps::launcher(&e.path()) {
+                let icon = if has(&app.icon) { app.icon } else { APP_ICON.into() };
+                return Some(Entry { name, icon, label: Some(app.name) });
             }
             let icon =
                 if e.path().is_dir() { FOLDER.to_owned() } else { mime.icons(&name).into_iter().find(|i| has(i)).unwrap_or_else(|| FALLBACK_ICON.into()) };
