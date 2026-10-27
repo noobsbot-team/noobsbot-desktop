@@ -216,6 +216,8 @@ pub struct State {
     pub alert: Option<crate::shell::alert::Alert>,
     /// Its once-a-second countdown.
     pub alert_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// When the alert appeared (a permission alert ignores input at first).
+    pub alert_opened: Instant,
     /// logind's sleep blockers, read when Control Center opens.
     pub sleep_blockers: Vec<crate::services::login::Inhibitor>,
     /// Keep Awake is on: no idle dim, screen-off or sleep. Not saved: it ends with the session.
@@ -341,10 +343,9 @@ impl State {
         let socket = ListeningSocketSource::new_auto()?;
         let socket_name = socket.socket_name().to_os_string();
         let handle = event_loop.handle();
-        handle.insert_source(socket, |stream, _, state| {
-            if let Err(err) = state.display_handle.insert_client(stream, Arc::new(ClientState::default())) {
-                tracing::warn!("rejected client: {err}");
-            }
+        handle.insert_source(socket, |stream, _, state| match state.display_handle.insert_client(stream, Arc::new(ClientState::default())) {
+            Ok(client) => crate::perms::record_program(&state.display_handle, &client),
+            Err(err) => tracing::warn!("rejected client: {err}"),
         })?;
         // `noobsbot-desktop --trusted <command>` connects here (E6.11, perms.rs).
         let trusted = ListeningSocketSource::with_name(&crate::perms::trusted_socket(&socket_name).to_string_lossy())?;
@@ -593,6 +594,7 @@ impl State {
             osd: None,
             alert: None,
             alert_timer: None,
+            alert_opened: Instant::now(),
             sleep_blockers: Vec::new(),
             keep_awake: false,
             expanded: None,
@@ -1118,6 +1120,8 @@ pub struct ClientState {
     pub security_context: Option<SecurityContext>,
     /// Connected through the trusted socket (perms.rs): may record the screen without asking.
     pub trusted: bool,
+    /// Its program and name, read as it connected (perms.rs).
+    pub program: std::sync::OnceLock<(std::path::PathBuf, String)>,
 }
 
 impl ClientData for ClientState {
