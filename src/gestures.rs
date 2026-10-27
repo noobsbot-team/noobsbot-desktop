@@ -1,8 +1,9 @@
 //! Touchpad system gestures (E5.3) and hot corners (E5.4). The recogniser and the corner logic are pure; the `State`
 //! glue at the bottom feeds them libinput's events and the pointer.
 //!
-//! The Space slide follows a sideways swipe 1:1, and Mission Control a swipe up or down; both spring on from where the
-//! fingers let go (`Live`). Launchpad pages follow too. Reduce motion: the action happens on release instead.
+//! The Space slide follows a sideways swipe 1:1, Mission Control a swipe up or down and App Exposé one down; each
+//! springs on from where the fingers let go (`Live`). Launchpad pages follow too. Reduce motion: the action happens on
+//! release instead.
 
 use std::time::{Duration, Instant};
 
@@ -69,6 +70,8 @@ pub enum Live {
     Space(String, f64),
     /// Mission Control opening, or (`true`) closing.
     Mission(bool),
+    /// App Exposé of this app opening.
+    Expose(String),
 }
 
 impl Live {
@@ -77,7 +80,7 @@ impl Live {
         match self {
             Live::Space(..) => Gesture::Space(0),
             Live::Mission(false) => Gesture::MissionControl,
-            Live::Mission(true) => Gesture::AppExpose,
+            Live::Mission(true) | Live::Expose(_) => Gesture::AppExpose,
         }
     }
 }
@@ -299,7 +302,8 @@ impl State {
         }
         match self.gesture.as_ref().and_then(|t| t.live.clone()) {
             Some(Live::Space(key, width)) => self.swipe_space(&key, -dx / width),
-            Some(Live::Mission(closing)) => self.mission_hold(f64::from(u8::from(closing)) - dy / FULL),
+            Some(Live::Mission(closing)) => self.mission_hold(f64::from(u8::from(closing)) - dy / FULL, None),
+            Some(Live::Expose(app)) => self.mission_hold(dy / FULL, Some(app)),
             None => {}
         }
         true
@@ -321,9 +325,10 @@ impl State {
             let width = self.space.output_geometry(&output)?.size.w;
             return Some(Live::Space(self.output_key(&output), f64::from(width.max(1))));
         }
-        // Up opens Mission Control, down closes it (or App Exposé); the rest acts on release.
+        // Up opens Mission Control, down App Exposé of the focused app, or closes either; the rest acts on release.
         match self.mission.as_ref().map(|m| m.progress.target() == 1.0) {
             None if !horizontal && dy < 0.0 => Some(Live::Mission(false)),
+            None if !horizontal && dy > 0.0 => self.focused_window().and_then(|w| self.app_key(&w)).map(Live::Expose),
             Some(true) if !horizontal && dy > 0.0 => Some(Live::Mission(true)),
             _ => None,
         }
@@ -346,6 +351,10 @@ impl State {
                 // Only a swipe the way it started commits.
                 let commit = !cancelled && (dy < 0.0) != closing && commits(dy, FULL, vy);
                 self.mission_let_go(commit != closing, -vy * 1000.0 / FULL);
+                return true;
+            }
+            Some(Live::Expose(_)) => {
+                self.mission_let_go(!cancelled && dy > 0.0 && commits(dy, FULL, vy), vy * 1000.0 / FULL);
                 return true;
             }
             None if locked => return true,
@@ -464,8 +473,10 @@ mod tests {
         touchpad.gesture_mission_control = false;
         assert!(!touchpad.allows(space.gesture()) && !touchpad.allows(open.gesture()));
         assert!(touchpad.allows(close.gesture()));
+        let expose = Live::Expose("app".into());
+        assert!(touchpad.allows(expose.gesture()));
         touchpad.gesture_app_expose = false;
-        assert!(!touchpad.allows(close.gesture()));
+        assert!(!touchpad.allows(close.gesture()) && !touchpad.allows(expose.gesture()));
     }
 
     #[test]
