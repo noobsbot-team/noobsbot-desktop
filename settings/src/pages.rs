@@ -502,6 +502,14 @@ pub const SETTINGS: &[Setting] = &[
     s(
         Page::Dock,
         "Windows",
+        "windows.keyboard_nudge",
+        "Move and resize with the keyboard",
+        "Super+Alt+arrows move the window 16 px; add Shift to resize it",
+        Kind::Toggle,
+    ),
+    s(
+        Page::Dock,
+        "Windows",
         "windows.double_click_title",
         "Double-click a title bar to",
         "",

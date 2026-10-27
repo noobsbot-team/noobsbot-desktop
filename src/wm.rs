@@ -204,6 +204,30 @@ pub fn resize_anchor(start: Rect, edges: Edges, symmetric: bool, size: Size<i32,
     (x, y).into()
 }
 
+/// A keyboard nudge or resize step (E1.2), in px.
+pub const NUDGE: i32 = 16;
+
+/// `rect` moved `dx`, `dy` keyboard steps, kept reachable as a dragged window is (no magnetic edges).
+pub fn nudge(rect: Rect, area: Rect, dx: i32, dy: i32) -> Point<i32, Logical> {
+    move_to(Rect::new(rect.loc + Point::from((dx * NUDGE, dy * NUDGE)), rect.size), area, &[], false)
+}
+
+/// `rect`'s size with its right and bottom edges moved `dx`, `dy` keyboard steps (out when positive), within the app's
+/// `min` / `max`; growing stops at the work area's right and bottom edges.
+pub fn nudge_size(rect: Rect, area: Rect, dx: i32, dy: i32, min: Size<i32, Logical>, max: Size<i32, Logical>) -> Size<i32, Logical> {
+    let edges = Edges { right: true, bottom: true, ..Default::default() };
+    let delta = Point::from((f64::from(dx * NUDGE), f64::from(dy * NUDGE)));
+    let mut size = resize_size(rect, edges, delta, ResizeMods { symmetric: false, keep_aspect: false }, min, max);
+    // A window already past the edge isn't pulled in.
+    if dx > 0 {
+        size.w = size.w.min((area.loc.x + area.size.w - rect.loc.x).max(rect.size.w));
+    }
+    if dy > 0 {
+        size.h = size.h.min((area.loc.y + area.size.h - rect.loc.y).max(rect.size.h));
+    }
+    size
+}
+
 /// Invisible resize zones reach this far outside every window edge...
 pub const ZONE_OUTSIDE: f64 = 8.0;
 /// ...and this far into the window.
@@ -434,6 +458,23 @@ mod tests {
         assert_eq!(tiny, MIN_SIZE.into(), "no hints: floor");
         let hinted = resize_size(start, br, (-1000.0, 1000.0).into(), NONE, (300, 100).into(), (0, 500).into());
         assert_eq!(hinted, (300, 500).into(), "app min and max win");
+    }
+
+    #[test]
+    fn keyboard_steps_move_and_resize_16_px() {
+        let (area, w, free) = (rect(0, 24, 1000, 800), rect(100, 100, 400, 300), Size::from(NO_HINT));
+        assert_eq!(nudge(w, area, 1, 0), (116, 100).into());
+        assert_eq!(nudge(w, area, 0, -1), (100, 84).into());
+        assert_eq!(nudge(rect(100, 30, 400, 300), area, 0, -1), (100, 24).into(), "title bar stays below the menu bar");
+        assert_eq!(nudge(rect(955, 100, 400, 300), area, 1, 0), (960, 100).into(), "40 px stay on screen");
+        assert_eq!(nudge_size(w, area, 1, 0, free, free), (416, 300).into());
+        assert_eq!(nudge_size(w, area, 0, -1, free, free), (400, 284).into());
+        assert_eq!(nudge_size(rect(100, 100, 200, 300), area, -1, 0, free, free), (200, 300).into(), "no hints: floor");
+        assert_eq!(nudge_size(w, area, 1, 0, free, (410, 0).into()), (410, 300).into(), "app max");
+        assert_eq!(nudge_size(w, area, 0, -1, (0, 290).into(), free), (400, 290).into(), "app min");
+        assert_eq!(nudge_size(rect(100, 100, 890, 300), area, 1, 0, free, free), (900, 300).into(), "stops at the work area");
+        assert_eq!(nudge_size(rect(700, 100, 400, 300), area, 1, 0, free, free), (400, 300).into(), "already past: kept");
+        assert_eq!(nudge_size(rect(700, 100, 400, 300), area, -1, 0, free, free), (384, 300).into(), "and can still shrink");
     }
 
     #[test]

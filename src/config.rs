@@ -586,6 +586,8 @@ pub struct Windows {
     pub focus: FocusMode,
     /// The Log Out alert's "Reopen windows when logging back in" box, as last left (E8.8).
     pub reopen_at_login: bool,
+    /// The `nudge` and `resize` shortcuts (E1.2): off, their keys go to the app.
+    pub keyboard_nudge: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
@@ -1227,6 +1229,7 @@ impl Default for Windows {
             spaces: 0,
             focus: FocusMode::Click,
             reopen_at_login: true,
+            keyboard_nudge: false,
         }
     }
 }
@@ -1289,6 +1292,14 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("Super+Ctrl+Right", "tile right"),
         ("Super+Ctrl+Up", "tile top"),
         ("Super+Ctrl+Down", "tile bottom"),
+        ("Super+Alt+Left", "nudge left"),
+        ("Super+Alt+Right", "nudge right"),
+        ("Super+Alt+Up", "nudge up"),
+        ("Super+Alt+Down", "nudge down"),
+        ("Super+Alt+Shift+Left", "resize left"),
+        ("Super+Alt+Shift+Right", "resize right"),
+        ("Super+Alt+Shift+Up", "resize up"),
+        ("Super+Alt+Shift+Down", "resize down"),
         ("Super+grave", "cycle-app-windows"),
         ("Super+Up", "mission-control"),
         ("Super+Down", "app-expose"),

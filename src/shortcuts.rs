@@ -122,6 +122,13 @@ pub enum Action {
     MoveToDisplay(i32),
     /// Tiles the focused window against these work-area edges; none: Fill (E8.5, Super+Ctrl+arrows).
     Tile(crate::wm::Edges),
+    /// The focused window `x`, `y` keyboard steps, or (`resize`) its right and bottom edges (E1.2, Super+Alt+arrows,
+    /// with Shift to resize; only with `[windows] keyboard_nudge`).
+    Nudge {
+        x: i32,
+        y: i32,
+        resize: bool,
+    },
     /// Centres the focused window.
     Center,
     /// Keeps the focused window above the others, or not.
@@ -153,7 +160,7 @@ pub enum Action {
 impl Action {
     /// Steps again while its key is held (`repeat_every`).
     pub fn held_repeats(&self) -> bool {
-        matches!(self, Action::Volume(_) | Action::VolumeFine(_) | Action::Brightness(_))
+        matches!(self, Action::Volume(_) | Action::VolumeFine(_) | Action::Brightness(_) | Action::Nudge { .. })
     }
 
     /// Runs while locked (E8.7): sound, brightness, media, eject and the keyboard layout; nothing that shows the
@@ -288,6 +295,8 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("move-to-display", "previous") => Some(Action::MoveToDisplay(-1)),
         ("tile", side) => tile_edges(side).map(Action::Tile),
         ("fill", "") => Some(Action::Tile(Default::default())),
+        ("nudge", way) => arrow(way).map(|(x, y)| Action::Nudge { x, y, resize: false }),
+        ("resize", way) => arrow(way).map(|(x, y)| Action::Nudge { x, y, resize: true }),
         ("center" | "centre", "") => Some(Action::Center),
         ("keep-on-top", "") => Some(Action::KeepOnTop),
         ("cycle-app-windows", "") => Some(Action::CycleAppWindows),
@@ -313,6 +322,17 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
 /// "1"…"9": a dock icon or an input source, from 0.
 fn dock_n(n: &str) -> Option<usize> {
     n.parse::<usize>().ok().filter(|n| (1..=9).contains(n)).map(|n| n - 1)
+}
+
+/// "left", "right", "up", "down": one step that way.
+fn arrow(way: &str) -> Option<(i32, i32)> {
+    match way {
+        "left" => Some((-1, 0)),
+        "right" => Some((1, 0)),
+        "up" => Some((0, -1)),
+        "down" => Some((0, 1)),
+        _ => None,
+    }
 }
 
 /// "left", "top-right", …: the work-area edges a tile is against; a half or a quarter, nothing else.
@@ -342,6 +362,8 @@ pub fn from_config(config: &Config) -> Vec<(Binding, Action)> {
                 table.push((binding, Action::Switcher { back: false, held }));
                 table.push((Binding { shift: true, ..binding }, Action::Switcher { back: true, held }));
             }
+            // Off, the keys go to the app.
+            (Some(_), Some(Action::Nudge { .. })) if !config.windows.keyboard_nudge => {}
             (Some(binding), Some(action)) => table.push((binding, action)),
             _ => tracing::warn!("config: shortcut `{combo}` = `{text}` not understood, skipped"),
         }
@@ -578,6 +600,11 @@ impl State {
             Action::Tile(edges) => {
                 if let Some(window) = focused {
                     self.tile_to(&window, edges);
+                }
+            }
+            Action::Nudge { x, y, resize } => {
+                if let Some(window) = focused {
+                    self.nudge(&window, x, y, resize);
                 }
             }
             Action::Center => {
@@ -819,6 +846,22 @@ mod tests {
         assert_eq!(a("move-to-space left"), Some(Action::MoveToSpace(-1)));
         assert_eq!(a("move-to-display previous"), Some(Action::MoveToDisplay(-1)));
         assert_eq!(a("keep-on-top"), Some(Action::KeepOnTop));
+        assert_eq!(a("nudge up"), Some(Action::Nudge { x: 0, y: -1, resize: false }));
+        assert_eq!(a("resize right"), Some(Action::Nudge { x: 1, y: 0, resize: true }));
+        assert_eq!(a("nudge"), None);
+        assert!(a("nudge left").unwrap().held_repeats());
+    }
+
+    #[test]
+    fn nudge_keys_only_with_keyboard_nudge() {
+        let super_alt = ModifiersState { logo: true, alt: true, ..Default::default() };
+        assert_eq!(lookup(&from_config(&Config::default()), &super_alt, Keysym::Left, false), None, "off: the app gets them");
+        let mut config = Config::default();
+        config.windows.keyboard_nudge = true;
+        let table = from_config(&config);
+        assert_eq!(lookup(&table, &super_alt, Keysym::Left, false), Some(&Action::Nudge { x: -1, y: 0, resize: false }));
+        let shifted = ModifiersState { shift: true, ..super_alt };
+        assert_eq!(lookup(&table, &shifted, Keysym::Down, false), Some(&Action::Nudge { x: 0, y: 1, resize: true }));
     }
 
     #[test]
