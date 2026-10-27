@@ -685,6 +685,25 @@ fn heartbeat(event_loop: &EventLoop<'static, State>) {
         TimeoutAction::ToDuration(SECOND)
     };
     if let Err(err) = event_loop.handle().insert_source(Timer::from_duration(SECOND), beat) {
-        tracing::warn!("no session heartbeat: {err}");
+        return tracing::warn!("no session heartbeat: {err}");
+    }
+    // SAFETY: one backtrace now loads the unwinder, so `stuck` never allocates; it is then this signal's handler.
+    unsafe {
+        let mut frame = [std::ptr::null_mut(); 1];
+        libc::backtrace(frame.as_mut_ptr(), 1);
+        libc::signal(libc::SIGUSR1, stuck as extern "C" fn(libc::c_int) as libc::sighandler_t);
+    }
+}
+
+/// SIGUSR1, sent to the loop's thread by the watchdog before it stops a frozen loop: where it is stuck goes to the
+/// log, as offsets into the binary (`addr2line -fCi -e <the binary with its symbols> <offset>`).
+extern "C" fn stuck(_: libc::c_int) {
+    const HEAD: &[u8] = b"noobsbot-desktop: the event loop is stuck in\n";
+    let mut frames = [std::ptr::null_mut(); 64];
+    // SAFETY: write and the warmed-up backtrace are async-signal-safe; `frames` outlives both calls.
+    unsafe {
+        libc::write(2, HEAD.as_ptr().cast(), HEAD.len());
+        let n = libc::backtrace(frames.as_mut_ptr(), frames.len() as libc::c_int);
+        libc::backtrace_symbols_fd(frames.as_ptr(), n, 2);
     }
 }

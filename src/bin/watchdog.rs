@@ -1,7 +1,8 @@
 //! `noobsbot-desktop-watchdog <compositor> [args...]` (E6.4, E6.13): the session wrapper runs the compositor through
 //! this. The compositor gets a pipe's write end in `NOOBSBOT_HEARTBEAT_FD` and writes a byte a second from its event
 //! loop; once it has beaten and the startup grace is over, 10 s of silence means a frozen loop (perhaps while
-//! locked), so it is stopped (SIGTERM, then SIGKILL after 2 s) and the wrapper sees a crash. Exits with the
+//! locked), so it logs where it is stuck (SIGUSR1), is stopped (SIGTERM, then SIGKILL after 2 s) and the wrapper
+//! sees a crash. Exits with the
 //! compositor's status (128 + signal when killed), like a shell would.
 //!
 //! Timing is `Instant`, which is `CLOCK_MONOTONIC` on Linux: it stops during suspend, so a sleep never counts as silence.
@@ -72,6 +73,10 @@ fn supervise(command: &mut Command) -> io::Result<ExitStatus> {
         }
         if frozen(start.elapsed(), beat.map(|b: Instant| b.elapsed())) {
             eprintln!("noobsbot-desktop-watchdog: no heartbeat for {}s, stopping the compositor", SILENCE.as_secs());
+            // Its loop thread (the main one, whose id is the pid) logs where it is stuck first.
+            // SAFETY: tgkill only signals our own child's main thread, which handles SIGUSR1 once it has beaten.
+            unsafe { libc::syscall(libc::SYS_tgkill, child.id(), child.id(), libc::SIGUSR1) };
+            sleep(Duration::from_secs(1));
             return stop(&mut child);
         }
     }
