@@ -3,9 +3,10 @@
 
 use std::{
     collections::{HashMap, HashSet},
+    hash::{DefaultHasher, Hash, Hasher},
     path::{Path, PathBuf},
     sync::{Arc, mpsc},
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use notify::{RecursiveMode, Watcher};
@@ -536,8 +537,9 @@ pub enum Rasterised {
 }
 
 impl Job {
-    /// `files` remembers each name's theme files across jobs (the index.theme reads and stats).
-    fn run(self, files: &mut HashMap<String, Vec<(u32, PathBuf)>>) -> Rasterised {
+    /// `files` remembers each name's theme files across jobs (the index.theme reads and stats); `disk`: the icon
+    /// disk cache, on the thread only.
+    fn run(self, files: &mut HashMap<String, Vec<(u32, PathBuf)>>, disk: Option<&Path>) -> Rasterised {
         match self {
             Job::Theme(name, px) => {
                 // A miss isn't remembered: an install brings the icon along, and `Icons::clear` asks again.
@@ -551,7 +553,10 @@ impl Job {
                         files.entry(name.clone()).or_insert(found)
                     }
                 };
-                let rendered = pick(found, px).and_then(|p| rasterise(p, px));
+                let rendered = pick(found, px).and_then(|p| match disk {
+                    Some(dir) => rasterise_cached(p, px, dir),
+                    None => rasterise(p, px),
+                });
                 Rasterised::Theme { name, px, rendered }
             }
             Job::Tray(images, px) => Rasterised::Tray { rendered: tray::render(&images, px), images, px },
@@ -585,8 +590,9 @@ impl Icons {
         let (jobs, rx) = mpsc::channel::<Job>();
         let spawned = std::thread::Builder::new().name("icon-raster".into()).spawn(move || {
             let mut files = HashMap::new();
+            let disk = icon_cache();
             while let Ok(job) = rx.recv() {
-                if tx.send(job.run(&mut files)).is_err() {
+                if tx.send(job.run(&mut files, Some(&disk))).is_err() {
                     return;
                 }
             }
@@ -615,7 +621,7 @@ impl Icons {
             return Some(rendered).filter(|r| r.width > 0);
         }
         let Some(jobs) = &self.jobs else {
-            self.receive(Job::Theme(key.0, px).run(&mut HashMap::new()));
+            self.receive(Job::Theme(key.0, px).run(&mut HashMap::new(), None));
             return self.cache.get(&(name.to_owned(), px)).filter(|r| r.width > 0);
         };
         if self.pending.insert(key.clone()) && jobs.send(Job::Theme(key.0.clone(), px)).is_err() {
@@ -642,7 +648,7 @@ impl Icons {
                 Arc::new(Rendered { pixels: vec![0; (px * px * 4) as usize], width: px, height: px, baseline: px, truncated: false })
             }
             None => {
-                self.receive(Job::Tray(images.clone(), px).run(&mut HashMap::new()));
+                self.receive(Job::Tray(images.clone(), px).run(&mut HashMap::new(), None));
                 self.tray(images, px)
             }
         }
@@ -664,6 +670,51 @@ impl Icons {
             }
         }
     }
+}
+
+/// The rasterised-icon disk cache (E1.11), pruned by housekeeping. `v1`: the key's hash (`DefaultHasher` may change
+/// with Rust) and the file layout; a new one starts empty.
+pub fn icon_cache() -> PathBuf {
+    crate::config::xdg_dir("XDG_CACHE_HOME", ".cache").join("noobsbot-desktop/icons/v1")
+}
+
+/// The cache file name of icon file `path` (changed at `mtime`) drawn at `px`.
+fn cache_key(path: &Path, mtime: SystemTime, px: u32) -> String {
+    let mut hasher = DefaultHasher::new();
+    (path, mtime, px).hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+/// A cache file: width and height (u32 LE), then the premultiplied RGBA.
+fn encode(r: &Rendered) -> Vec<u8> {
+    [&r.width.to_le_bytes()[..], &r.height.to_le_bytes(), &r.pixels].concat()
+}
+
+/// `encode` undone; `None` for a short or torn file.
+fn decode(bytes: &[u8]) -> Option<Rendered> {
+    let (head, pixels) = bytes.split_first_chunk::<8>()?;
+    let (w, h) = head.split_at(4);
+    let (width, height) = (u32::from_le_bytes(w.try_into().ok()?), u32::from_le_bytes(h.try_into().ok()?));
+    (pixels.len() as u64 == u64::from(width) * u64::from(height) * 4).then(|| Rendered {
+        pixels: pixels.to_vec(),
+        width,
+        height,
+        baseline: height,
+        truncated: false,
+    })
+}
+
+/// `rasterise` through the disk cache in `dir`: a hit skips the SVG/PNG decode, a miss is drawn and written.
+fn rasterise_cached(path: &Path, px: u32, dir: &Path) -> Option<Rendered> {
+    let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+    let file = dir.join(cache_key(path, mtime, px));
+    if let Some(hit) = std::fs::read(&file).ok().and_then(|bytes| decode(&bytes)) {
+        return Some(hit);
+    }
+    let rendered = rasterise(path, px)?;
+    // A torn write fails `decode` next time and is drawn again.
+    let _ = std::fs::create_dir_all(dir).and_then(|()| std::fs::write(&file, encode(&rendered)));
+    Some(rendered)
 }
 
 /// usvg with `<image href="file">` turned off: an icon file never pulls other files off the disk (B18).
@@ -933,6 +984,31 @@ mod tests {
         let mut icons = Icons::default();
         assert!(icons.get(path.to_str().unwrap(), 32).is_some());
         assert!(icons.get("no-such-icon-anywhere", 32).is_none());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn icon_disk_cache_key_and_file() {
+        let (path, t) = (Path::new("/usr/share/icons/a.svg"), SystemTime::UNIX_EPOCH);
+        let key = cache_key(path, t, 32);
+        assert_eq!(key, cache_key(path, t, 32));
+        assert_ne!(key, cache_key(path, t + Duration::from_secs(1), 32), "a changed file");
+        assert_ne!(key, cache_key(path, t, 64), "another size");
+        assert_ne!(key, cache_key(Path::new("/usr/share/icons/b.svg"), t, 32));
+        let r = Rendered { pixels: (0..24).collect(), width: 3, height: 2, baseline: 2, truncated: false };
+        let bytes = encode(&r);
+        assert_eq!(decode(&bytes), Some(r));
+        assert_eq!(decode(&bytes[..bytes.len() - 1]), None, "torn");
+        assert_eq!(decode(&[1, 0]), None);
+        // Drawn and written once, then read back instead of drawn.
+        let dir = std::env::temp_dir().join(format!("noobsbot-icon-cache-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (svg, cache) = (dir.join("i.svg"), dir.join("cache"));
+        std::fs::write(&svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>"#).unwrap();
+        assert_eq!(rasterise_cached(&svg, 16, &cache).map(|r| r.width), Some(16));
+        let file = std::fs::read_dir(&cache).unwrap().next().unwrap().unwrap().path();
+        std::fs::write(&file, &bytes).unwrap();
+        assert_eq!(rasterise_cached(&svg, 16, &cache), decode(&bytes), "a hit");
         let _ = std::fs::remove_dir_all(dir);
     }
 

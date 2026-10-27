@@ -2087,30 +2087,44 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
     }
 }
 
-/// General ▸ Software Update's rows above the settings (version, Update Now, More Info…) and below them (Last
-/// checked with Check Now, Revert to). The desktop checks; this only shows its `update.json`.
+/// General ▸ Software Update's rows above the settings (the desktop's and noobsbot-terminal's versions, Update Now,
+/// More Info…) and below them (Last checked with Check Now, Revert to). The desktop checks; this only shows its
+/// `update.json`.
 fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message>>) {
     let t = app.tokens;
     let u = &app.update;
     let push = |label: &'static str, message: Option<Message>| button(text(label).size(12)).padding([3, 10]).style(t.push(false)).on_press_maybe(message);
+    // A version row: its name, status, the newer release's size and date, More Info… and `update`.
+    let version_row = |name: String, status: String, info: String, url: &Option<String>, update: Option<Element<'static, Message>>| {
+        let mut controls = row![].spacing(8).align_y(Alignment::Center);
+        if let Some(url) = url {
+            controls = controls.push(push("More Info…", Some(Message::OpenUrl(url.clone()))));
+        }
+        controls = controls.extend(update);
+        let mut words = column![text(name).size(13)].spacing(2);
+        for line in [status, info].into_iter().filter(|l| !l.is_empty()) {
+            words = words.push(text(line).size(11).color(t.secondary()));
+        }
+        Element::from(row![words.width(Length::Fill), controls].spacing(12).align_y(Alignment::Center).padding([8, 12]))
+    };
     let status = match (&u.available, u.ready) {
         (Some(v), true) => format!("{v} is available, downloaded and verified"),
         (Some(v), false) => format!("{v} is available; install it with ./install.sh --update or your package manager"),
         (None, _) if u.checked > 0 => "Up to date".to_owned(),
         (None, _) => String::new(),
     };
-    let mut controls = row![].spacing(8).align_y(Alignment::Center);
-    if let Some(url) = &u.url {
-        controls = controls.push(push("More Info…", Some(Message::OpenUrl(url.clone()))));
+    let update = u.ready.then(|| button(text("Update Now").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::UpdateCall("Install")).into());
+    let info = u.available.as_ref().map(|_| release_info(u.size, u.published.as_deref())).unwrap_or_default();
+    let mut before = vec![version_row(format!("Noobsbot Desktop {}", version()), status, info, &u.url, update)];
+    // Its own installer or package updates it: only shown, with its release page.
+    if let Some(term) = &u.terminal {
+        let status = match &term.available {
+            Some(v) => format!("{v} is available; install it with its installer or your package manager"),
+            None => "Up to date".to_owned(),
+        };
+        let info = term.available.as_ref().map(|_| release_info(term.size, term.published.as_deref())).unwrap_or_default();
+        before.push(version_row(format!("Noobsbot Terminal {}", term.installed), status, info, &term.url, None));
     }
-    if u.ready {
-        controls = controls.push(button(text("Update Now").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::UpdateCall("Install")));
-    }
-    let mut words = column![text(format!("Noobsbot Desktop {}", version())).size(13)].spacing(2);
-    if !status.is_empty() {
-        words = words.push(text(status).size(11).color(t.secondary()));
-    }
-    let head = row![words.width(Length::Fill), controls].spacing(12).align_y(Alignment::Center).padding([8, 12]).into();
     let check = push(if app.checking { "Checking…" } else { "Check Now" }, (!app.checking).then_some(Message::UpdateCall("Check")));
     let mut after = vec![line(
         t,
@@ -2122,7 +2136,14 @@ fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message
         let revert = push("Revert", Some(Message::UpdateCall("Revert")));
         after.push(line(t, format!("Revert to {v}"), "The version before the last update, at next login", revert.into()));
     }
-    (vec![head], after)
+    (before, after)
+}
+
+/// "12.3 MB · 27 Oct 2026": a release's download size and date, either left out when unknown.
+fn release_info(size: Option<u64>, published: Option<&str>) -> String {
+    let size = size.map(|bytes| format!("{:.1} MB", bytes as f64 / 1e6));
+    let date = published.and_then(|p| chrono::DateTime::parse_from_rfc3339(p).ok()).map(|d| d.with_timezone(&chrono::Local).format("%-d %b %Y").to_string());
+    size.into_iter().chain(date).collect::<Vec<_>>().join(" · ")
 }
 
 /// "Last checked": Never, Today, 9:41, Yesterday, 9:41, or 12 Oct 2026.
@@ -2511,6 +2532,14 @@ mod tests {
         assert_eq!(checked(at(27, 9, 41), now), "Today, 9:41");
         assert_eq!(checked(at(26, 23, 5), now), "Yesterday, 23:05");
         assert_eq!(checked(at(12, 9, 41), now), "12 Oct 2026");
+    }
+
+    #[test]
+    fn release_size_and_date() {
+        assert_eq!(release_info(Some(12_345_678), Some("2026-10-27T12:00:00Z")), "12.3 MB · 27 Oct 2026");
+        assert_eq!(release_info(None, Some("2026-10-27T12:00:00Z")), "27 Oct 2026");
+        assert_eq!(release_info(Some(900_000), Some("garbage")), "0.9 MB");
+        assert_eq!(release_info(None, None), "");
     }
 
     #[test]
