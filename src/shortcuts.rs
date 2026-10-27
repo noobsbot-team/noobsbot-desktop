@@ -48,6 +48,8 @@ pub enum Action {
     DisplayOff,
     /// Ask, then restart, shut down or log out (logo menu).
     Power(crate::shell::alert::Power),
+    /// The power button: Shut Down's alert with Sleep and Restart (E6.5).
+    PowerButton,
     /// The app switcher (E4.5); `back`: Shift was held. `held` is the binding, whose modifiers keep it open.
     Switcher {
         back: bool,
@@ -250,6 +252,7 @@ pub fn action(config: &Config, text: &str) -> Option<Action> {
         ("restart", "") => Some(Action::Power(Power::Restart)),
         ("shut-down", "") => Some(Action::Power(Power::ShutDown)),
         ("log-out", "") => Some(Action::Power(Power::LogOut)),
+        ("power-button", "") => Some(Action::PowerButton),
         // "cycle" is the M1 name.
         ("switcher" | "cycle", "") => Some(Action::Switcher { back: false, held: Default::default() }),
         ("force-quit", "") => Some(Action::ForceQuit),
@@ -501,6 +504,7 @@ impl State {
                 self.tray_press(i, at, false);
             }
             Action::Power(power) => self.open_alert(power),
+            Action::PowerButton => self.open_ask(crate::shell::alert::Kind::PowerButton),
             Action::Switcher { back, held } => self.switcher_start(back, held),
             Action::ForceQuit => self.open_force_quit(),
             Action::Spotlight => {
