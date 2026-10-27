@@ -3,7 +3,12 @@
 //! timer set to the next alarm.
 // ponytail: local files only; CalDAV/Google would sync into the same files (or feed `Calendar::events` directly).
 
-use std::{cell::RefCell, path::PathBuf, sync::mpsc, time::Duration};
+use std::{
+    cell::RefCell,
+    path::{Path, PathBuf},
+    sync::mpsc,
+    time::Duration,
+};
 
 use chrono::{Local, NaiveDate, TimeZone, Weekday};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -51,8 +56,8 @@ type View = ((i32, u32, Weekday, i64), Vec<bool>, Vec<Upcoming>);
 #[derive(Default)]
 pub struct Calendar {
     pub events: Vec<Event>,
-    /// The entries being watched, and the watcher (dropping it ends its worker thread).
-    watching: Option<(Vec<String>, RecommendedWatcher)>,
+    /// The entries being watched, the folders watched for them, and the watcher (dropping it ends its worker thread).
+    watching: Option<(Vec<String>, Vec<PathBuf>, RecommendedWatcher)>,
     loaded: Option<channel::Sender<Vec<Event>>>,
     timer: Option<RegistrationToken>,
     /// Alarms up to here (unix seconds) have gone off.
@@ -116,6 +121,17 @@ fn watch_dir(entry: &str) -> PathBuf {
     if path.is_dir() { path } else { path.parent().map(PathBuf::from).unwrap_or_default() }
 }
 
+/// What watches `dir`: itself, else its nearest parent that exists, until it appears.
+fn nearest(dir: &Path) -> Option<&Path> {
+    dir.ancestors().find(|d| d.is_dir())
+}
+
+/// A change at `path` matters to the folders `dirs`: it's in one of them, or is one of them (or a parent) appearing
+/// or going. A neighbour in a parent watched until a folder appears doesn't.
+fn concerns(dirs: &[PathBuf], path: &Path) -> bool {
+    dirs.iter().any(|d| path.parent() == Some(d.as_path()) || d.starts_with(path))
+}
+
 /// `--show calendar-events`: a sample calendar around today, written to `dir`; returns its file.
 pub fn sample(dir: &std::path::Path) -> std::io::Result<PathBuf> {
     let today = Local::now().date_naive();
@@ -139,10 +155,15 @@ pub fn sample(dir: &std::path::Path) -> std::io::Result<PathBuf> {
 }
 
 impl State {
-    /// (Re)starts watching `[calendar] files` when it changed: a worker loads them now and after every change.
+    /// (Re)starts watching `[calendar] files` when it changed, or a folder it names appeared or went: a worker loads
+    /// them now and after every change. A folder that isn't there yet is watched through its nearest parent.
     pub fn calendar_watch(&mut self) {
         let entries = self.config.calendar.files.clone();
-        if self.calendar.watching.as_ref().is_some_and(|(w, _)| *w == entries) {
+        let dirs: Vec<PathBuf> = entries.iter().map(|e| watch_dir(e)).collect();
+        let mut watched: Vec<PathBuf> = dirs.iter().filter_map(|d| nearest(d)).map(Path::to_owned).collect();
+        watched.sort();
+        watched.dedup();
+        if self.calendar.watching.as_ref().is_some_and(|(e, w, _)| *e == entries && *w == watched) {
             return;
         }
         self.calendar.watching = None;
@@ -170,11 +191,7 @@ impl State {
             Ok(w) => w,
             Err(err) => return tracing::warn!("calendar: no live updates: {err}"),
         };
-        let mut dirs: Vec<PathBuf> = entries.iter().map(|e| watch_dir(e)).collect();
-        dirs.sort();
-        dirs.dedup();
-        // ponytail: a folder that doesn't exist yet isn't watched until the config changes or the desktop restarts.
-        for dir in dirs.iter().filter(|d| d.is_dir()) {
+        for dir in &watched {
             if let Err(err) = watcher.watch(dir, RecursiveMode::NonRecursive) {
                 tracing::warn!("calendar: {}: {err}", dir.display());
             }
@@ -186,7 +203,8 @@ impl State {
             }
             // Ends when the watcher (and its sender) is dropped.
             while let Ok(event) = rx.recv() {
-                if !event.is_ok_and(|e| e.kind.is_create() || e.kind.is_modify() || e.kind.is_remove()) {
+                let changed = |e: &notify::Event| e.kind.is_create() || e.kind.is_modify() || e.kind.is_remove();
+                if !event.is_ok_and(|e| changed(&e) && e.paths.iter().any(|p| concerns(&dirs, p))) {
                     continue;
                 }
                 while rx.recv_timeout(Duration::from_millis(300)).is_ok() {}
@@ -198,7 +216,7 @@ impl State {
         if let Err(err) = spawned {
             return tracing::warn!("calendar: {err}");
         }
-        self.calendar.watching = Some((entries, watcher));
+        self.calendar.watching = Some((entries, watched, watcher));
     }
 
     fn calendar_loaded(&mut self, events: Vec<Event>) {
@@ -207,6 +225,8 @@ impl State {
         self.calendar.view.replace(None);
         self.calendar_arm();
         self.schedule_redraw();
+        // A missing folder may have appeared (or a watched one gone): watch where it is now.
+        self.calendar_watch();
     }
 
     /// One timer, to the next alarm (or the horizon, to look again).
@@ -328,6 +348,25 @@ mod tests {
         assert_eq!(when(&u(local(2026, 10, 21, 14, 0), local(2026, 10, 21, 14, 0), false), now, true), "Tomorrow 14:00");
         assert_eq!(when(&u(local(2026, 10, 23, 0, 0), local(2026, 10, 24, 0, 0), true), now, false), "Friday · All day");
         assert_eq!(when(&u(local(2026, 10, 20, 0, 0), local(2026, 10, 21, 0, 0), true), now, false), "All day");
+    }
+
+    #[test]
+    fn a_missing_folder_is_watched_through_its_nearest_parent() {
+        let dir = std::env::temp_dir().join(format!("noobsbot-desktop-test-calendar-parent-{}", std::process::id()));
+        let deep = dir.join("a/b");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(nearest(&deep), Some(dir.as_path()));
+        std::fs::create_dir_all(&deep).unwrap();
+        assert_eq!(nearest(&deep), Some(deep.as_path()));
+        assert_eq!(nearest(Path::new("missing/relative")), None);
+        // In the folder, or a step towards it appearing; not a neighbour in a watched parent.
+        let dirs = [deep.clone()];
+        assert!(concerns(&dirs, &deep.join("work.ics")));
+        assert!(concerns(&dirs, &dir.join("a")));
+        assert!(concerns(&dirs, &deep));
+        assert!(!concerns(&dirs, &dir.join("notes.txt")));
+        assert!(!concerns(&dirs, &deep.join("c/deeper.ics")));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
