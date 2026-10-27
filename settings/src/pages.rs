@@ -2241,8 +2241,8 @@ fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message
     (before, after)
 }
 
-/// "Pre-release · 12.3 MB · 27 Oct 2026": whether `version` is a pre-release (Stable offers them while there is no
-/// stable release yet), its download size and date, each left out when not so or unknown.
+/// "Pre-release · 12.3 MB · 27 Oct 2026": whether `version` is a pre-release (only Beta offers them), its download
+/// size and date, each left out when not so or unknown.
 fn release_info(version: &str, size: Option<u64>, published: Option<&str>) -> String {
     let pre = version.contains('-').then(|| "Pre-release".to_owned());
     let size = size.map(|bytes| format!("{:.1} MB", bytes as f64 / 1e6));
@@ -2613,18 +2613,19 @@ pub fn keep_sheet<'a>(t: Tokens, left: u64) -> Element<'a, Message> {
     iced::widget::opaque(container(sheet).center(Length::Fill).style(t.dim()))
 }
 
-/// The desktop's version: the root package's, which release-plz bumps (this crate's own stays 0.1.0).
+/// The desktop's version: the root package's, set from the release tag by `.github/set-version.sh` (this crate's own
+/// stays 0.1.0).
 pub fn version() -> &'static str {
     let manifest = include_str!("../../Cargo.toml");
     manifest.lines().find_map(|l| l.strip_prefix("version = ")).map_or("", |v| v.trim_matches('"'))
 }
 
-/// "1.3", "1.0 beta 1", "1.0 RC 2": MAJOR.MINOR and any pre-release, as About names the version (the desktop's
-/// update notice too, `update::short`).
+/// "1.3", "1.0 beta 1", "1.0.1 beta 2", "1.0 RC 2": MAJOR.MINOR and any pre-release, with the patch when the
+/// pre-release leads to one, as About names the version (the desktop's update notice too, `update::short`).
 fn short_version(v: &str) -> String {
     let (core, pre) = v.split_once('-').unwrap_or((v, ""));
-    let minor = core.rsplit_once('.').map_or(core, |(minor, _)| minor);
-    format!("{minor} {}", pre.replace('.', " ").replacen("rc", "RC", 1)).trim_end().to_owned()
+    let name = core.rsplit_once('.').filter(|(_, patch)| pre.is_empty() || *patch == "0").map_or(core, |(minor, _)| minor);
+    format!("{name} {}", pre.replace('.', " ").replacen("rc", "RC", 1)).trim_end().to_owned()
 }
 
 fn note<'a>(t: Tokens, words: &'a str) -> Element<'a, Message> {
@@ -2763,6 +2764,7 @@ mod tests {
     fn about_names_a_pre_release() {
         assert_eq!(short_version("1.3.2"), "1.3");
         assert_eq!(short_version("1.0.0-beta.1"), "1.0 beta 1");
+        assert_eq!(short_version("1.0.1-beta.2"), "1.0.1 beta 2");
         assert_eq!(short_version("1.0.0-rc.2"), "1.0 RC 2");
         assert_eq!(short_version("1.1.0-alpha"), "1.1 alpha");
     }
