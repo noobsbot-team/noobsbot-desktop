@@ -4,6 +4,7 @@
 use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
@@ -27,21 +28,35 @@ pub fn volume_args(percent: u8) -> (String, String) {
     (format!("--volume={:.1}", 20.0 * factor.log10()), format!("--volume={factor:.2}"))
 }
 
+/// Sounds playing at once, at most `MAX_PLAYING`: any client can ring the bell, and a new one past that is dropped.
+static PLAYING: AtomicUsize = AtomicUsize::new(0);
+const MAX_PLAYING: usize = 2;
+
+/// Takes a place in `playing`; false when all `MAX_PLAYING` are taken.
+fn claim(playing: &AtomicUsize) -> bool {
+    playing.try_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < MAX_PLAYING).then_some(n + 1)).is_ok()
+}
+
 /// Plays sound `name` from the sound theme, else the freedesktop one straight to PipeWire, at `volume` percent; off
-/// the calling thread. Silent at 0.
+/// the calling thread. Silent at 0, and while `MAX_PLAYING` others still play.
 pub fn play(name: &str, volume: u8) {
     // A theme name only: the config file's value goes into a path.
-    if volume == 0 || name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if volume == 0 || name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') || !claim(&PLAYING) {
         return;
     }
     let name = name.to_owned();
-    std::thread::spawn(move || {
+    let spawned = std::thread::Builder::new().name("sound".into()).spawn(move || {
         let (db, factor) = volume_args(volume);
         let quiet = |c: &mut Command| c.stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
         if !quiet(Command::new("canberra-gtk-play").args(["-i", &name, &db])) {
             quiet(Command::new("pw-play").args([&factor, &format!("/usr/share/sounds/freedesktop/stereo/{name}.oga")]));
         }
+        PLAYING.fetch_sub(1, Ordering::Relaxed);
     });
+    if let Err(err) = spawned {
+        PLAYING.fetch_sub(1, Ordering::Relaxed);
+        tracing::warn!("sound: {err}");
+    }
 }
 
 /// The login sound's file: `desktop-login` from any sound theme in `themes`, else `service-login`, else none.
@@ -62,7 +77,7 @@ impl State {
         if std::fs::File::create_new(dir.join(format!("login-sound{session}"))).is_err() || !self.config.sound.startup_sound {
             return;
         }
-        std::thread::spawn(|| {
+        let spawned = std::thread::Builder::new().name("login sound".into()).spawn(|| {
             let mut themes: Vec<_> = std::fs::read_dir("/usr/share/sounds").map(|d| d.flatten().map(|e| e.path()).collect()).unwrap_or_default();
             // The freedesktop theme's first, the rest by name.
             themes.sort_by_key(|t| (!t.ends_with("freedesktop"), t.clone()));
@@ -70,6 +85,9 @@ impl State {
                 let _ = Command::new("pw-play").arg(file).stdout(Stdio::null()).stderr(Stdio::null()).status();
             }
         });
+        if let Err(err) = spawned {
+            tracing::warn!("login sound: {err}");
+        }
     }
 
     pub fn ring_bell(&mut self) {
@@ -127,6 +145,15 @@ mod tests {
         assert_eq!(found(&["/s/freedesktop/stereo/service-login.oga", "/s/ocean/stereo/desktop-login.ogg"]), Some("/s/ocean/stereo/desktop-login.ogg".into()));
         assert_eq!(found(&["/s/freedesktop/stereo/service-login.oga"]), Some("/s/freedesktop/stereo/service-login.oga".into()));
         assert_eq!(found(&["/s/freedesktop/stereo/bell.oga"]), None);
+    }
+
+    #[test]
+    fn at_most_two_sounds_at_once() {
+        let playing = AtomicUsize::new(0);
+        assert!(claim(&playing) && claim(&playing));
+        assert!(!claim(&playing), "a third is dropped");
+        playing.fetch_sub(1, Ordering::Relaxed);
+        assert!(claim(&playing), "one finished: room again");
     }
 
     #[test]
