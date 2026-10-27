@@ -1,4 +1,4 @@
-//! The menu bar (E2.2): a 24 px `bar` glass strip (taller with larger text) across the top. Left: the logo and the
+//! The menu bar (E2.2): a 30 px `bar` glass strip (taller with larger text) across the top. Left: the logo and the
 //! active app's name; right: tray icons, Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4).
 //! Every piece is kept between frames, so a frame where only the minute changed damages only the clock.
 
@@ -29,20 +29,23 @@ use crate::{
 };
 
 /// D: the bar's height in logical px at text size 1; windows stay below it.
-const HEIGHT: i32 = 24;
-const EDGE: i32 = 14;
+const HEIGHT: i32 = 30;
+const EDGE: i32 = 18;
 /// Between right-side items (E2.2); this, `TIGHT`, `APP_WIDTH` and `MIN_APP` grow with the text size.
-const GAP: i32 = 12;
-const LOGO_GAP: i32 = 18;
+const GAP: i32 = 16;
+const LOGO_GAP: i32 = 22;
 /// Between a battery's percentage and its symbol.
-const TIGHT: i32 = 4;
-const SYMBOL: u16 = 16;
+const TIGHT: i32 = 5;
+/// Symbols, the logo and tray icons, square.
+const SYMBOL: u16 = 20;
 /// The app's name is ellipsised past this, and dropped when less than `MIN_APP` is free.
-const APP_WIDTH: i32 = 300;
-const MIN_APP: i32 = 40;
+const APP_WIDTH: i32 = 375;
+const MIN_APP: i32 = 50;
+/// Body a step up (13 / 16 → 16 / 20) for the taller bar; its labels are this, or this at 600.
+const BODY: Style = Style { size: 16, line_height: 20, ..ui::BODY };
 /// The Space dots' size and the step from one to the next.
-const DOT: i32 = 6;
-const DOT_STEP: i32 = 10;
+const DOT: i32 = 8;
+const DOT_STEP: i32 = 13;
 
 /// The Space dots' x offsets for `count` Spaces, and their whole width.
 pub fn dots(count: usize) -> (Vec<i32>, i32) {
@@ -244,7 +247,7 @@ impl MenuBar {
     /// The pressed pill behind `item`: rounded, a little inside the bar's height. Menus line up with it.
     pub fn pill(&self, item: BarItem) -> Option<Rect> {
         let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
-        Some(Rectangle::new((area.loc.x + ts(GAP) / 2 - 6, 2).into(), (area.size.w - ts(GAP) + 12, height() - 4).into()))
+        Some(Rectangle::new((area.loc.x + ts(GAP) / 2 - 8, 3).into(), (area.size.w - ts(GAP) + 16, height() - 6).into()))
     }
 
     /// How many tray icons, from the first, didn't fit and are in the "»" menu.
@@ -289,7 +292,7 @@ impl MenuBar {
         }
 
         let color = ui::label(dark);
-        let body = Style { color, tabular: true, ..ui::BODY };
+        let body = Style { color, tabular: true, ..BODY };
         let symbol = |symbols: &mut Symbols, s: Symbol| symbols.get(s, Weight::Regular, SYMBOL, scale, color);
         // (piece, gap after it, item); left pieces then right ones, each list in reading order. The right group is
         // laid out first: the app's name takes what is left of the bar, or goes when that is too little.
@@ -300,7 +303,7 @@ impl MenuBar {
             Some(Space::Number(n)) => right.push((text.label(&n.to_string(), Style { weight: 600, ..body }, 100, scale), ts(GAP), BarItem::Space)),
             Some(Space::App(id)) => {
                 let name = self.names.entry(id.clone()).or_insert_with(|| app_name(id));
-                right.push((text.label(name, Style { weight: 600, ..body }, 120, scale), ts(GAP), BarItem::Space));
+                right.push((text.label(name, Style { weight: 600, ..body }, 150, scale), ts(GAP), BarItem::Space));
             }
             Some(Space::Dots { count, .. }) => {
                 let w = (f64::from(dots(*count).1) * scale).round() as u32;
@@ -321,11 +324,11 @@ impl MenuBar {
             }
             right.push((symbol(symbols, item.symbol), if item.badge { ts(1) } else { ts(GAP) }, BarItem::Status(i)));
             if item.badge {
-                right.push((text.label("!", Style { size: 11, weight: 700, ..body }, 100, scale), ts(GAP), BarItem::Status(i)));
+                right.push((text.label("!", Style { size: 14, weight: 700, ..body }, 100, scale), ts(GAP), BarItem::Status(i)));
             }
         }
         right.push((symbol(symbols, Symbol::Sliders), ts(GAP), BarItem::ControlCenter));
-        right.push((text.label(&content.clock, body, 300, scale), 0, BarItem::Clock));
+        right.push((text.label(&content.clock, body, 375, scale), 0, BarItem::Clock));
 
         let logical = |r: &Rendered| (f64::from(r.width) / scale).round() as i32;
         let logo = symbols.get(Symbol::Logo, Weight::Regular, SYMBOL, scale, color);
@@ -342,7 +345,7 @@ impl MenuBar {
         let mut left = vec![(logo, LOGO_GAP, BarItem::Logo)];
         if let Some(app) = content.app.as_ref().filter(|_| room >= ts(MIN_APP)) {
             let name = self.names.entry(app.clone()).or_insert_with(|| app_name(app));
-            left.push((text.label(name, Style { color, ..ui::HEADLINE }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
+            left.push((text.label(name, Style { color, weight: 600, ..BODY }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
         }
         let mut rects = Vec::new();
         let mut x = EDGE;
@@ -390,7 +393,7 @@ impl MenuBar {
                 if self.pill.as_ref().is_none_or(|(k, _)| *k != key) {
                     // The open item is held down: the D7 pressed overlay.
                     let fill = ui::overlay(ui::State::Pressed, dark).unwrap_or_default();
-                    self.pill = Some((key, shaders.glass_shape(rect, fill, 4.0, false, dark, scale)));
+                    self.pill = Some((key, shaders.glass_shape(rect, fill, 5.0, false, dark, scale)));
                 }
                 out.extend(self.pill.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
             }
@@ -491,7 +494,7 @@ mod tests {
         assert_eq!(dots(1), (vec![0], DOT));
         assert_eq!(dots(3), (vec![0, DOT_STEP, 2 * DOT_STEP], 2 * DOT_STEP + DOT));
         // Grown with the text size, still evenly spaced.
-        crate::text::with_scale(1.5, || assert_eq!(dots(2), (vec![0, 15], 15 + 9)));
+        crate::text::with_scale(1.5, || assert_eq!(dots(2), (vec![0, 20], 20 + 12)));
     }
 
     #[test]
@@ -501,14 +504,14 @@ mod tests {
 
     #[test]
     fn the_app_name_gives_way_to_the_right_group() {
-        // 1280 wide with a usual right group: the full 300 px name fits.
-        assert!(app_room(1280, 16, 400) >= APP_WIDTH);
+        // 1280 wide with a usual right group: the full 375 px name fits.
+        assert!(app_room(1280, 20, 400) >= APP_WIDTH);
         // 1024 wide with tray icons, a battery and a long clock: ellipsised to what is left, still clear of the group.
-        let room = app_room(1024, 16, 700);
+        let room = app_room(1024, 20, 700);
         assert!((MIN_APP..APP_WIDTH).contains(&room));
-        assert_eq!(EDGE + 16 + LOGO_GAP + room + GAP, 1024 - EDGE - 700);
+        assert_eq!(EDGE + 20 + LOGO_GAP + room + GAP, 1024 - EDGE - 700);
         // Portrait: the right group leaves nothing worth showing, so the name goes.
-        assert!(app_room(600, 16, 540) < MIN_APP);
+        assert!(app_room(600, 20, 540) < MIN_APP);
     }
 
     #[test]
@@ -522,30 +525,32 @@ mod tests {
 
     #[test]
     fn tray_icons_overflow_from_the_left() {
-        let tray = [16, 16, 16, 16];
+        let tray = [20, 20, 20, 20];
         // Room for all: none hidden.
-        assert_eq!(tray_overflow(1280, 16, 400, &tray, 10), 0);
+        assert_eq!(tray_overflow(1280, 20, 400, &tray, 10), 0);
         // Tight: just enough go that the name keeps its minimum beside the "»".
-        let fixed = 1024 - 2 * EDGE - 16 - LOGO_GAP - GAP - MIN_APP - (10 + GAP) - 2 * (16 + GAP);
-        assert_eq!(tray_overflow(1024, 16, fixed, &tray, 10), 2);
+        let fixed = 1024 - 2 * EDGE - 20 - LOGO_GAP - GAP - MIN_APP - (10 + GAP) - 2 * (20 + GAP);
+        assert_eq!(tray_overflow(1024, 20, fixed, &tray, 10), 2);
         // Nothing fits even with every icon gone: all of them are in the menu.
-        assert_eq!(tray_overflow(600, 16, 700, &tray, 10), 4);
-        assert_eq!(tray_overflow(600, 16, 700, &[], 10), 0);
+        assert_eq!(tray_overflow(600, 20, 700, &tray, 10), 4);
+        assert_eq!(tray_overflow(600, 20, 700, &[], 10), 0);
     }
 
     #[test]
     fn the_bar_grows_with_the_text_size() {
         let area = Rectangle::new((0, 0).into(), (1280, 800).into());
-        assert_eq!(height(), 24);
+        assert_eq!(height(), 30);
+        // 20 px lines and symbols: 5 px clear above and below.
+        assert_eq!((height() - i32::from(BODY.line_height), height() - i32::from(SYMBOL)), (10, 10));
         crate::text::with_scale(1.5, || {
-            // A 13 px label shapes into a 24 px line at 1.5: the 36 px bar holds it with room to spare.
-            assert_eq!(height(), 36);
-            assert_eq!(below(area), Rectangle::new((0, 36).into(), (1280, 764).into()));
-            assert!(reveals(true, 30.0), "the whole taller bar keeps it shown");
+            // A 16 px label shapes into a 30 px line at 1.5: the 45 px bar holds it with room to spare.
+            assert_eq!(height(), 45);
+            assert_eq!(below(area), Rectangle::new((0, 45).into(), (1280, 755).into()));
+            assert!(reveals(true, 40.0), "the whole taller bar keeps it shown");
             // Items space out and the app's name keeps a wider minimum.
-            assert_eq!(app_room(1280, 16, 400), 1280 - 2 * EDGE - 16 - LOGO_GAP - 18 - 400);
+            assert_eq!(app_room(1280, 20, 400), 1280 - 2 * EDGE - 20 - LOGO_GAP - 24 - 400);
             let tray = [24; 4];
-            let fixed = 1024 - 2 * EDGE - 24 - LOGO_GAP - 18 - 60 - (15 + 18) - 2 * (24 + 18);
+            let fixed = 1024 - 2 * EDGE - 24 - LOGO_GAP - 24 - 75 - (15 + 24) - 2 * (24 + 24);
             assert_eq!(tray_overflow(1024, 24, fixed, &tray, 15), 2);
         });
     }
@@ -553,9 +558,9 @@ mod tests {
     #[test]
     fn windows_stay_below_the_bar() {
         let area = Rectangle::new((0, 0).into(), (1280, 800).into());
-        assert_eq!(below(area), Rectangle::new((0, 24).into(), (1280, 776).into()));
+        assert_eq!(below(area), Rectangle::new((0, 30).into(), (1280, 770).into()));
         // A layer bar already reserved more: unchanged.
-        let lower = Rectangle::new((0, 30).into(), (1280, 770).into());
+        let lower = Rectangle::new((0, 36).into(), (1280, 764).into());
         assert_eq!(below(lower), lower);
     }
 }

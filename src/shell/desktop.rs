@@ -742,10 +742,11 @@ mod tests {
     #[test]
     fn grid_fills_from_the_top_right() {
         let g = grid();
-        // (800 - 32 - 72) / 110 = 6 rows.
-        assert_eq!((g.rows, g.cols, g.top), (6, 12, 32));
-        assert_eq!(g.rect((0, 0)), Rectangle::new((1280 - 12 - 100, 32).into(), (100, 110).into()));
-        assert_eq!(g.rect((1, 2)).loc, (1280 - 12 - 200, 32 + 220).into());
+        // (800 - 38 - 72) / 110 = 6 rows, from 8 px under the bar.
+        let top = menubar::height() + 8;
+        assert_eq!((g.rows, g.cols, g.top), (6, 12, top));
+        assert_eq!(g.rect((0, 0)), Rectangle::new((1280 - 12 - 100, top).into(), (100, 110).into()));
+        assert_eq!(g.rect((1, 2)).loc, (1280 - 12 - 200, top + 220).into());
         // Back from a point to its cell, clamped onto the grid.
         assert_eq!(g.at((1200.0, 40.0).into()), (0, 0));
         assert_eq!(g.at((1100.0, 300.0).into()), (1, 2));

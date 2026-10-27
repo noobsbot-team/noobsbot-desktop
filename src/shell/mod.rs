@@ -1283,9 +1283,10 @@ mod tests {
         let output = Size::from((1280, 1200));
         let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
-        assert_eq!(rect, Rectangle::new((8, 28).into(), (200, 142).into()));
-        assert_eq!(cells[0], Rectangle::new((13, 33).into(), (190, 22).into()));
-        assert_eq!(cells[2].loc.y, 33 + 22 + 11);
+        let top = menubar::height() + DROP;
+        assert_eq!(rect, Rectangle::new((8, top).into(), (200, 142).into()));
+        assert_eq!(cells[0], Rectangle::new((13, top + 5).into(), (190, 22).into()));
+        assert_eq!(cells[2].loc.y, top + 5 + 22 + 11);
         assert!(cells.iter().all(|c| rect.contains_rect(*c)));
         // Near the right edge it moves left to fit.
         assert_eq!(menu_layout(Anchor::Below(1200), output, 200, &rows, 0).0.loc.x, 1280 - 8 - 200);
@@ -1331,7 +1332,8 @@ mod tests {
         let shown = |cells: &[Rect]| cells.iter().filter(|c| c.size.h > 0).count();
         // Under the bar: clipped at the bottom margin, whole rows only.
         let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
-        assert_eq!(rect.loc.y, 28);
+        let top = menubar::height() + DROP;
+        assert_eq!(rect.loc.y, top);
         assert!(rect.loc.y + rect.size.h <= 768 - 8 && rect.size.h > 700);
         assert!(cells[0].size.h == 22 && shown(&cells) < 40 && cells.iter().all(|c| c.size.h == 0 || rect.contains_rect(*c)));
         // Scrolled past the end: clamped so the last row is the last one shown.
@@ -1339,9 +1341,9 @@ mod tests {
         assert!(cells[39].size.h == 22 && cells[0].size.h == 0 && shown(&cells) == shown(&menu_layout(Anchor::Below(6), output, 200, &rows, 0).1));
         // Scrolled one row: the first row goes, the next one shows up at the top.
         let (_, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 1);
-        assert!(cells[0].size.h == 0 && cells[1].loc.y == 33);
+        assert!(cells[0].size.h == 0 && cells[1].loc.y == top + 5);
         // A dock menu taller than the screen moves down under the bar instead of off the top; a short one is unmoved.
-        assert_eq!(menu_layout(Anchor::Above((640, 740).into()), output, 200, &rows, 0).0.loc.y, 28);
+        assert_eq!(menu_layout(Anchor::Above((640, 740).into()), output, 200, &rows, 0).0.loc.y, top);
         assert_eq!(menu_layout(Anchor::Above((640, 740).into()), output, 200, &rows[..3], 0).0.loc.y, 740 - 4 - 76);
         // A context menu near the bottom is pushed up to fit.
         let (rect, _) = menu_layout(Anchor::At((100, 700).into()), output, 200, &rows[..5], 0);
