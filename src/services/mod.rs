@@ -265,8 +265,15 @@ pub struct Services {
 
 impl Services {
     pub fn send(&self, command: Command) {
+        use std::sync::atomic::Ordering;
+        let brightness = matches!(command, Command::Brightness(_));
+        if brightness {
+            brightness::PENDING.fetch_add(1, Ordering::AcqRel);
+        }
         // Unbounded; fails only once the thread has gone, which it has already logged.
-        let _ = self.commands.try_send(command);
+        if self.commands.try_send(command).is_err() && brightness {
+            brightness::PENDING.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 

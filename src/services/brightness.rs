@@ -7,7 +7,11 @@ use std::{
     os::fd::AsRawFd,
     path::Path,
     process::Command,
-    sync::{OnceLock, mpsc},
+    sync::{
+        OnceLock,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
     time::{Duration, Instant},
 };
 
@@ -25,9 +29,16 @@ trait Session {
     fn set_brightness(&self, subsystem: &str, name: &str, brightness: u32) -> zbus::Result<()>;
 }
 
+/// Our own changes to every display asked for (`Services::send` counts them) and not yet done. A drag asks once per
+/// pixel: only the newest is set, and readings meanwhile are stale, pulling the slider back under the finger.
+pub static PENDING: AtomicUsize = AtomicUsize::new(0);
+
 /// Sends the current brightness in percent; `None` without a backlight (desktop monitors). At start, after our own
-/// changes, and on the backlight's udev events (`watch`).
+/// changes, and on the backlight's udev events (`watch`). Not while one of ours is pending: its own reading follows.
 pub fn send_current(updates: &Sender<Update>) {
+    if PENDING.load(Ordering::Acquire) > 0 {
+        return;
+    }
     let percent = panel();
     tracing::debug!(?percent, "brightness");
     let _ = updates.send(Update::Brightness(percent));
@@ -83,36 +94,40 @@ pub fn redetect() {
     }
 }
 
-/// The built-in panel (no bus: skipped) and every DDC/CI monitor.
+/// The built-in panel (no bus: skipped) and every DDC/CI monitor; skipped when a newer value is queued (`PENDING`).
 pub async fn set(bus: Option<&Connection>, percent: u8, updates: &Sender<Update>) {
-    if let Some(ddc) = DDC.get() {
+    let newest = PENDING.load(Ordering::Acquire) <= 1;
+    if newest && let Some(ddc) = DDC.get() {
         let _ = ddc.send(Ddc::Set(percent));
     }
-    set_backlight(bus, percent, updates).await;
+    let done = newest && set_backlight(bus, percent).await;
+    PENDING.fetch_sub(1, Ordering::AcqRel);
+    if done {
+        send_current(updates);
+    }
 }
 
 /// One display, by connector: the built-in panel's backlight, or a DDC/CI monitor.
 pub async fn set_output(bus: Option<&Connection>, connector: String, percent: u8, updates: &Sender<Update>) {
     if display_info::built_in(&connector) {
-        set_backlight(bus, percent, updates).await;
+        if set_backlight(bus, percent).await {
+            send_current(updates);
+        }
     } else if let Some(ddc) = DDC.get() {
         let _ = ddc.send(Ddc::SetOne(connector, percent));
     }
 }
 
-/// The built-in panel, through logind; no bus: skipped.
-async fn set_backlight(bus: Option<&Connection>, percent: u8, updates: &Sender<Update>) {
-    let Some(bus) = bus else { return };
-    let Some(name) = backlight() else { return };
-    let Some(max) = backlight_number(&name, "max_brightness") else { return };
+/// The built-in panel, through logind; no bus: skipped. Whether it was set.
+async fn set_backlight(bus: Option<&Connection>, percent: u8) -> bool {
+    let Some(bus) = bus else { return false };
+    let Some(name) = backlight() else { return false };
+    let Some(max) = backlight_number(&name, "max_brightness") else { return false };
     let result = match SessionProxy::new(bus).await {
         Ok(session) => session.set_brightness("backlight", &name, to_raw(percent, max)).await,
         Err(err) => Err(err),
     };
-    match result {
-        Ok(()) => send_current(updates),
-        Err(err) => tracing::warn!("brightness {percent}%: {err}"),
-    }
+    result.inspect_err(|err| tracing::warn!("brightness {percent}%: {err}")).is_ok()
 }
 
 enum Ddc {
@@ -369,5 +384,24 @@ mod tests {
         for p in 1..=100 {
             assert_eq!(to_percent(to_raw(p, 96_000), 96_000), p);
         }
+    }
+
+    #[test]
+    fn a_drag_hides_readings_until_its_last_change() {
+        let mut events = smithay::reexports::calloop::EventLoop::<usize>::try_new().unwrap();
+        let (tx, rx) = smithay::reexports::calloop::channel::channel();
+        events.handle().insert_source(rx, |_, _, readings| *readings += 1).unwrap();
+        let mut readings = 0;
+        // Three changes queued: the udev reading of the first is stale, and so are the first two.
+        PENDING.store(3, Ordering::Release);
+        send_current(&tx);
+        futures_lite::future::block_on(set(None, 40, &tx));
+        futures_lite::future::block_on(set(None, 45, &tx));
+        events.dispatch(Some(Duration::ZERO), &mut readings).unwrap();
+        assert_eq!((PENDING.load(Ordering::Acquire), readings), (1, 0));
+        futures_lite::future::block_on(set(None, 50, &tx));
+        send_current(&tx);
+        events.dispatch(Some(Duration::ZERO), &mut readings).unwrap();
+        assert_eq!((PENDING.load(Ordering::Acquire), readings), (0, 1), "the last one done: readings again");
     }
 }
