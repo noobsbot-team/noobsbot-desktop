@@ -734,8 +734,8 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Done when:** every item opens its menu (the battery its menu; Wi-Fi, Bluetooth, volume their module); tray icons from apps appear and their menus work; Sleep/Restart/
   Shut Down/Log Out work.
 - **Built:** `src/render/menubar.rs`, `src/shell/mod.rs` (logo, app and status menus), the tray host
-  (`src/services/tray.rs`), power actions through logind with the 60 s alert (`src/shell/alert.rs`). Not yet: a count
-  badge on Software Update… (the row becomes "Restart to Update…" instead).
+  (`src/services/tray.rs`), power actions through logind with the 60 s alert (`src/shell/alert.rs`), the pending
+  updates' count beside Software Update… (in the shortcut column; "Restart to Update…" once a download is verified).
 
 ### E2.3 Control Center
 - **What it is:** quick controls in one glass panel, opened from ⊞ in the menu bar.
@@ -1683,8 +1683,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   path), **Last checked** + **Check Now** (`org.noobsbot.Desktop.Update.Check`; the shell writes
   `$XDG_STATE_HOME/noobsbot-desktop/update.json`), **Revert to x.y.z** for 30 days after an update while the older
   `versions/<v>` exists (`noobsbot-desktop-update --revert <v>`, then the log-out alert), and the red "1" on System
-  Settings in the dock while an update is pending. Not yet: the noobsbot-terminal row (the checker doesn't know that
-  repo), size and release date on the version row.
+  Settings in the dock while an update is pending (the count of pending updates), the noobsbot-terminal row (its
+  version from `noobsbot --version`; only shown with More Info…, since its own installer or package updates it), and
+  the download size and release date under each version row ("12.3 MB · 27 Oct 2026").
 - **Built with:** `release-plz` + GitHub Actions (CI); `ureq` (small blocking HTTP client, run on a worker thread so the
   compositor loop never blocks), `semver`, `minisign-verify`, `zstd`/`tar` crates; `polkit` action + a 100-line
   privileged helper (`src/bin/update-helper.rs` → binary `noobsbot-desktop-update`); the session wrapper is a shell
