@@ -246,6 +246,8 @@ const fn s(page: Page, group: &'static str, key: &'static str, label: &'static s
 
 /// Date & Time ▸ Calendars ▸ Add…: the chooser's, or the path field's, `texts` key.
 pub const CALENDAR_ADD: &str = "calendar.add";
+/// Notifications ▸ World Clock ▸ Add…: the typed city's `texts` key (no chooser).
+pub const CLOCK_ADD: &str = "widgets.clock_add";
 
 /// Every setting in `config.toml` (`data/config.toml`), in page order.
 pub const SETTINGS: &[Setting] = &[
@@ -677,6 +679,14 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Notifications, "Weather", "weather.latitude", "Latitude", "North is positive; setting it clears City", Kind::Degrees(90.0)),
     s(Page::Notifications, "Weather", "weather.longitude", "Longitude", "East is positive; setting it clears City", Kind::Degrees(180.0)),
     s(Page::Notifications, "Weather", "weather.units", "Units", "", Kind::Choice(&[("celsius", "°C"), ("fahrenheit", "°F")])),
+    s(
+        Page::Notifications,
+        "World Clock",
+        "widgets.clocks",
+        "Cities",
+        "Their time in Notification Center; Add… takes a city or zone name",
+        Kind::List(Some(CLOCK_ADD)),
+    ),
     s(Page::LockScreen, "", "idle.dim", "Dim the display when inactive", "", Kind::Slider { min: 0.0, max: 600.0, step: 30.0 }),
     s(
         Page::LockScreen,
@@ -1228,14 +1238,15 @@ fn list_rows<'a>(app: &'a App, key: &'static str, add: Option<&'static str>) -> 
         rows.push(container(text("None").size(12).color(t.secondary())).padding([8, 12]).into());
     }
     if let Some((add, typed)) = add.and_then(|add| Some((add, app.texts.get(add)?))) {
-        let field = text_input("Path", typed)
+        let label = if add == CLOCK_ADD { "City" } else { "Path" };
+        let field = text_input(label, typed)
             .on_input(move |v| Message::Type(add.into(), v))
             .on_submit(Message::Submit(add.into()))
             .size(13)
             .padding([3, 8])
             .width(240)
             .style(t.input(false));
-        rows.push(line(t, "Path", "", field.into()));
+        rows.push(line(t, label, "", field.into()));
     }
     rows
 }

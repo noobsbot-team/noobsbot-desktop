@@ -222,6 +222,9 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             let updates = config.check_updates != state.config.check_updates || config.update != state.config.update;
             // Widgets are placed from the config every frame; one frame applies a new `[widgets]`.
             if config.widgets != state.config.widgets {
+                if config.widgets.clocks != state.config.widgets.clocks {
+                    state.clocks = clock::world_clocks(&config.widgets.clocks);
+                }
                 state.schedule_redraw();
             }
             state.config = config;

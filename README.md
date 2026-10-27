@@ -210,7 +210,7 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   brightness, Dark Mode, Do Not Disturb, power mode.
 - **Notification Center:** click the clock or press Super+N. Banners are grouped by app, plus Up Next (your calendar
   events), the month calendar (‹ ›, ←/→ or a two-finger swipe sideways change the month), the weather (if you turn it
-  on) and battery levels.
+  on), a world clock (`[widgets] clocks`) and battery levels.
 - **Dock:** pinned apps and running apps, with dots for open apps, badges, magnification under the pointer and
   right-click menus. Minimised windows sit as thumbnail tiles after a separator at the right end (or go into their
   app's icon with `[dock] minimise_into_icon`); `[dock] minimise_effect = "genie"` swaps the shrink for a genie. The Trash sits at the far right (`[dock] show_trash`):
@@ -344,7 +344,7 @@ doesn't understand is skipped and reported in the journal.
 | `[notifications]` | Do Not Disturb, on a schedule too (`dnd_scheduled`, `dnd_from`, `dnd_until`), banners over full-screen windows (`full_screen`), previews always, when unlocked or never (`previews`) |
 | `[notification_apps]` | per app: banners, alerts, Notification Center only or off; sound, dock badge, kept in Notification Center, shown on the lock screen (`lock`) |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
-| `[widgets]` | order of other apps' widgets in Notification Center, which go on the desktop instead, and which are hidden |
+| `[widgets]` | order of other apps' widgets in Notification Center, which go on the desktop instead, and which are hidden; the World Clock's time zones (`clocks`) |
 | `[calendar]` | which `.ics` files to show |
 | `[update]` | stable or beta updates |
 | `[desktop]` | desktop icons on or off, mounted drives among them (`show_drives`) |
