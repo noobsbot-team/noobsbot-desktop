@@ -458,6 +458,7 @@ impl State {
                         state.services.send(crate::services::Command::Brightness(percent));
                     }
                     crate::services::Update::Identify => state.identify_displays(),
+                    crate::services::Update::CalDavNow => state.caldav_now(),
                     crate::services::Update::CheckNow => state.check_update_now(),
                     crate::services::Update::InstallNow => state.install_update(),
                     crate::services::Update::RevertVersion => state.revert_update(),
