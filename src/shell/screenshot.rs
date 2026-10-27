@@ -1062,6 +1062,35 @@ mod tests {
         );
     }
 
+    /// The real pipeline on a few synthetic frames: a playable mp4 comes out. Skipped without ffmpeg.
+    #[test]
+    fn encodes_frames_into_an_mp4() {
+        if !installed("ffmpeg") {
+            return;
+        }
+        let path = std::env::temp_dir().join(format!("noobsbot recording {}.mp4", std::process::id()));
+        let region = Rectangle::new((2, 2).into(), (64, 48).into());
+        let ffmpeg = std::process::Command::new("ffmpeg").args(ffmpeg_args(region.size, &path)).stdin(Stdio::piped()).stdout(Stdio::null()).spawn().unwrap();
+        let (frames, queue) = mpsc::sync_channel(2);
+        let thread = std::thread::spawn(move || encode(ffmpeg, queue, region));
+        for (i, transform) in [Transform::Normal, Transform::Flipped180, Transform::Normal].into_iter().enumerate() {
+            frames.send(Pixels { size: (68, 52).into(), rgba: vec![i as u8 * 100; 68 * 52 * 4], transform }).unwrap();
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        drop(frames);
+        assert_eq!(thread.join().unwrap(), Ok(()));
+        let probe = installed("ffprobe").then(|| {
+            let args = ["-v", "error", "-show_entries", "stream=codec_name,width,height", "-of", "csv=p=0"];
+            std::process::Command::new("ffprobe").args(args).arg(&path).output().unwrap()
+        });
+        let mp4 = std::fs::read(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert!(&mp4[4..8] == b"ftyp" && mp4.windows(4).any(|w| w == b"moov"), "a finished mp4");
+        if let Some(probe) = probe {
+            assert_eq!(String::from_utf8_lossy(&probe.stdout).trim(), "h264,64,48");
+        }
+    }
+
     #[test]
     fn frames_are_paced() {
         let t = Instant::now();
