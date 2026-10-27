@@ -820,10 +820,11 @@ impl State {
     /// Remakes every EGL context on the same GPUs, the shell's textures and shaders (`Views`), the cursors, the
     /// mirrors' pictures and the scanout buffers, then redraws every display. Client buffers import again on their
     /// next frame: Smithay keeps their textures per renderer context, so the new context finds none.
+    // The old `Views` stay until the new ones are made, so a failed rebuild can be tried again (`soften_gpu`).
     // ponytail: the DRM surfaces (mode, planes) are kept; only their buffers are remade. The shell's open popovers
     // and animations restart from their defaults.
     fn rebuild_gpu(&mut self, udev: &mut Udev) -> Result<(), Error> {
-        let wallpaper = self.backend.take().ok_or("no views")?.wallpaper.reupload();
+        let wallpaper = self.backend.as_ref().ok_or("no views")?.wallpaper.reupload();
         udev.gpus = GpuManager::new(Api::default())?;
         for card in udev.cards.values_mut() {
             udev.gpus.as_mut().add_node(card.render, card.gbm.clone())?;
