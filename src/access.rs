@@ -50,7 +50,7 @@ pub struct Locked {
 }
 
 /// An alert or Force Quit: title, message, a field, a list (Force Quit's apps) with its selected row, the buttons
-/// and the one Return presses.
+/// and the one Return presses (none on a permission alert).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Dialog {
     pub title: String,
@@ -61,7 +61,7 @@ pub struct Dialog {
     pub rows: Vec<String>,
     pub selected: Option<usize>,
     pub buttons: Vec<String>,
-    pub default: usize,
+    pub default: Option<usize>,
 }
 
 /// A notification: its body is `None` while previews are hidden; actions are (key, label).
@@ -376,7 +376,7 @@ pub fn tree(shell: &Shell) -> TreeUpdate {
             .iter()
             .enumerate()
             .map(|(i, label)| {
-                let mut button = Node::new(if i == d.default { Role::DefaultButton } else { Role::Button });
+                let mut button = Node::new(if Some(i) == d.default { Role::DefaultButton } else { Role::Button });
                 button.set_label(label.as_str());
                 button.add_action(Action::Click);
                 (NodeId(DIALOG_BUTTON + i as u64), button)
@@ -453,7 +453,7 @@ fn focus(shell: &Shell) -> NodeId {
         } else if d.selected.is_some() {
             DIALOG_LIST
         } else {
-            NodeId(DIALOG_BUTTON + d.default as u64)
+            d.default.map_or(DIALOG, |i| NodeId(DIALOG_BUTTON + i as u64))
         }
     } else if let Some((_, selected)) = &shell.switcher {
         // Focus follows the selection, so each app is read as it is stepped to.
@@ -606,7 +606,7 @@ impl State {
             });
             let extra = alert.extra().iter().map(|e| e.0.to_owned());
             let buttons: Vec<String> = extra.chain(alert.cancellable().then(|| alert.cancel().to_owned())).chain([alert.confirm().to_owned()]).collect();
-            let default = buttons.len() - 1;
+            let default = (!alert.consent()).then(|| buttons.len() - 1);
             let message = alert.body(std::time::Instant::now());
             return Some(Dialog { title: alert.title(), message, ticking: alert.deadline.is_some(), field, buttons, default, ..Default::default() });
         }
@@ -619,6 +619,7 @@ impl State {
             rows: entries.iter().map(|e| if e.frozen { format!("{} (not responding)", e.name) } else { e.name.clone() }).collect(),
             selected: entries.iter().position(|e| Some(e.pid) == pid),
             buttons: vec!["Force Quit".into()],
+            default: Some(0),
             ..Default::default()
         })
     }
@@ -871,7 +872,7 @@ mod tests {
             message: "Enter the password for “anil” to allow this.".into(),
             field,
             buttons: vec!["Cancel".into(), "OK".into()],
-            default: 1,
+            default: Some(1),
             ..Default::default()
         };
         let update = tree(&Shell { dialog: Some(dialog.clone()), spotlight: Some(Search::default()), ..Default::default() });
@@ -884,12 +885,23 @@ mod tests {
         assert_eq!((ok.role(), ok.label()), (Role::DefaultButton, Some("OK")));
         assert_eq!(node(&update, DIALOG_MESSAGE).live(), Some(Live::Polite), "a wrong password is read");
 
-        let power = tree(&Shell { dialog: Some(Dialog { field: None, ticking: true, ..dialog }), ..Default::default() });
+        let power = tree(&Shell { dialog: Some(Dialog { field: None, ticking: true, ..dialog.clone() }), ..Default::default() });
         assert_eq!(power.focus, NodeId(DIALOG_BUTTON + 1), "no field: the default button");
         assert_eq!(node(&power, DIALOG_MESSAGE).live(), None, "a countdown isn't read every second");
 
+        let ask = tree(&Shell { dialog: Some(Dialog { field: None, default: None, ..dialog }), ..Default::default() });
+        assert_eq!(ask.focus, DIALOG, "a permission alert: no default button, the alert itself");
+        assert!((0..2).all(|i| node(&ask, NodeId(DIALOG_BUTTON + i)).role() == Role::Button));
+
         let rows = vec!["Files".into(), "Notes (not responding)".into()];
-        let quit = Dialog { title: "Force Quit Applications".into(), rows, selected: Some(1), buttons: vec!["Force Quit".into()], ..Default::default() };
+        let quit = Dialog {
+            title: "Force Quit Applications".into(),
+            rows,
+            selected: Some(1),
+            buttons: vec!["Force Quit".into()],
+            default: Some(0),
+            ..Default::default()
+        };
         let quit = tree(&Shell { dialog: Some(quit), ..Default::default() });
         assert_eq!(quit.focus, DIALOG_LIST);
         assert_eq!(node(&quit, DIALOG_LIST).active_descendant(), Some(NodeId(DIALOG_ROW + 1)));
