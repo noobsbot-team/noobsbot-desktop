@@ -1023,8 +1023,10 @@ Goal: the owner's current dock (Plank, Transparent-Tight theme), rebuilt nativel
   (`com.canonical.Unity.LauncherEntry`), the Plank import (`src/shell/plank.rs`), a dock per display (E8.3), the
   focused app's highlight fading in and out over 300 ms (ActiveTime), the `whitesur-dark` and `glass` presets
   (`[dock] style`, Settings ▸ Dock ▸ Style; `Look` in `src/render/dock.rs`: tint, opacity, radius, light edge and the
-  highlight's colour; `glass` is the most see-through tint, with no blur by design, R2). Not yet: the small shadow
-  behind each icon (the shadow shader draws rounded rects, not an icon's shape).
+  highlight's colour; `glass` is the most see-through tint, with no blur by design, R2), and the small shadow behind
+  each icon (IconShadowSize 1 as D6 level 1, dark: 1 px down, blur 4, 30%, the same in every preset): the icon's alpha
+  box-blurred on the icon thread (`apps::shadow`, cached in memory beside the icon) and zoomed, dragged and bounced
+  with it.
 
 **M3 done when:** all of the above; mockup review passed.
 

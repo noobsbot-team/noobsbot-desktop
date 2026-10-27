@@ -524,15 +524,15 @@ fn missing() -> Rendered {
     Rendered { pixels: Vec::new(), width: 0, height: 0, baseline: 0, truncated: false }
 }
 
-/// What the `icon-raster` thread draws.
+/// What the `icon-raster` thread draws. A theme icon's `u32`s: its size, then its `shadow` radius (0: the icon).
 enum Job {
-    Theme(String, u32),
+    Theme(String, u32, u32),
     Tray(Arc<Vec<Image>>, u32),
 }
 
 /// What it drew, back on the frame thread through `Icons::receive`.
 pub enum Rasterised {
-    Theme { name: String, px: u32, rendered: Option<Rendered> },
+    Theme { name: String, px: u32, shadow: u32, rendered: Option<Rendered> },
     Tray { images: Arc<Vec<Image>>, px: u32, rendered: Rendered },
 }
 
@@ -541,14 +541,14 @@ impl Job {
     /// disk cache, on the thread only.
     fn run(self, files: &mut HashMap<String, Vec<(u32, PathBuf)>>, disk: Option<&Path>) -> Rasterised {
         match self {
-            Job::Theme(name, px) => {
+            Job::Theme(name, px, shadow) => {
                 // A miss isn't remembered: an install brings the icon along, and `Icons::clear` asks again.
                 let found = match files.get(&name) {
                     Some(found) => found,
                     None => {
                         let found = icon_files(&name);
                         if found.is_empty() {
-                            return Rasterised::Theme { name, px, rendered: None };
+                            return Rasterised::Theme { name, px, shadow, rendered: None };
                         }
                         files.entry(name.clone()).or_insert(found)
                     }
@@ -557,7 +557,9 @@ impl Job {
                     Some(dir) => rasterise_cached(p, px, dir),
                     None => rasterise(p, px),
                 });
-                Rasterised::Theme { name, px, rendered }
+                // Memory only: blurring the disk-cached icon again is cheap.
+                let rendered = rendered.map(|r| if shadow > 0 { self::shadow(&r, shadow) } else { r });
+                Rasterised::Theme { name, px, shadow, rendered }
             }
             Job::Tray(images, px) => Rasterised::Tray { rendered: tray::render(&images, px), images, px },
         }
@@ -568,9 +570,10 @@ impl Job {
 /// an icon asked for shows at its nearest other size, or not at all, until the thread has drawn it and `receive`
 /// asked for a frame.
 pub struct Icons {
-    cache: Lru<(String, u32)>,
+    /// By name, size and shadow radius (0: the icon itself).
+    cache: Lru<(String, u32, u32)>,
     /// Sent to the thread and not back yet.
-    pending: HashSet<(String, u32)>,
+    pending: HashSet<(String, u32, u32)>,
     /// Tray icons by their image set (the `Arc` kept so its address stays unique) and size, oldest first.
     tray: Vec<(Arc<Vec<Image>>, u32, Arc<Rendered>)>,
     tray_pending: Vec<(Arc<Vec<Image>>, u32)>,
@@ -616,22 +619,38 @@ impl Icons {
     /// Icon `name` (an `App::icon`) for a `px`-sized square. `None`: the theme has no such icon, or it isn't drawn
     /// yet and no other size of it is.
     pub fn get(&mut self, name: &str, px: u32) -> Option<Arc<Rendered>> {
-        let key = (name.to_owned(), px);
+        let found = self.fetch(name, px, 0);
+        if found.is_some() || !self.pending.contains(&(name.to_owned(), px, 0)) {
+            return found;
+        }
+        // Until it lands: the same icon at the nearest size there is (the GPU scales it).
+        let other = self.cache.iter().filter(|((n, _, s), r)| n == name && *s == 0 && r.width > 0);
+        other.min_by_key(|((_, p, _), _)| p.abs_diff(px)).map(|(_, r)| r.clone())
+    }
+
+    /// The dock's shadow of icon `name` at `px` (`shadow` at radius `r`): `None` until the thread has made it, with no
+    /// other size meanwhile, as its padding would be off.
+    pub fn shadow(&mut self, name: &str, px: u32, r: u32) -> Option<Arc<Rendered>> {
+        self.fetch(name, px, r.max(1))
+    }
+
+    /// `get` and `shadow` from the cache, else asked of the thread.
+    fn fetch(&mut self, name: &str, px: u32, shadow: u32) -> Option<Arc<Rendered>> {
+        let key = (name.to_owned(), px, shadow);
         if let Some(rendered) = self.cache.get(&key) {
             return Some(rendered).filter(|r| r.width > 0);
         }
         let Some(jobs) = &self.jobs else {
-            self.receive(Job::Theme(key.0, px).run(&mut HashMap::new(), None));
-            return self.cache.get(&(name.to_owned(), px)).filter(|r| r.width > 0);
+            self.receive(Job::Theme(key.0, px, shadow).run(&mut HashMap::new(), None));
+            return self.cache.get(&(name.to_owned(), px, shadow)).filter(|r| r.width > 0);
         };
-        if self.pending.insert(key.clone()) && jobs.send(Job::Theme(key.0.clone(), px)).is_err() {
+        if self.pending.insert(key.clone()) && jobs.send(Job::Theme(key.0, px, shadow)).is_err() {
             // The thread is gone: draw here from now on.
             self.jobs = None;
             self.pending.clear();
-            return self.get(name, px);
+            return self.fetch(name, px, shadow);
         }
-        // Until it lands: the same icon at the nearest size there is (the GPU scales it).
-        self.cache.iter().filter(|((n, _), r)| n == name && r.width > 0).min_by_key(|((_, p), _)| p.abs_diff(px)).map(|(_, r)| r.clone())
+        None
     }
 
     /// A tray item's icon (`services::tray`) in a `px` square: blank until the thread has drawn it.
@@ -657,9 +676,9 @@ impl Icons {
     /// Keeps what the thread drew.
     pub fn receive(&mut self, done: Rasterised) {
         match done {
-            Rasterised::Theme { name, px, rendered } => {
-                self.pending.remove(&(name.clone(), px));
-                self.cache.insert((name, px), Arc::new(rendered.unwrap_or_else(missing)));
+            Rasterised::Theme { name, px, shadow, rendered } => {
+                self.pending.remove(&(name.clone(), px, shadow));
+                self.cache.insert((name, px, shadow), Arc::new(rendered.unwrap_or_else(missing)));
             }
             Rasterised::Tray { images, px, rendered } => {
                 self.tray_pending.retain(|(i, p)| !(Arc::ptr_eq(i, &images) && *p == px));
@@ -762,6 +781,37 @@ pub fn rasterise(path: &Path, px: u32) -> Option<Rendered> {
     let (dx, dy) = ((px as f32 - size.width() * fit) / 2.0, (px as f32 - size.height() * fit) / 2.0);
     resvg::render(&tree, tiny_skia::Transform::from_scale(fit, fit).post_translate(dx, dy), &mut pixmap.as_mut());
     Some(rendered(pixmap.take(), px, px))
+}
+
+/// The drop shadow of `icon` (the dock's, E3.1): its alpha in black, padded by `3 * r` on every side and box-blurred
+/// three times at radius `r`, like a Gaussian of σ ≈ r + ½ that reaches 3r. The drawer applies the opacity.
+pub fn shadow(icon: &Rendered, r: u32) -> Rendered {
+    let (r, pad, iw) = (r as usize, 3 * r as usize, icon.width as usize);
+    let (w, h) = (iw + 2 * pad, icon.height as usize + 2 * pad);
+    let mut a = vec![0.0; w * h];
+    for (i, px) in icon.pixels.as_chunks::<4>().0.iter().enumerate() {
+        a[(i / iw + pad) * w + i % iw + pad] = f32::from(px[3]);
+    }
+    for _ in 0..3 {
+        box_pass(&mut a, h, w, 1, w, r);
+        box_pass(&mut a, w, 1, w, h, r);
+    }
+    let pixels = a.iter().flat_map(|v| [0, 0, 0, v.round().clamp(0.0, 255.0) as u8]).collect();
+    Rendered { pixels, width: w as u32, height: h as u32, baseline: h as u32, truncated: false }
+}
+
+/// One box blur of radius `r` along each of `lines` lines of `len` values: line `l`'s value `i` is at
+/// `l * stride + i * step`, and zero past either end.
+fn box_pass(a: &mut [f32], lines: usize, stride: usize, step: usize, len: usize, r: usize) {
+    let mut sums = vec![0.0; len + 1];
+    for l in 0..lines {
+        for i in 0..len {
+            sums[i + 1] = sums[i] + a[l * stride + i * step];
+        }
+        for i in 0..len {
+            a[l * stride + i * step] = (sums[(i + r + 1).min(len)] - sums[i.saturating_sub(r)]) / (2 * r + 1) as f32;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -937,15 +987,17 @@ mod tests {
     fn icon_cache_evicts_and_shows_the_nearest_size_meanwhile() {
         let mut icons = Icons::default();
         let big = Rendered { pixels: vec![0; MAX_BYTES / 2 + 1], width: 1, height: 1, baseline: 1, truncated: false };
-        icons.receive(Rasterised::Theme { name: "a".into(), px: 32, rendered: Some(big) });
+        icons.receive(Rasterised::Theme { name: "a".into(), px: 32, shadow: 0, rendered: Some(big) });
         icons.receive(Rasterised::Theme {
             name: "b".into(),
             px: 32,
+            shadow: 0,
             rendered: Some(Rendered { pixels: vec![0; 4], width: 1, height: 1, baseline: 1, truncated: false }),
         });
         icons.receive(Rasterised::Theme {
             name: "a".into(),
             px: 64,
+            shadow: 0,
             rendered: Some(Rendered { pixels: vec![0; MAX_BYTES / 2 + 1], width: 2, height: 2, baseline: 2, truncated: false }),
         });
         assert!(icons.get("a", 32).is_none() && icons.get("b", 32).is_some(), "the big one made room for the other big one");
@@ -955,19 +1007,21 @@ mod tests {
         icons.receive(Rasterised::Theme {
             name: "a".into(),
             px: 64,
+            shadow: 0,
             rendered: Some(Rendered { pixels: vec![0; 16], width: 2, height: 2, baseline: 2, truncated: false }),
         });
         icons.receive(Rasterised::Theme {
             name: "a".into(),
             px: 16,
+            shadow: 0,
             rendered: Some(Rendered { pixels: vec![0; 4], width: 1, height: 1, baseline: 1, truncated: false }),
         });
         assert_eq!(icons.get("a", 48).map(|r| r.width), Some(2), "nearest size while 48 is pending");
-        assert!(icons.pending.contains(&("a".to_owned(), 48)));
-        icons.receive(Rasterised::Theme { name: "a".into(), px: 48, rendered: None });
+        assert!(icons.pending.contains(&("a".to_owned(), 48, 0)));
+        icons.receive(Rasterised::Theme { name: "a".into(), px: 48, shadow: 0, rendered: None });
         assert!(icons.get("a", 48).is_none() && icons.pending.is_empty());
         let done = rx.recv().unwrap();
-        assert!(matches!(done, Rasterised::Theme { name, px: 48, rendered: None } if name == "a"), "the thread looked a nameless icon up once");
+        assert!(matches!(done, Rasterised::Theme { name, px: 48, shadow: 0, rendered: None } if name == "a"), "the thread looked a nameless icon up once");
     }
 
     #[test]
@@ -983,8 +1037,25 @@ mod tests {
         assert_eq!(r.pixels[3], 0);
         let mut icons = Icons::default();
         assert!(icons.get(path.to_str().unwrap(), 32).is_some());
+        assert_eq!(icons.shadow(path.to_str().unwrap(), 32, 2).map(|r| (r.width, r.height)), Some((44, 44)), "padded by 3r");
+        assert_eq!(icons.get(path.to_str().unwrap(), 32).map(|r| r.width), Some(32), "a shadow is its own entry");
         assert!(icons.get("no-such-icon-anywhere", 32).is_none());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn shadow_pads_spreads_and_keeps_the_alpha() {
+        // A 4×2 opaque bar; its colour is ignored.
+        let icon = Rendered { pixels: [9, 9, 9, 255].repeat(8), width: 4, height: 2, baseline: 2, truncated: false };
+        let s = shadow(&icon, 2);
+        assert_eq!((s.width, s.height, s.pixels.len()), (16, 14, 16 * 14 * 4), "padded by 3r on every side");
+        assert!(s.pixels.as_chunks::<4>().0.iter().all(|p| p[..3] == [0, 0, 0]), "black: premultiplied at any alpha");
+        let alpha: Vec<u32> = s.pixels.as_chunks::<4>().0.iter().map(|p| u32::from(p[3])).collect();
+        let total: u32 = alpha.iter().sum();
+        assert!(total.abs_diff(8 * 255) <= 16 * 14 / 2, "spread, not lost: {total}");
+        assert!(alpha[0] == 0 && alpha[7 * 16 + 1] > 0, "reaches 3r out along the bar's row, not into the corner");
+        assert!(alpha[7 * 16 + 7] < 255 && alpha[7 * 16 + 7] > alpha[7 * 16 + 2], "spread from the middle, fading out");
+        assert_eq!(shadow(&icon, 0).pixels.as_chunks::<4>().0.iter().map(|p| p[3]).collect::<Vec<_>>(), [255; 8], "r 0: unblurred");
     }
 
     #[test]
