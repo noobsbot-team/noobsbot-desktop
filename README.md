@@ -322,7 +322,8 @@ click; Space and Mission Control swipes then take four fingers.
 ## Settings
 Open **System Settings** from Launchpad or Spotlight (search "Settings"), or edit `~/.config/noobsbot-desktop/config.toml`. The file is
 fully commented, every line shows the default, and saving it applies the change straight away. A line the desktop
-doesn't understand is skipped and reported in the journal.
+doesn't understand is skipped and reported in the journal; a file that doesn't parse keeps the last good settings
+and shows a notification with the line.
 
 | Section | What it controls |
 |---|---|
