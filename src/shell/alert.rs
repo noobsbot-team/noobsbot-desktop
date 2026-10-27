@@ -32,6 +32,11 @@ const COUNTDOWN: Duration = Duration::from_secs(60);
 /// How long a permission alert ignores clicks and keys once it appears.
 const INPUT_DELAY: Duration = Duration::from_millis(500);
 
+/// An app's program path for an alert's text, "It" when unknown.
+fn program(exe: &str) -> &str {
+    if exe.is_empty() { "It" } else { exe }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Power {
     Restart,
@@ -143,10 +148,14 @@ impl Alert {
             Kind::Pin { passkey: false, .. } => "Enter the PIN shown on the device or in its manual.".into(),
             Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
-            Kind::ScreenRecording { .. } => "It will see everything on the screen, including other apps' windows. The answer is kept in config.toml.".into(),
-            Kind::ControlInput { .. } => {
-                "It could type and click in any app as you. Until you allow it, its keys and clicks go nowhere. The answer is kept in config.toml.".into()
+            // Its path, not its name: an app sets its own name.
+            Kind::ScreenRecording { exe, .. } => {
+                format!("{} will see everything on the screen, including other apps' windows. The answer is kept in config.toml.", program(exe))
             }
+            Kind::ControlInput { exe, .. } => format!(
+                "{} could type and click in any app as you. Until you allow it, its keys and clicks go nowhere. The answer is kept in config.toml.",
+                program(exe)
+            ),
             Kind::Thunderbolt(_) => "Allow only accessories you trust. Once allowed, it connects by itself next time.".into(),
             Kind::EmptyTrash => "You can't undo this action.".into(),
             Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
