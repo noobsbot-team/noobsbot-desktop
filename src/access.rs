@@ -604,7 +604,8 @@ impl State {
                 };
                 Field::new(label, f)
             });
-            let buttons: Vec<String> = alert.cancellable().then(|| alert.cancel().to_owned()).into_iter().chain([alert.confirm().to_owned()]).collect();
+            let extra = alert.extra().iter().map(|e| e.0.to_owned());
+            let buttons: Vec<String> = extra.chain(alert.cancellable().then(|| alert.cancel().to_owned())).chain([alert.confirm().to_owned()]).collect();
             let default = buttons.len() - 1;
             let message = alert.body(std::time::Instant::now());
             return Some(Dialog { title: alert.title(), message, ticking: alert.deadline.is_some(), field, buttons, default, ..Default::default() });
@@ -704,9 +705,16 @@ impl State {
             }
         } else if (DIALOG_ROW..DIALOG_BUTTON + 1000).contains(&id) {
             if let Some(alert) = &self.alert {
-                // The last button is the default one.
-                let last = alert.cancellable() as u64;
-                self.alert_answer(if id == DIALOG_BUTTON + last { crate::shell::alert::Button::Confirm } else { crate::shell::alert::Button::Cancel });
+                // The extra buttons first, then Cancel; the last button is the default one.
+                use crate::shell::alert::Button;
+                let extra = alert.extra();
+                let last = extra.len() + alert.cancellable() as usize;
+                let button = match id.checked_sub(DIALOG_BUTTON).map(|i| i as usize) {
+                    Some(i) if i < extra.len() => extra[i].1,
+                    Some(i) if i == last => Button::Confirm,
+                    _ => Button::Cancel,
+                };
+                self.alert_answer(button);
             } else if self.force_quit.is_some() {
                 let entries = self.force_quit_entries();
                 match id.checked_sub(DIALOG_BUTTON) {

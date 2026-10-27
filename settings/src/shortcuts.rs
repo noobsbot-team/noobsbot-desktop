@@ -409,6 +409,7 @@ const KNOWN: &[(&str, &str, &str)] = &[
     ("restart", "Restart", "System"),
     ("shut-down", "Shut Down", "System"),
     ("log-out", "Log Out", "System"),
+    ("power-button", "Sleep, Restart or Shut Down", "System"),
     ("input-source", "Next Input Source", "System"),
     ("keyboard-viewer", "Keyboard Viewer", "System"),
 ];

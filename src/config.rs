@@ -1350,7 +1350,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("XF86Calculator", "default-app Calculator"),
         ("XF86Search", "spotlight"),
         ("XF86Display", "exec noobsbot-desktop-settings --page displays"),
-        ("XF86PowerOff", "shut-down"),
+        ("XF86PowerOff", "power-button"),
         ("XF86Sleep", "sleep"),
         ("Super+Shift+Q", "log-out"),
     ]
