@@ -933,6 +933,8 @@ impl State {
                 for card in udev.cards.values_mut() {
                     card.drm.pause();
                 }
+                // The fingerprint reader goes free for the session in front; back on return if still locked.
+                self.fingerprint(false);
             }
             SessionEvent::ActivateSession => {
                 tracing::info!("session active");
@@ -957,6 +959,7 @@ impl State {
                     self.scan_connectors(node);
                 }
                 self.apply_displays();
+                self.fingerprint(true);
             }
         }
     }

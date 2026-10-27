@@ -426,13 +426,15 @@ impl State {
     }
 
     /// Starts (`on`) or stops fprintd's verify, each call under a new tag (`finger_counts`). Only on our own lock
-    /// screen: not on the login screen, nor under a locker client, which checks its own way.
+    /// screen: not on the login screen, nor under a locker client, which checks its own way, nor while the session is
+    /// in the background (the reader stays free for the session in front).
     /// ponytail: a client that dies and leaves ours up gets none until the next lock.
     pub fn fingerprint(&mut self, on: bool) {
+        let active = self.session_active();
         let mut user = None;
         if let Some(lock) = self.lock.as_mut().filter(|l| !l.client && l.greeter.is_none()) {
             lock.finger = Verify::Off;
-            user = on.then(|| crate::pam::user().0).filter(|u| !u.is_empty());
+            user = (on && active).then(|| crate::pam::user().0).filter(|u| !u.is_empty());
         }
         self.fingerprint_tag += 1;
         self.services.send(Command::Fingerprint(self.fingerprint_tag, user));
