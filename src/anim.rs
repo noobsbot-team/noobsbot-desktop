@@ -350,11 +350,14 @@ impl State {
         self.move_from(window, from, Curve::Spring(SMOOTH));
     }
 
-    /// About to zoom or un-zoom: the frame springs from here to its new size. Reduce motion: it just jumps.
+    /// About to zoom or un-zoom: the frame springs from here to its new size. Reduce motion: the old frame fades out
+    /// over the new one.
     // ponytail: the snapshot is stretched until the app draws at the new size; a crossfade of old and new frames
     // looks cleaner if the stretch shows.
     pub fn window_reframing(&mut self, window: &Window) {
-        if let Some(look) = self.current_look(window).filter(|_| !self.config.appearance.reduce_motion) {
+        if self.config.appearance.reduce_motion {
+            self.leave(window, None, Curve::Ease(CROSSFADE));
+        } else if let Some(look) = self.current_look(window) {
             self.move_from(window, look, Curve::Spring(SMOOTH));
         }
     }
@@ -502,10 +505,16 @@ impl State {
         }
     }
 
-    /// Moves `window`'s frame to `loc` with a `smooth` spring; reduce motion: it jumps.
+    /// Moves `window`'s frame to `loc` with a `smooth` spring; reduce motion: it fades out there and in here.
+    // ponytail: the fading-out copy is drawn over every window (ghosts are) for the 150 ms.
     fn slide_window(&mut self, window: &Window, loc: Point<i32, Logical>) {
-        let from = self.current_look(window).filter(|_| !self.config.appearance.reduce_motion);
+        let reduce = self.config.appearance.reduce_motion;
+        let from = self.current_look(window);
+        if reduce {
+            self.leave(window, None, Curve::Ease(CROSSFADE));
+        }
         self.set_visible_loc(window, loc);
+        let from = if reduce { self.window_frame(window).map(|rect| Look { rect, alpha: 0.0 }) } else { from };
         if let Some(from) = from {
             self.move_from(window, from, Curve::Spring(SMOOTH));
         }
