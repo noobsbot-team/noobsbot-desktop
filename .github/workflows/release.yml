@@ -53,9 +53,8 @@ jobs:
           cargo build --workspace --release --locked
       - name: Build xwayland-satellite
         run: |
-          # Debian has no package for it (X11 apps, E6.9); install.sh puts this one in /usr/local/bin. Arch uses its own.
-          rev="$(sed -n 's/^XWS_REV=//p' install.sh)"
-          cargo install --locked --git https://github.com/Supreeeme/xwayland-satellite --rev "$rev" --root "$RUNNER_TEMP/xws"
+          # X11 apps (E6.9): our patched build, which the desktop starts from beside itself.
+          sh scripts/build-xwayland-satellite.sh "$RUNNER_TEMP/xws"
       - name: Package
         run: |
           version="${TAG#v}"
@@ -63,7 +62,7 @@ jobs:
           mkdir -p "dist/$name"
           cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings target/release/noobsbot-desktop-update \
             target/release/noobsbot-desktop-watchdog target/release/noobsbot-desktop-widget-system \
-            "$RUNNER_TEMP/xws/bin/xwayland-satellite" LICENSE README.md "dist/$name/"
+            "$RUNNER_TEMP/xws/target/release/xwayland-satellite" LICENSE README.md "dist/$name/"
           cp -r data "dist/$name/"
           cd dist
           tar --zstd -cf "$name.tar.zst" "$name"
