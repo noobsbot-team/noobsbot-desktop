@@ -41,8 +41,9 @@ pub struct Status {
     pub media: Option<(String, String, bool)>,
     /// Percent and charging.
     pub battery: Option<(u8, bool)>,
-    /// The active power-profiles-daemon profile.
+    /// The active power-profiles-daemon profile, and the ones it offers.
     pub profile: Option<String>,
+    pub profiles: Vec<String>,
     /// Sound outputs: PipeWire id, short name, current.
     pub outputs: Vec<(u32, String, bool)>,
     /// Apps playing sound, under the Sound slider.
@@ -71,6 +72,8 @@ pub enum Module {
     Sound,
     /// Keep Awake: the apps blocking sleep.
     Awake,
+    /// The power mode's ▾: the profiles to pick from.
+    Power,
 }
 
 /// A network or device in an open list.
@@ -112,6 +115,8 @@ pub enum Control {
     PlayPause,
     Next,
     Power,
+    /// A power profile of the open power mode list, by its index in `Status::profiles`.
+    Profile(usize),
     /// The Sound module's title row: shows or hides the outputs.
     SoundMore,
     /// A sound output, by PipeWire id.
@@ -156,6 +161,8 @@ pub struct Layout {
     pub blockers: Vec<Rect>,
     pub media: Rect,
     pub power: Option<Rect>,
+    /// The open power mode list's rows, one per `Status::profiles`.
+    pub profiles: Vec<Rect>,
     /// A bar module's `links` rows.
     pub links: Vec<Rect>,
 }
@@ -240,7 +247,7 @@ pub fn links(status: &Status) -> Vec<(&'static str, Action)> {
         }
         Some((Module::Bluetooth, _)) => vec![settings("Bluetooth Settings…", "bluetooth")],
         Some((Module::Sound, _)) => vec![settings("Sound Settings…", "sound")],
-        Some((Module::Awake, _)) | None => Vec::new(),
+        Some((Module::Awake | Module::Power, _)) | None => Vec::new(),
     }
 }
 
@@ -382,13 +389,19 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         }
         y += media_h + GAP;
     }
+    let mut profiles = Vec::new();
     let power = (full && (status.battery.is_some() || status.profile.is_some())).then(|| {
-        let c = card(PAD, y, INNER, power_h);
+        let rows = if status.expanded == Some(Module::Power) && status.profile.is_some() { status.profiles.len() as i32 } else { 0 };
+        let c = card(PAD, y, INNER, power_h + if rows > 0 { 2 * LIST_PAD + rows * list_row } else { 0 });
         if status.profile.is_some() {
-            hits.push((Control::Power, c));
+            hits.push((Control::Power, Rectangle::new(c.loc, (c.size.w, power_h).into())));
         }
+        profiles = (0..rows)
+            .map(|i| Rectangle::new((c.loc.x + LIST_PAD, c.loc.y + power_h + LIST_PAD + i * list_row).into(), (c.size.w - 2 * LIST_PAD, list_row).into()))
+            .collect();
+        hits.extend(profiles.iter().enumerate().map(|(i, r)| (Control::Profile(i), *r)));
         cards.push(c);
-        y += power_h + GAP;
+        y += c.size.h + GAP;
         c
     });
     let mut links = Vec::new();
@@ -419,6 +432,7 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         blockers,
         media,
         power,
+        profiles,
         links,
     }
 }
@@ -521,6 +535,7 @@ impl State {
             media: self.media.as_ref().map(|m| (m.title.clone(), m.artist.clone(), m.playing)),
             battery: self.battery.as_ref().map(|b| (b.percent, b.charging)),
             profile: self.profiles.as_ref().map(|p| p.active.clone()),
+            profiles: self.profiles.as_ref().map_or_else(Vec::new, |p| p.available.clone()),
             outputs: self.sound.as_ref().map_or_else(Vec::new, |s| {
                 let names = short_names(&s.outputs.iter().map(|o| o.name.clone()).collect::<Vec<_>>());
                 s.outputs.iter().zip(names).map(|(o, name)| (o.id, name, o.current)).collect()
@@ -652,13 +667,15 @@ impl State {
             Control::Previous => self.run_action(Action::Media(crate::services::media::Action::Previous)),
             Control::PlayPause => self.run_action(Action::Media(crate::services::media::Action::PlayPause)),
             Control::Next => self.run_action(Action::Media(crate::services::media::Action::Next)),
-            Control::Power => {
-                // ponytail: cycles through the profiles; the ▾ dropdown comes with module expansion.
-                if let Some(profiles) = self.profiles.as_mut().filter(|p| !p.available.is_empty()) {
-                    let next = profiles.available.iter().position(|p| *p == profiles.active).map_or(0, |i| (i + 1) % profiles.available.len());
-                    profiles.active = profiles.available[next].clone();
-                    self.services.send(Command::PowerProfile(profiles.active.clone()));
+            Control::Power => self.expanded = if self.expanded == Some(Module::Power) { None } else { Some(Module::Power) },
+            Control::Profile(i) => {
+                if let Some(profiles) = self.profiles.as_mut()
+                    && let Some(profile) = profiles.available.get(i).cloned()
+                {
+                    profiles.active = profile.clone();
+                    self.services.send(Command::PowerProfile(profile));
                 }
+                self.expanded = None;
             }
             // ponytail: opens at once; the in-place `smooth` spring comes with the animation module.
             Control::SoundMore => self.expanded = if self.expanded == Some(Module::Sound) { None } else { Some(Module::Sound) },
@@ -773,6 +790,22 @@ mod tests {
             battery: Some((85, false)),
             profile: Some("balanced".into()),
             ..Status::default()
+        }
+    }
+
+    #[test]
+    fn power_mode_opens_its_profiles_under_it() {
+        let profiles = vec!["power-saver".to_owned(), "balanced".to_owned(), "performance".to_owned()];
+        let shut = layout((1280, 800).into(), &Status { profiles: profiles.clone(), ..full() });
+        let open = layout((1280, 800).into(), &Status { profiles, expanded: Some(Module::Power), ..full() });
+        assert!(shut.profiles.is_empty());
+        assert_eq!(open.profiles.len(), 3);
+        let (card, head) = (open.power.unwrap(), open.rect_of(Control::Power).unwrap());
+        assert_eq!(head.size.h, ts(POWER_CARD), "the ▾ row stays the card's top");
+        assert_eq!(open.rect.size.h - shut.rect.size.h, card.size.h - shut.power.unwrap().size.h);
+        for (i, row) in open.profiles.iter().enumerate() {
+            assert!(card.contains_rect(*row) && !row.overlaps(head));
+            assert_eq!(open.hit(row.loc.to_f64() + Point::from((4.0, 4.0))), Some(Control::Profile(i)));
         }
     }
 
