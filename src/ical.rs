@@ -134,6 +134,8 @@ struct Rule {
     by_month: Vec<u32>,
     /// 1 to 31, or from the month's end when negative (-1 the last day).
     by_month_day: Vec<i32>,
+    /// Which of each period's days are kept: 1 the first, -1 the last.
+    by_set_pos: Vec<i32>,
 }
 
 /// When an alarm goes off.
@@ -288,7 +290,15 @@ fn period(rule: &Rule, date: NaiveDate, step: u32) -> Option<Vec<NaiveDate>> {
         Freq::Monthly => d.month() == first.month(),
         Freq::Yearly => d.year() == first.year(),
     };
-    Some(first.iter_days().take(period_days(rule.freq) as usize).take_while(inside).filter(|d| rule.matches(*d, date)).collect())
+    let days: Vec<NaiveDate> = first.iter_days().take(period_days(rule.freq) as usize).take_while(inside).filter(|d| rule.matches(*d, date)).collect();
+    if rule.by_set_pos.is_empty() {
+        return Some(days);
+    }
+    let at = |n: i32| if n > 0 { days.get(n as usize - 1) } else { days.len().checked_sub(n.unsigned_abs() as usize).and_then(|i| days.get(i)) };
+    let mut kept: Vec<NaiveDate> = rule.by_set_pos.iter().filter_map(|n| at(*n)).copied().collect();
+    kept.sort();
+    kept.dedup();
+    Some(kept)
 }
 
 impl Rule {
@@ -476,7 +486,16 @@ fn duration(value: &str) -> Option<i64> {
 }
 
 fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<Rule> {
-    let mut rule = Rule { freq: Freq::Daily, interval: 1, count: None, until: None, by_day: Vec::new(), by_month: Vec::new(), by_month_day: Vec::new() };
+    let mut rule = Rule {
+        freq: Freq::Daily,
+        interval: 1,
+        count: None,
+        until: None,
+        by_day: Vec::new(),
+        by_month: Vec::new(),
+        by_month_day: Vec::new(),
+        by_set_pos: Vec::new(),
+    };
     let mut freq = None;
     for (key, v) in value.split(';').filter_map(|p| p.split_once('=')) {
         match key.to_ascii_uppercase().as_str() {
@@ -499,6 +518,7 @@ fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<R
                 rule.until = Some(z.timestamp(t));
             }
             "BYMONTHDAY" => rule.by_month_day = numbers(v, 31)?,
+            "BYSETPOS" => rule.by_set_pos = numbers(v, 366)?,
             "BYMONTH" => rule.by_month = numbers(v, 12)?.into_iter().map(u32::try_from).collect::<Result<_, _>>().ok()?,
             "BYDAY" => {
                 for day in v.split(',') {
@@ -809,6 +829,25 @@ mod tests {
         assert_eq!(starts(&e, "2026-01-01 00:00", "2028-01-01 00:00"), [utc("2026-02-13 09:00"), utc("2026-03-13 09:00"), utc("2026-11-13 09:00")]);
         let e = one("DTSTART:20260101T090000Z\r\nRRULE:FREQ=YEARLY;BYDAY=FR;BYMONTHDAY=13;COUNT=3");
         assert_eq!(starts(&e, "2026-01-01 00:00", "2028-01-01 00:00"), [utc("2026-02-13 09:00"), utc("2026-03-13 09:00"), utc("2026-11-13 09:00")]);
+    }
+
+    #[test]
+    fn bysetpos_picks_from_each_period() {
+        // The last weekday of the month.
+        let e = one("DTSTART:20261001T090000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;COUNT=3");
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-06-01 00:00"), [utc("2026-10-30 09:00"), utc("2026-11-30 09:00"), utc("2026-12-31 09:00")]);
+        // The second Tuesday, written with BYSETPOS.
+        let e = one("DTSTART:20261001T090000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=TU;BYSETPOS=2;COUNT=2");
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-06-01 00:00"), [utc("2026-10-13 09:00"), utc("2026-11-10 09:00")]);
+        // RFC 5545's: the third Tuesday, Wednesday or Thursday of the month.
+        let e = one("DTSTART:19970904T090000Z\r\nRRULE:FREQ=MONTHLY;COUNT=3;BYDAY=TU,WE,TH;BYSETPOS=3");
+        assert_eq!(starts(&e, "1997-01-01 00:00", "1998-01-01 00:00"), [utc("1997-09-04 09:00"), utc("1997-10-07 09:00"), utc("1997-11-06 09:00")]);
+        // The first and last weekday, in order; a position past the set picks nothing.
+        let e = one("DTSTART:20261001T090000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1,1,40;COUNT=4");
+        let s = starts(&e, "2026-10-01 00:00", "2027-06-01 00:00");
+        assert_eq!(s, [utc("2026-10-01 09:00"), utc("2026-10-30 09:00"), utc("2026-11-02 09:00"), utc("2026-11-30 09:00")]);
+        let e = one("DTSTART:20261001T090000Z\r\nRRULE:FREQ=MONTHLY;BYDAY=MO;BYSETPOS=0");
+        assert_eq!(starts(&e, "2026-01-01 00:00", "2030-01-01 00:00").len(), 1, "0 is no position");
     }
 
     #[test]
