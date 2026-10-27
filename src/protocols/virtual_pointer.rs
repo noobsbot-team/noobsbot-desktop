@@ -1,6 +1,6 @@
 //! `zwlr_virtual_pointer_v1` (E6.11): remote desktops (wayvnc) and automation (ydotool-style tools) move, click and
-//! scroll through the same path as a mouse: pointer assist, the shell's scrollers, then the app. Trusted clients only
-//! (perms.rs), like the virtual keyboard.
+//! scroll through the same path as a mouse: pointer assist, the shell's scrollers, then the app. Like the virtual
+//! keyboard: not for sandboxed apps, others only once allowed, and never while locked (perms.rs).
 
 use std::sync::Mutex;
 
@@ -81,14 +81,14 @@ impl GlobalDispatch<ZwlrVirtualPointerManagerV1, ()> for State {
     }
 
     fn can_view(client: Client, _: &()) -> bool {
-        crate::perms::trusted(&client)
+        crate::protocols::unsandboxed(&client)
     }
 }
 
 impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for State {
     fn request(
-        _: &mut Self,
-        _: &Client,
+        state: &mut Self,
+        client: &Client,
         _: &ZwlrVirtualPointerManagerV1,
         request: zwlr_virtual_pointer_manager_v1::Request,
         _: &(),
@@ -100,6 +100,7 @@ impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for State {
             zwlr_virtual_pointer_manager_v1::Request::CreateVirtualPointerWithOutput { id, output, .. } => (id, output),
             _ => return,
         };
+        state.may_control(client);
         init.init(id, Pointer { output: output.as_ref().and_then(Output::from_resource), scroll: Mutex::default(), held: Mutex::default() });
     }
 }
@@ -107,7 +108,7 @@ impl Dispatch<ZwlrVirtualPointerManagerV1, ()> for State {
 impl Dispatch<ZwlrVirtualPointerV1, Pointer> for State {
     fn request(
         state: &mut Self,
-        _: &Client,
+        client: &Client,
         _: &ZwlrVirtualPointerV1,
         request: zwlr_virtual_pointer_v1::Request,
         data: &Pointer,
@@ -115,6 +116,9 @@ impl Dispatch<ZwlrVirtualPointerV1, Pointer> for State {
         _: &mut DataInit<'_, Self>,
     ) {
         use zwlr_virtual_pointer_v1::Request;
+        if !state.may_control(client) {
+            return;
+        }
         let mut scroll = data.scroll.lock().unwrap();
         match request {
             Request::Motion { time, dx, dy } => {

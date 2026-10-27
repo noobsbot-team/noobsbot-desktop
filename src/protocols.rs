@@ -3,14 +3,17 @@
 //! method behind it is E6.12, see ime.rs). The E6.11 lists and remote controls are in the submodules: toplevel list,
 //! virtual pointer, output management, workspaces.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicBool, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 
 use smithay::{
     delegate_cursor_shape, delegate_fractional_scale, delegate_keyboard_shortcuts_inhibit, delegate_layer_shell, delegate_pointer_constraints,
-    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context, delegate_virtual_keyboard_manager,
+    delegate_pointer_gestures, delegate_presentation, delegate_relative_pointer, delegate_security_context,
     desktop::{LayerSurface, WindowSurfaceType, layer_map_for_output},
     input::pointer::{CursorIcon, CursorImageStatus, MotionEvent, PointerHandle, RelativeMotionEvent},
     output::Output,
@@ -18,6 +21,10 @@ use smithay::{
         wayland_protocols::wp::tearing_control::v1::server::{
             wp_tearing_control_manager_v1::{self, WpTearingControlManagerV1},
             wp_tearing_control_v1::{self, WpTearingControlV1},
+        },
+        wayland_protocols_misc::zwp_virtual_keyboard_v1::server::{
+            zwp_virtual_keyboard_manager_v1::{self, ZwpVirtualKeyboardManagerV1},
+            zwp_virtual_keyboard_v1::{self, ZwpVirtualKeyboardV1},
         },
         wayland_server::{
             Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource, WEnum,
@@ -42,7 +49,7 @@ use smithay::{
         shell::wlr_layer::{KeyboardInteractivity, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState},
         tablet_manager::TabletSeatHandler,
         text_input::TextInputManagerState,
-        virtual_keyboard::VirtualKeyboardManagerState,
+        virtual_keyboard::{VirtualKeyboardManagerGlobalData, VirtualKeyboardManagerState, VirtualKeyboardUserData},
     },
 };
 
@@ -74,6 +81,8 @@ pub struct Protocols {
     _input_method: InputMethodManagerState,
     _system_bell: smithay::wayland::xdg_system_bell::XdgSystemBellState,
     _virtual_keyboard: VirtualKeyboardManagerState,
+    /// The user's answer per connection about its virtual keyboard and pointer (perms.rs).
+    pub control: HashMap<ClientId, bool>,
     toplevel_list: toplevel_list::ToplevelList,
     _virtual_pointer: GlobalId,
     output_management: output_management::OutputManagement,
@@ -103,10 +112,11 @@ impl Protocols {
             // An input method sees every key typed: not for sandboxed apps.
             _input_method: InputMethodManagerState::new::<State, _>(dh, unsandboxed),
             _system_bell: smithay::wayland::xdg_system_bell::XdgSystemBellState::new::<State>(dh),
-            // A virtual keyboard types into any app (and the lock screen): trusted clients only.
-            _virtual_keyboard: VirtualKeyboardManagerState::new::<State, _>(dh, crate::perms::trusted),
+            // A virtual keyboard types into any app: not for sandboxed apps, and others only once allowed (perms.rs).
+            _virtual_keyboard: VirtualKeyboardManagerState::new::<State, _>(dh, unsandboxed),
+            control: HashMap::new(),
             toplevel_list: toplevel_list::ToplevelList::new(dh),
-            // Moves and clicks anywhere, like the virtual keyboard types: trusted clients only.
+            // Moves and clicks anywhere, like the virtual keyboard types.
             _virtual_pointer: virtual_pointer::global(dh),
             output_management: output_management::OutputManagement::new(dh),
             workspaces: workspaces::Workspaces::new(dh),
@@ -448,4 +458,40 @@ delegate_pointer_gestures!(State);
 delegate_cursor_shape!(State);
 delegate_keyboard_shortcuts_inhibit!(State);
 delegate_security_context!(State);
-delegate_virtual_keyboard_manager!(State);
+
+// smithay's `delegate_virtual_keyboard_manager!`, but making a keyboard asks (perms.rs), and its keys and modifiers
+// pass only while allowed; the keymap is its own.
+smithay::reexports::wayland_server::delegate_global_dispatch!(State: [ZwpVirtualKeyboardManagerV1: VirtualKeyboardManagerGlobalData] => VirtualKeyboardManagerState);
+
+impl Dispatch<ZwpVirtualKeyboardManagerV1, ()> for State {
+    fn request(
+        state: &mut Self,
+        client: &Client,
+        resource: &ZwpVirtualKeyboardManagerV1,
+        request: zwp_virtual_keyboard_manager_v1::Request,
+        data: &(),
+        dh: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        state.may_control(client);
+        <VirtualKeyboardManagerState as Dispatch<ZwpVirtualKeyboardManagerV1, (), State>>::request(state, client, resource, request, data, dh, init);
+    }
+}
+
+impl Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData<State>> for State {
+    fn request(
+        state: &mut Self,
+        client: &Client,
+        resource: &ZwpVirtualKeyboardV1,
+        request: zwp_virtual_keyboard_v1::Request,
+        data: &VirtualKeyboardUserData<State>,
+        dh: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        if matches!(request, zwp_virtual_keyboard_v1::Request::Keymap { .. }) || state.may_control(client) {
+            <VirtualKeyboardManagerState as Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData<State>, State>>::request(
+                state, client, resource, request, data, dh, init,
+            );
+        }
+    }
+}
