@@ -1,6 +1,7 @@
 //! Software Update (E6.13): once at start and every 24 h, ask GitHub for the newest release on the chosen channel
-//! and compare it with the running version. No account, no identifier: the request carries only the version in its
-//! User-Agent. Fails silently when offline. Off in nested mode and with `check_updates = false` (applied on reload).
+//! (Stable: releases only, never a beta; Beta: betas too) and compare it with the running version. No account, no
+//! identifier: the request carries only the version in its User-Agent. Fails silently when offline. Off in nested mode
+//! and with `check_updates = false` (applied on reload).
 //!
 //! A newer release on an install.sh install (versions under `/usr/lib/noobsbot-desktop/versions/`, release key
 //! installed) is downloaded in the background to `~/.cache/noobsbot-desktop/updates/<v>/` and verified (minisign
@@ -40,10 +41,10 @@ const ARCH: &str = std::env::consts::ARCH;
 #[derive(Debug, Clone, Copy, PartialEq, Default, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Channel {
-    /// Stable releases, or the newest pre-release while there is none yet (1.0.0's).
+    /// Releases only, never a beta.
     #[default]
     Stable,
-    /// Pre-releases (`1.4.0-beta.2`) too.
+    /// Betas (`1.0.1-beta.2`) too: the newest version, whichever it is.
     Beta,
 }
 
@@ -140,18 +141,15 @@ fn running() -> Version {
 }
 
 /// The newest release of `repo` (its web URL) on `channel` if it is newer than `running`: `Some(None)` when up to
-/// date, `None` offline. Stable asks for GitHub's latest release, which is never a pre-release; while the repo has no
-/// stable release yet (1.0.0's pre-releases: a 404), it reads the list, where `newer` takes the newest pre-release.
+/// date, `None` offline. Stable asks for GitHub's latest release, which is never a pre-release (a 404 while there is
+/// none yet, so it reads as offline); Beta reads the list, betas included.
 fn latest(repo: &str, running: &Version, channel: Channel) -> Option<Option<Release>> {
     let api = repo.replace("https://github.com/", "https://api.github.com/repos/");
-    let list = || fetch(&format!("{api}/releases?per_page=20"));
-    let json = match channel {
-        // ponytail: curl -f can't tell the 404 from another failure; then the list's newest stable release still
-        // wins, so only one more than 20 releases back is missed. Read curl's HTTP code if that ever matters.
-        Channel::Stable => fetch(&format!("{api}/releases/latest")).or_else(list),
-        Channel::Beta => list(),
+    let url = match channel {
+        Channel::Stable => format!("{api}/releases/latest"),
+        Channel::Beta => format!("{api}/releases?per_page=20"),
     };
-    json.map(|json| newer(&json, repo, running, channel))
+    fetch(&url).map(|json| newer(&json, repo, running, channel))
 }
 
 /// noobsbot-terminal's Software Update row: the installed version and a newer release on the same channel.
@@ -291,13 +289,15 @@ struct Asset {
 }
 
 /// The newest release of `repo` (its web URL) in a GitHub `releases/latest` (one) or `releases` (a list) response by
-/// SemVer precedence (`1.0.0-rc.1` < `1.0.0`, `beta.10` > `beta.2`), if it is newer than `running`. Stable ignores
-/// pre-releases once the list has a stable release; GitHub never lists drafts to anonymous requests.
+/// SemVer precedence (`1.0.0` < `1.0.1-beta.2` < `1.0.1-beta.10` < `1.0.1`), if it is newer than `running`. Stable
+/// never takes a pre-release; GitHub never lists drafts to anonymous requests.
 pub fn newer(json: &str, repo: &str, running: &Version, channel: Channel) -> Option<Release> {
     let releases: Vec<Json> = serde_json::from_str(json).or_else(|_| serde_json::from_str(json).map(|one| vec![one])).ok()?;
-    let releases: Vec<_> = releases.into_iter().filter_map(|r| Some((Version::parse(r.tag_name.strip_prefix('v').unwrap_or(&r.tag_name)).ok()?, r))).collect();
-    let stable_only = channel == Channel::Stable && releases.iter().any(|(v, _)| v.pre.is_empty());
-    let (version, json) = releases.into_iter().filter(|(v, _)| !stable_only || v.pre.is_empty()).max_by(|a, b| a.0.cmp(&b.0))?;
+    let (version, json) = releases
+        .into_iter()
+        .filter_map(|r| Some((Version::parse(r.tag_name.strip_prefix('v').unwrap_or(&r.tag_name)).ok()?, r)))
+        .filter(|(v, _)| channel == Channel::Beta || v.pre.is_empty())
+        .max_by(|a, b| a.0.cmp(&b.0))?;
     // The tarball for this CPU, not its checksum (smaller) nor another CPU's.
     let size = json.assets.iter().filter(|a| a.name.contains(ARCH)).map(|a| a.size).max();
     let url = format!("{repo}/releases/tag/{}", json.tag_name);
@@ -622,18 +622,16 @@ mod tests {
     }
 
     #[test]
-    fn stable_takes_pre_releases_until_a_stable_release_exists() {
-        // Only 1.0.0's pre-releases: the newest by SemVer precedence, whatever the list's order.
-        let pre = r#"[{"tag_name": "v1.0.0-beta.2"}, {"tag_name": "v1.0.0-beta.10"}, {"tag_name": "v1.0.0-alpha.8"}]"#;
-        assert_eq!(newer(pre, REPO, &v("1.0.0-alpha.8"), Channel::Stable).unwrap().version, v("1.0.0-beta.10"));
-        let rc = r#"[{"tag_name": "v1.0.0-beta.10"}, {"tag_name": "v1.0.0-rc.1"}]"#;
-        assert_eq!(newer(rc, REPO, &v("1.0.0-beta.10"), Channel::Stable).unwrap().version, v("1.0.0-rc.1"));
-        assert_eq!(newer(rc, REPO, &v("1.0.0-rc.1"), Channel::Stable), None);
-        // From 1.0.0 on, the next version's betas are Beta's only.
-        let after = r#"[{"tag_name": "v1.1.0-beta.1"}, {"tag_name": "v1.0.0-rc.1"}, {"tag_name": "v1.0.0"}]"#;
-        assert_eq!(newer(after, REPO, &v("1.0.0-rc.1"), Channel::Stable).unwrap().version, v("1.0.0"));
-        assert_eq!(newer(after, REPO, &v("1.0.0"), Channel::Stable), None);
-        assert_eq!(newer(after, REPO, &v("1.0.0"), Channel::Beta).unwrap().version, v("1.1.0-beta.1"));
+    fn stable_never_takes_a_beta() {
+        // Only betas: Stable stays; Beta takes the newest by SemVer precedence, whatever the list's order.
+        let betas = r#"[{"tag_name": "v1.0.1-beta.2"}, {"tag_name": "v1.0.1-beta.10"}, {"tag_name": "v1.0.1-beta.1"}]"#;
+        assert_eq!(newer(betas, REPO, &v("1.0.0"), Channel::Stable), None);
+        assert_eq!(newer(betas, REPO, &v("1.0.0"), Channel::Beta).unwrap().version, v("1.0.1-beta.10"));
+        assert_eq!(newer(betas, REPO, &v("1.0.1-beta.10"), Channel::Beta), None);
+        // The release of those betas is above them: Beta takes it too.
+        let released = r#"[{"tag_name": "v1.0.1-beta.10"}, {"tag_name": "v1.0.1"}, {"tag_name": "v1.0.0"}]"#;
+        assert_eq!(newer(released, REPO, &v("1.0.1-beta.10"), Channel::Beta).unwrap().version, v("1.0.1"));
+        assert_eq!(newer(released, REPO, &v("1.0.0"), Channel::Stable).unwrap().version, v("1.0.1"));
     }
 
     #[test]
