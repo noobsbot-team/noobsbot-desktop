@@ -898,9 +898,19 @@ impl State {
 
     /// The keys of an open menu: Up/Down light the next live row, Right or Return open its submenu or run it, Left
     /// or Esc back out of one submenu, a letter (`letters`: no shortcut has it) lights the next row starting with it.
-    /// Left/Right on a bar menu with no submenu in the way go to the neighbouring bar menu. `true`: used.
+    /// Left/Right on a bar menu with no submenu in the way go to the neighbouring bar menu; in Notification Center
+    /// (unless a shortcut has them) they turn the calendar's month. `true`: used.
     pub fn menu_key(&mut self, sym: smithay::input::keyboard::Keysym, letters: bool) -> bool {
         use smithay::input::keyboard::Keysym;
+        if let Some(Popup::Notifications { year, month }) = self.popup {
+            // ←/→ turn the calendar's month.
+            let by = match sym {
+                Keysym::Left if letters => -1,
+                Keysym::Right if letters => 1,
+                _ => return false,
+            };
+            return self.calendar_turn(shift_month(year, month, by));
+        }
         if let Some(Popup::Module(_, i)) = self.popup {
             // A status module takes no other keys; Esc closes it (`close_popup`).
             return matches!(sym, Keysym::Left | Keysym::Right) && self.bar_key(BarItem::Status(i), sym == Keysym::Right);

@@ -15,7 +15,7 @@ use smithay::{
 use super::{CalendarLayout, DROP, MARGIN, Popup, calendar_click, calendar_layout, grid, shift_month};
 pub use crate::services::notifications::{Notification, Reason};
 use crate::{
-    anim::{GESTURE, Spring},
+    anim::{GESTURE, SMOOTH, Spring},
     config::AppStyle,
     render::menubar,
     services::{Command, notifications},
@@ -166,7 +166,13 @@ fn month_follow(dx: f64) -> f64 {
 /// gesture), and where the grid then shown springs home from, px right of its place, moving how fast, px per s.
 fn month_let_go(dx: f64, v: f64) -> (i32, f64, f64) {
     let by = if crate::gestures::commits(dx, MONTH_W, v) { dx.signum() as i32 } else { 0 };
-    (by, month_follow(dx) + f64::from(by) * MONTH_W, -v * 1000.0)
+    (by, turn_from(month_follow(dx), by), -v * 1000.0)
+}
+
+/// Turning `by` months with the grid `at` px right of its place: where the new month's grid starts, beside the old
+/// one's and never more than a card's width away.
+fn turn_from(at: f64, by: i32) -> f64 {
+    (at + f64::from(by) * MONTH_W).clamp(-MONTH_W, MONTH_W)
 }
 
 impl Store {
@@ -820,9 +826,9 @@ impl State {
             }
             Some(Hit::Calendar) => {
                 if let Some(Popup::Notifications { year, month }) = self.popup
-                    && let Some((year, month)) = calendar_click(&center.calendar.1, location, (year, month))
+                    && let Some(to) = calendar_click(&center.calendar.1, location, (year, month))
                 {
-                    self.popup = Some(Popup::Notifications { year, month });
+                    self.calendar_turn(to);
                 }
             }
             Some(Hit::Widget(i)) => {
@@ -942,6 +948,16 @@ impl State {
         let Some(Popup::Notifications { year, month }) = self.popup else { return None };
         let x = self.notifications.slide.filter(|_| !self.config.appearance.reduce_motion)?.offset(self.frame_time).round() as i32;
         (x != 0).then(|| (x, shift_month(year, month, if x > 0 { -1 } else { 1 })))
+    }
+
+    /// Shows month `to` in the calendar (‹ ›, ←/→, its title): the grid slides over on the `smooth` spring.
+    pub(super) fn calendar_turn(&mut self, (year, month): (i32, u32)) -> bool {
+        let Some(Popup::Notifications { year: was_year, month: was }) = self.popup else { return false };
+        let by = (year - was_year) * 12 + month as i32 - was as i32;
+        let at = self.notifications.slide.map_or(0.0, |s| s.offset(Instant::now()));
+        self.popup = Some(Popup::Notifications { year, month });
+        self.calendar_spring(turn_from(at, by), 0.0, SMOOTH);
+        true
     }
 
     /// The grid springs home from `from` px right of its place, moving `v` px per s. Reduce motion: it is there now.
@@ -1134,11 +1150,14 @@ mod tests {
         // Short and slow, or heading back: it stays and springs back.
         assert_eq!(month_let_go(60.0, 0.0), (0, -60.0, 0.0));
         assert_eq!(month_let_go(150.0, -0.5).0, 0);
+        // ‹ › slide the next month in from the right, the one before from the left, from wherever the grid was.
+        assert_eq!((turn_from(0.0, 1), turn_from(0.0, -1), turn_from(-100.0, 1)), (MONTH_W, -MONTH_W, MONTH_W - 100.0));
+        assert_eq!(turn_from(200.0, 5), MONTH_W, "today, months away, still comes in from beside it");
         // A spring starts where it is let go and settles home.
         let now = Instant::now();
-        let slide = Slide::Spring { t0: now, from: 120.0, v: 0.0, spring: GESTURE };
+        let slide = Slide::Spring { t0: now, from: 120.0, v: 0.0, spring: SMOOTH };
         assert_eq!(slide.offset(now), 120.0);
-        assert!(slide.offset(now + GESTURE.settle_release(120.0 / MONTH_W, 0.0)).abs() < 1.0);
+        assert!(slide.offset(now + SMOOTH.settle_release(120.0 / MONTH_W, 0.0)).abs() < 1.0);
     }
 
     #[test]
