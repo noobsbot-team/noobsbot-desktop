@@ -10,6 +10,8 @@ use std::{
 use crate::autostart::{self, Installed};
 
 const SECTION: &str = "[Default Applications]";
+/// `mimeinfo.cache`'s one section: every app that opens a type, the fallback when no list names a default.
+const CACHE: &str = "[MIME Cache]";
 
 /// Each row: its label and the MIME types a choice is written for (the first one shows the current default).
 pub const KINDS: &[(&str, &[&str])] = &[
@@ -53,12 +55,12 @@ pub fn command(app: &Path) -> Option<String> {
     (!exec.is_empty()).then_some(exec)
 }
 
-/// The default for `mime` in one `mimeapps.list`: the first desktop-file id listed.
-pub fn default_in(text: &str, mime: &str) -> Option<String> {
+/// The default for `mime` in one `mimeapps.list` (or `mimeinfo.cache`): the first desktop-file id `section` lists.
+pub fn default_in(text: &str, section: &str, mime: &str) -> Option<String> {
     let mut inside = false;
     for line in text.lines().map(str::trim) {
         if line.starts_with('[') {
-            inside = line == SECTION;
+            inside = line == section;
         } else if inside
             && let Some((key, value)) = line.split_once('=')
             && key.trim() == mime
@@ -105,26 +107,29 @@ pub fn user_list() -> PathBuf {
     autostart::env_dir("XDG_CONFIG_HOME", ".config").join("mimeapps.list")
 }
 
-/// Every `mimeapps.list` read for the current default, most important first: the user's, `$XDG_CONFIG_DIRS`',
-/// then the data dirs' `applications/` (`/usr/share/applications/mimeapps.list`).
-/// ponytail: no `$desktop-mimeapps.list` and no `mimeinfo.cache`; read them if a default shows wrong.
-fn lists() -> Vec<PathBuf> {
+/// Every file read for the current default, most important first, with the section read (the mime-apps spec's
+/// order): in the user's config dir, `$XDG_CONFIG_DIRS`, then the data dirs' `applications/`, a
+/// `$desktop-mimeapps.list` for each name in `desktop` (`$XDG_CURRENT_DESKTOP`, lower-cased) before the plain
+/// `mimeapps.list`; then the data dirs' `mimeinfo.cache`.
+fn lists(desktop: &str) -> Vec<(PathBuf, &'static str)> {
     let split = |var: &str, fallback: &str| std::env::var(var).ok().filter(|d| !d.is_empty()).unwrap_or_else(|| fallback.into());
     let config = split("XDG_CONFIG_DIRS", "/etc/xdg");
     let data = split("XDG_DATA_DIRS", "/usr/local/share:/usr/share");
-    std::iter::once(user_list())
-        .chain(config.split(':').filter(|d| !d.is_empty()).map(|d| PathBuf::from(d).join("mimeapps.list")))
-        .chain(
-            std::iter::once(autostart::env_dir("XDG_DATA_HOME", ".local/share"))
-                .chain(data.split(':').filter(|d| !d.is_empty()).map(PathBuf::from))
-                .map(|d| d.join("applications/mimeapps.list")),
-        )
-        .collect()
+    let apps: Vec<PathBuf> = std::iter::once(autostart::env_dir("XDG_DATA_HOME", ".local/share"))
+        .chain(data.split(':').filter(|d| !d.is_empty()).map(PathBuf::from))
+        .map(|d| d.join("applications"))
+        .collect();
+    let dirs = std::iter::once(autostart::env_dir("XDG_CONFIG_HOME", ".config"))
+        .chain(config.split(':').filter(|d| !d.is_empty()).map(PathBuf::from))
+        .chain(apps.iter().cloned());
+    let names: Vec<String> =
+        desktop.split(':').filter(|d| !d.is_empty()).map(|d| format!("{}-mimeapps.list", d.to_ascii_lowercase())).chain(["mimeapps.list".into()]).collect();
+    dirs.flat_map(|d| names.iter().map(move |n| (d.join(n), SECTION))).chain(apps.iter().map(|d| (d.join("mimeinfo.cache"), CACHE))).collect()
 }
 
-/// The default for `mime`, from the first list that names one.
+/// The default for `mime`, from the first file that names one.
 pub fn current(mime: &str) -> Option<String> {
-    lists().into_iter().find_map(|p| std::fs::read_to_string(p).ok().and_then(|text| default_in(&text, mime)))
+    lists(&autostart::desktop()).into_iter().find_map(|(p, section)| std::fs::read_to_string(p).ok().and_then(|text| default_in(&text, section, mime)))
 }
 
 /// Makes `id` (`firefox.desktop`) the user's default for `mimes`.
@@ -146,8 +151,25 @@ mod tests {
     #[test]
     fn reads_the_default_section_only() {
         let text = "[Added Associations]\ntext/html=a.desktop;\n\n[Default Applications]\n# browser\ntext/html= ;b.desktop;c.desktop;\n";
-        assert_eq!(default_in(text, "text/html").as_deref(), Some("b.desktop"));
-        assert_eq!(default_in(text, "text/plain"), None);
+        assert_eq!(default_in(text, SECTION, "text/html").as_deref(), Some("b.desktop"));
+        assert_eq!(default_in(text, SECTION, "text/plain"), None);
+        let cache = "[MIME Cache]\ntext/html=web.desktop;other.desktop;\n";
+        assert_eq!(default_in(cache, CACHE, "text/html").as_deref(), Some("web.desktop"));
+        assert_eq!(default_in(cache, SECTION, "text/html"), None);
+    }
+
+    #[test]
+    fn lists_in_the_spec_order() {
+        let lists = lists("Noobsbot-Desktop:Extra");
+        let names: Vec<String> = lists.iter().map(|(p, _)| p.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(lists[2].0, user_list());
+        // Each dir's desktop lists, then its plain one; the caches last, read for their own section.
+        let caches = names.iter().filter(|n| *n == "mimeinfo.cache").count();
+        assert!(caches > 0);
+        for dir in names[..names.len() - caches].chunks(3) {
+            assert_eq!(dir, ["noobsbot-desktop-mimeapps.list", "extra-mimeapps.list", "mimeapps.list"]);
+        }
+        assert!(lists.iter().all(|(p, section)| (*section == CACHE) == p.ends_with("mimeinfo.cache")));
     }
 
     #[test]
