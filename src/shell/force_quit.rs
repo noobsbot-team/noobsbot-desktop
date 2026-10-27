@@ -23,7 +23,7 @@ use smithay::{
 use crate::{
     decorations::{FIRST_LIGHT, LIGHT, LIGHT_STEP},
     shell::{alert, switcher},
-    state::State,
+    state::{ClientState, State},
     text::ts,
     wm::Rect,
 };
@@ -69,6 +69,13 @@ impl Ping {
         self.frozen |= late;
         became
     }
+}
+
+/// xwayland-satellite, the client of every X11 window, known by the program it connected as: its pid is no X11 app's,
+/// and killing it takes every X11 app down. So X11 apps get no Force Quit row.
+// ponytail: the X11 app's own pid would need XRes from the X server; until then they quit from their own menus.
+fn x11_bridge(data: &ClientState) -> bool {
+    data.program.get().and_then(|(exe, _)| exe.file_name()).is_some_and(|name| name.to_string_lossy().starts_with("xwayland-satellite"))
 }
 
 /// Runs `f` on the app's ping state, kept with its xdg_wm_base.
@@ -198,11 +205,12 @@ impl State {
         }
     }
 
-    /// The close button or Super+W: a frozen app gets the Wait / Force Quit alert instead.
+    /// The close button or Super+W: a frozen app (not the X11 bridge) gets the Wait / Force Quit alert instead.
     pub fn close_window(&mut self, window: &Window) {
         self.ping(window);
+        let client = window.toplevel().and_then(|t| t.wl_surface().client()).filter(|c| !c.get_data::<ClientState>().is_some_and(x11_bridge));
         if frozen(window)
-            && let (Some(pid), Some(client)) = (self.pid(window), window.toplevel().and_then(|t| t.wl_surface().client()))
+            && let (Some(pid), Some(client)) = (self.pid(window), client)
         {
             let app = self.app_name(window);
             self.open_ask(alert::Kind::NotResponding { app, pid, client: client.id() });
@@ -219,7 +227,12 @@ impl State {
     /// One row per app process, most recently used first.
     pub fn force_quit_entries(&mut self) -> Vec<Entry> {
         let windows: Vec<Window> = self.switcher_apps().into_iter().flat_map(|a| a.windows).collect();
-        let keyed: Vec<_> = windows.into_iter().filter_map(|w| Some((w.toplevel()?.wl_surface().client()?.id(), w))).collect();
+        let keyed: Vec<_> = windows
+            .into_iter()
+            .filter_map(|w| Some((w.toplevel()?.wl_surface().client()?, w)))
+            .filter(|(c, _)| !c.get_data::<ClientState>().is_some_and(x11_bridge))
+            .map(|(c, w)| (c.id(), w))
+            .collect();
         switcher::group(keyed)
             .into_iter()
             .filter_map(|(client, windows)| {
@@ -312,8 +325,10 @@ impl State {
 
     /// SIGTERM, then SIGKILL after 3 s if the app is still connected.
     pub fn kill(&mut self, pid: i32, client: ClientId) {
-        // Never ourselves, init, or a process group.
-        if pid <= 1 || pid == std::process::id() as i32 {
+        // Never ourselves, init, a process group, or the X11 bridge.
+        let bridge =
+            self.display_handle.backend_handle().get_client_data(client.clone()).is_ok_and(|d| d.downcast_ref::<ClientState>().is_some_and(x11_bridge));
+        if pid <= 1 || pid == std::process::id() as i32 || bridge {
             tracing::warn!(pid, "force quit: refusing to signal this process");
             return;
         }
@@ -337,6 +352,19 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_x11_bridge_is_known_by_its_program() {
+        let client = |exe: &str| {
+            let data = ClientState::default();
+            let _ = data.program.set((exe.into(), "x".into()));
+            data
+        };
+        assert!(x11_bridge(&client("/usr/lib/noobsbot-desktop/versions/1.0.0/xwayland-satellite")));
+        assert!(x11_bridge(&client("/usr/bin/xwayland-satellite (deleted)")));
+        assert!(!x11_bridge(&client("/usr/bin/foot")));
+        assert!(!x11_bridge(&ClientState::default()));
+    }
 
     #[test]
     fn ping_times_out_and_recovers() {
