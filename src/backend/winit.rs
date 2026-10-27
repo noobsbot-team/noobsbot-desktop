@@ -424,7 +424,6 @@ impl State {
         let peek = self.dock_peek().filter(|_| here);
         let peek_hover = self.dock_ui.peek.as_ref().and_then(|p| p.hover);
         let held_at = self.dock_ui.dragged().filter(|_| here).and(self.seat.get_pointer()).map(|p| self.to_dock(self.to_output(p.current_location())));
-        let focused_item = self.focused_window().and_then(|w| dock_items.iter().position(|i| i.windows.contains(&w)));
         let output_rect = self.space.output_geometry(output).unwrap_or_default();
         let scale = output.current_scale().fractional_scale();
         let appearance = &self.config.appearance;
@@ -442,10 +441,9 @@ impl State {
             let mut icons: Vec<DockIcon> = dock_items
                 .iter()
                 .zip(&dock_frame.shades)
-                .enumerate()
-                .map(|(i, (item, shade))| {
+                .map(|(item, shade)| {
                     let windows = if item.is_tile() { 0 } else { item.windows.len() };
-                    DockIcon { name: item.icon(), windows, focused: focused_item == Some(i), shade: *shade }
+                    DockIcon { name: item.icon(), windows, shade: *shade }
                 })
                 .collect();
             let px = (layout.icon * zoom * scale).ceil() as u32;
@@ -465,8 +463,8 @@ impl State {
             if let Some((item, at)) = held.zip(held_at) {
                 let s = layout.icon;
                 layout.icons.push(smithay::utils::Rectangle::new((at.x - s / 2.0, at.y - s / 2.0).into(), (s, s).into()));
-                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0 };
-                icons.push(DockIcon { name: item.icon(), windows: 0, focused: false, shade });
+                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0, active: 0.0 };
+                icons.push(DockIcon { name: item.icon(), windows: 0, shade });
             }
             let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
             bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &dock_frame.tips, dark, scale));

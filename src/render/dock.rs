@@ -69,7 +69,6 @@ pub struct Icon<'a> {
     pub name: &'a str,
     /// Open windows: one dot, two for several (Plank).
     pub windows: usize,
-    pub focused: bool,
     pub shade: Shade,
 }
 
@@ -78,8 +77,8 @@ pub struct Icon<'a> {
 pub struct DockView {
     /// The bar, made at this scale; resized as zoom widens it.
     bar: Option<(u64, PixelShaderElement)>,
-    /// Running dots and the focused app's highlight, by their rect.
-    marks: Vec<((Rect, bool), PixelShaderElement)>,
+    /// Running dots and the focused app's highlight, by their rect, kind (dot) and opacity in percent.
+    marks: Vec<((Rect, bool, u8), PixelShaderElement)>,
     icons: Vec<Label>,
     /// Badges and progress bars: built for these icons and entries, accent and scale.
     badges: Option<(BadgeKey, Vec<PixelShaderElement>, Vec<Piece>)>,
@@ -321,8 +320,8 @@ impl DockView {
         }
 
         // IndicatorSize 5: a small light dot centred under the icon, in the band below it, two (s/16 either side) for
-        // several windows; the focused app's icon sits on a faint highlight (Plank's active-window glow, without its
-        // 300 ms fade).
+        // several windows; the focused app's icon sits on a faint highlight (Plank's active-window glow, fading in and
+        // out over its 300 ms).
         let dot = (layout.icon / 16.0).round().max(4.0) as i32;
         let floor = f64::from(layout.zone.loc.y + layout.zone.size.h);
         let band = f64::from(layout.zone.size.h) - layout.icon;
@@ -337,22 +336,23 @@ impl DockView {
                 _ => &[-apart, apart],
             };
             for dx in offsets {
-                marks.push((Rectangle::new((centre + dx - dot / 2, y).into(), (dot, dot).into()), true));
+                marks.push((Rectangle::new((centre + dx - dot / 2, y).into(), (dot, dot).into()), true, 100));
             }
-            if item.focused {
+            let active = (item.shade.active.clamp(0.0, 1.0) * 100.0).round() as u8;
+            if active > 0 {
                 let (x, w) = (left.round() as i32, (right - left).round() as i32);
-                marks.push((Rectangle::new(Point::from((x, layout.bar.loc.y)), (w, layout.bar.size.h).into()), false));
+                marks.push((Rectangle::new(Point::from((x, layout.bar.loc.y)), (w, layout.bar.size.h).into()), false, active));
             }
         }
         // Dots in front of highlights.
-        marks.sort_by_key(|(_, dot)| !dot);
+        marks.sort_by_key(|(_, dot, _)| !dot);
         let old = std::mem::take(&mut self.marks);
         self.marks = marks
             .into_iter()
             .map(|key| {
                 let element = old.iter().find(|(k, _)| *k == key).map(|(_, e)| e.clone()).unwrap_or_else(|| match key {
-                    (rect, true) => shaders.light(rect, [1.0, 1.0, 1.0, 0.9], false, scale),
-                    (rect, false) => shaders.glass_shape(rect, [1.0, 1.0, 1.0, 0.10], 0.0, false, true, scale),
+                    (rect, true, _) => shaders.light(rect, [1.0, 1.0, 1.0, 0.9], false, scale),
+                    (rect, false, active) => shaders.glass_shape(rect, [1.0, 1.0, 1.0, 0.10 * f32::from(active) / 100.0], 0.0, false, true, scale),
                 });
                 (key, element)
             })
