@@ -143,7 +143,8 @@ pub enum Action {
     AppExpose,
     /// Windows slide to the screen edges, or back (E5.3; no default key).
     ShowDesktop,
-    /// Keyboard layout n, from 0, or the next one (Super+Ctrl+Space, E6.12).
+    /// Keyboard layout n, from 0, or the next one (Super+Ctrl+Space, E6.12; the next input method while the engine
+    /// lists several).
     Layout(Option<usize>),
     /// The keyboard layout before the active one (Super+Ctrl+Shift+Space).
     PreviousLayout,
@@ -514,8 +515,9 @@ impl State {
             Action::Emoji => self.toggle_emoji(),
             Action::OnScreenKeyboard => self.toggle_osk(),
             Action::KeyboardViewer => self.toggle_keyboard_viewer(),
+            Action::Layout(None) => self.cycle_input(1),
             Action::Layout(index) => self.switch_layout(index),
-            Action::PreviousLayout => self.switch_layout(Some(crate::ime::step(self.layouts.active, self.layouts.list.len(), -1))),
+            Action::PreviousLayout => self.cycle_input(-1),
             Action::InputMethod(name) => {
                 let ibus = self.config.keyboard.engine() == "ibus";
                 self.services.send(crate::services::Command::InputMethod { name, ibus });

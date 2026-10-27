@@ -177,7 +177,29 @@ pub(crate) fn step(active: usize, count: usize, by: isize) -> usize {
     (active as isize + by).rem_euclid(count.max(1) as isize) as usize
 }
 
+/// The engine's method `by` steps from its current one, when it lists more than one.
+fn method_step(fcitx: &crate::services::fcitx::Fcitx, by: isize) -> Option<&(String, String)> {
+    let at = fcitx.methods.iter().position(|m| m.0 == fcitx.current).unwrap_or(0);
+    (fcitx.methods.len() > 1).then(|| &fcitx.methods[step(at, fcitx.methods.len(), by)])
+}
+
 impl State {
+    /// Super+Ctrl+Space (`by` 1) or with Shift (-1): the next or previous input method while the engine lists several,
+    /// else layout; the OSD says which.
+    // ponytail: fcitx5 tells nobody when its own hotkey switches, so this steps from the method we last read.
+    pub fn cycle_input(&mut self, by: isize) {
+        let Some((id, name)) = self.layouts.methods.as_ref().and_then(|f| method_step(f, by)).cloned() else {
+            return self.switch_layout(Some(step(self.layouts.active, self.layouts.list.len(), by)));
+        };
+        if let Some(methods) = self.layouts.methods.as_mut() {
+            // At once, so presses faster than the engine's echo still step on.
+            methods.current = id.clone();
+        }
+        let ibus = self.config.keyboard.engine() == "ibus";
+        self.services.send(crate::services::Command::InputMethod { name: id, ibus });
+        self.show_osd(Osd { symbol: Symbol::Keyboard, level: None, text: Some(name) });
+    }
+
     /// Reads the keymap's layouts after the keyboard got a new xkb config; `codes` is its `layout` string.
     pub fn read_layouts(&mut self, codes: &str) {
         let Some(keyboard) = self.seat.get_keyboard() else { return };
@@ -386,6 +408,16 @@ mod tests {
         // The editor closed.
         r.retain(|k| *k != "editor");
         assert_eq!(r.focus(Some(&"editor"), 0), None, "forgotten");
+    }
+
+    #[test]
+    fn methods_cycle_from_the_current_one() {
+        let methods = ["keyboard-us", "m17n_ne_rom", "pinyin"].map(|id| (id.to_owned(), id.to_uppercase())).to_vec();
+        let mut fcitx = crate::services::fcitx::Fcitx { methods, current: "pinyin".into() };
+        assert_eq!(method_step(&fcitx, 1).unwrap().0, "keyboard-us");
+        assert_eq!(method_step(&fcitx, -1).unwrap().0, "m17n_ne_rom");
+        fcitx.methods.truncate(1);
+        assert_eq!(method_step(&fcitx, 1), None, "one method: the layouts cycle");
     }
 
     #[test]
