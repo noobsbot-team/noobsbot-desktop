@@ -8,11 +8,13 @@ set -eu
 cd "$(dirname "$0")/.."
 export CARGO_TARGET_DIR=target/dev CARGO_PROFILE_RELEASE_STRIP=false CARGO_PROFILE_RELEASE_DEBUG=line-tables-only
 cargo build --workspace --release --locked
+sh scripts/build-xwayland-satellite.sh target/dev/xwayland-satellite
 lib=/usr/lib/noobsbot-desktop
 v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)+$(git rev-parse --short HEAD)$(git diff --quiet HEAD || echo .dirty)
 for b in noobsbot-desktop noobsbot-desktop-settings noobsbot-desktop-update noobsbot-desktop-watchdog noobsbot-desktop-widget-system; do
     sudo install -Dm755 "target/dev/release/$b" "$lib/versions/$v/$b"
 done
+sudo install -Dm755 target/dev/xwayland-satellite/target/release/xwayland-satellite "$lib/versions/$v/xwayland-satellite"
 sudo ln -sfn "$lib/versions/$v/noobsbot-desktop" /usr/bin/noobsbot-desktop
 sudo ln -sfn "$lib/versions/$v/noobsbot-desktop-settings" /usr/bin/noobsbot-desktop-settings
 sudo install -Dm755 "$lib/versions/$v/noobsbot-desktop-update" "$lib/noobsbot-desktop-update"
