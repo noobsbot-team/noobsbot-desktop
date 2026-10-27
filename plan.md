@@ -776,7 +776,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   ```
   - Days of other months at `label-tertiary`; week starts on the locale's first day (configurable); optional week numbers.
   - ‹ › change month with a horizontal slide (spring `snappy`); 2-finger horizontal swipe also changes month; clicking
-    the month title returns to today.
+    the month title returns to today. Built: the swipe follows the fingers 1:1 with the next month sliding in beside,
+    then a `gesture` spring turns it past 30% of the card or on a flick, else back; ‹ ›, the title and ←/→ slide on
+    `smooth`; both grids are cut at the card's edge; reduce motion turns the month at once.
   - Later (optional): event dots under days, from local `.ics` files, then CalDAV/Google.
 - **Built with:** `chrono` (date math); our widgets.
 - **Why:** pure date math, so no calendar library or service is needed until events are added.

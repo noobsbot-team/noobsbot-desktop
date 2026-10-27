@@ -225,6 +225,8 @@ impl State {
             Some(Popup::Notifications { year, month }) => Some(self.calendar_view(year, month, self.config.clock.week_start.into())),
             _ => None,
         };
+        // Mid-slide, the month beside it with its dots.
+        let slide = self.calendar_slide().map(|(x, (year, month))| (x, (year, month), self.calendar_view(year, month, self.config.clock.week_start.into()).0));
         let dock_menu =
             self.dock_ui.menu.as_ref().filter(|_| self.popup == Some(Popup::Menu(crate::shell::Menu::Dock))).map(|(_, at)| (self.dock_menu_rows(), *at));
         let input_menu = self.input_menu_rows();
@@ -281,7 +283,7 @@ impl State {
             Some(Popup::Notifications { year, month }) => {
                 let week_start = self.config.clock.week_start.into();
                 let (dots, up_next) = calendar.clone().unwrap_or_default();
-                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots };
+                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots, slide };
                 if let Some(center) = &center {
                     let view = View::Center {
                         center,

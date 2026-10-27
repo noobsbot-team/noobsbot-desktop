@@ -12,9 +12,10 @@ use smithay::{
     wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
 };
 
-use super::{CalendarLayout, DROP, MARGIN, Popup, calendar_click, calendar_layout, grid};
+use super::{CalendarLayout, DROP, MARGIN, Popup, calendar_click, calendar_layout, grid, shift_month};
 pub use crate::services::notifications::{Notification, Reason};
 use crate::{
+    anim::{GESTURE, SMOOTH, Spring},
     config::AppStyle,
     render::menubar,
     services::{Command, notifications},
@@ -74,6 +75,8 @@ pub struct Store {
     /// Notification Center's scroll offset, px.
     pub scroll: i32,
     swipe: Option<Swipe>,
+    /// The calendar's grid moving between months.
+    slide: Option<Slide>,
 }
 
 /// A banner following two fingers sideways, then springing off or back once they lift.
@@ -128,6 +131,48 @@ fn fling_time(from: f64, v: f64, gone: bool) -> Duration {
     let settle = crate::anim::GESTURE.settle_release((from - to) / OFF, v * 1000.0 / OFF);
     let out = (0..settle.as_millis() as u64).find(|ms| gone && fling(from, v, true, *ms as f64 / 1000.0) >= OFF - 1.0);
     out.map_or(settle, Duration::from_millis)
+}
+
+/// The calendar card's width: a month's grid slides this far to make way for the next (E2.5).
+const MONTH_W: f64 = (CENTER_W - 2 * CENTER_PAD) as f64;
+
+/// The calendar's grid following two fingers sideways, or springing into place.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Slide {
+    /// Scroll travel (about 1 px; + towards the next month) and its smoothed speed per ms, at libinput time `last`.
+    Swipe { dx: f64, v: f64, last: u32 },
+    /// Let go at `t0` `from` px right of its place, moving `v` px per s, home on `spring`.
+    Spring { t0: Instant, from: f64, v: f64, spring: Spring },
+}
+
+impl Slide {
+    /// How far right of its place the shown month's grid is drawn at `now`.
+    fn offset(self, now: Instant) -> f64 {
+        match self {
+            Slide::Swipe { dx, .. } => month_follow(dx),
+            Slide::Spring { t0, from, v, spring } => spring.release(from, v, now.saturating_duration_since(t0).as_secs_f64()),
+        }
+    }
+}
+
+/// Where a grid scrolled `dx` is drawn: against the scroll 1:1 (with the fingers, as scrolling is natural by default),
+/// then past a whole month a rubber band.
+fn month_follow(dx: f64) -> f64 {
+    let past = dx.abs() - MONTH_W;
+    -dx.signum() * if past > 0.0 { MONTH_W + crate::gestures::rubber(past / MONTH_W) * MONTH_W } else { dx.abs() }
+}
+
+/// Fingers let go `dx` along at `v` per ms: the months it turns (past 30% of the card or on a flick, as a touchpad
+/// gesture), and where the grid then shown springs home from, px right of its place, moving how fast, px per s.
+fn month_let_go(dx: f64, v: f64) -> (i32, f64, f64) {
+    let by = if crate::gestures::commits(dx, MONTH_W, v) { dx.signum() as i32 } else { 0 };
+    (by, turn_from(month_follow(dx), by), -v * 1000.0)
+}
+
+/// Turning `by` months with the grid `at` px right of its place: where the new month's grid starts, beside the old
+/// one's and never more than a card's width away.
+fn turn_from(at: f64, by: i32) -> f64 {
+    (at + f64::from(by) * MONTH_W).clamp(-MONTH_W, MONTH_W)
 }
 
 impl Store {
@@ -781,9 +826,9 @@ impl State {
             }
             Some(Hit::Calendar) => {
                 if let Some(Popup::Notifications { year, month }) = self.popup
-                    && let Some((year, month)) = calendar_click(&center.calendar.1, location, (year, month))
+                    && let Some(to) = calendar_click(&center.calendar.1, location, (year, month))
                 {
-                    self.popup = Some(Popup::Notifications { year, month });
+                    self.calendar_turn(to);
                 }
             }
             Some(Hit::Widget(i)) => {
@@ -844,9 +889,22 @@ impl State {
     /// A scroll at `location`: scrolls Notification Center, or swipes a banner away (`finger`: on a touchpad, at
     /// libinput `time`, `lifted` when the fingers left it). `true`: the shell took it.
     pub fn notify_scroll(&mut self, location: Point<f64, Logical>, dx: f64, dy: f64, finger: bool, lifted: bool, time: u32) -> bool {
+        let swiping = matches!(self.notifications.slide, Some(Slide::Swipe { .. }));
+        if lifted && swiping {
+            self.calendar_let_go(time);
+            return true;
+        }
         if let Some(center) = self.center_layout() {
-            if !center.rect.to_f64().contains(self.to_popup(location)) {
+            let at = self.to_popup(location);
+            if !center.rect.to_f64().contains(at) {
                 return false;
+            }
+            // Two fingers sideways on the calendar turn its month, and keep it until they lift.
+            if finger && (swiping || (dx.abs() > dy.abs() && center.visible(center.calendar.0) && center.calendar.0.to_f64().contains(at))) {
+                if dx != 0.0 {
+                    self.calendar_swipe(dx, time);
+                }
+                return true;
             }
             let scroll = (self.notifications.scroll + dy.round() as i32).clamp(0, center.max_scroll);
             if scroll != self.notifications.scroll {
@@ -883,6 +941,59 @@ impl State {
         }
         self.schedule_redraw();
         true
+    }
+
+    /// The calendar mid-slide: how far right its grid is drawn, px, and the month beside it. Reduce motion: never.
+    pub fn calendar_slide(&self) -> Option<(i32, (i32, u32))> {
+        let Some(Popup::Notifications { year, month }) = self.popup else { return None };
+        let x = self.notifications.slide.filter(|_| !self.config.appearance.reduce_motion)?.offset(self.frame_time).round() as i32;
+        (x != 0).then(|| (x, shift_month(year, month, if x > 0 { -1 } else { 1 })))
+    }
+
+    /// Shows month `to` in the calendar (‹ ›, ←/→, its title): the grid slides over on the `smooth` spring.
+    pub(super) fn calendar_turn(&mut self, (year, month): (i32, u32)) -> bool {
+        let Some(Popup::Notifications { year: was_year, month: was }) = self.popup else { return false };
+        let by = (year - was_year) * 12 + month as i32 - was as i32;
+        let at = self.notifications.slide.map_or(0.0, |s| s.offset(Instant::now()));
+        self.popup = Some(Popup::Notifications { year, month });
+        self.calendar_spring(turn_from(at, by), 0.0, SMOOTH);
+        true
+    }
+
+    /// The grid springs home from `from` px right of its place, moving `v` px per s. Reduce motion: it is there now.
+    fn calendar_spring(&mut self, from: f64, v: f64, spring: Spring) {
+        self.notifications.slide = None;
+        self.schedule_redraw();
+        if self.config.appearance.reduce_motion {
+            return;
+        }
+        let now = Instant::now();
+        self.notifications.slide = Some(Slide::Spring { t0: now, from, v, spring });
+        crate::anim::extend(&mut self.anim_until, now + spring.settle_release(from / MONTH_W, v / MONTH_W));
+    }
+
+    /// Two fingers moved `dx` sideways on the calendar at libinput `time`; caught mid-spring, it goes on from there.
+    fn calendar_swipe(&mut self, dx: f64, time: u32) {
+        let (d, v, last) = match self.notifications.slide {
+            Some(Slide::Swipe { dx, v, last }) => (dx, v, last),
+            other => (-other.map_or(0.0, |s| s.offset(Instant::now())), 0.0, time),
+        };
+        // Smoothed like a touchpad gesture's (gestures::Tracker).
+        let dt = f64::from(time.wrapping_sub(last).max(1));
+        self.notifications.slide = Some(Slide::Swipe { dx: d + dx, v: (v + dx / dt) / 2.0, last: time });
+        self.schedule_redraw();
+    }
+
+    /// The fingers lifted at libinput `time`: the month turns or stays (`month_let_go`) and the grid springs
+    /// (`gesture`) home from where they left it.
+    fn calendar_let_go(&mut self, time: u32) {
+        let Some(Slide::Swipe { dx, v, last }) = self.notifications.slide.take() else { return };
+        let Some(Popup::Notifications { year, month }) = self.popup else { return };
+        let v = if time.wrapping_sub(last) > 50 { 0.0 } else { v };
+        let (by, from, v) = month_let_go(dx, v);
+        let (year, month) = shift_month(year, month, by);
+        self.popup = Some(Popup::Notifications { year, month });
+        self.calendar_spring(from, v, GESTURE);
     }
 
     /// A new swipe on banner `id`; one still flying off goes now.
@@ -1026,6 +1137,27 @@ mod tests {
         assert!(out < Duration::from_millis(600) && fling(120.0, 0.5, true, out.as_secs_f64()) >= OFF - 1.0, "{out:?}");
         let back = fling_time(50.0, 0.0, false);
         assert!(fling(50.0, 0.0, false, back.as_secs_f64()).abs() < 1.0);
+    }
+
+    #[test]
+    fn the_calendar_follows_the_fingers_and_turns_or_springs_back() {
+        // Against the scroll 1:1: towards the next month the grid goes left. Past a whole month, a rubber band.
+        assert_eq!((month_follow(60.0), month_follow(-60.0)), (-60.0, 60.0));
+        assert!(month_follow(10_000.0) < -MONTH_W && month_follow(10_000.0) > -1.1 * MONTH_W);
+        // Past 30% or flicked it turns, the new month's grid starting where the fingers left it, beside the old one.
+        assert_eq!(month_let_go(150.0, 0.0), (1, MONTH_W - 150.0, 0.0));
+        assert_eq!(month_let_go(-40.0, -1.0), (-1, 40.0 - MONTH_W, 1000.0));
+        // Short and slow, or heading back: it stays and springs back.
+        assert_eq!(month_let_go(60.0, 0.0), (0, -60.0, 0.0));
+        assert_eq!(month_let_go(150.0, -0.5).0, 0);
+        // ‹ › slide the next month in from the right, the one before from the left, from wherever the grid was.
+        assert_eq!((turn_from(0.0, 1), turn_from(0.0, -1), turn_from(-100.0, 1)), (MONTH_W, -MONTH_W, MONTH_W - 100.0));
+        assert_eq!(turn_from(200.0, 5), MONTH_W, "today, months away, still comes in from beside it");
+        // A spring starts where it is let go and settles home.
+        let now = Instant::now();
+        let slide = Slide::Spring { t0: now, from: 120.0, v: 0.0, spring: SMOOTH };
+        assert_eq!(slide.offset(now), 120.0);
+        assert!(slide.offset(now + SMOOTH.settle_release(120.0 / MONTH_W, 0.0)).abs() < 1.0);
     }
 
     #[test]
