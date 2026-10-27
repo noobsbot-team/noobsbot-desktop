@@ -100,7 +100,8 @@ Things it does on purpose:
 - **Text:** [cosmic-text](https://github.com/pop-os/cosmic-text) with Inter, JetBrains Mono and Noto fonts.
 - **System services:** [zbus](https://github.com/dbus2/zbus) talks to PipeWire, NetworkManager, BlueZ, UPower,
   udisks2, logind, timedated and power-profiles-daemon on a background thread, so the screen never waits on them.
-- **Old X11 apps:** run through `xwayland-satellite`.
+- **Old X11 apps:** run through `xwayland-satellite`, with a small patch (`vendor/xwayland-satellite`) so they get
+  the display's scale from the first one on.
 - **Settings:** one file, `~/.config/noobsbot-desktop/config.toml`. Saving it applies the change at once. System
   Settings (`noobsbot-desktop-settings`, built with [iced](https://github.com/iced-rs/iced)) edits the same file.
 - **Login:** greetd starts the session, either through `tuigreet` (text, the default) or through Noobsbot Desktop's
@@ -168,8 +169,8 @@ What `install.sh` does:
    on your machine. If there is no prebuilt for your CPU, or it doesn't fit your system's libraries, it builds that
    release from source instead (and installs Rust for it).
 5. Installs noobsbot-terminal, the system files (session, greetd, PAM, polkit, portals), enables the services and
-   writes your default settings, keeping any settings you already have. On Debian it also installs
-   `xwayland-satellite` (for X11 apps; Debian has no package) to `/usr/local/bin`.
+   writes your default settings, keeping any settings you already have. The release carries our patched
+   `xwayland-satellite` (for X11 apps); on Debian, which has no package of it, a copy also goes to `/usr/local/bin`.
 
 Running it again is safe: it only redoes what is missing or changed, so it also repairs an install.
 
