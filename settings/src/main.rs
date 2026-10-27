@@ -979,7 +979,8 @@ impl App {
                 }
             }
             Message::Reload => {
-                // A half-written or broken file keeps what is shown, with the error under it.
+                // A half-written or broken file keeps what is shown, with the error under it; nothing is saved over
+                // it (each write reads the file again first).
                 let (config, error) = config::Config::load(config::path());
                 if error.is_none() {
                     self.config = config;

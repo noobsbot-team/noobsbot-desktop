@@ -38,6 +38,15 @@ fn program(exe: &str) -> &str {
     if exe.is_empty() { "It" } else { exe }
 }
 
+/// Where a privacy answer about `exe` is kept (`perms::remember`).
+fn kept(exe: &str) -> &'static str {
+    if !exe.is_empty() && crate::perms::rememberable(exe, &crate::perms::home()) {
+        "The answer is kept in config.toml."
+    } else {
+        "The answer holds until it quits."
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Power {
     Restart,
@@ -148,12 +157,11 @@ impl Alert {
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
             // Its path, not its name: an app sets its own name.
             Kind::ScreenRecording { exe, .. } => {
-                format!("{} will see everything on the screen, including other apps' windows. The answer is kept in config.toml.", program(exe))
+                format!("{} will see everything on the screen, including other apps' windows. {}", program(exe), kept(exe))
             }
-            Kind::ControlInput { exe, .. } => format!(
-                "{} could type and click in any app as you. Until you allow it, its keys and clicks go nowhere. The answer is kept in config.toml.",
-                program(exe)
-            ),
+            Kind::ControlInput { exe, .. } => {
+                format!("{} could type and click in any app as you. Until you allow it, its keys and clicks go nowhere. {}", program(exe), kept(exe))
+            }
             Kind::Thunderbolt(_) => "Allow only accessories you trust. Once allowed, it connects by itself next time.".into(),
             Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
             Kind::Polkit { auth, user, .. } => {
@@ -467,8 +475,9 @@ impl State {
         self.config.windows.reopen_at_login = on;
         let path = crate::config::path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        if let Err(err) = crate::config::save_atomic(&path, &crate::config::set_key(&text, "windows", "reopen_at_login", &on.to_string())) {
+        let saved = crate::config::read_config(&path)
+            .and_then(|text| crate::config::save_atomic(&path, &crate::config::set_key(&text, "windows", "reopen_at_login", &on.to_string())));
+        if let Err(err) = saved {
             tracing::warn!("{}: {err}", path.display());
         }
         self.schedule_redraw();

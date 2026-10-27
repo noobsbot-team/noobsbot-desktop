@@ -24,19 +24,22 @@ pub fn path() -> PathBuf {
 }
 
 impl Config {
-    /// The file at `path`; a missing or unparsable one reads as the defaults (a broken file is never overwritten
-    /// until the user changes something, and then only from the defaults plus that change).
+    /// The file at `path`; a missing or unparsable one reads as the defaults (shown only: every write reads the
+    /// file again first, and a broken one is never written over).
     pub fn load(path: PathBuf) -> (Config, Option<String>) {
         let defaults: DocumentMut = DEFAULT_TOML.parse().expect("shipped config parses");
-        let (doc, error) = match fs::read_to_string(&path) {
-            Ok(text) => match text.parse::<DocumentMut>() {
-                Ok(doc) => (doc, None),
-                Err(err) => (defaults.clone(), Some(format!("{}: {err}", path.display()))),
-            },
-            Err(err) if err.kind() == io::ErrorKind::NotFound => (defaults.clone(), None),
-            Err(err) => (defaults.clone(), Some(format!("{}: {err}", path.display()))),
+        let (doc, error) = match read(&path, &defaults) {
+            Ok(doc) => (doc, None),
+            Err(err) => (defaults.clone(), Some(err.to_string())),
         };
         (Config { path, doc, defaults }, error)
+    }
+
+    /// The file as it is now, before a change: a stale copy (a missed reload) never undoes someone else's edit,
+    /// and a file that can't be read or parsed is an error, so the user's broken file isn't replaced by defaults.
+    fn reread(&mut self) -> io::Result<()> {
+        self.doc = read(&self.path, &self.defaults)?;
+        Ok(())
     }
 
     /// `table.key` (or a top-level `key`): the user's value, else the default.
@@ -94,6 +97,7 @@ impl Config {
 
     /// Removes the user's `remove` keys (their defaults apply again), sets `set`, then saves once.
     pub fn change<'a>(&mut self, remove: &[String], set: impl IntoIterator<Item = (&'a str, Value)>) -> io::Result<()> {
+        self.reread()?;
         for key in remove {
             let (table, name) = key.split_once('.').map_or(("", key.as_str()), |(t, k)| (t, k));
             let parent = if table.is_empty() {
@@ -141,6 +145,7 @@ impl Config {
 
     /// Sets `(display, key, value)` in each display's `[[display.outputs]]` entry (made when missing) and saves once.
     pub fn set_outputs(&mut self, changes: Vec<(String, &str, Value)>) -> io::Result<()> {
+        self.reread()?;
         let display = self.doc.entry("display").or_insert(toml_edit::table());
         let display = display.as_table_mut().ok_or_else(|| io::Error::other("[display] is not a table"))?;
         let outputs = display.entry("outputs").or_insert(Item::ArrayOfTables(toml_edit::ArrayOfTables::new()));
@@ -163,6 +168,7 @@ impl Config {
 
     /// Takes `key` out of every `[[display.outputs]]` entry (Displays ▸ Reset: `position`).
     pub fn clear_outputs(&mut self, key: &str) -> io::Result<()> {
+        self.reread()?;
         let outputs = self.doc.get_mut("display").and_then(|d| d.get_mut("outputs")).and_then(Item::as_array_of_tables_mut);
         for entry in outputs.into_iter().flat_map(|o| o.iter_mut()) {
             entry.remove(key);
@@ -183,6 +189,7 @@ impl Config {
     /// Puts a `[display]` section taken earlier back (the display settings' "Revert"); the rest stays as it is.
     pub fn restore_display(&mut self, text: &str) -> io::Result<()> {
         let previous: DocumentMut = text.parse().map_err(io::Error::other)?;
+        self.reread()?;
         // Where `[display]` is in the file now, so it does not move.
         let position = self.doc.get("display").and_then(Item::as_table).and_then(toml_edit::Table::position);
         match previous.get("display").cloned() {
@@ -267,6 +274,16 @@ pub fn clear_recent_files() -> io::Result<()> {
 }
 
 const EMPTY_XBEL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbel version=\"1.0\"\n      xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\"\n      xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>\n</xbel>\n";
+
+/// The file at `path` parsed; missing: `defaults`. Unreadable or unparsable: an error naming the file.
+fn read(path: &Path, defaults: &DocumentMut) -> io::Result<DocumentMut> {
+    let broken = |err: &dyn std::fmt::Display| io::Error::other(format!("{} can't be used, fix or remove it first: {err}", path.display()));
+    match fs::read_to_string(path) {
+        Ok(text) => text.parse().map_err(|err| broken(&err)),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(defaults.clone()),
+        Err(err) => Err(broken(&err)),
+    }
+}
 
 fn lookup<'a>(doc: &'a DocumentMut, key: &str) -> Option<&'a Value> {
     let (table, name) = key.split_once('.').map_or((None, key), |(t, k)| (Some(t), k));
@@ -364,6 +381,22 @@ mod tests {
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# Noobsbot Desktop settings."));
         assert!(text.contains("hour24 = true"));
+    }
+
+    #[test]
+    fn broken_or_changed_file_is_never_written_over() {
+        let broken = "[appearance]\nmode = \"dark\"\naccent = \n";
+        let path = temp("broken", Some(broken));
+        let (mut config, error) = Config::load(path.clone());
+        assert!(error.is_some());
+        assert!(config.set("clock.hour24", true).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+        // Fixed meanwhile (no reload seen): the change goes on top of the file as it is now.
+        fs::write(&path, "[appearance]\nmode = \"dark\"\n").unwrap();
+        config.set("clock.hour24", true).unwrap();
+        let (config, _) = Config::load(path);
+        assert_eq!(config.str("appearance.mode"), "dark");
+        assert!(config.bool("clock.hour24"));
     }
 
     #[test]

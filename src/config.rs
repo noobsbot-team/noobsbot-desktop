@@ -1469,7 +1469,7 @@ fn warn_unknown(prefix: &str, user: &toml::Table, known: &toml::Table) {
 
 /// Reads and parses the file: the error (logged), "line 3: …", when it can't be read or parsed; a missing file is the
 /// defaults.
-fn read(path: &Path) -> Result<Config, String> {
+pub fn read(path: &Path) -> Result<Config, String> {
     let result = match fs::read_to_string(path) {
         Ok(text) => parse(&text).map_err(|err| {
             let message = err.message().trim().replace('\n', " ");
@@ -1525,16 +1525,24 @@ fn migrate(text: &str) -> Option<String> {
 /// The broken-settings notification's id, below the network portal's.
 pub const BROKEN_NOTICE: u32 = 0xFFF9_0000;
 
-/// "Settings file has an error", with `err` (its line) and Open File.
+/// How `watch`'s error starts when live reload is off (the file itself may be fine).
+const UNWATCHED: &str = "can't be watched";
+
+/// "Settings file has an error", with `err` (its line) and Open File; or that live reload is off.
 pub fn broken_notice(err: &str) -> crate::services::notifications::Notification {
     let icon = "dialog-warning";
+    let (summary, body) = if err.starts_with(UNWATCHED) {
+        ("Settings changes need a new login", format!("config.toml {err}"))
+    } else {
+        ("Settings file has an error", format!("config.toml {err}. The last good settings stay until it is fixed."))
+    };
     crate::services::notifications::Notification {
         id: BROKEN_NOTICE,
         app: "System Settings".into(),
         icon_name: icon.into(),
         icon: crate::services::notifications::load_icon(icon).map(std::sync::Arc::new),
-        summary: "Settings file has an error".into(),
-        body: format!("config.toml {err}. The last good settings stay until it is fixed."),
+        summary: summary.into(),
+        body,
         actions: vec![("default".into(), String::new()), ("open".into(), "Open File".into())],
         urgency: 1,
         expire: -1,
@@ -1712,8 +1720,19 @@ pub fn save_key(table: &str, key: &str, value: &str) {
 pub fn save_edit(edit: impl FnOnce(&str) -> String) -> bool {
     let path = self::path();
     let path = fs::canonicalize(&path).unwrap_or(path);
-    let text = fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_TOML.to_owned());
-    save_atomic(&path, &edit(&text)).inspect_err(|err| tracing::warn!("{}: {err}", path.display())).is_ok()
+    read_config(&path)
+        .and_then(|text| save_atomic(&path, &edit(if text.is_empty() { DEFAULT_TOML } else { &text })))
+        .inspect_err(|err| tracing::warn!("{}: {err}", path.display()))
+        .is_ok()
+}
+
+/// A file's text before an edit: "" when it is missing. Any other error (unreadable, not UTF-8) is returned, so the
+/// write is skipped rather than replacing the whole file with the edit alone.
+pub fn read_config(path: &Path) -> io::Result<String> {
+    match fs::read_to_string(path) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        read => read,
+    }
 }
 
 type Edit = Box<dyn FnOnce(&str) -> String + Send>;
@@ -1728,7 +1747,8 @@ static QUEUE: OnceLock<Mutex<mpsc::Sender<Save>>> = OnceLock::new();
 
 /// Rewrites `path` with `edit(current text)` on the `config-save` thread, so a save (a sync and two renames, tens of
 /// ms on a slow disk) never stalls a frame. Edits of one file within `DEBOUNCE` of each other are applied in order
-/// and written once: Ctrl+scrolling the dock's icon size saves at the end, not per notch. A missing file reads as "".
+/// and written once: Ctrl+scrolling the dock's icon size saves at the end, not per notch. A missing file reads as "";
+/// one that can't be read isn't written.
 /// Quitting calls `flush`, so the last edits are kept.
 pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'static) {
     let queue = QUEUE.get_or_init(|| {
@@ -1757,11 +1777,8 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
                     }
                 }
                 for (path, edits) in files {
-                    let mut text = fs::read_to_string(&path).unwrap_or_default();
-                    for edit in edits {
-                        text = edit(&text);
-                    }
-                    if let Err(err) = save_atomic(&path, &text) {
+                    let saved = read_config(&path).and_then(|text| save_atomic(&path, &edits.into_iter().fold(text, |text, edit| edit(&text))));
+                    if let Err(err) = saved {
                         tracing::warn!("{}: {err}", path.display());
                     }
                 }
@@ -1778,8 +1795,7 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
     let edit: Edit = Box::new(edit);
     if let Err(mpsc::SendError(Save::Edit(path, edit))) = queue.lock().unwrap_or_else(|e| e.into_inner()).send(Save::Edit(path, edit)) {
         // The thread never started: do it here rather than lose the save.
-        let text = fs::read_to_string(&path).unwrap_or_default();
-        if let Err(err) = save_atomic(&path, &edit(&text)) {
+        if let Err(err) = read_config(&path).and_then(|text| save_atomic(&path, &edit(&text))) {
             tracing::warn!("{}: {err}", path.display());
         }
     }
@@ -1799,7 +1815,8 @@ pub fn flush() {
 /// Live reload on a worker thread. Watches the file's directory (editors replace the file by renaming), waits for
 /// 300 ms of quiet, and calls `send` with each newly parsed config that differs from the last one sent (or fixes a
 /// broken file). A file that doesn't parse sends its error instead, once per new error (also at start, when the
-/// desktop started with the defaults), so the last good config stays. The thread ends when `send` returns false.
+/// desktop started with the defaults), so the last good config stays. A watch that can't be set up sends one error
+/// starting `UNWATCHED`. The thread ends when `send` returns false.
 ///
 /// The compositor bridges it into calloop without an extra thread:
 /// ```ignore
@@ -1813,13 +1830,16 @@ pub fn watch(path: &Path, mut send: impl FnMut(Result<Config, String>) -> bool +
     let spawned = std::thread::Builder::new().name("config-watch".into()).spawn(move || {
         let _ = fs::create_dir_all(&dir);
         let (tx, rx) = mpsc::channel();
-        let mut watcher = match notify::recommended_watcher(tx) {
+        let watched = notify::recommended_watcher(tx).and_then(|mut w| w.watch(&dir, RecursiveMode::NonRecursive).map(|()| w));
+        // Kept for as long as the thread runs.
+        let _watcher = match watched {
             Ok(w) => w,
-            Err(err) => return tracing::warn!("config live reload off: {err}"),
+            Err(err) => {
+                tracing::warn!("config live reload off: {}: {err}", dir.display());
+                send(Err(format!("{UNWATCHED} ({err}), so a change to it applies at the next login.")));
+                return;
+            }
         };
-        if let Err(err) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
-            return tracing::warn!("config live reload off: {}: {err}", dir.display());
-        }
         // Writes, renames and deletes of our file; our own reads (open / close-after-read) would loop forever.
         let changed = |event: notify::Result<notify::Event>| {
             event.is_ok_and(|e| {
@@ -2159,6 +2179,19 @@ mod tests {
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), "[dock]\nicon_size = 48\n", "the second edit saw the first");
         assert_eq!(fs::read_to_string(dir.join("other.txt")).unwrap(), "other\n");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_file_is_not_saved_over() {
+        let dir = temp_dir("unreadable");
+        let path = dir.join("config.toml");
+        assert_eq!(read_config(&path).unwrap(), "", "missing reads as empty");
+        fs::write(&path, b"[dock]\nicon_size = 40 # \xff\n").unwrap();
+        assert!(read_config(&path).is_err(), "not UTF-8");
+        save_later(path.clone(), |text| set_key(text, "dock", "icon_size", "48"));
+        flush();
+        assert_eq!(fs::read(&path).unwrap(), b"[dock]\nicon_size = 40 # \xff\n", "left as it was");
         fs::remove_dir_all(dir).unwrap();
     }
 
