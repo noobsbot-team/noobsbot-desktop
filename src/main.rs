@@ -137,6 +137,7 @@ fn main() {
 fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, show: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     heartbeat(&event_loop);
+    stop_on_signals(&event_loop);
     let display: Display<State> = Display::new()?;
     let config_path = config::path();
     // Not nested: a test run never writes the owner's config.
@@ -611,7 +612,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         state.sync_workspaces();
         let _ = state.display_handle.flush_clients();
     });
-    // Log out, the login screen's session started, the nested window closed: settings saved just now are kept.
+    // Log out, the login screen's session started, the nested window closed, SIGTERM: settings saved just now are kept.
     config::flush();
     ran?;
     Ok(())
@@ -624,6 +625,40 @@ fn widget_apps() {
     match std::process::Command::new(&app).spawn() {
         Ok(mut child) => drop(std::thread::spawn(move || child.wait())),
         Err(err) => tracing::info!("{}: {err}", app.display()),
+    }
+}
+
+/// SIGTERM and SIGINT (a shutdown not started from our menus, Ctrl+C on a nested run) stop the loop as logging out
+/// does, so `config::flush` still runs. Blocked here, before any thread starts (threads inherit the mask), and read
+/// from a signalfd; std's `Command` gives children an empty mask again.
+fn stop_on_signals(event_loop: &EventLoop<'static, State>) {
+    use smithay::reexports::calloop::generic::Generic;
+    use smithay::reexports::calloop::{Interest, Mode, PostAction};
+    use std::os::fd::FromRawFd;
+    // SAFETY: a zeroed sigset filled by sigemptyset and sigaddset; pthread_sigmask and signalfd only read it.
+    let fd = unsafe {
+        let mut set = std::mem::zeroed::<libc::sigset_t>();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::sigaddset(&mut set, libc::SIGINT);
+        let fd = libc::signalfd(-1, &set, libc::SFD_CLOEXEC | libc::SFD_NONBLOCK);
+        if fd >= 0 {
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+        }
+        fd
+    };
+    if fd < 0 {
+        return tracing::warn!("no signal handling: {}", std::io::Error::last_os_error());
+    }
+    // SAFETY: signalfd just returned this descriptor, owned by nothing else.
+    let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
+    let stop = Generic::new(fd, Interest::READ, Mode::Level);
+    if let Err(err) = event_loop.handle().insert_source(stop, |_, _, state: &mut State| {
+        tracing::info!("signalled, quitting");
+        state.loop_signal.stop();
+        Ok(PostAction::Remove)
+    }) {
+        tracing::warn!("no signal handling: {err}");
     }
 }
 
