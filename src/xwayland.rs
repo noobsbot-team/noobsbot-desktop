@@ -1,5 +1,6 @@
 //! X11 apps (E6.9, C10): xwayland-satellite on a free X display, restarted if it dies (E1.11). It is a normal
-//! Wayland client, so X11 windows get our title bars; programs we start get its `DISPLAY`.
+//! Wayland client, so X11 windows get our title bars; programs we start get its `DISPLAY`. Giving up posts a
+//! notification.
 
 use std::{
     ffi::OsStr,
@@ -7,6 +8,10 @@ use std::{
     process::{Child, Command},
     time::{Duration, Instant},
 };
+
+use smithay::reexports::calloop::{LoopHandle, channel};
+
+use crate::{services::notifications::Notification, state::State};
 
 /// A run shorter than this counts as a crash loop.
 const QUICK: Duration = Duration::from_secs(10);
@@ -16,14 +21,21 @@ const TRIES: u32 = 5;
 /// Starts xwayland-satellite on the first free display, for the compositor on `socket`; its `DISPLAY` (`:1`), or
 /// `None` when it isn't installed. A thread waits on it (no polling) and starts it again when it dies.
 /// `cursor_size` goes to it as `XCURSOR_SIZE`.
-pub fn spawn(socket: &OsStr, cursor_size: u32) -> Option<String> {
+pub fn spawn(socket: &OsStr, cursor_size: u32, handle: &LoopHandle<'static, State>) -> Option<String> {
     let name = format!(":{}", free_display(|n| Path::new(&format!("/tmp/.X11-unix/X{n}")).exists() || Path::new(&format!("/tmp/.X{n}-lock")).exists()));
     let start = {
         let (name, socket) = (name.clone(), socket.to_owned());
         move || Command::new("xwayland-satellite").arg(&name).env("WAYLAND_DISPLAY", &socket).env("XCURSOR_SIZE", cursor_size.to_string()).spawn()
     };
     let child = start().inspect_err(|err| tracing::info!("X11 apps off: xwayland-satellite: {err}")).ok()?;
-    let spawned = std::thread::Builder::new().name("xwayland".into()).spawn(move || supervise(child, start));
+    let (gave_up, rx) = channel::channel();
+    if let Err(err) = handle.insert_source(rx, |_, _, state| state.notify(notice())) {
+        tracing::warn!("xwayland-satellite notice: {err}");
+    }
+    let spawned = std::thread::Builder::new().name("xwayland".into()).spawn(move || {
+        supervise(child, start);
+        let _ = gave_up.send(());
+    });
     if let Err(err) = spawned {
         tracing::warn!("xwayland-satellite won't be restarted: {err}");
     }
@@ -31,6 +43,7 @@ pub fn spawn(socket: &OsStr, cursor_size: u32) -> Option<String> {
     Some(name)
 }
 
+/// Restarts it until it dies `TRIES` times quickly in a row, or can't be started; then returns.
 fn supervise(mut child: Child, start: impl Fn() -> std::io::Result<Child>) {
     let mut quick = 0;
     loop {
@@ -49,6 +62,26 @@ fn supervise(mut child: Child, start: impl Fn() -> std::io::Result<Child>) {
             Ok(next) => child = next,
             Err(err) => return tracing::error!("restarting xwayland-satellite: {err}"),
         }
+    }
+}
+
+/// The give-up notification's id, below the settings file's.
+const NOTICE: u32 = 0xFFF8_0000;
+
+/// "X11 apps stopped working".
+fn notice() -> Notification {
+    let icon = "dialog-warning";
+    Notification {
+        id: NOTICE,
+        app: "Noobsbot Desktop".into(),
+        icon_name: icon.into(),
+        icon: crate::services::notifications::load_icon(icon).map(std::sync::Arc::new),
+        summary: "X11 apps stopped working".into(),
+        body: "xwayland-satellite kept quitting, so older X11 apps can't open until you log in again.".into(),
+        urgency: 1,
+        expire: -1,
+        time: chrono::Local::now().timestamp(),
+        ..Default::default()
     }
 }
 
