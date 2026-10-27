@@ -1,0 +1,199 @@
+X11 apps get the display's fractional scale from the start: xwayland-satellite takes an output's scale from its
+mode and xdg-output logical sizes (with fractional scaling), instead of its integer wl_output scale until one of its
+windows has been on that output. Until then, X11 apps started first in a session got 200% at 125%. A window's
+preferred scale no longer overrides an output's scale from its sizes (a window across two outputs is given one).
+For xwayland-satellite v0.8.3 (b83eab9); scripts/build-xwayland-satellite.sh applies it.
+
+diff --git a/src/server/event.rs b/src/server/event.rs
+index acf51d9..b4ded78 100644
+--- a/src/server/event.rs
++++ b/src/server/event.rs
+@@ -104,7 +104,12 @@ impl Event for SurfaceEvents {
+ 
+                     entity.get::<&mut SurfaceScaleFactor>().unwrap().0 = factor;
+ 
+-                    if let Some(OnOutput(output)) = entity.get::<&OnOutput>().as_deref().copied() {
++                    if let Some(OnOutput(output)) = entity
++                        .get::<&OnOutput>()
++                        .as_deref()
++                        .copied()
++                        .filter(|OnOutput(output)| !scaled_by_size(&state.world, *output))
++                    {
+                         if update_output_scale(
+                             state.world.query_one(output).unwrap(),
+                             OutputScaleFactor::Fractional(factor),
+@@ -237,7 +242,7 @@ impl SurfaceEvents {
+                             &state.world,
+                             state.world.query_one(target).unwrap(),
+                         );
+-                    } else {
++                    } else if dimensions.fractional_scale().is_none() {
+                         let scale = data.get::<&SurfaceScaleFactor>().unwrap();
+                         if update_output_scale(
+                             state.world.query_one(on_output.0).unwrap(),
+@@ -1046,6 +1051,36 @@ fn update_output_scale(
+     false
+ }
+ 
++/// Whether `output`'s scale comes from its sizes. A surface's preferred scale doesn't change it then: a window across
++/// two outputs is given one scale for both.
++fn scaled_by_size(world: &World, output: Entity) -> bool {
++    world
++        .get::<&OutputDimensions>(output)
++        .is_ok_and(|dimensions| dimensions.fractional_scale().is_some())
++}
++
++/// With fractional scaling, an output's scale comes from its sizes once xdg-output has given its logical one, so X11
++/// apps get its DPI before any of their windows has been on it (until then only its integer scale is known).
++fn update_scale_from_size<C: XConnection>(target: Entity, state: &mut ServerState<C>) {
++    if state.fractional_scale.is_none() {
++        return;
++    }
++    let Some(factor) = state
++        .world
++        .get::<&OutputDimensions>(target)
++        .ok()
++        .and_then(|dimensions| dimensions.fractional_scale())
++    else {
++        return;
++    };
++    if update_output_scale(
++        state.world.query_one(target).unwrap(),
++        OutputScaleFactor::Fractional(factor),
++    ) {
++        state.updated_outputs.push(target);
++    }
++}
++
+ enum OutputDimensionsSource {
+     // The data in this variant is the values needed for the wl_output.geometry event.
+     Wl {
+@@ -1066,6 +1101,19 @@ pub(super) struct OutputDimensions {
+     pub width: i32,
+     pub height: i32,
+     rotated_90: bool,
++    /// From xdg-output: the output's size in the compositor's logical coordinates.
++    logical_size: Option<(i32, i32)>,
++}
++
++impl OutputDimensions {
++    /// The output's scale from its sizes, its mode's over its logical one, in the fractional-scale protocol's 1/120ths
++    /// (the logical size is rounded). Comparing the longer sides makes the transform irrelevant.
++    fn fractional_scale(&self) -> Option<f64> {
++        let (width, height) = self.logical_size?;
++        let (logical, physical) = (width.max(height), self.width.max(self.height));
++        (logical > 0 && physical > 0)
++            .then(|| (f64::from(physical) / f64::from(logical) * 120.0).round() / 120.0)
++    }
+ }
+ 
+ impl Default for OutputDimensions {
+@@ -1084,6 +1132,7 @@ impl Default for OutputDimensions {
+             width: 0,
+             height: 0,
+             rotated_90: false,
++            logical_size: None,
+         }
+     }
+ }
+@@ -1359,11 +1408,15 @@ impl OutputEvent {
+                     .name(name.clone());
+                 state.world.insert(target, (OutputName(name),)).unwrap();
+             }
++            // xdg-output v3 sends its logical size before this.
++            Event::Done => {
++                state.world.get::<&WlOutput>(target).unwrap().done();
++                update_scale_from_size(target, state);
++            }
+             _ => simple_event_shunt! {
+                 state.world.get::<&WlOutput>(target).unwrap(),
+                 event: client::wl_output::Event => [
+-                    Description { description },
+-                    Done
++                    Description { description }
+                 ]
+             },
+         }
+@@ -1390,23 +1443,28 @@ impl OutputEvent {
+                         );
+                 }
+             }
+-            Event::LogicalSize { .. } => {
++            Event::LogicalSize { width, height } => {
+                 let Ok((xdg, dimensions)) = state
+                     .world
+-                    .query_one_mut::<(&XdgOutputServer, &OutputDimensions)>(target)
++                    .query_one_mut::<(&XdgOutputServer, &mut OutputDimensions)>(target)
+                 else {
+                     return;
+                 };
++                dimensions.logical_size = Some((width, height));
+                 if dimensions.rotated_90 {
+                     xdg.logical_size(dimensions.height, dimensions.width);
+                 } else {
+                     xdg.logical_size(dimensions.width, dimensions.height);
+                 }
+             }
++            // Before v3, this ends the batch with its logical size.
++            Event::Done => {
++                state.world.get::<&XdgOutputServer>(target).unwrap().done();
++                update_scale_from_size(target, state);
++            }
+             _ => simple_event_shunt! {
+                 state.world.get::<&XdgOutputServer>(target).unwrap(),
+                 event: zxdg_output_v1::Event => [
+-                    Done,
+                     Name { name },
+                     Description { description }
+                 ]
+diff --git a/src/server/tests.rs b/src/server/tests.rs
+index fa70c7d..581352d 100644
+--- a/src/server/tests.rs
++++ b/src/server/tests.rs
+@@ -3080,6 +3080,46 @@ fn disconnected_output_rescaling() {
+     assert_eq!(f.satellite.inner.new_scale, Some(2.0));
+ }
+ 
++#[test]
++fn fractional_output_scale_from_xdg_output_size() {
++    let mut f = TestFixture::new_pre_connect(|testwl| {
++        testwl.enable_fractional_scale();
++    });
++    let comp = f.compositor();
++    let man = f.enable_xdg_output();
++    // A 1000x1000 mode (see finalize_output) at 1.25: integer scale 2, logical size 800x800.
++    let (output_obj, output) = f.new_output(0, 0);
++    f.create_xdg_output(&man, output_obj.obj.clone());
++    output.scale(2);
++    output.done();
++    f.run();
++    f.run();
++    assert_eq!(f.satellite.inner.new_scale, Some(2.0));
++
++    // No window has been on the output yet.
++    let xdg = f.testwl.get_xdg_output(&output).expect("No xdg output");
++    xdg.logical_size(800, 800);
++    output.done();
++    f.run();
++    f.run();
++    assert_eq!(f.satellite.inner.new_scale, Some(1.25));
++
++    // A window given another output's scale (it is mostly there) doesn't change this one's.
++    let (_, id) = f.create_toplevel(&comp, Window::new(1));
++    let fractional = f
++        .testwl
++        .get_surface_data(id)
++        .expect("No surface data")
++        .fractional
++        .as_ref()
++        .expect("No fractional scale for surface");
++    fractional.preferred_scale(240);
++    f.testwl.move_surface_to_output(id, &output);
++    f.run();
++    f.run();
++    assert_eq!(f.satellite.inner.new_scale, Some(1.25));
++}
++
+ #[track_caller]
+ fn check_window_and_viewport_size(
+     f: &TestFixture<FakeXConnection>,
