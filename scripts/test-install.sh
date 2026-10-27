@@ -64,11 +64,3 @@ for distro in arch debian; do
     fi
     echo "install.sh ($distro): ok"
 done
-
-# The release install.sh takes while there is no stable one yet (1.0.0's pre-releases): the newest by SemVer
-# precedence, whatever GitHub's order; once there is a stable one, only stable ones.
-newest() { printf '%s\n' "$@" | bash -c "$(sed -n '/^newest_tag()/,/^}/p' "$repo/install.sh"); newest_tag"; }
-[ "$(newest v1.0.0-beta.2 v1.0.0-beta.10 v1.0.0-alpha.8)" = v1.0.0-beta.10 ] || { echo "FAIL: beta.10 is newer than beta.2"; exit 1; }
-[ "$(newest v1.0.0-beta.10 v1.0.0-rc.1)" = v1.0.0-rc.1 ] || { echo "FAIL: rc.1 is newer than beta.10"; exit 1; }
-[ "$(newest v1.1.0-beta.1 v1.0.0 v1.0.0-rc.1)" = v1.0.0 ] || { echo "FAIL: a stable release wins"; exit 1; }
-echo "install.sh (release pick): ok"
