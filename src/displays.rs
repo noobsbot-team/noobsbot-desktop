@@ -322,7 +322,6 @@ fn layouts_path() -> std::path::PathBuf {
 impl State {
     /// Layouts per set of displays (E6.2): `connected` is a set not seen last time → its remembered layout goes into
     /// `[[display.outputs]]` (in memory and in the file); then the current entries are remembered for it.
-    // ponytail: no 500 ms settle; a dock bringing up two monitors one after the other passes through the set with one.
     pub(crate) fn follow_layout(&mut self, connected: &[Display]) {
         let key = layout_key(connected);
         let path = layouts_path();
