@@ -62,8 +62,6 @@ pub struct Layout {
     pub zone: Rect,
     /// The unzoomed icon size after fitting.
     pub icon: f64,
-    /// The x of the line between the apps and the minimised-window tiles, if both are there.
-    pub separator: Option<f64>,
 }
 
 /// The icon size for `n` items on a `width`-wide screen: `icon`, shrunk until they fit (D13), never below MIN_ICON.
@@ -88,24 +86,22 @@ pub fn dock_displays(mode: DockDisplays, n: usize, pointer: Option<usize>) -> Ve
     }
 }
 
-/// The dock of `n` items on an `output`-sized screen, the last `tiles` of them minimised windows after a separator gap,
-/// with Plank's zoom: icons within the zoomed icon size of the `pointer` grow up to `zoom` (1.5 = 150%) along a
-/// parabola and the others move aside, all scaled by `progress` (0..1, the zoom easing in and out).
-pub fn layout(n: usize, tiles: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, progress: f64, pointer: Option<Point<f64, Logical>>) -> Layout {
+/// The dock of `n` items on an `output`-sized screen, with Plank's zoom: icons within the zoomed icon size of the
+/// `pointer` grow up to `zoom` (1.5 = 150%) along a parabola and the others move aside, all scaled by `progress` (0..1,
+/// the zoom easing in and out).
+pub fn layout(n: usize, output: Size<i32, Logical>, icon: i32, zoom: f64, progress: f64, pointer: Option<Point<f64, Logical>>) -> Layout {
     let s = fit(n, output.w, icon);
     let (pad, bottom) = (item_pad(s), bottom_pad(s));
     let step = s + pad;
-    let split = n - tiles.min(n);
-    let gap = if split > 0 && split < n { (step / 3.0).floor() } else { 0.0 };
     let (w, h) = (f64::from(output.w), f64::from(output.h));
-    let left = ((w - step * n as f64 - gap) / 2.0).floor();
-    let zone = Rectangle::new((left as i32, (h - s - bottom) as i32).into(), ((step * n as f64 + gap) as i32, (s + bottom) as i32).into());
+    let left = ((w - step * n as f64) / 2.0).floor();
+    let zone = Rectangle::new((left as i32, (h - s - bottom) as i32).into(), ((step * n as f64) as i32, (s + bottom) as i32).into());
     // Plank's ZoomIconSize: how far the zoom reaches, and the zoom at this point of the easing.
     let reach = (s * zoom).round();
     let now = 1.0 + (zoom - 1.0) * progress;
     let (mut icons, mut columns) = (Vec::with_capacity(n), Vec::with_capacity(n));
     for i in 0..n {
-        let rest = (left + step / 2.0).floor() + step * i as f64 + if i >= split { gap } else { 0.0 };
+        let rest = (left + step / 2.0).floor() + step * i as f64;
         let (mut centre, mut scale) = (rest, 1.0);
         if let Some(p) = pointer.filter(|_| now > 1.0) {
             let distance = (p.x - rest).abs().min(reach);
@@ -122,8 +118,7 @@ pub fn layout(n: usize, tiles: usize, output: Size<i32, Logical>, icon: i32, zoo
         icons.push(Rectangle::new(((centre - size / 2.0).round(), h - bottom - size).into(), (size, size).into()));
         columns.push((centre - (size + pad) / 2.0, centre + (size + pad) / 2.0));
     }
-    let separator = (gap > 0.0).then(|| (columns[split - 1].1 + columns[split].0) / 2.0);
-    Layout { icons, columns, zone, icon: s, separator }
+    Layout { icons, columns, zone, icon: s }
 }
 
 /// The item whose hover region (its column, from its icon's top to the screen edge) holds `p`; the first wins.
@@ -559,7 +554,7 @@ impl State {
         let eased = if self.dock_pointer.is_some() { 1.0 } else { side.zoom.value(now) * (1.0 - side.hide.value(now)) };
         let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
         let pointer = self.dock_pointer.or(side.zoom_at);
-        Some(layout(items.len(), 0, size, i32::from(dock.icon_size), zoom, eased, pointer))
+        Some(layout(items.len(), size, i32::from(dock.icon_size), zoom, eased, pointer))
     }
 
     /// `dock_output`'s dock is shown (or showing): the hide modes' state as of the last update.
@@ -1705,7 +1700,7 @@ mod tests {
 
     #[test]
     fn unzoomed_dock_has_planks_numbers() {
-        let l = layout(8, 0, SCREEN.into(), 84, 1.5, 0.0, None);
+        let l = layout(8, SCREEN.into(), 84, 1.5, 0.0, None);
         // Transparent-Tight at 84 px: ItemPadding 4 px, BottomPadding 16 px; 8 × 88 = 704 px, centred.
         assert_eq!(l.zone, Rectangle::new((608, 1100).into(), (704, 100).into()));
         assert_eq!(l.icons[0], Rectangle::new((610.0, 1100.0).into(), (84.0, 84.0).into()));
@@ -1715,10 +1710,10 @@ mod tests {
 
     #[test]
     fn zoom_is_planks() {
-        let flat = layout(8, 0, SCREEN.into(), 84, 1.5, 0.0, None);
+        let flat = layout(8, SCREEN.into(), 84, 1.5, 0.0, None);
         let centre: Point<f64, Logical> = (916.0, 1142.0).into();
         assert_eq!(flat.icons[3].loc.x + 42.0, centre.x);
-        let l = layout(8, 0, SCREEN.into(), 84, 1.5, 1.0, Some(centre));
+        let l = layout(8, SCREEN.into(), 84, 1.5, 1.0, Some(centre));
         assert_eq!(l.icons[3], Rectangle::new((853.0, 1058.0).into(), (126.0, 126.0).into()), "150% under the pointer, same baseline");
         // A neighbour 88 px away: zoom 1 + (1 − (88/126)²) × 0.5, moved out by 88 × 0.5 × (1 − 88/378).
         let f: f64 = 88.0 / 126.0;
@@ -1733,33 +1728,15 @@ mod tests {
         assert_eq!(hit(&l, centre), Some(3));
         assert_eq!(hit(&l, (916.0, 1060.0).into()), Some(3), "the zoomed top of the icon counts");
         // Half-way through the easing: 125%.
-        assert_eq!(layout(8, 0, SCREEN.into(), 84, 1.5, 0.5, Some(centre)).icons[3].size.w, 105.0);
+        assert_eq!(layout(8, SCREEN.into(), 84, 1.5, 0.5, Some(centre)).icons[3].size.w, 105.0);
         // No easing or zoom off: flat, wherever the pointer is.
-        assert_eq!(layout(8, 0, SCREEN.into(), 84, 1.5, 0.0, Some(centre)), flat);
-        assert_eq!(layout(8, 0, SCREEN.into(), 84, 1.0, 1.0, Some(centre)), flat);
-    }
-
-    #[test]
-    fn tiles_sit_after_a_separator() {
-        let flat = layout(5, 0, SCREEN.into(), 84, 1.0, 0.0, None);
-        let l = layout(5, 2, SCREEN.into(), 84, 1.0, 0.0, None);
-        // A third of a step (88 / 3 = 29 px) between the third icon and the first tile, the dock still centred.
-        assert_eq!(l.zone.size.w, flat.zone.size.w + 29);
-        assert_eq!(l.icons[3].loc.x - l.icons[2].loc.x, 88.0 + 29.0);
-        let sep = l.separator.unwrap();
-        assert!(l.columns[2].1 <= sep && sep <= l.columns[3].0);
-        assert_eq!(hit(&l, (sep, 1150.0).into()), None, "the gap is no icon");
-        assert_eq!(flat.separator, None);
-        assert_eq!(layout(2, 2, SCREEN.into(), 84, 1.0, 0.0, None).separator, None, "only tiles: no line");
-        // Tiles zoom like icons.
-        let p = (l.icons[4].loc.x + 42.0, 1150.0).into();
-        let z = layout(5, 2, SCREEN.into(), 84, 1.5, 1.0, Some(p));
-        assert_eq!((z.icons[4].size.w, hit(&z, p)), (126.0, Some(4)));
+        assert_eq!(layout(8, SCREEN.into(), 84, 1.5, 0.0, Some(centre)), flat);
+        assert_eq!(layout(8, SCREEN.into(), 84, 1.0, 1.0, Some(centre)), flat);
     }
 
     #[test]
     fn hits_follow_columns_inside_the_zone() {
-        let l = layout(3, 0, SCREEN.into(), 84, 1.0, 0.0, None);
+        let l = layout(3, SCREEN.into(), 84, 1.0, 0.0, None);
         let x = |i: usize| (l.columns[i].0 + l.columns[i].1) / 2.0;
         assert_eq!(hit(&l, (x(0), 1150.0).into()), Some(0));
         assert_eq!(hit(&l, (x(2), 1199.0).into()), Some(2));
@@ -1768,7 +1745,7 @@ mod tests {
         // The pointer over an icon's centre hits it, zoomed.
         for i in 0..3 {
             let p = (x(i), 1150.0).into();
-            let z = layout(3, 0, SCREEN.into(), 84, 1.5, 1.0, Some(p));
+            let z = layout(3, SCREEN.into(), 84, 1.5, 1.0, Some(p));
             assert_eq!(hit(&z, p), Some(i));
             assert!(z.icons.iter().all(|r| r.size.w <= z.icons[i].size.w));
         }
@@ -2036,7 +2013,7 @@ mod tests {
 
     #[test]
     fn drag_slots_follow_columns() {
-        let l = layout(4, 0, SCREEN.into(), 84, 1.0, 0.0, None);
+        let l = layout(4, SCREEN.into(), 84, 1.0, 0.0, None);
         let mid = |i: usize| (l.columns[i].0 + l.columns[i].1) / 2.0;
         assert_eq!(slot(&l, mid(0), 3), 0);
         assert_eq!(slot(&l, mid(2), 3), 2);
@@ -2127,6 +2104,6 @@ mod tests {
 
     #[test]
     fn reserve_matches_the_zone() {
-        assert_eq!(reserve(&Dock::default()), layout(8, 0, SCREEN.into(), 84, 1.0, 0.0, None).zone.size.h);
+        assert_eq!(reserve(&Dock::default()), layout(8, SCREEN.into(), 84, 1.0, 0.0, None).zone.size.h);
     }
 }
