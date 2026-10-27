@@ -1,8 +1,9 @@
 //! A small iCalendar (`.ics`, RFC 5545) reader for calendar events (E7.2): VEVENTs with SUMMARY, LOCATION,
 //! DTSTART/DTEND/DURATION (UTC, floating, TZID or all-day), a simple RRULE (FREQ DAILY/WEEKLY/MONTHLY/YEARLY with
-//! INTERVAL, COUNT, UNTIL, BYDAY) and VALARM TRIGGERs, and the occurrences and alarms they make.
-// ponytail: no EXDATE, RECURRENCE-ID overrides, BYMONTH/BYMONTHDAY/BYSETPOS or YEARLY BYDAY; add them when real
-// calendars need them. CalDAV (and Google) sync is later: it would fetch into the same `.ics` files.
+//! INTERVAL, COUNT, UNTIL, BYDAY), EXDATE, RECURRENCE-ID overrides (moved, renamed or cancelled occurrences) and VALARM
+//! TRIGGERs, and the occurrences and alarms they make.
+// ponytail: no RDATE, RANGE=THISANDFUTURE, BYMONTH/BYMONTHDAY/BYSETPOS or YEARLY BYDAY, and an override only finds its
+// event in the same file (CalDAV's cache is one file); add them when real calendars need them.
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
@@ -153,6 +154,13 @@ pub struct Event {
     length: TimeDelta,
     rule: Option<Rule>,
     alarms: Vec<Trigger>,
+    uid: String,
+    /// An override's RECURRENCE-ID: the start (unix seconds) of its event's occurrence it replaces.
+    replaces: Option<i64>,
+    /// Starts (unix seconds) that don't happen: EXDATEs and the occurrences overrides replace.
+    skip: Vec<i64>,
+    /// STATUS:CANCELLED.
+    cancelled: bool,
 }
 
 /// One time an event happens, in unix seconds.
@@ -214,7 +222,7 @@ impl Event {
             if o.start >= to {
                 return false;
             }
-            if o.end > from || o.start >= from {
+            if (o.end > from || o.start >= from) && !self.skip.contains(&o.start) {
                 out.push(o);
             }
             true
@@ -313,6 +321,12 @@ pub fn parse(text: &str) -> Vec<Event> {
             }
         }
     }
+    // An override replaces its occurrence of the event with the same UID; a cancelled one only removes it.
+    let replaced: Vec<(String, i64)> = events.iter().filter(|e| !e.uid.is_empty()).filter_map(|e| Some((e.uid.clone(), e.replaces?))).collect();
+    for e in events.iter_mut().filter(|e| e.replaces.is_none()) {
+        e.skip.extend(replaced.iter().filter(|(uid, _)| *uid == e.uid).map(|(_, t)| t));
+    }
+    events.retain(|e| !e.cancelled);
     events
 }
 
@@ -374,6 +388,13 @@ fn date_time(value: &str, params: &Params, zones: &mut HashMap<String, Zone>) ->
         (false, None) => Zone::Local,
     };
     Some((t, zone, false))
+}
+
+/// An EXDATE or RECURRENCE-ID value in unix seconds; a floating time is in `zone`, the event's.
+fn instant(value: &str, params: &Params, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<i64> {
+    let (t, z, date) = date_time(value, params, zones)?;
+    let floating = !date && z != Zone::Utc && param(params, "TZID").is_none();
+    Some(if floating { zone } else { &z }.timestamp(t))
 }
 
 /// `[+-]P[nW][nD][T[nH][nM][nS]]` in seconds.
@@ -485,8 +506,27 @@ fn event(props: &[(String, Params, String)], zones: &mut HashMap<String, Zone>) 
             Some(if param(p, "RELATED") == Some("END") { Trigger::End(secs) } else { Trigger::Start(secs) })
         })
         .collect();
+    let mut skip = Vec::new();
+    for (_, p, v) in props.iter().filter(|(n, _, _)| n == "EXDATE") {
+        skip.extend(v.split(',').filter_map(|v| instant(v, p, &zone, zones)));
+    }
+    let replaces = get("RECURRENCE-ID").and_then(|(_, p, v)| instant(v, p, &zone, zones));
+    let cancelled = get("STATUS").is_some_and(|(_, _, v)| v.trim().eq_ignore_ascii_case("CANCELLED"));
     let text = |name: &str| get(name).map(|(_, _, v)| unescape(v)).unwrap_or_default();
-    Some(Event { summary: text("SUMMARY"), location: text("LOCATION"), all_day, start, zone, length: length.max(TimeDelta::zero()), rule, alarms })
+    Some(Event {
+        summary: text("SUMMARY"),
+        location: text("LOCATION"),
+        all_day,
+        start,
+        zone,
+        length: length.max(TimeDelta::zero()),
+        rule,
+        alarms,
+        uid: text("UID"),
+        replaces,
+        skip,
+        cancelled,
+    })
 }
 
 /// The `.ics` files `entry` names: a file, a directory (its `.ics` files), or a `dir/*.ics`-style pattern with one `*`
