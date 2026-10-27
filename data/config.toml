@@ -375,7 +375,7 @@ show_drives = true
 
 [housekeeping]
 # Once a day: items in the Trash longer than this many days are deleted for good, and recent-files entries older
-# than this are forgotten (0 = never). Thumbnails unused for 90 days are removed too.
+# than this are forgotten (0 = never). Thumbnails unused for 90 days and cached icons unused for 30 are removed too.
 empty_trash_days = 30
 recent_days = 30
 

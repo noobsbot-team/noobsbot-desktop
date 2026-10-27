@@ -140,6 +140,8 @@ pub struct State {
     pub x_display: Option<String>,
     /// A newer release, found by Software Update (E6.13).
     pub update: Option<crate::services::update::Release>,
+    /// noobsbot-terminal's Software Update row, when it is installed.
+    pub update_terminal: Option<crate::services::update::Terminal>,
     /// The Weather widget's forecast (E7.2); `None` while it is off.
     pub weather: Option<crate::services::weather::Weather>,
     /// Widgets other processes set over D-Bus (E8.8).
@@ -526,6 +528,7 @@ impl State {
             nested,
             x_display: None,
             update: None,
+            update_terminal: None,
             weather: None,
             widgets: Vec::new(),
             clocks: crate::clock::world_clocks(&config.widgets.clocks),

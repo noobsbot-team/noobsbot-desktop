@@ -256,20 +256,20 @@ pub fn bar_step(items: &[BarItem], open: BarItem, right: bool, opens: impl Fn(Ba
     Some(menus[if right { (at + 1) % n } else { (at + n - 1) % n }])
 }
 
-/// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows, `update`: a verified
-/// update is waiting (E6.13), `recent` the Recent Items submenu (`recent_rows`).
-pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: bool, recent: &[Option<Row>]) -> Vec<Option<Row>> {
+/// The rows of `menu`; `app` is the focused app's name, `tray` the open tray menu's rows, `update`: the pending
+/// updates' count and whether a verified one is waiting (E6.13), `recent` the Recent Items submenu (`recent_rows`).
+pub fn menu_rows(menu: Menu, app: &str, tray: &[Option<MenuRow>], update: (usize, bool), recent: &[Option<Row>]) -> Vec<Option<Row>> {
     let row = |label: String, shortcut, action| Some(Row { sub: Vec::new(), label, shortcut, action });
     let settings = |page: &str| Some(Action::Spawn(format!("noobsbot-desktop-settings --page {page}")));
     match menu {
         Menu::Logo => vec![
             row("About This Computer".into(), "", settings("about")),
             row("System Settings…".into(), "", settings("appearance")),
-            // The row itself is the badge (E6.13).
-            if update {
-                row("Restart to Update…".into(), "", Some(Action::InstallUpdate))
+            // The pending count in the shortcut column (E6.13); a verified download installs from here.
+            if update.1 {
+                row("Restart to Update…".into(), ["", "1", "2"][update.0.min(2)], Some(Action::InstallUpdate))
             } else {
-                row("Software Update…".into(), "", settings("general"))
+                row("Software Update…".into(), ["", "1", "2"][update.0.min(2)], settings("general"))
             },
             None,
             Some(Row { label: "Recent Items".into(), shortcut: "", action: None, sub: recent.to_vec() }),
@@ -766,7 +766,7 @@ impl State {
             Menu::Window => self.window_menu_rows(),
             Menu::Overflow => self.overflow_menu_rows(),
             Menu::Battery(_) => self.battery_menu_rows(),
-            _ => menu_rows(menu, "", tray, self.update_ready(), self.recent_menu.as_deref().unwrap_or_default()),
+            _ => menu_rows(menu, "", tray, (self.update_count(), self.update_ready()), self.recent_menu.as_deref().unwrap_or_default()),
         };
         fit_menu(&rows, self.popup, &mut self.submenu, &mut self.menu_cursor);
         rows
@@ -1268,13 +1268,18 @@ mod tests {
         // Nothing to clear: Clear Menu is greyed.
         assert_eq!(recent_rows(&[], &[]).last().unwrap().as_ref().unwrap().action, None);
         // The logo menu carries them as its Recent Items submenu.
-        let logo = menu_rows(Menu::Logo, "", &[], false, &rows);
+        let logo = menu_rows(Menu::Logo, "", &[], (0, false), &rows);
         assert_eq!(logo.iter().flatten().find(|r| r.label == "Recent Items").map(|r| r.sub.len()), Some(rows.len()));
+        // Pending updates: their count beside Software Update…, which a verified download makes Restart to Update….
+        let update = |pending| menu_rows(Menu::Logo, "", &[], pending, &[])[2].clone().map(|r| (r.label, r.shortcut));
+        assert_eq!(update((0, false)), Some(("Software Update…".into(), "")));
+        assert_eq!(update((2, false)), Some(("Software Update…".into(), "2")));
+        assert_eq!(update((1, true)), Some(("Restart to Update…".into(), "1")));
     }
 
     #[test]
     fn menus_stay_on_screen_and_stack_rows() {
-        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
+        let rows = menu_rows(Menu::App, "Kate", &[], (0, false), &[]);
         let output = Size::from((1280, 1200));
         let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
@@ -1293,7 +1298,7 @@ mod tests {
     #[test]
     fn popups_fit_a_second_display_at_its_right_edge() {
         // Laid out in the second display's own size and coordinates, whatever its place in the layout.
-        let rows = menu_rows(Menu::Logo, "", &[], false, &[]);
+        let rows = menu_rows(Menu::Logo, "", &[], (0, false), &[]);
         let second = Size::from((1920, 1080));
         let (rect, cells) = menu_layout(Anchor::Below(1900), second, 240, &rows, 0);
         assert_eq!((rect.loc.x, rect.loc.y), (1920 - 8 - 240, menubar::height() + DROP));
@@ -1308,7 +1313,7 @@ mod tests {
 
     #[test]
     fn menu_rows_grow_with_the_text_size() {
-        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
+        let rows = menu_rows(Menu::App, "Kate", &[], (0, false), &[]);
         let output = Size::from((1280, 1200));
         let big = crate::text::with_scale(1.5, || menu_layout(Anchor::Below(6), output, 200, &rows, 0));
         let small = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
@@ -1345,7 +1350,7 @@ mod tests {
 
     #[test]
     fn submenus_open_beside_their_row_and_flip_at_the_edge() {
-        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
+        let rows = menu_rows(Menu::App, "Kate", &[], (0, false), &[]);
         let output = Size::from((1280, 800));
         // The parent spans x 100..300; its row is at y 60.
         let row = Rectangle::new((100, 60).into(), (200, 22).into());
@@ -1421,21 +1426,21 @@ mod tests {
     #[test]
     fn keys_skip_separators_and_disabled_rows_and_stop_at_the_ends() {
         // About Kate (disabled), —, Hide Kate, Hide Others, Show All, —, Quit Kate.
-        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
+        let rows = menu_rows(Menu::App, "Kate", &[], (0, false), &[]);
         assert_eq!(menu_step(&rows, None, true), Some(2), "Down from nothing: the first live row");
         assert_eq!(menu_step(&rows, None, false), Some(6), "Up from nothing: the last");
         assert_eq!(menu_step(&rows, Some(4), true), Some(6), "over the separator");
         assert_eq!(menu_step(&rows, Some(2), false), Some(2), "the disabled first row is skipped; the top stays");
         assert_eq!(menu_step(&rows, Some(6), true), Some(6), "the bottom stays");
         // A submenu row is live though it has no action.
-        let logo = menu_rows(Menu::Logo, "", &[], false, &recent_rows(&[], &[]));
+        let logo = menu_rows(Menu::Logo, "", &[], (0, false), &recent_rows(&[], &[]));
         assert_eq!(menu_step(&logo, Some(2), true), Some(4));
         assert_eq!(menu_step(&[None, None], None, true), None);
     }
 
     #[test]
     fn letters_jump_to_the_next_row_starting_with_them() {
-        let rows = menu_rows(Menu::App, "Kate", &[], false, &[]);
+        let rows = menu_rows(Menu::App, "Kate", &[], (0, false), &[]);
         assert_eq!(menu_jump(&rows, None, 'h'), Some(2));
         assert_eq!(menu_jump(&rows, Some(2), 'H'), Some(3), "the next one, any case");
         assert_eq!(menu_jump(&rows, Some(3), 'h'), Some(2), "round to the top");

@@ -272,10 +272,26 @@ pub struct UpdateStatus {
     pub available: Option<String>,
     /// Its release page.
     pub url: Option<String>,
+    /// Its download's size in bytes and release date (RFC 3339).
+    pub size: Option<u64>,
+    pub published: Option<String>,
     /// Downloaded and verified: Update Now installs it.
     pub ready: bool,
     /// The previous version, while it can be reverted to.
     pub revert: Option<String>,
+    /// noobsbot-terminal's row, when it is installed.
+    pub terminal: Option<TerminalUpdate>,
+}
+
+/// noobsbot-terminal's Software Update row (`src/services/update.rs` `Terminal`).
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct TerminalUpdate {
+    pub installed: String,
+    pub available: Option<String>,
+    pub url: Option<String>,
+    pub size: Option<u64>,
+    pub published: Option<String>,
 }
 
 pub fn read_update() -> UpdateStatus {
