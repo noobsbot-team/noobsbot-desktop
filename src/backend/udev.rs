@@ -1101,6 +1101,14 @@ fn configure(device: &mut InputDevice, touchpad: &Touchpad, mouse: &Mouse) {
                 ffi::libinput_device_config_click_set_method(device.as_raw_mut(), ffi::libinput_config_click_method_LIBINPUT_CONFIG_CLICK_METHOD_NONE);
             },
         }
+        // SAFETY: a live device. Fewer than 3 fingers: no 3-finger drag on this pad.
+        unsafe {
+            use smithay::reexports::input::AsRaw;
+            if libinput_device_config_3fg_drag_get_finger_count(device.as_raw_mut()) >= 3 {
+                // 1 = LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG.
+                libinput_device_config_3fg_drag_set_enabled(device.as_raw_mut(), touchpad.three_finger_drag.into());
+            }
+        }
         let mode = match (touchpad.enabled, touchpad.ignore_with_mouse) {
             (false, _) => SendEventsMode::DISABLED,
             (true, true) => SendEventsMode::DISABLED_ON_EXTERNAL_MOUSE,
@@ -1114,6 +1122,14 @@ fn configure(device: &mut InputDevice, touchpad: &Touchpad, mouse: &Mouse) {
         let _ = device.config_scroll_set_natural_scroll_enabled(mouse.natural_scroll);
         let _ = device.config_middle_emulation_set_enabled(mouse.middle_click_emulation);
     }
+}
+
+// libinput's 3-finger drag (since 1.27), which input-sys (bound to libinput 1.21) lacks.
+// ponytail: linked directly, so a libinput older than 1.27 can't start the desktop; Arch ships newer. Look the symbols
+// up with dlsym if older systems matter.
+unsafe extern "C" {
+    fn libinput_device_config_3fg_drag_get_finger_count(device: *mut smithay::reexports::input::ffi::libinput_device) -> std::ffi::c_int;
+    fn libinput_device_config_3fg_drag_set_enabled(device: *mut smithay::reexports::input::ffi::libinput_device, state: std::ffi::c_uint) -> std::ffi::c_uint;
 }
 
 /// libinput's click method for a secondary-click choice; `None`: no method (every click is a left click).
