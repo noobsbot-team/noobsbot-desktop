@@ -651,7 +651,7 @@ glass windows with traffic lights.
   | **Monotonic time only** | the wall clock jumps on resume, NTP sync and time-zone change; wall-clock timers then fire instantly (lock loop) or never | animations, idle timers, gesture velocity and the frame scheduler use `CLOCK_MONOTONIC`; only the clock display reads wall time |
   | **GPU can disappear** | suspend/resume on NVIDIA and a DRM device reset destroy the EGL context; a compositor that doesn't handle it crashes on wake | on `EGL_CONTEXT_LOST` / DRM reset the renderer is recreated and every texture (wallpaper, glyphs, icons) re-uploaded lazily; apps re-send buffers on the next frame |
   | **Crash → clean exit, never a dead screen** | a panic on the real backend without releasing the GPU/VT leaves a black screen and a dead keyboard | `panic = "abort"` with a panic hook that logs the backtrace to the journal and releases the DRM master and seat (libseat does this on exit); greetd then shows the login screen; `coredumpctl` keeps the dump for the bug report |
-  | **Rate limits at every door** | an app sending 1000 notifications/s, a held volume key, a slider dragged for 2 s | notifications ≤ 5/s per app (extra are coalesced); volume/brightness keys repeat at most 30/s and `wpctl` is replaced by the `pipewire` crate before M6 (spawning a process per key repeat is a visible lag); theme generator and config writes **debounced 300 ms** |
+  | **Rate limits at every door** | an app sending 1000 notifications/s, a held volume key, a slider dragged for 2 s | notifications ≤ 5/s per app (extra are coalesced); volume/brightness keys repeat at most 30/s; volume, mute and output changes go to their own thread and only the latest value per target is applied, at most every 30 ms (spawning a process per key repeat was a visible lag), and the monitor reads once per burst, never while our own changes are still queued (a stale reading moved the slider back) — **built**; the `pipewire` crate only if that still shows (it needs libpipewire headers in the build images); theme generator and config writes **debounced 300 ms** |
   | **Frame deadline misses are recovered** | a wrong render-time estimate (E1.10) means a skipped frame | 3 misses in a row → fall back to rendering right after vblank for 1 s, then re-measure |
   | **Helpers are supervised** | xwayland-satellite, the polkit agent or the IME dying silently breaks a feature | child helpers are restarted with back-off (max 3 in 60 s, then a notification) |
   | **Memory and CPU are measured, not hoped for** | | `PERF.md` per milestone + a 24 h soak test in M6 (RSS must not grow) |
@@ -2096,7 +2096,7 @@ custom-desktop-environemt/
 | `freedesktop-icons` | icon theme lookup | standard lookup rules | M3 |
 | `nucleo-matcher` | fuzzy search | very fast (Helix) | M4 |
 | `evalexpr` (or similar) | Spotlight calculator | tiny | M4 |
-| `pipewire` | volume, outputs, mic (replaces `wpctl`, E1.11) | official Rust bindings; no process per key press | before M6 |
+| `pipewire` | volume, outputs, mic (replaces `wpctl`, E1.11) | official Rust bindings; no process per change | only if coalesced `wpctl` (E1.11) still lags |
 | `libc` | `kill` for Force Quit, socket credentials | standard | M4 |
 | `pam-client` | lock screen password | standard Linux auth | M6 |
 | ~~`greetd_ipc`~~ | own graphical greeter (E6.6) | not needed: the protocol is spoken directly in `shell/greeter.rs` | — |
