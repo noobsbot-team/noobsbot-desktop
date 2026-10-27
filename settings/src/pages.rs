@@ -587,6 +587,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Trackpad, "", "touchpad.tap_to_drag", "Tap to drag", "Tap, then drag with the finger down", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.drag_lock", "Drag lock", "Keep dragging through a short lift", Kind::Toggle),
+    s(Page::Trackpad, "", "touchpad.three_finger_drag", "Three-finger drag", "Drag windows and selections with three fingers", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.disable_while_typing", "Ignore while typing", "", Kind::Toggle),
     s(Page::Trackpad, "", "touchpad.ignore_with_mouse", "Ignore when a mouse is plugged in", "", Kind::Toggle),
     s(
@@ -843,6 +844,10 @@ fn control<'a>(app: &'a App, setting: &'static Setting) -> Element<'a, Message> 
             let pick =
                 pick_list(options.iter().map(|&(v, l)| Labelled(v, l)).collect::<Vec<_>>(), selected, move |c: Labelled| Message::Choose(key.into(), c.0));
             pick.placeholder(current).text_size(13).padding([3, 8]).style(t.pick()).menu_style(t.menu()).into()
+        }
+        // Three-finger drag holds three fingers: the swipes take four (src/config.rs `effective_swipe_fingers`).
+        Kind::Steps(_) if key == "touchpad.swipe_fingers" && app.config.bool("touchpad.three_finger_drag") => {
+            text("Four fingers").size(13).color(t.secondary()).into()
         }
         Kind::Steps(steps) => {
             let current = app.config.num(key) as i64;
