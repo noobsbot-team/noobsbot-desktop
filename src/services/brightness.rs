@@ -3,8 +3,9 @@
 //! sets each display on its own.
 
 use std::{
-    io,
+    fs, io,
     os::fd::AsRawFd,
+    path::Path,
     process::Command,
     sync::{OnceLock, mpsc},
     time::{Duration, Instant},
@@ -27,7 +28,7 @@ trait Session {
 /// Sends the current brightness in percent; `None` without a backlight (desktop monitors). At start, after our own
 /// changes, and on the backlight's udev events (`watch`).
 pub fn send_current(updates: &Sender<Update>) {
-    let percent = display_info::brightness();
+    let percent = panel();
     tracing::debug!(?percent, "brightness");
     let _ = updates.send(Update::Brightness(percent));
 }
@@ -41,7 +42,7 @@ pub fn start(updates: &Sender<Update>) {
     if let Err(err) = std::thread::Builder::new().name("ddc".into()).spawn(move || ddc(&ddc_updates, &rx)) {
         tracing::warn!("monitor brightness off: {err}");
     }
-    if display_info::backlight().is_some() {
+    if backlight().is_some() {
         let updates = updates.clone();
         let watch = move || {
             if let Err(err) = watch(&updates) {
@@ -102,8 +103,8 @@ pub async fn set_output(bus: Option<&Connection>, connector: String, percent: u8
 /// The built-in panel, through logind; no bus: skipped.
 async fn set_backlight(bus: Option<&Connection>, percent: u8, updates: &Sender<Update>) {
     let Some(bus) = bus else { return };
-    let Some(name) = display_info::backlight() else { return };
-    let Some(max) = display_info::backlight_number(&name, "max_brightness") else { return };
+    let Some(name) = backlight() else { return };
+    let Some(max) = backlight_number(&name, "max_brightness") else { return };
     let result = match SessionProxy::new(bus).await {
         Ok(session) => session.set_brightness("backlight", &name, to_raw(percent, max)).await,
         Err(err) => Err(err),
@@ -155,7 +156,7 @@ fn ddc(updates: &Sender<Update>, rx: &mpsc::Receiver<Ddc>) {
                 Ok(msg) => msg,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     due = None;
-                    current = display_info::brightness().or(current);
+                    current = panel().or(current);
                     detect(&mut monitors, &mut current, updates);
                     continue;
                 }
@@ -226,8 +227,8 @@ fn detect(monitors: &mut Vec<Monitor>, current: &mut Option<u8>, updates: &Sende
                 Some(percent)
             }
             (None, Some((now, top))) => {
-                let percent = display_info::to_percent(now, top);
-                if current.is_none() && display_info::backlight().is_none() {
+                let percent = to_percent(now, top);
+                if current.is_none() && backlight().is_none() {
                     *current = Some(percent);
                     let _ = updates.send(Update::Brightness(Some(percent)));
                 }
@@ -293,6 +294,35 @@ fn parse_vcp(out: &str) -> Option<(u32, u32)> {
     (max > 0).then_some((now, max))
 }
 
+const BACKLIGHT: &str = "/sys/class/backlight";
+
+/// The built-in panel's backlight: firmware interfaces first, then platform, then raw (the order logind uses).
+fn backlight() -> Option<String> {
+    let rank = |name: &str| match fs::read_to_string(Path::new(BACKLIGHT).join(name).join("type")).ok()?.trim() {
+        "firmware" => Some(0),
+        "platform" => Some(1),
+        "raw" => Some(2),
+        _ => None,
+    };
+    let names = fs::read_dir(BACKLIGHT).ok()?.filter_map(|e| e.ok()?.file_name().into_string().ok());
+    names.filter_map(|name| Some((rank(&name)?, name))).min().map(|(_, name)| name)
+}
+
+/// A number from the backlight's sysfs `file` (`brightness`, `max_brightness`).
+fn backlight_number(name: &str, file: &str) -> Option<u32> {
+    fs::read_to_string(Path::new(BACKLIGHT).join(name).join(file)).ok()?.trim().parse().ok()
+}
+
+/// The built-in panel's brightness in percent; `None` without a backlight (desktop monitors).
+pub fn panel() -> Option<u8> {
+    let name = backlight()?;
+    Some(to_percent(backlight_number(&name, "brightness")?, backlight_number(&name, "max_brightness")?))
+}
+
+fn to_percent(raw: u32, max: u32) -> u8 {
+    if max == 0 { 0 } else { (u64::from(raw.min(max)) * 100).div_ceil(u64::from(max)) as u8 }
+}
+
 /// Never 0: a backlight at 0 is a black screen with no way to see the slider.
 fn to_raw(percent: u8, max: u32) -> u32 {
     ((u64::from(percent.min(100)) * u64::from(max)) / 100).max(1) as u32
@@ -301,7 +331,6 @@ fn to_raw(percent: u8, max: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display_info::to_percent;
 
     #[test]
     fn ddcutil_output() {
