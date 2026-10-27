@@ -1,7 +1,8 @@
 //! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s; the power
 //! button (E6.5) asks Shut Down with Sleep and Restart beside it.
 //! Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. A frozen app asks
-//! Wait / Force Quit (E4.7).
+//! Wait / Force Quit (E4.7). A permission alert (screen recording, input control, Thunderbolt) is kept as answered:
+//! Return never allows, and it ignores clicks and keys for its first `INPUT_DELAY`, so a press meant for an app can't.
 //! Drawn by render/alert.rs, which keeps the button rects of the last frame.
 
 use std::time::{Duration, Instant};
@@ -28,6 +29,8 @@ use crate::{
 };
 
 const COUNTDOWN: Duration = Duration::from_secs(60);
+/// How long a permission alert ignores clicks and keys once it appears.
+const INPUT_DELAY: Duration = Duration::from_millis(500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Power {
@@ -195,6 +198,16 @@ impl Alert {
         }
     }
 
+    /// Asks for a permission that is kept once given (`INPUT_DELAY`, and Return doesn't allow).
+    pub fn consent(&self) -> bool {
+        matches!(self.kind, Kind::ScreenRecording { .. } | Kind::ControlInput { .. } | Kind::Thunderbolt(_))
+    }
+
+    /// Whether a click or key may answer it, `shown` after it appeared.
+    pub fn ready(&self, shown: Duration) -> bool {
+        !self.consent() || shown >= INPUT_DELAY
+    }
+
     /// `false`: one button only (a code to type on the device needs no answer).
     pub fn cancellable(&self) -> bool {
         !matches!(&self.kind, Kind::Pair(Pairing { answer: false, .. }))
@@ -237,6 +250,7 @@ impl State {
         self.popup = None;
         let power = matches!(kind, Kind::Power(_) | Kind::PowerButton);
         self.alert = Some(Alert { kind, deadline: power.then(|| Instant::now() + COUNTDOWN) });
+        self.alert_opened = Instant::now();
         self.schedule_redraw();
         if !power {
             return;
@@ -255,9 +269,11 @@ impl State {
     }
 
     /// A key while the alert is up: `true` if it took it. An alert with a field takes every key, so a password
-    /// never reaches the focused app; without one, only Esc and Return.
+    /// never reaches the focused app; without one, only Esc and Return (a permission alert: only Esc, once ready).
     pub fn alert_key(&mut self, keysym: Keysym, ctrl: bool) -> bool {
+        let shown = self.alert_opened.elapsed();
         let Some(alert) = self.alert.as_mut() else { return false };
+        let (ready, consent) = (alert.ready(shown), alert.consent());
         let edit = match &mut alert.kind {
             Kind::Polkit { checking: true, .. } => return true,
             Kind::Polkit { auth, user, wrong, .. } if keysym == Keysym::Tab => {
@@ -273,8 +289,8 @@ impl State {
             }
             Kind::Wifi { field, .. } | Kind::Pin { field, .. } => field.key(keysym, keysym.key_char().map(String::from).as_deref(), ctrl),
             _ => match keysym {
-                Keysym::Escape => Edit::Cancel,
-                Keysym::Return | Keysym::KP_Enter => Edit::Submit,
+                Keysym::Escape if ready => Edit::Cancel,
+                Keysym::Return | Keysym::KP_Enter if !consent => Edit::Submit,
                 _ => return false,
             },
         };
@@ -380,7 +396,7 @@ impl State {
 
     /// Cancel (Esc) or the default button (Return, or the countdown running out).
     pub fn alert_answer(&mut self, button: Button) {
-        let Some(alert) = self.alert.clone() else { return };
+        let Some(alert) = self.alert.clone().filter(|a| a.ready(self.alert_opened.elapsed())) else { return };
         if button == Button::Reopen {
             return self.toggle_reopen();
         }
@@ -543,5 +559,14 @@ mod tests {
         let alert = Alert { kind: Kind::Thunderbolt(Accessory { uid: "u".into(), name: "Dell WD19TB".into() }), deadline: None };
         assert_eq!((alert.title().as_str(), alert.cancel(), alert.confirm()), ("Allow “Dell WD19TB” to connect?", "Don't Allow", "Allow"));
         assert!(alert.cancellable() && alert.field().is_none());
+    }
+
+    #[test]
+    fn permission_alerts_wait_before_answering() {
+        let ask = Alert { kind: Kind::Thunderbolt(Accessory { uid: "u".into(), name: "Dock".into() }), deadline: None };
+        assert!(ask.consent() && !ask.ready(Duration::ZERO) && !ask.ready(Duration::from_millis(499)));
+        assert!(ask.ready(INPUT_DELAY));
+        let power = Alert::power(Power::ShutDown, Instant::now());
+        assert!(!power.consent() && power.ready(Duration::ZERO), "other alerts answer at once");
     }
 }

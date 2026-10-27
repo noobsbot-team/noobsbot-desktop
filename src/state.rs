@@ -216,6 +216,8 @@ pub struct State {
     pub alert: Option<crate::shell::alert::Alert>,
     /// Its once-a-second countdown.
     pub alert_timer: Option<smithay::reexports::calloop::RegistrationToken>,
+    /// When the alert appeared (a permission alert ignores input at first).
+    pub alert_opened: Instant,
     /// logind's sleep blockers, read when Control Center opens.
     pub sleep_blockers: Vec<crate::services::login::Inhibitor>,
     /// Keep Awake is on: no idle dim, screen-off or sleep. Not saved: it ends with the session.
@@ -591,6 +593,7 @@ impl State {
             osd: None,
             alert: None,
             alert_timer: None,
+            alert_opened: Instant::now(),
             sleep_blockers: Vec::new(),
             keep_awake: false,
             expanded: None,
