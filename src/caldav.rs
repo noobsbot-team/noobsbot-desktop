@@ -114,6 +114,28 @@ fn elements<'a>(xml: &'a str, name: &str) -> Vec<&'a str> {
     out
 }
 
+/// A reply's (or one `<response>`'s) resource is a calendar collection.
+fn is_calendar(xml: &str) -> bool {
+    elements(xml, "resourcetype").iter().any(|kinds| !elements(kinds, "calendar").is_empty())
+}
+
+/// The first `<href>` inside a `<name>` (`current-user-principal`, `calendar-home-set`) in a reply to `base`.
+fn href_in(xml: &str, name: &str, base: &str) -> Option<String> {
+    elements(xml, name).iter().find_map(|e| elements(e, "href").first().map(|href| resolve(base, &unescape(href.trim()))))
+}
+
+/// The calendars that can hold events in a Depth 1 listing of a calendar home at `base` (tasks-only lists, inboxes,
+/// subscriptions and the home itself aren't).
+fn event_calendars(xml: &str, base: &str) -> Vec<String> {
+    let holds_events = |response: &&str| {
+        // No component set (or not found): every kind.
+        let kinds = elements(response, "supported-calendar-component-set");
+        is_calendar(response) && kinds.iter().all(|k| k.trim().is_empty() || k.contains("VEVENT"))
+    };
+    let own_href = |response: &str| elements(response, "href").first().map(|href| resolve(base, &unescape(href.trim())));
+    elements(xml, "response").into_iter().filter(holds_events).filter_map(own_href).collect()
+}
+
 /// An `<href>` from a reply to `base`: as it is when it's a whole URL, else a path on `base`'s server.
 fn resolve(base: &str, href: &str) -> String {
     if href.contains("://") {
@@ -195,6 +217,106 @@ END:VCALENDAR]]></C:calendar-data>
         assert!(data[0].contains("SUMMARY:Tom & Jerry <3 \"live\"\r\n"));
         assert!(data[1].contains("SUMMARY:A & B <raw>\n") && data[1].ends_with("END:VCALENDAR"));
         assert!(calendar_data("<d:multistatus xmlns:d=\"DAV:\"/>").is_empty());
+    }
+
+    #[test]
+    fn discovery_with_lowercase_prefixes() {
+        // The server's DAV root, Depth 0: only the principal.
+        let root = r#"<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:s="http://sabredav.org/ns" xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:nc="http://nextcloud.org/ns">
+ <d:response>
+  <d:href>/remote.php/dav/</d:href>
+  <d:propstat>
+   <d:prop>
+    <d:resourcetype><d:collection/></d:resourcetype>
+    <d:current-user-principal>
+     <d:href>/remote.php/dav/principals/users/me/</d:href>
+    </d:current-user-principal>
+   </d:prop>
+   <d:status>HTTP/1.1 200 OK</d:status>
+  </d:propstat>
+  <d:propstat>
+   <d:prop><cal:calendar-home-set/></d:prop>
+   <d:status>HTTP/1.1 404 Not Found</d:status>
+  </d:propstat>
+ </d:response>
+</d:multistatus>"#;
+        let base = "https://cloud.example.com/remote.php/dav/";
+        assert!(!is_calendar(root));
+        assert_eq!(href_in(root, "calendar-home-set", base), None);
+        assert_eq!(href_in(root, "current-user-principal", base).as_deref(), Some("https://cloud.example.com/remote.php/dav/principals/users/me/"));
+        // The principal: its calendar home.
+        let principal = r#"<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav"><d:response>
+<d:href>/remote.php/dav/principals/users/me/</d:href><d:propstat><d:prop>
+<d:resourcetype><d:principal/></d:resourcetype>
+<d:current-user-principal><d:href>/remote.php/dav/principals/users/me/</d:href></d:current-user-principal>
+<cal:calendar-home-set><d:href>/remote.php/dav/calendars/me/</d:href></cal:calendar-home-set>
+</d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response></d:multistatus>"#;
+        assert_eq!(href_in(principal, "calendar-home-set", base).as_deref(), Some("https://cloud.example.com/remote.php/dav/calendars/me/"));
+        // The home, Depth 1.
+        let home = r#"<?xml version="1.0"?>
+<d:multistatus xmlns:d="DAV:" xmlns:cal="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:nc="http://nextcloud.org/ns">
+ <d:response><d:href>/remote.php/dav/calendars/me/</d:href>
+  <d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+  <d:propstat><d:prop><cal:supported-calendar-component-set/></d:prop><d:status>HTTP/1.1 404 Not Found</d:status></d:propstat>
+ </d:response>
+ <d:response><d:href>/remote.php/dav/calendars/me/personal/</d:href>
+  <d:propstat><d:prop>
+   <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
+   <cal:supported-calendar-component-set><cal:comp name="VEVENT"/></cal:supported-calendar-component-set>
+  </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+ </d:response>
+ <d:response><d:href>/remote.php/dav/calendars/me/tasks/</d:href>
+  <d:propstat><d:prop>
+   <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
+   <cal:supported-calendar-component-set><cal:comp name="VTODO"/></cal:supported-calendar-component-set>
+  </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+ </d:response>
+ <d:response><d:href>/remote.php/dav/calendars/me/work%20%26%20play/</d:href>
+  <d:propstat><d:prop>
+   <d:resourcetype><d:collection/><cal:calendar/></d:resourcetype>
+   <cal:supported-calendar-component-set><cal:comp name="VEVENT"/><cal:comp name="VTODO"/></cal:supported-calendar-component-set>
+  </d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+ </d:response>
+ <d:response><d:href>/remote.php/dav/calendars/me/inbox/</d:href>
+  <d:propstat><d:prop><d:resourcetype><d:collection/><cal:schedule-inbox/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+ </d:response>
+ <d:response><d:href>/remote.php/dav/calendars/me/holidays/</d:href>
+  <d:propstat><d:prop><d:resourcetype><d:collection/><cs:subscribed/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+ </d:response>
+ <d:response><d:href>/remote.php/dav/calendars/me/trashbin/</d:href>
+  <d:propstat><d:prop><d:resourcetype><d:collection/><nc:trash-bin/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat>
+ </d:response>
+</d:multistatus>"#;
+        let base = "https://cloud.example.com/remote.php/dav/calendars/me/";
+        assert_eq!(
+            event_calendars(home, base),
+            ["https://cloud.example.com/remote.php/dav/calendars/me/personal/", "https://cloud.example.com/remote.php/dav/calendars/me/work%20%26%20play/"]
+        );
+    }
+
+    #[test]
+    fn discovery_with_other_prefixes() {
+        // A calendar's own URL, Depth 0: it is one.
+        let own = r#"<?xml version="1.0" encoding="UTF-8"?>
+<D:multistatus xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:response>
+<D:href>/dav/calendars/user/me@example.com/Default/</D:href>
+<D:propstat><D:prop><D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
+<D:current-user-principal><D:href>/dav/principals/user/me@example.com/</D:href></D:current-user-principal></D:prop>
+<D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>"#;
+        assert!(is_calendar(own));
+        // A principal whose home is on another host.
+        let principal = r#"<D:multistatus xmlns:D="DAV:"><D:response><D:href>/123/principal/</D:href><D:propstat><D:prop>
+<C:calendar-home-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href>https://p42-caldav.example.net:443/123/calendars/</D:href></C:calendar-home-set>
+</D:prop></D:propstat></D:response></D:multistatus>"#;
+        assert_eq!(
+            href_in(principal, "calendar-home-set", "https://caldav.example.net/").as_deref(),
+            Some("https://p42-caldav.example.net:443/123/calendars/")
+        );
+        // The DAV namespace as the default one, spaces before `/>`, an address book, a calendar without a component set.
+        let home = r#"<?xml version='1.0' encoding='utf-8'?>
+<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CR="urn:ietf:params:xml:ns:carddav"><response><href>/me/</href><propstat><prop><resourcetype><principal /><collection /></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat><propstat><prop><C:supported-calendar-component-set /></prop><status>HTTP/1.1 404 Not Found</status></propstat></response><response><href>/me/2b8f6b6e-a0f1/</href><propstat><prop><resourcetype><C:calendar /><collection /></resourcetype><C:supported-calendar-component-set><C:comp name="VEVENT" /><C:comp name="VJOURNAL" /><C:comp name="VTODO" /></C:supported-calendar-component-set></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/me/contacts/</href><propstat><prop><resourcetype><CR:addressbook /><collection /></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/me/journal/</href><propstat><prop><resourcetype><C:calendar /><collection /></resourcetype><C:supported-calendar-component-set><C:comp name="VJOURNAL" /></C:supported-calendar-component-set></prop><status>HTTP/1.1 200 OK</status></propstat></response><response><href>/me/old/</href><propstat><prop><resourcetype><C:calendar /><collection /></resourcetype></prop><status>HTTP/1.1 200 OK</status></propstat><propstat><prop><C:supported-calendar-component-set /></prop><status>HTTP/1.1 404 Not Found</status></propstat></response></multistatus>"#;
+        assert_eq!(event_calendars(home, "http://localhost:5232/me/"), ["http://localhost:5232/me/2b8f6b6e-a0f1/", "http://localhost:5232/me/old/"]);
     }
 
     #[test]
