@@ -107,17 +107,54 @@ pub struct Details {
     pub dns: String,
 }
 
-// ponytail: no RequestScan; the list is NetworkManager's last scan (it rescans on its own every few minutes).
 pub async fn read(bus: &Connection) -> Network {
     let (known, mut vpns) = known(bus).await.unwrap_or_default();
-    let objects = async { ObjectManagerProxy::builder(bus).destination(NM)?.path("/org/freedesktop")?.build().await?.get_managed_objects().await };
-    let objects = objects.await.unwrap_or_default();
+    let objects = objects(bus).await;
     for vpn in &mut vpns {
         vpn.active = objects.keys().find(|a| path(get(&objects, a, ACTIVE, "Connection")).is_some_and(|c| c.as_str() == vpn.path)).map(|a| a.to_string());
     }
     let editor = std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join(EDITOR).is_file()));
     let wifi_device = objects.iter().find(|(_, i)| i.keys().any(|i| i.as_str() == WIRELESS)).map(|(p, _)| p.to_string());
     Network { networks: networks(&objects, &known), details: details(&objects), known, vpns, wifi_device, editor, error: None }
+}
+
+/// NetworkManager's devices, access points, IP configs and active connections.
+async fn objects(bus: &Connection) -> ManagedObjects {
+    let objects = async { ObjectManagerProxy::builder(bus).destination(NM)?.path("/org/freedesktop")?.build().await?.get_managed_objects().await };
+    objects.await.unwrap_or_default()
+}
+
+/// While the Network page shows: every Wi-Fi device rescans now and every 10 s (the desktop's `network::scan`), and
+/// `()` 4 s after each request, for a re-read. NetworkManager refuses scans too close together; the re-read then
+/// shows its last one.
+// ponytail: a fixed 4 s wait, not `LastScan`; a slow scan shows on the next round.
+pub fn scans() -> impl iced::futures::Stream<Item = ()> {
+    iced::stream::channel(1, async |tx: iced::futures::channel::mpsc::Sender<()>| {
+        let mut sender = tx.clone();
+        let spawned = std::thread::Builder::new().name("wifi-scan".into()).spawn(move || {
+            let bus = futures_lite::future::block_on(crate::system::system(2)).ok();
+            while !sender.is_closed() {
+                if let Some(bus) = &bus {
+                    futures_lite::future::block_on(async {
+                        for (path, interfaces) in objects(bus).await {
+                            if interfaces.keys().any(|i| i.as_str() == WIRELESS) {
+                                let options = HashMap::<&str, Value>::new();
+                                let _ = bus.call_method(Some(NM), &path, Some(WIRELESS), "RequestScan", &(options,)).await;
+                            }
+                        }
+                    });
+                }
+                std::thread::sleep(std::time::Duration::from_secs(4));
+                let _ = sender.try_send(());
+                std::thread::sleep(std::time::Duration::from_secs(6));
+            }
+        });
+        if let Err(err) = spawned {
+            eprintln!("wifi scan: {err}");
+        }
+        std::future::pending::<()>().await;
+        drop(tx);
+    })
 }
 
 /// Saved Wi-Fi and wired connections, and the VPNs.

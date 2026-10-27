@@ -2235,6 +2235,7 @@ dependencies = [
  "chrono",
  "futures-lite",
  "iced",
+ "libc",
  "notify",
  "png 0.18.1",
  "serde",

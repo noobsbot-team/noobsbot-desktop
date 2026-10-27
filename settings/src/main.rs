@@ -57,9 +57,17 @@ fn main() -> iced::Result {
                 all.push(iced::Subscription::run(system::discover).map(|()| Message::Rescan));
                 all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::Rescan));
             }
+            // Networks in range: a rescan every 10 s and a re-read after it, only while Network shows.
+            if app.page == Page::Network {
+                all.push(iced::Subscription::run(network::scans).map(|()| Message::Rescan));
+            }
             // The microphone's live level, only while Sound shows it.
             if app.page == Page::Sound && app.status.input.is_some() {
                 all.push(iced::Subscription::run(system::level).map(Message::Level));
+            }
+            // Volume, mute and devices changed elsewhere, only while Sound shows them.
+            if app.page == Page::Sound {
+                all.push(iced::Subscription::run(system::sound_changes).map(|()| Message::SoundChanged));
             }
             // Software Update's state while General shows; a time limit while Check Now waits.
             if app.page == Page::General {
@@ -156,6 +164,8 @@ pub struct App {
     shortcuts: Option<shortcuts::Editor>,
     /// Sound ▸ Input: the microphone's level, 0 … 1.
     level: f32,
+    /// The last volume, mute, balance or device change made here.
+    sound_set: Option<Instant>,
     /// The Users page's accounts; `None` until read (when the page opens).
     users: Option<users::Users>,
     /// Users ▸ Take Photo…'s sheet, open.
@@ -228,7 +238,7 @@ pub enum Message {
     Forget(String),
     /// A Bluetooth action finished: the new status and what went wrong.
     Acted((system::Status, Option<String>)),
-    /// Re-read while looking for nearby devices.
+    /// Re-read while looking for nearby devices or networks.
     Rescan,
     /// A PipeWire sink or source becomes the default.
     DefaultDevice(u32),
@@ -283,6 +293,10 @@ pub enum Message {
     AppRule(String, pages::AppRule),
     /// The microphone's level, 0 … 1.
     Level(f32),
+    /// Sound changed, here or elsewhere (keys, the Control Center, other apps).
+    SoundChanged,
+    /// What a re-read for `SoundChanged` found, and when it was asked for.
+    Followed(Instant, system::Status),
     /// About ▸ Copy System Report.
     CopyReport,
     /// A theme sound plays; `true`: it becomes the alert sound.
@@ -373,6 +387,7 @@ impl App {
             widget_ids: Vec::new(),
             shortcuts: None,
             level: 0.0,
+            sound_set: None,
             users: None,
             shot: None,
             shot_generation: 0,
@@ -479,6 +494,9 @@ impl App {
                 if let Some(name) = key.strip_prefix("display.underscan.") {
                     self.change_outputs(vec![(name.to_owned(), "underscan", (value.round() as i64).into())], false);
                     return Task::none();
+                }
+                if key.starts_with("sound.") {
+                    self.sound_set = Some(Instant::now());
                 }
                 match key.as_str() {
                     "sound.output" | "sound.input" => return Task::perform(system::set_volume(key == "sound.output", value.round() as u8), Message::Status),
@@ -800,7 +818,10 @@ impl App {
             Message::Advanced => network::advanced(),
             Message::Bluetooth(on) => return Task::perform(system::set_bluetooth(on), Message::Status),
             Message::PowerMode(profile) => return Task::perform(system::set_power_mode(profile), Message::Status),
-            Message::Mute(output, muted) => return Task::perform(system::set_muted(output, muted), Message::Status),
+            Message::Mute(output, muted) => {
+                self.sound_set = Some(Instant::now());
+                return Task::perform(system::set_muted(output, muted), Message::Status);
+            }
             Message::Ntp(on) => return Task::perform(system::set_ntp(on), Message::Status),
             Message::Connectivity(on) => return Task::perform(system::set_connectivity(on), Message::Status),
             Message::Grant(device, app, on) => return Task::perform(system::set_grant(device, app, on), Message::Status),
@@ -824,7 +845,21 @@ impl App {
                 self.error = error;
             }
             Message::Rescan => return Task::perform(system::read(), Message::Status),
-            Message::DefaultDevice(id) => return Task::perform(system::set_default(id), Message::Status),
+            Message::DefaultDevice(id) => {
+                self.sound_set = Some(Instant::now());
+                return Task::perform(system::set_default(id), Message::Status);
+            }
+            Message::SoundChanged => {
+                let asked = Instant::now();
+                return Task::perform(system::read(), move |status| Message::Followed(asked, status));
+            }
+            // A re-read asked for before our own change may show the old volume, and land after that change's own
+            // read: dropped. A held slider shows its draft either way.
+            Message::Followed(asked, status) => {
+                if self.sound_set.is_none_or(|set| set < asked) {
+                    self.status = status;
+                }
+            }
             Message::Reload => {
                 // A half-written or broken file keeps what is shown, with the error under it.
                 let (config, error) = config::Config::load(config::path());
