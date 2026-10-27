@@ -935,6 +935,9 @@ impl State {
             self.banner_swipe_start(id, time);
         }
         if let Some(s) = self.notifications.swipe.as_mut() {
+            // A finger scroll moves content, so the banner goes the way Launchpad's pages do: with the fingers
+            // under natural scrolling (libinput flips `dx` for it).
+            let dx = -dx;
             // Smoothed like a touchpad gesture's (gestures::Tracker).
             let dt = f64::from(time.wrapping_sub(s.last).max(1));
             (s.v, s.dx, s.last) = ((s.v + dx / dt) / 2.0, s.dx + dx, time);
