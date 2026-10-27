@@ -826,7 +826,7 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
     `[calendar] files` (`src/ical.rs`, `src/events.rs`, E7.2) and `[calendar] caldav` (`src/caldav.rs`: a `REPORT`
     through curl for a month back to a year ahead, at login, every 15 minutes and when the network returns, cached for
     offline; the password in the keyring via `secret-tool`; Settings ▸ Date & Time ▸ CalDAV accounts adds one after a
-    test fetch). Dropped: Google (needs OAuth; owner decision). Not yet: CalDAV discovery (the calendar's own URL is typed).
+    test fetch). Dropped: Google (needs OAuth; owner decision). Built: CalDAV discovery (a server address finds its calendars).
 - **Built with:** `chrono` (date math); our widgets.
 - **Why:** pure date math, so no calendar library or service is needed until events are added.
 - **Done when:** the correct month grid for any month and year, including leap years (unit tested).
