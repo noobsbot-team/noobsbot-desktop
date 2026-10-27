@@ -155,7 +155,7 @@ fn split_exec(exec: &str) -> Vec<String> {
 }
 
 /// A value with the desktop-entry escapes `\s \n \t \r \\` undone; other backslashes stay.
-fn unescape(value: &str) -> String {
+pub fn unescape(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     let mut chars = value.chars();
     while let Some(c) = chars.next() {
