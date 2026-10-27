@@ -524,7 +524,7 @@ impl Default for HotCorners {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Displays {
     /// The GPU that draws the desktop (`/dev/dri/card1`); empty: the one the firmware booted with. Read at start.
@@ -533,6 +533,12 @@ pub struct Displays {
     pub scale: f64,
     /// `[[display.outputs]]`: one display's own settings, by connector name. Live.
     pub outputs: Vec<OutputSettings>,
+}
+
+impl Default for Displays {
+    fn default() -> Self {
+        Self { gpu: String::new(), scale: 1.25, outputs: Vec::new() }
+    }
 }
 
 /// One display's settings (E6.2); a display without an entry gets the defaults below.

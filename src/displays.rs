@@ -682,8 +682,10 @@ mod tests {
         let p = plan(laptop_and_monitor(), &Displays::default(), false);
         assert!(p.iter().all(|d| d.enabled));
         assert_eq!((p[0].mode, p[0].scale, p[0].x, p[0].width, p[0].height), (mode(1920, 1200, 60, true), 1.25, 0, 1536, 960));
-        assert_eq!((p[1].mode.refresh, p[1].scale, p[1].x, p[1].y, p[1].width), (144_000, 1.0, 1536, 0, 2560), "highest refresh, placed right");
+        assert_eq!((p[1].mode.refresh, p[1].scale, p[1].x, p[1].y, p[1].width), (144_000, 1.25, 1536, 0, 2048), "highest refresh, placed right");
         assert!(p[0].primary && !p[1].primary, "the first is primary");
+        let auto = plan(laptop_and_monitor(), &Displays { scale: 0.0, ..Default::default() }, false);
+        assert_eq!((auto[0].scale, auto[1].scale), (1.25, 1.0), "0: each from its pixel density");
         let global = Displays { scale: 2.0, ..Default::default() };
         assert!(plan(laptop_and_monitor(), &global, false).iter().all(|d| d.scale == 2.0));
     }
@@ -763,6 +765,7 @@ mod tests {
     #[test]
     fn underscan_shrinks_the_logical_size_and_the_picture() {
         let tv = Displays {
+            scale: 1.0,
             outputs: vec![OutputSettings { underscan: 5, ..output("HDMI-A-1") }, OutputSettings { underscan: 50, ..output("eDP-1") }],
             ..Default::default()
         };
