@@ -57,6 +57,10 @@ fn main() -> iced::Result {
                 all.push(iced::Subscription::run(system::discover).map(|()| Message::Rescan));
                 all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::Rescan));
             }
+            // Networks in range: a rescan every 10 s and a re-read after it, only while Network shows.
+            if app.page == Page::Network {
+                all.push(iced::Subscription::run(network::scans).map(|()| Message::Rescan));
+            }
             // The microphone's live level, only while Sound shows it.
             if app.page == Page::Sound && app.status.input.is_some() {
                 all.push(iced::Subscription::run(system::level).map(Message::Level));
@@ -228,7 +232,7 @@ pub enum Message {
     Forget(String),
     /// A Bluetooth action finished: the new status and what went wrong.
     Acted((system::Status, Option<String>)),
-    /// Re-read while looking for nearby devices.
+    /// Re-read while looking for nearby devices or networks.
     Rescan,
     /// A PipeWire sink or source becomes the default.
     DefaultDevice(u32),
