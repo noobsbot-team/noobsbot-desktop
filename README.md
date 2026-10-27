@@ -486,7 +486,7 @@ A widget belongs to the connection that set it and goes when that connection lea
 only for a moment (`busctl` exits); a real app keeps its connection open. A click sends the `Activated(id)` signal
 to the owner alone. `[widgets]` in `config.toml` sets the order in Notification Center and puts chosen ids on the
 desktop instead (or hides them); Settings ▸ Notifications edits it, listing the ids in the `Ids` property. Each app may have up to eight widgets.
-The desktop ships one: `system` (CPU, memory and disk use, every 5 s), from `noobsbot-desktop-widget-system`, which
+The desktop ships one: `system` (CPU, memory and disk use and network speed, every 5 s), from `noobsbot-desktop-widget-system`, which
 the shell starts at login; put `system` in `[widgets] hidden` to hide it.
 
 ## Known limits
