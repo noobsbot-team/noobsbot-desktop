@@ -7,8 +7,8 @@
 //! signature of `SHA256SUMS`, then the tarball's SHA-256); a bad download is deleted. The notification then offers
 //! "Restart to Update", which runs the privileged helper through pkexec and logs out, so the next login starts the
 //! new version. With `[update] install_at_login`, the session wrapper instead installs it at the next login, before the
-//! compositor starts, through the helper's passwordless `--verified` mode. Anything else (an AUR package, a hand-built
-//! binary, no key yet) only notifies.
+//! compositor starts, through the helper's `--verified` mode (no password for an admin; never a pre-release or a version
+//! Settings reverted from). Anything else (an AUR package, a hand-built binary, no key yet) only notifies.
 //!
 //! noobsbot-terminal's releases are checked too, for its own row in Settings and the update count; its own installer
 //! or package updates it, so it is only shown (with its release page), never downloaded.
@@ -467,9 +467,12 @@ impl crate::state::State {
         if write().is_none() {
             tracing::debug!("update: couldn't write {}", path.display());
         }
-        // `[update] install_at_login`: while this is there, the session wrapper installs the download at the next login.
+        // `[update] install_at_login`: while this is there, the session wrapper installs the download at the next login;
+        // not for what `--verified` refuses (a pre-release, a version "Revert to" went back from).
         let marker = path.with_file_name("install-at-login");
-        let _ = if self.config.update.install_at_login && self.update_ready() { fs::write(&marker, "") } else { fs::remove_file(&marker) };
+        let unattended = |r: &Release| verify::unattended(&r.version, &fs::read_to_string(verify::REVERTED).unwrap_or_default());
+        let at_login = self.config.update.install_at_login && self.update_ready() && self.update.as_ref().is_some_and(unattended);
+        let _ = if at_login { fs::write(&marker, "") } else { fs::remove_file(&marker) };
     }
 
     /// A verified download is waiting for "Restart to Update" (logo menu, notification).
