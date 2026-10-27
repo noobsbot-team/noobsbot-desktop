@@ -1073,16 +1073,17 @@ impl State {
         }
     }
 
-    /// Shows `osd` for 1.5 s after the latest call.
-    // ponytail: fades in (render::motion::Entrances) but goes at once; a fade out needs its last elements kept.
+    /// Shows `osd` for 1.5 s after the latest call; the banners spring out of its way meanwhile.
     pub fn show_osd(&mut self, osd: Osd) {
         if let Some(token) = self.osd_timer.take() {
             self.loop_handle.remove(token);
         }
         self.osd = Some(osd);
+        self.banners_dodge(true);
         let hide = self.loop_handle.insert_source(Timer::from_duration(OSD_TIME), |_, _, state| {
             state.osd = None;
             state.osd_timer = None;
+            state.banners_dodge(false);
             state.schedule_redraw();
             TimeoutAction::Drop
         });
