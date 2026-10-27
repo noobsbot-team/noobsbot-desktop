@@ -754,6 +754,8 @@ pub struct Dock {
     /// A display's own pinned list, by connector name, in place of `items` (the dock menu's Separate Items on This
     /// Display). Kept while the display is away.
     pub outputs: BTreeMap<String, Vec<String>>,
+    /// The bar's look (E3.1).
+    pub style: DockStyle,
 }
 
 impl Dock {
@@ -773,6 +775,19 @@ pub enum DockDisplays {
     Main,
     /// The display the pointer is on: the dock follows it.
     Pointer,
+}
+
+/// The dock bar's preset (E3.1).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DockStyle {
+    /// Plank's Transparent-Tight: an opaque grey gradient, square.
+    #[default]
+    Default,
+    /// Plank's WhiteSur-Dark: near-black, mostly opaque, a faint light edge.
+    WhitesurDark,
+    /// Part D glass: lighter and see-through, rounded.
+    Glass,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -1100,6 +1115,7 @@ impl Default for Dock {
             assign: BTreeMap::new(),
             displays: DockDisplays::All,
             outputs: BTreeMap::new(),
+            style: DockStyle::Default,
         }
     }
 }
