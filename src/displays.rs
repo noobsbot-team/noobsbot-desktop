@@ -314,38 +314,60 @@ pub(crate) fn set_outputs(text: &str, outputs: &[OutputSettings]) -> String {
     out
 }
 
-/// `$XDG_STATE_HOME/noobsbot-desktop/display-layouts.json`: every set of displays' remembered layout, by `layout_key`.
-fn layouts_path() -> std::path::PathBuf {
-    crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").join("noobsbot-desktop/display-layouts.json")
+/// `$XDG_STATE_HOME/noobsbot-desktop`: `display-layouts.json`, every set of displays' remembered layout by
+/// `layout_key`, and `last-display-set`, the key of the set connected when the desktop last ran.
+fn layouts_dir() -> std::path::PathBuf {
+    crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").join("noobsbot-desktop")
+}
+
+/// Layouts per set of displays (E6.2), kept in `dir`: `connected` is not the set `last` (empty: not read yet, the set
+/// the desktop last ran with) → its remembered layout replaces `outputs`' entries; then the result is remembered for
+/// it. The new outputs when they changed. No displays is no set, and changes nothing.
+fn follow(dir: &std::path::Path, last: &mut String, connected: &[Display], outputs: &[OutputSettings]) -> Option<Vec<OutputSettings>> {
+    if connected.is_empty() {
+        return None;
+    }
+    let key = layout_key(connected);
+    let (path, last_path) = (dir.join("display-layouts.json"), dir.join("last-display-set"));
+    let save = |path: &std::path::Path, text: &str| {
+        if let Err(err) = crate::config::save_atomic(path, text) {
+            tracing::warn!("{}: {err}", path.display());
+        }
+    };
+    let mut layouts: std::collections::HashMap<String, Saved> =
+        std::fs::read_to_string(&path).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default();
+    if last.is_empty() {
+        // At login, so an unchanged set keeps what the settings file says now; none recorded (a first run) is unchanged.
+        *last = std::fs::read_to_string(&last_path).unwrap_or_default();
+    }
+    let mut changed = None;
+    if key != *last {
+        if !last.is_empty()
+            && let Some(saved) = layouts.get(&key)
+        {
+            changed = Some(restore(saved, connected, outputs)).filter(|o| o != outputs);
+        }
+        *last = key.clone();
+        save(&last_path, &key);
+    }
+    let now = remember(changed.as_deref().unwrap_or(outputs), connected);
+    if layouts.get(&key) != Some(&now) {
+        layouts.insert(key, now);
+        if let Ok(json) = serde_json::to_string_pretty(&layouts) {
+            save(&path, &json);
+        }
+    }
+    changed
 }
 
 impl State {
-    /// Layouts per set of displays (E6.2): `connected` is a set not seen last time → its remembered layout goes into
-    /// `[[display.outputs]]` (in memory and in the file); then the current entries are remembered for it.
+    /// `follow` for the connected displays: a remembered layout goes into `[[display.outputs]]` (in memory and in the
+    /// file).
     pub(crate) fn follow_layout(&mut self, connected: &[Display]) {
-        let key = layout_key(connected);
-        let path = layouts_path();
-        let mut layouts: std::collections::HashMap<String, Saved> =
-            std::fs::read_to_string(&path).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default();
-        if key != self.layout_key {
-            self.layout_key = key.clone();
-            if let Some(saved) = layouts.get(&key) {
-                let outputs = restore(saved, connected, &self.config.display.outputs);
-                if outputs != self.config.display.outputs {
-                    tracing::info!("displays: the layout last used with {key}");
-                    crate::config::save_edit(|text| set_outputs(text, &outputs));
-                    self.config.display.outputs = outputs;
-                }
-            }
-        }
-        let now = remember(&self.config.display.outputs, connected);
-        if layouts.get(&key) != Some(&now) {
-            layouts.insert(key, now);
-            if let Ok(json) = serde_json::to_string_pretty(&layouts)
-                && let Err(err) = crate::config::save_atomic(&path, &json)
-            {
-                tracing::warn!("{}: {err}", path.display());
-            }
+        if let Some(outputs) = follow(&layouts_dir(), &mut self.layout_key, connected, &self.config.display.outputs) {
+            tracing::info!("displays: the layout last used with {}", self.layout_key);
+            crate::config::save_edit(|text| set_outputs(text, &outputs));
+            self.config.display.outputs = outputs;
         }
     }
 
@@ -962,6 +984,22 @@ mod tests {
         // Saved before mirroring existed: extended.
         let old: Saved = serde_json::from_str(r#"[["HDMI-A-1", {"name": "HDMI-A-1", "primary": true}]]"#).unwrap();
         assert_eq!(old[0].1.mirror, "");
+    }
+
+    #[test]
+    fn a_remembered_layout_comes_back_only_when_the_set_changed() {
+        let dir = std::env::temp_dir().join(format!("noobsbot-desktop-test-layouts-{}", std::process::id()));
+        let desk = laptop_and_monitor();
+        let laptop = &desk[..1];
+        let at_one = vec![OutputSettings { scale: 1.0, ..output("eDP-1") }];
+        // Each call with a new `last` is a login.
+        assert_eq!(follow(&dir, &mut String::new(), laptop, &at_one), None, "nothing remembered yet");
+        assert_eq!(follow(&dir, &mut String::new(), laptop, &[output("eDP-1")]), None, "edited while not running: the file wins");
+        let mut last = String::new();
+        assert_eq!(follow(&dir, &mut last, &desk, &at_one), None, "a new set");
+        assert_eq!(follow(&dir, &mut last, &[], &at_one), None, "no displays");
+        assert_eq!(follow(&dir, &mut String::new(), laptop, &at_one), Some(vec![output("eDP-1")]), "the set changed since last time");
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
