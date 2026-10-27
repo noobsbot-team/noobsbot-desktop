@@ -34,9 +34,18 @@ mkdir -p "$state"
 # greetd leaves stdout and stderr on the VT, where nobody can read them: this session's log and the last one's are kept.
 mv -f "$state/session.log" "$state/session.log.old" 2>/dev/null
 exec >"$state/session.log" 2>&1
+# Install at login ([update] install_at_login): the compositor leaves install-at-login while that's on and a verified
+# download waits. The helper's --verified mode needs no password (its own polkit action) and installs only that
+# download, after checking its signature itself; then this login starts the new version, with "Updated to <v>".
+updated=""
+if [ -f "$state/install-at-login" ]; then
+    rm -f "$state/install-at-login"
+    pkexec --disable-internal-agent "$lib/noobsbot-desktop-update" --verified && updated=1
+fi
 bin=$(readlink -f "$(command -v noobsbot-desktop)")
 ver=""
 case $bin in "$lib"/versions/*/noobsbot-desktop) ver=${bin#"$lib/versions/"}; ver=${ver%/noobsbot-desktop} ;; esac
+[ -z "$updated" ] || export NOOBSBOT_UPDATED="$ver"
 good=$(cat "$state/boot-ok" 2>/dev/null)
 run=$bin running=$ver
 if [ -n "$ver" ] && [ "$ver" != "$good" ] && [ -x "$lib/versions/$good/noobsbot-desktop" ]; then
@@ -66,7 +75,10 @@ ${watchdog:+"$watchdog"} "$run" -- sh -c 'dbus-update-activation-environment --s
     [ -z "$NOOBSBOT_ROLLED_BACK" ] || gdbus call --session --dest org.freedesktop.Notifications \
         --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify Noobsbot\ Desktop 0 "" \
         "Update $NOOBSBOT_ROLLED_BACK was rolled back" "It kept quitting at start, so the previous version is running." \
-        "[\"report\", \"Report\"]" "{}" 10000 >/dev/null'
+        "[\"report\", \"Report\"]" "{}" 10000 >/dev/null
+    [ -z "$NOOBSBOT_UPDATED" ] || gdbus call --session --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify Noobsbot\ Desktop 0 "" \
+        "Updated to $NOOBSBOT_UPDATED" "Installed at login." "[]" "{}" 10000 >/dev/null'
 status=$?
 [ -z "$marker" ] || kill "$marker" 2>/dev/null
 # A crash before the boot-ok marker counts towards a rollback; only the installed version is counted.
