@@ -148,6 +148,7 @@ At the start, the script asks how to install:
 | Another login manager is enabled (GDM, SDDM, …) | keep it (pick Noobsbot Desktop in its session menu) | switch to greetd |
 | Login screen | text (tuigreet) | graphical (`--greeter`) |
 | Browser | Helium | Firefox (ESR on Debian), Chromium, none |
+| Typing Nepali, Hindi, Chinese… | none | fcitx5 with `fcitx5-m17n` and its settings app |
 | NVIDIA driver | Arch: `nvidia-open`; Debian: nouveau | Arch: nouveau; Debian: NVIDIA 550 |
 | Prebuilt or source | signed prebuilt | build from source (`--from-source`) |
 | Network set up by the Debian installer (DHCP) | move it to NetworkManager at the next boot, so the menu bar can manage it; Wi-Fi is kept | leave `/etc/network/interfaces` |
@@ -248,7 +249,7 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   in the calendar, and as reminders.
 - **USB drives:** appear in a notification with Open and Eject.
 - **Typing other languages:** Super+Ctrl+Space switches keyboard layout. With fcitx5 installed, its input methods
-  (Nepali, Hindi, Chinese, Japanese, Korean…) appear in the input menu too.
+  (Nepali, Hindi, Chinese, Japanese, Korean…) appear in the input menu too, and Super+Ctrl+Space cycles them instead.
 - **Force Quit:** Super+Alt+Esc.
 
 ## Keyboard shortcuts
@@ -282,7 +283,7 @@ settings file.
 | Super+Alt+8, Super+Alt+= / - | Zoom on or off, in, out |
 | Super+Shift+Q | log out (asks first) |
 | Super+Alt+Esc | Force Quit |
-| Super+Ctrl+Space | next keyboard layout |
+| Super+Ctrl+Space | next input method (or keyboard layout) |
 | Super+Ctrl+Shift+Space | previous keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
 | F12 | quake terminal |
@@ -295,7 +296,7 @@ settings file.
 | Calculator key | a calculator app |
 | Search key | Spotlight |
 | Display key | System Settings › Displays |
-| Power button | asks before shutting down |
+| Power button | asks Sleep, Restart or Shut Down |
 | Sleep key | lock, then sleep |
 | Eject key | ejects the last mounted USB drive or disc |
 | Ctrl+Alt+F1 … F12 | switch to a text console and back |
@@ -321,7 +322,8 @@ click; Space and Mission Control swipes then take four fingers.
 ## Settings
 Open **System Settings** from Launchpad or Spotlight (search "Settings"), or edit `~/.config/noobsbot-desktop/config.toml`. The file is
 fully commented, every line shows the default, and saving it applies the change straight away. A line the desktop
-doesn't understand is skipped and reported in the journal.
+doesn't understand is skipped and reported in the journal; a file that doesn't parse keeps the last good settings
+and shows a notification with the line.
 
 | Section | What it controls |
 |---|---|
@@ -485,7 +487,7 @@ A widget belongs to the connection that set it and goes when that connection lea
 only for a moment (`busctl` exits); a real app keeps its connection open. A click sends the `Activated(id)` signal
 to the owner alone. `[widgets]` in `config.toml` sets the order in Notification Center and puts chosen ids on the
 desktop instead (or hides them); Settings ▸ Notifications edits it, listing the ids in the `Ids` property. Each app may have up to eight widgets.
-The desktop ships one: `system` (CPU, memory and disk use, every 5 s), from `noobsbot-desktop-widget-system`, which
+The desktop ships one: `system` (CPU, memory and disk use and network speed, every 5 s), from `noobsbot-desktop-widget-system`, which
 the shell starts at login; put `system` in `[widgets] hidden` to hide it.
 
 ## Known limits

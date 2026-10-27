@@ -27,6 +27,7 @@ ln -sfn "$tmp/lib/versions/1.1.0/noobsbot-desktop" "$tmp/bin/noobsbot-desktop"
 session; session; session; session; session
 [ "$(tr '\n' ' ' <"$tmp/ran")" = "1.1.0 1.1.0 1.1.0 1.0.0 1.0.0 " ] || fail "rollback order: $(tr '\n' ' ' <"$tmp/ran")"
 grep -q "Update 1.1.0 was rolled back" "$tmp/calls" || fail "no rollback notification"
+grep -q '\["report", "Report"\]' "$tmp/calls" || fail "no Report button"
 grep -q "1.1.0 keeps crashing" "$tmp/state/noobsbot-desktop/session.log" || fail "no session log"
 grep -q "dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY" "$tmp/calls" || fail "DISPLAY not exported"
 # A version shipping the watchdog (E6.4) runs under it, with the heartbeat pipe.

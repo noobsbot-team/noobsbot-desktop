@@ -1,6 +1,6 @@
 //! The settings file (E1.8, C11): `~/.config/noobsbot-desktop/config.toml`, parsed with serde + toml and live-reloaded.
-//! It never stops the desktop: a missing file means defaults, a broken one is logged with its line and column and the
-//! last good config stays, unknown keys are warned about and skipped.
+//! It never stops the desktop: a missing file means defaults, a broken one is logged and notified with its line and
+//! the last good config stays, unknown keys are warned about and skipped.
 
 use std::{
     collections::BTreeMap,
@@ -1350,7 +1350,7 @@ fn default_bindings() -> BTreeMap<String, String> {
         ("XF86Calculator", "default-app Calculator"),
         ("XF86Search", "spotlight"),
         ("XF86Display", "exec noobsbot-desktop-settings --page displays"),
-        ("XF86PowerOff", "shut-down"),
+        ("XF86PowerOff", "power-button"),
         ("XF86Sleep", "sleep"),
         ("Super+Shift+Q", "log-out"),
     ]
@@ -1449,21 +1449,45 @@ fn warn_unknown(prefix: &str, user: &toml::Table, known: &toml::Table) {
     }
 }
 
-/// Reads and parses the file: `None` (logged) when it can't be read or parsed; a missing file is the defaults.
-fn read(path: &Path) -> Option<Config> {
-    match fs::read_to_string(path) {
-        Ok(text) => parse(&text).map_err(|err| tracing::warn!("{}: {err}", path.display())).ok(),
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Some(Config::default()),
-        Err(err) => {
-            tracing::warn!("{}: {err}", path.display());
-            None
-        }
-    }
+/// Reads and parses the file: the error (logged), "line 3: …", when it can't be read or parsed; a missing file is the
+/// defaults.
+fn read(path: &Path) -> Result<Config, String> {
+    let result = match fs::read_to_string(path) {
+        Ok(text) => parse(&text).map_err(|err| {
+            let message = err.message().trim().replace('\n', " ");
+            let line = err.span().map(|s| text.as_bytes()[..s.start.min(text.len())].iter().filter(|&&b| b == b'\n').count() + 1);
+            line.map_or(message.clone(), |n| format!("line {n}: {message}"))
+        }),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Config::default()),
+        Err(err) => Err(err.to_string()),
+    };
+    result.inspect_err(|err| tracing::warn!("{}: {err}", path.display()))
 }
 
 /// Startup load: the file, or the defaults if it is missing or broken.
 pub fn load(path: &Path) -> Config {
     read(path).unwrap_or_default()
+}
+
+/// The broken-settings notification's id, below the network portal's.
+pub const BROKEN_NOTICE: u32 = 0xFFF9_0000;
+
+/// "Settings file has an error", with `err` (its line) and Open File.
+pub fn broken_notice(err: &str) -> crate::services::notifications::Notification {
+    let icon = "dialog-warning";
+    crate::services::notifications::Notification {
+        id: BROKEN_NOTICE,
+        app: "System Settings".into(),
+        icon_name: icon.into(),
+        icon: crate::services::notifications::load_icon(icon).map(std::sync::Arc::new),
+        summary: "Settings file has an error".into(),
+        body: format!("config.toml {err}. The last good settings stay until it is fixed."),
+        actions: vec![("default".into(), String::new()), ("open".into(), "Open File".into())],
+        urgency: 1,
+        expire: -1,
+        time: chrono::Local::now().timestamp(),
+        ..Default::default()
+    }
 }
 
 /// Writes `contents` to a temp file next to `path`, syncs it and renames it over `path`, so a reader (or a crash)
@@ -1658,16 +1682,17 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
 }
 
 /// Live reload on a worker thread. Watches the file's directory (editors replace the file by renaming), waits for
-/// 300 ms of quiet, and calls `send` with each newly parsed config that differs from the last one sent. A file that
-/// doesn't parse sends nothing, so the last good config stays. The thread ends when `send` returns false.
+/// 300 ms of quiet, and calls `send` with each newly parsed config that differs from the last one sent (or fixes a
+/// broken file). A file that doesn't parse sends its error instead, once per new error (also at start, when the
+/// desktop started with the defaults), so the last good config stays. The thread ends when `send` returns false.
 ///
 /// The compositor bridges it into calloop without an extra thread:
 /// ```ignore
 /// let (tx, rx) = calloop::channel::channel();
 /// config::watch(&path, move |config| tx.send(config).is_ok());
-/// handle.insert_source(rx, |event, _, state| if let channel::Event::Msg(config) = event { state.apply_config(config) })?;
+/// handle.insert_source(rx, |event, _, state| if let channel::Event::Msg(Ok(config)) = event { state.apply_config(config) })?;
 /// ```
-pub fn watch(path: &Path, mut send: impl FnMut(Config) -> bool + Send + 'static) {
+pub fn watch(path: &Path, mut send: impl FnMut(Result<Config, String>) -> bool + Send + 'static) {
     let path = path.to_owned();
     let (Some(dir), Some(name)) = (path.parent().map(Path::to_owned), path.file_name().map(ToOwned::to_owned)) else { return };
     let spawned = std::thread::Builder::new().name("config-watch".into()).spawn(move || {
@@ -1689,17 +1714,31 @@ pub fn watch(path: &Path, mut send: impl FnMut(Config) -> bool + Send + 'static)
             })
         };
         let mut last: Option<Config> = None;
+        let mut broken = read(&path).err();
+        if let Some(err) = &broken
+            && !send(Err(err.clone()))
+        {
+            return;
+        }
         while let Ok(event) = rx.recv() {
             if !changed(event) {
                 continue;
             }
             while rx.recv_timeout(DEBOUNCE).is_ok() {}
-            let Some(config) = read(&path) else { continue };
-            if last.as_ref() != Some(&config) {
-                last = Some(config.clone());
-                if !send(config) {
-                    return;
+            let sent = match read(&path) {
+                Ok(config) if broken.take().is_some() || last.as_ref() != Some(&config) => {
+                    last = Some(config.clone());
+                    send(Ok(config))
                 }
+                // Not every save while it stays broken the same way.
+                Err(err) if broken.as_ref() != Some(&err) => {
+                    broken = Some(err.clone());
+                    send(Err(err))
+                }
+                Ok(_) | Err(_) => true,
+            };
+            if !sent {
+                return;
             }
         }
     });
@@ -1901,8 +1940,10 @@ mod tests {
 
         let dir = temp_dir("bad");
         let path = dir.join("config.toml");
-        fs::write(&path, "[windows\n").unwrap();
-        assert_eq!(read(&path), None);
+        fs::write(&path, "[windows\nsnapping = true\n").unwrap();
+        assert!(read(&path).is_err_and(|e| e.starts_with("line 1: ")));
+        fs::write(&path, "[windows]\nsnapping = maybe\n").unwrap();
+        assert!(read(&path).is_err_and(|e| e.starts_with("line 2: ")));
         assert_eq!(load(&path), Config::default());
         assert_eq!(load(&dir.join("missing.toml")), Config::default());
         fs::remove_dir_all(dir).unwrap();
@@ -1969,13 +2010,15 @@ mod tests {
         std::thread::sleep(Duration::from_millis(200));
 
         save_atomic(&path, "[windows]\nsnapping = false\n").unwrap();
-        assert!(!rx.recv_timeout(Duration::from_secs(3)).unwrap().windows.snapping);
+        assert!(!rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap().windows.snapping);
 
         fs::write(&path, "[windows\nsnapping = true").unwrap();
-        assert!(rx.recv_timeout(Duration::from_millis(800)).is_err(), "a broken file sends nothing");
+        assert!(rx.recv_timeout(Duration::from_secs(3)).unwrap().is_err_and(|e| e.starts_with("line 1")), "a broken file sends its error");
+        fs::write(&path, "[windows\nsnapping = true").unwrap();
+        assert!(rx.recv_timeout(Duration::from_millis(800)).is_err(), "the same error only once");
 
         fs::write(&path, "[windows]\nmagnetic_edges = false\n").unwrap();
-        let c = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let c = rx.recv_timeout(Duration::from_secs(3)).unwrap().unwrap();
         assert!(c.windows.snapping && !c.windows.magnetic_edges);
         drop(rx);
         fs::remove_dir_all(dir).unwrap();

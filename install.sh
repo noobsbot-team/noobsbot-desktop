@@ -54,7 +54,7 @@ done
 SOURCE_SET=$FROM_SOURCE GREETER_SET=$GREETER
 
 # The choices, with Auto's answers. Advanced asks them; NVIDIA's default depends on the distro (detect_distro).
-BROWSER=helium NVIDIA="" NONFREE=1 KEEP_DM=1 NM_TAKEOVER=1
+BROWSER=helium NVIDIA="" NONFREE=1 KEEP_DM=1 NM_TAKEOVER=1 IME=0
 FALLBACK_TAG="" BUILD_TOOLS=0 OLD_DM="" MISSING_COMPONENTS="" NET_MOVE="" NET_KEEP="" DKMS=0
 
 say() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -144,6 +144,7 @@ load_choices() {
             nvidia=driver | nvidia=nouveau) NVIDIA=$value ;;
             nonfree=0 | nonfree=1) NONFREE=$value ;;
             source=0 | source=1) ((SOURCE_SET)) || FROM_SOURCE=$value ;;
+            ime=0 | ime=1) IME=$value ;;
         esac
     done <"$CHOICES"
     return 0
@@ -153,7 +154,7 @@ save_choices() {
     if ((DRY)); then show write "$CHOICES"; return; fi
     mkdir -p "$(dirname "$CHOICES")"
     printf '# The choices of the last ./install.sh --advanced; repairs and updates keep them.\n' >"$CHOICES"
-    printf 'browser=%s\nnvidia=%s\nnonfree=%s\nsource=%s\n' "$BROWSER" "$NVIDIA" "$NONFREE" "$FROM_SOURCE" >>"$CHOICES"
+    printf 'browser=%s\nnvidia=%s\nnonfree=%s\nsource=%s\nime=%s\n' "$BROWSER" "$NVIDIA" "$NONFREE" "$FROM_SOURCE" "$IME" >>"$CHOICES"
 }
 
 # Answers come from the terminal, also when the script itself is piped in.
@@ -265,6 +266,8 @@ ask_choices() {
     case $BROWSER in firefox) def=2 ;; chromium) def=3 ;; none) def=4 ;; esac
     ask "Which web browser?" "$def" "Helium (the desktop is set up for it)" "$firefox" "Chromium" "None"
     BROWSER=$(sed -n "${ANSWER}p" <<<$'helium\nfirefox\nchromium\nnone')
+    ask "Type Nepali, Hindi, Chinese or other scripts?" $((IME + 1)) "No" "Yes: fcitx5 with m17n (Nepali, Hindi…) and its settings"
+    IME=$((ANSWER == 2))
     if ((GPU_NVIDIA)); then
         if debian; then
             ask "NVIDIA graphics card found. Which driver?" 1 \
@@ -297,6 +300,7 @@ ask_choices() {
     if [[ -n $OLD_DM ]] && ((KEEP_DM)); then printf '  Login manager:     keep %s\n' "${OLD_DM%.service}" >/dev/tty
     else printf '  Login screen:      %s\n' "$( ((GREETER)) && echo graphical || echo text)" >/dev/tty; fi
     printf '  Browser:           %s\n' "$BROWSER" >/dev/tty
+    printf '  Input methods:     %s\n' "$( ((IME)) && echo fcitx5 || echo none)" >/dev/tty
     ((GPU_NVIDIA)) && printf '  NVIDIA driver:     %s\n' "$NVIDIA" >/dev/tty
     printf '  Noobsbot Desktop:  %s\n' "$( ((FROM_SOURCE)) && echo "build from source" || echo "signed prebuilt")" >/dev/tty
     debian && [[ -n $NET_MOVE && -z $NET_KEEP ]] &&
@@ -338,6 +342,7 @@ arch_packages() {
     )
     ((FROM_SOURCE)) && PKGS+=(rust)
     [[ -z $BROWSER_PKG ]] || PKGS+=("$BROWSER_PKG")
+    [[ $IME == 0 ]] || PKGS+=(fcitx5 fcitx5-m17n fcitx5-configtool)
 
     case $CPU in
         *GenuineIntel*) PKGS+=(intel-ucode) ;;
@@ -378,6 +383,7 @@ debian_packages() {
         qt-style-kvantum qt6ct qt6-wayland breeze-icon-theme
     )
     [[ -z $BROWSER_PKG ]] || PKGS+=("$BROWSER_PKG")
+    [[ $IME == 0 ]] || PKGS+=(fcitx5 fcitx5-m17n fcitx5-config-qt)
     if ((NONFREE)); then
         # Arch's linux-firmware has all of these in one package.
         PKGS+=(firmware-linux-free firmware-linux-nonfree firmware-misc-nonfree firmware-sof-signed firmware-iwlwifi
@@ -905,8 +911,8 @@ main() {
     user_settings
     security_check
     [[ -z $NET_MOVE || -n $NET_KEEP ]] || ((!NM_TAKEOVER)) || say "The network moves to NetworkManager at the reboot."
-    # Not installed by default: either input-method engine is the user's pick.
-    say "Typing Pinyin, Nepali and other scripts needs fcitx5 (fcitx5-m17n…) or the ibus package (Settings › Keyboard › Input method)."
+    # Not installed by default: --advanced offers fcitx5; either engine is the user's pick.
+    ((IME)) || say "Typing Pinyin, Nepali and other scripts needs fcitx5 (./install.sh --advanced offers it) or the ibus package (Settings › Keyboard › Input method)."
     if [[ -n $OLD_DM ]] && ((KEEP_DM)); then
         say "Done. Reboot, choose Noobsbot Desktop in ${OLD_DM%.service}'s session menu, and log in."
     elif ((GREETER)); then say "Done. Reboot, log in at the login screen, and Noobsbot Desktop starts."
