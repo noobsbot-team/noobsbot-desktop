@@ -853,7 +853,12 @@ impl State {
         let wallpaper = self.backend.as_ref().ok_or("no views")?.wallpaper.reupload();
         udev.gpus = GpuManager::new(Api::default())?;
         for card in udev.cards.values_mut() {
-            udev.gpus.as_mut().add_node(card.render, card.gbm.clone())?;
+            // Only the primary GPU's failure fails the rebuild (and turns software drawing on, `soften_gpu`): another
+            // GPU's displays stay dark (`Fail::Display`), as when it fails to start (`card_added`).
+            match udev.gpus.as_mut().add_node(card.render, card.gbm.clone()) {
+                Err(err) if card.render != udev.primary => tracing::warn!("{}: the GPU did not come back: {err}", card.render),
+                added => added?,
+            }
             for screen in card.screens.values_mut() {
                 screen.compositor.reset_buffers();
                 screen.mirrored = None;
