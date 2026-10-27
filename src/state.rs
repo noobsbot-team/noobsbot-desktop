@@ -4,8 +4,8 @@ use std::{ffi::OsString, os::fd::OwnedFd, sync::Arc, time::Instant};
 
 use smithay::{
     backend::{allocator::dmabuf::Dmabuf, renderer::ImportDma},
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_ext_data_control, delegate_output, delegate_primary_selection, delegate_seat,
-    delegate_shm, delegate_viewporter, delegate_xdg_activation, delegate_xdg_dialog, delegate_xdg_foreign, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output, delegate_primary_selection, delegate_seat, delegate_shm, delegate_viewporter,
+    delegate_xdg_activation, delegate_xdg_dialog, delegate_xdg_foreign, delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
         layer_map_for_output,
@@ -17,9 +17,16 @@ use smithay::{
             generic::Generic,
             timer::{TimeoutAction, Timer},
         },
-        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_protocols::{
+            ext::data_control::v1::server::{
+                ext_data_control_device_v1::{self, ExtDataControlDeviceV1},
+                ext_data_control_manager_v1::ExtDataControlManagerV1,
+                ext_data_control_source_v1::ExtDataControlSourceV1,
+            },
+            xdg::shell::server::xdg_toplevel,
+        },
         wayland_server::{
-            Client, Display, DisplayHandle, Resource,
+            Client, DataInit, Dispatch, Display, DisplayHandle, Resource,
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::{wl_buffer::WlBuffer, wl_seat::WlSeat, wl_surface::WlSurface},
         },
@@ -34,7 +41,10 @@ use smithay::{
         selection::{
             SelectionHandler, SelectionSource, SelectionTarget,
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler, set_data_device_focus},
-            ext_data_control::{DataControlHandler, DataControlState},
+            ext_data_control::{
+                DataControlHandler, DataControlState, ExtDataControlDeviceUserData, ExtDataControlManagerGlobalData, ExtDataControlManagerUserData,
+                ExtDataControlSourceUserData,
+            },
             primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus},
         },
         shell::xdg::{
@@ -1570,6 +1580,31 @@ impl DataControlHandler for State {
     }
 }
 
+// smithay's `delegate_ext_data_control!`, but a clipboard set through data-control belongs to its client, which has
+// no keyboard focus: `new_selection` takes the focused app for the owner, and the copy would never be served once the
+// client quits (E1.1).
+smithay::reexports::wayland_server::delegate_global_dispatch!(State: [ExtDataControlManagerV1: ExtDataControlManagerGlobalData] => DataControlState);
+smithay::reexports::wayland_server::delegate_dispatch!(State: [ExtDataControlManagerV1: ExtDataControlManagerUserData] => DataControlState);
+smithay::reexports::wayland_server::delegate_dispatch!(State: [ExtDataControlSourceV1: ExtDataControlSourceUserData] => DataControlState);
+
+impl Dispatch<ExtDataControlDeviceV1, ExtDataControlDeviceUserData> for State {
+    fn request(
+        state: &mut Self,
+        client: &Client,
+        resource: &ExtDataControlDeviceV1,
+        request: ext_data_control_device_v1::Request,
+        data: &ExtDataControlDeviceUserData,
+        dh: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        let set = matches!(request, ext_data_control_device_v1::Request::SetSelection { source: Some(_) });
+        <DataControlState as Dispatch<ExtDataControlDeviceV1, ExtDataControlDeviceUserData, State>>::request(state, client, resource, request, data, dh, init);
+        if set {
+            state.clipboard.owner = Some(client.id());
+        }
+    }
+}
+
 impl ShmHandler for State {
     fn shm_state(&self) -> &ShmState {
         &self.shm_state
@@ -1643,7 +1678,6 @@ delegate_output!(State);
 delegate_seat!(State);
 delegate_data_device!(State);
 delegate_primary_selection!(State);
-delegate_ext_data_control!(State);
 delegate_xdg_activation!(State);
 delegate_xdg_foreign!(State);
 delegate_xdg_dialog!(State);

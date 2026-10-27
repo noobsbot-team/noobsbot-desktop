@@ -52,8 +52,8 @@ pub struct Fetched {
 
 pub struct Clipboard {
     generation: u64,
-    /// The app that copied, while it still serves the clipboard itself.
-    owner: Option<ClientId>,
+    /// The app that copied, while it still serves the clipboard itself (a data-control client too, see state.rs).
+    pub owner: Option<ClientId>,
     data: Vec<(String, Arc<[u8]>)>,
     tx: Sender<Fetched>,
 }
