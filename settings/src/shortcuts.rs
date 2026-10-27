@@ -410,6 +410,8 @@ const KNOWN: &[(&str, &str, &str)] = &[
 /// Actions with an argument (`space 3`, `exec firefox`): name and category.
 const WITH_ARGUMENT: &[(&str, &str)] = &[
     ("tile", "Windows"),
+    ("nudge", "Windows"),
+    ("resize", "Windows"),
     ("move-to-display", "Windows"),
     ("space", "Spaces & Mission Control"),
     ("move-to-space", "Spaces & Mission Control"),
@@ -471,6 +473,11 @@ pub fn label(action: &str) -> String {
         ("dock-app", n) if !n.is_empty() => format!("Dock App {n}"),
         ("dock-app-new", n) if !n.is_empty() => format!("New Window of Dock App {n}"),
         ("tile", side) if !side.is_empty() => format!("Tile {}", words(side)),
+        ("nudge", way) if !way.is_empty() => format!("Move Window {}", capital(way)),
+        ("resize", "right") => "Widen Window".into(),
+        ("resize", "left") => "Narrow Window".into(),
+        ("resize", "down") => "Make Window Taller".into(),
+        ("resize", "up") => "Make Window Shorter".into(),
         ("volume", "up-fine") => "Volume Up a Little".into(),
         ("volume", "down-fine") => "Volume Down a Little".into(),
         ("volume" | "brightness", way) if !way.is_empty() => format!("{} {}", capital(name), capital(way)),
@@ -592,6 +599,8 @@ mod tests {
         assert_eq!(label("exec helium-browser"), "Run: helium-browser");
         assert_eq!(label("space 3"), "Go to Space 3");
         assert_eq!(label("tile top-right"), "Tile Top Right");
+        assert_eq!(label("nudge up"), "Move Window Up");
+        assert_eq!(label("resize left"), "Narrow Window");
         assert_eq!(label("volume up"), "Volume Up");
         assert_eq!(label("media previous"), "Previous Track");
         assert_eq!(label("frobnicate"), "frobnicate");
