@@ -764,6 +764,37 @@ pub fn rasterise(path: &Path, px: u32) -> Option<Rendered> {
     Some(rendered(pixmap.take(), px, px))
 }
 
+/// The drop shadow of `icon` (the dock's, E3.1): its alpha in black, padded by `3 * r` on every side and box-blurred
+/// three times at radius `r`, like a Gaussian of σ ≈ r + ½ that reaches 3r. The drawer applies the opacity.
+pub fn shadow(icon: &Rendered, r: u32) -> Rendered {
+    let (r, pad, iw) = (r as usize, 3 * r as usize, icon.width as usize);
+    let (w, h) = (iw + 2 * pad, icon.height as usize + 2 * pad);
+    let mut a = vec![0.0; w * h];
+    for (i, px) in icon.pixels.as_chunks::<4>().0.iter().enumerate() {
+        a[(i / iw + pad) * w + i % iw + pad] = f32::from(px[3]);
+    }
+    for _ in 0..3 {
+        box_pass(&mut a, h, w, 1, w, r);
+        box_pass(&mut a, w, 1, w, h, r);
+    }
+    let pixels = a.iter().flat_map(|v| [0, 0, 0, v.round().clamp(0.0, 255.0) as u8]).collect();
+    Rendered { pixels, width: w as u32, height: h as u32, baseline: h as u32, truncated: false }
+}
+
+/// One box blur of radius `r` along each of `lines` lines of `len` values: line `l`'s value `i` is at
+/// `l * stride + i * step`, and zero past either end.
+fn box_pass(a: &mut [f32], lines: usize, stride: usize, step: usize, len: usize, r: usize) {
+    let mut sums = vec![0.0; len + 1];
+    for l in 0..lines {
+        for i in 0..len {
+            sums[i + 1] = sums[i] + a[l * stride + i * step];
+        }
+        for i in 0..len {
+            a[l * stride + i * step] = (sums[(i + r + 1).min(len)] - sums[i.saturating_sub(r)]) / (2 * r + 1) as f32;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -985,6 +1016,21 @@ mod tests {
         assert!(icons.get(path.to_str().unwrap(), 32).is_some());
         assert!(icons.get("no-such-icon-anywhere", 32).is_none());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn shadow_pads_spreads_and_keeps_the_alpha() {
+        // A 4×2 opaque bar; its colour is ignored.
+        let icon = Rendered { pixels: [9, 9, 9, 255].repeat(8), width: 4, height: 2, baseline: 2, truncated: false };
+        let s = shadow(&icon, 2);
+        assert_eq!((s.width, s.height, s.pixels.len()), (16, 14, 16 * 14 * 4), "padded by 3r on every side");
+        assert!(s.pixels.as_chunks::<4>().0.iter().all(|p| p[..3] == [0, 0, 0]), "black: premultiplied at any alpha");
+        let alpha: Vec<u32> = s.pixels.as_chunks::<4>().0.iter().map(|p| u32::from(p[3])).collect();
+        let total: u32 = alpha.iter().sum();
+        assert!(total.abs_diff(8 * 255) <= 16 * 14 / 2, "spread, not lost: {total}");
+        assert!(alpha[0] == 0 && alpha[7 * 16 + 1] > 0, "reaches 3r out along the bar's row, not into the corner");
+        assert!(alpha[7 * 16 + 7] < 255 && alpha[7 * 16 + 7] > alpha[7 * 16 + 2], "spread from the middle, fading out");
+        assert_eq!(shadow(&icon, 0).pixels.as_chunks::<4>().0.iter().map(|p| p[3]).collect::<Vec<_>>(), [255; 8], "r 0: unblurred");
     }
 
     #[test]
