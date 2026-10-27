@@ -55,6 +55,8 @@ pub enum Update {
     Profiles(Option<profiles::Profiles>),
     /// Percent; `None` without a backlight or DDC/CI monitor.
     Brightness(Option<u8>),
+    /// DDC/CI monitors' brightness in percent, by connector (`DP-1`).
+    Monitors(Vec<(String, u8)>),
     /// `None`: no output device, or PipeWire isn't running.
     Sound(Option<sound::Sound>),
     /// `None`: nothing playing or paused.
@@ -142,8 +144,10 @@ pub enum Command {
         path: String,
         active: Option<String>,
     },
-    /// Percent.
+    /// Percent, every display.
     Brightness(u8),
+    /// Percent, one display by connector.
+    OutputBrightness(String, u8),
     /// The keyboard backlight one step up, down, or (`None`) off and on.
     KbdBacklight(Option<bool>),
     /// Idle: the keyboard backlight off (`true`), or back to the level it had.
@@ -438,6 +442,7 @@ async fn handle(
             (Command::Timezone(zone), Some(bus), _) => set_timezone(bus, &zone).await,
             (Command::PowerProfile(profile), Some(bus), _) => profiles::set(bus, &profile).await,
             (Command::Brightness(percent), bus, _) => brightness::set(bus, percent, updates).await,
+            (Command::OutputBrightness(connector, percent), bus, _) => brightness::set_output(bus, connector, percent, updates).await,
             (Command::KbdBacklight(change), Some(bus), _) => power::kbd_backlight(bus, change, updates).await,
             (Command::KbdBacklightIdle(off), Some(bus), _) => power::kbd_idle(bus, off, &mut kbd_saved).await,
             (Command::Media { player, action }, _, Some(bus)) => media::control(bus, &player, action).await,
