@@ -15,7 +15,8 @@ design: glassy, yet mostly solid.
 Made by the Noobsbot Team. Sister project: [noobsbot-terminal](https://github.com/noobsbot-team/noobsbot-terminal), the
 default terminal.
 
-> **Status: pre-releases of 1.0.0 "Opal"** (alpha, then beta, then release candidates; see [Updates](#updates)).
+> **Status: 1.0.0 "Opal", the first stable release** (betas of the next version come between releases; see
+> [Updates](#updates)).
 > Every planned part is built and tested in a nested window and in a virtual machine (install, real-screen session,
 > lock, login screen, password prompts, updates and rollback). It has not been run on enough real hardware yet (Intel,
 > AMD, NVIDIA, laptops with two GPUs, several monitors), so expect rough edges there. Bug reports are welcome.
@@ -488,9 +489,8 @@ cargo fmt --all --check
 - `scripts/test-install.sh` and `scripts/test-session.sh` test the installer and session wrapper in a scratch
   directory. `scripts/vm/` boots a throwaway Arch VM in QEMU (no root needed) to test the real install, real-screen
   session, login screen, password prompts and updates: `sh scripts/vm/setup.sh`, then `scripts/vm/boot.sh`.
-- Commits follow [Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, …), which
-  [release-plz](https://release-plz.dev) uses to pick the next version and write the changelog. Merging its release
-  pull request tags the version and builds the signed release.
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, …): CI makes the next
+  version from their types, tags it and builds the signed release. Pick the type with [`VERSIONING.md`](VERSIONING.md).
 
 ### Widgets from your own apps
 Any process can show a widget in Notification Center or on the desktop over the session bus; nothing is loaded into
