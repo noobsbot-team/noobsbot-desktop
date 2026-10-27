@@ -1,12 +1,12 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+From 1.0.0 on, each version's changes are in its
+[GitHub release notes](https://github.com/noobsbot-team/noobsbot-desktop/releases), made from the commits by CI (see
+[`VERSIONING.md`](VERSIONING.md)). This file keeps the history up to 1.0.0-beta.1 and is no longer updated.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-Entries are written by release-plz from Conventional Commits; don't edit released sections by hand.
-
-## [Unreleased]
+The entries below were written by release-plz from Conventional Commits; don't edit them by hand.
 
 ## [1.0.0-beta.1](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.8...v1.0.0-beta.1) - 2026-10-27
 
