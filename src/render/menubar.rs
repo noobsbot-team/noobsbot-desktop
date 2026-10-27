@@ -36,7 +36,8 @@ const GAP: i32 = 12;
 const LOGO_GAP: i32 = 18;
 /// Between a battery's percentage and its symbol.
 const TIGHT: i32 = 4;
-const SYMBOL: u16 = 16;
+/// Symbols, the logo and tray icons, square.
+const SYMBOL: u16 = 20;
 /// The app's name is ellipsised past this, and dropped when less than `MIN_APP` is free.
 const APP_WIDTH: i32 = 300;
 const MIN_APP: i32 = 40;
@@ -539,8 +540,8 @@ mod tests {
     fn the_bar_grows_with_the_text_size() {
         let area = Rectangle::new((0, 0).into(), (1280, 800).into());
         assert_eq!(height(), 30);
-        // 20 px lines: 5 px clear above and below.
-        assert_eq!(height() - i32::from(BODY.line_height), 10);
+        // 20 px lines and symbols: 5 px clear above and below.
+        assert_eq!((height() - i32::from(BODY.line_height), height() - i32::from(SYMBOL)), (10, 10));
         crate::text::with_scale(1.5, || {
             // A 16 px label shapes into a 30 px line at 1.5: the 45 px bar holds it with room to spare.
             assert_eq!(height(), 45);
