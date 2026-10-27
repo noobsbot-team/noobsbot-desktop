@@ -730,7 +730,8 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   Wi-Fi + Bluetooth only.)
   - Round toggles 28 px (D8). Clicking a module's title expands it in place (spring `smooth`): Wi-Fi shows a
     network list with signal bars and a lock icon; Bluetooth shows devices with battery %; Sound shows outputs
-    (speakers, headphones, HDMI, Bluetooth).
+    (speakers, headphones, HDMI, Bluetooth). Power mode's ▾ lists power-profiles-daemon's profiles, the current one
+    checked. Built: every module's list springs open and closed (`src/shell/control.rs` `expand`; reduce motion: at once).
   - Wi-Fi password → **alert** with a secure text field.
   - Opens with a `snappy` fade + scale 0.98→1 from its menu-bar icon; Esc or click-outside closes it.
 - **Built with:**
@@ -802,6 +803,7 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 ### E2.8 Quake terminal hotkey
 - **What it is:** F12 (configurable) drops noobsbot-terminal down from the top, on any Space.
 - **Design:** full width, 40% height, slides down with `smooth`; same glass title-bar-less window with radius 10 at the bottom corners.
+  Built: slides down on show and up on hide (`src/anim.rs`, `window_opened` / `window_restored` / `window_minimising`); reduce motion fades.
 - **Built with:** noobsbot's existing `noobsbot --quake` (it toggles a running instance through its own
   socket) + a window rule in Noobsbot Desktop for its placement.
 - **Why:** reuses the owner's existing feature; no change to noobsbot needed. F12 is also Helium's DevTools key: while
@@ -978,7 +980,9 @@ Goal: everything that informs you and helps you find things.
   - **Banner** style: slides in from the right (`smooth`), stays 5 s (hover pauses). **Alert** style (apps can ask):
     stays until you act.
   - At most 3 stacked (newest on top); more collapse into "+N more".
-  - **2-finger swipe right** on a banner dismisses it (follows the finger); click opens the app.
+  - **2-finger swipe right** on a banner dismisses it (follows the finger); click opens the app. Built: it follows 1:1
+    (rubber band leftwards), then a `gesture` spring off-screen past 30% of its width or on a flick, else back;
+    reduce motion decides on lift without moving.
   - Silent while Do Not Disturb is on or an app is fullscreen (configurable).
 - **Built with:** Noobsbot Desktop **is** the notification server: it implements the standard
   `org.freedesktop.Notifications` D-Bus interface (zbus). Supports actions, icons, urgency, replace, progress hints.
