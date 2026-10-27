@@ -1,9 +1,9 @@
 //! Touchpad system gestures (E5.3) and hot corners (E5.4). The recogniser and the corner logic are pure; the `State`
 //! glue at the bottom feeds them libinput's events and the pointer.
 //!
-//! The Space slide follows a sideways swipe 1:1, Mission Control a swipe up or down and App Exposé one down; each
-//! springs on from where the fingers let go (`Live`). Launchpad pages follow too. Reduce motion: the action happens on
-//! release instead.
+//! The Space slide follows a sideways swipe 1:1, Mission Control a swipe up or down, App Exposé one down and Launchpad
+//! a 4-finger pinch; each springs on from where the fingers let go (`Live`). Launchpad pages follow too. Reduce
+//! motion: the action happens on release instead.
 
 use std::time::{Duration, Instant};
 
@@ -78,6 +78,8 @@ pub enum Live {
     Mission(bool),
     /// App Exposé of this app opening.
     Expose(String),
+    /// Launchpad opening (a pinch in), or (`true`) closing (out).
+    Launchpad(bool),
 }
 
 impl Live {
@@ -87,6 +89,9 @@ impl Live {
             Live::Space(..) => Gesture::Space(0),
             Live::Mission(false) => Gesture::MissionControl,
             Live::Mission(true) | Live::Expose(_) => Gesture::AppExpose,
+            Live::Launchpad(false) => Gesture::Launchpad,
+            // Spreading over Launchpad closes it, as on release.
+            Live::Launchpad(true) => Gesture::ShowDesktop,
         }
     }
 }
@@ -302,12 +307,16 @@ impl State {
         let fresh = tracker.horizontal.is_none();
         tracker.update(time, delta.x, delta.y, scale);
         let (kind, horizontal, (dx, dy)) = (tracker.kind, tracker.horizontal, tracker.delta());
-        // Fingers left = the next page, as with natural scrolling.
-        if kind != Kind::Swipe || self.launchpad_scroll(-delta.x, -delta.y, 0.0, false) {
-            return true;
-        }
-        if fresh && let Some(horizontal) = horizontal {
-            let live = self.live(horizontal, dy);
+        let (pinch, undecided) = (tracker.pinch(time).0, tracker.live.is_none());
+        let decide = match kind {
+            // A pinch follows once it has gone as far as a swipe must, the way it went then.
+            Kind::Pinch => undecided && pinch.abs() * FULL >= MIN_TRAVEL,
+            // Fingers left = the next page, as with natural scrolling.
+            Kind::Swipe if self.launchpad_scroll(-delta.x, -delta.y, 0.0, false) => return true,
+            Kind::Swipe => fresh && horizontal.is_some(),
+        };
+        if decide {
+            let live = self.live(kind, horizontal.unwrap_or(false), if kind == Kind::Pinch { pinch } else { dy });
             if let Some(tracker) = self.gesture.as_mut() {
                 tracker.live = live;
             }
@@ -316,18 +325,29 @@ impl State {
             Some(Live::Space(key, width)) => self.swipe_space(&key, -dx / width),
             Some(Live::Mission(closing)) => self.mission_hold(f64::from(u8::from(closing)) - dy / FULL, None),
             Some(Live::Expose(app)) => self.mission_hold(dy / FULL, Some(app)),
+            Some(Live::Launchpad(closing)) => self.launchpad_hold(if closing { 1.0 - pinch } else { -pinch }),
             None => {}
         }
         true
     }
 
-    /// What follows a swipe that just turned out sideways (or up and down, `dy` so far): nothing under reduce motion
-    /// or with that gesture switched off.
-    fn live(&self, horizontal: bool, dy: f64) -> Option<Live> {
+    /// What follows a swipe that just turned out sideways (or up and down, `d` so far), or a pinch `d` of a whole one
+    /// in (−) or out: nothing under reduce motion or with that gesture switched off.
+    fn live(&self, kind: Kind, horizontal: bool, d: f64) -> Option<Live> {
         if self.config.appearance.reduce_motion {
             return None;
         }
-        self.live_any(horizontal, dy).filter(|l| self.config.touchpad.allows(l.gesture()))
+        let live = if kind == Kind::Pinch { self.live_pinch(d) } else { self.live_any(horizontal, d) };
+        live.filter(|l| self.config.touchpad.allows(l.gesture()))
+    }
+
+    /// In opens Launchpad; out closes it.
+    fn live_pinch(&self, p: f64) -> Option<Live> {
+        match (p < 0.0, self.launchpad_open()) {
+            (true, false) => Some(Live::Launchpad(false)),
+            (false, true) => Some(Live::Launchpad(true)),
+            _ => None,
+        }
     }
 
     fn live_any(&self, horizontal: bool, dy: f64) -> Option<Live> {
@@ -354,6 +374,7 @@ impl State {
         let cancelled = cancelled || locked;
         let (dx, dy) = tracker.delta();
         let (vx, vy) = tracker.speed(time);
+        let (pinch, vp) = tracker.pinch(time);
         match tracker.live {
             Some(Live::Space(key, width)) => {
                 self.swipe_space_end(&key, -dx / width, -vx * 1000.0 / width, !cancelled && commits(dx, width, vx));
@@ -367,6 +388,11 @@ impl State {
             }
             Some(Live::Expose(_)) => {
                 self.mission_let_go(!cancelled && dy > 0.0 && commits(dy, FULL, vy), vy * 1000.0 / FULL);
+                return true;
+            }
+            Some(Live::Launchpad(closing)) => {
+                let commit = !cancelled && (pinch < 0.0) != closing && pinch_commits(pinch, vp);
+                self.launchpad_let_go(commit != closing, -vp * 1000.0);
                 return true;
             }
             None if locked => return true,
@@ -485,6 +511,10 @@ mod tests {
         touchpad.gesture_mission_control = false;
         assert!(!touchpad.allows(space.gesture()) && !touchpad.allows(open.gesture()));
         assert!(touchpad.allows(close.gesture()));
+        let (pad_open, pad_close) = (Live::Launchpad(false), Live::Launchpad(true));
+        assert!(touchpad.allows(pad_open.gesture()) && touchpad.allows(pad_close.gesture()));
+        touchpad.gesture_show_desktop = false;
+        assert!(touchpad.allows(pad_open.gesture()) && !touchpad.allows(pad_close.gesture()), "a spread closes Launchpad");
         let expose = Live::Expose("app".into());
         assert!(touchpad.allows(expose.gesture()));
         touchpad.gesture_app_expose = false;
