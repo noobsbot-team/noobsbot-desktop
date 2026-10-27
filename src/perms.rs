@@ -224,4 +224,11 @@ mod tests {
         assert_eq!(parsed.privacy.input_control_denied, ["/usr/bin/ydotool"]);
         assert!(parsed.privacy.input_control.is_empty());
     }
+
+    #[test]
+    fn crafted_paths_keep_the_file_valid() {
+        let paths = vec!["/tmp/a\nb\tc\x7f\"d\\e\u{1}\u{8}\u{c}\ré".to_owned(), "/usr/bin/ydotool".to_owned()];
+        let text = config::set_array(config::DEFAULT_TOML, "privacy", "input_control", &paths);
+        assert_eq!(config::parse(&text).unwrap().privacy.input_control, paths);
+    }
 }
