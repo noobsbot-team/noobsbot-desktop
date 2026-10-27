@@ -1220,6 +1220,7 @@ impl CompositorHandler for State {
                         self.window_opened(&window);
                     }
                 }
+                self.centre_sheets(&window);
             }
             self.resize_commit(&root);
         }

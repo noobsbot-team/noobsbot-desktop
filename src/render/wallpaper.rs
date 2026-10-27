@@ -71,6 +71,8 @@ pub struct Wallpaper {
     appearance: Appearance,
     /// The slideshow's picture and when it was picked.
     slide: Option<(PathBuf, Instant)>,
+    /// Shuffled, the pictures shown this round: each comes once before any comes back.
+    shown: Vec<PathBuf>,
     /// The file asked for; `None` = the opal gradient.
     wanted: Option<PathBuf>,
     /// The largest output seen, in physical px: the picture is decoded no bigger than needed to cover it (C20).
@@ -97,6 +99,7 @@ impl Wallpaper {
             tx,
             appearance: Appearance::default(),
             slide: None,
+            shown: Vec::new(),
             wanted: None,
             limit: Size::default(),
             asked: None,
@@ -111,7 +114,7 @@ impl Wallpaper {
 
     /// The same settings with nothing on the GPU (after a GPU reset): the picture is decoded and uploaded again.
     pub fn reupload(&self) -> Self {
-        Self { appearance: self.appearance.clone(), slide: self.slide.clone(), ..Self::new(self.tx.clone()) }
+        Self { appearance: self.appearance.clone(), slide: self.slide.clone(), shown: self.shown.clone(), ..Self::new(self.tx.clone()) }
     }
 
     /// Takes the wallpaper settings; the next frame picks the file (decoded on a worker thread once an output's size
@@ -122,6 +125,7 @@ impl Wallpaper {
         self.appearance = appearance.clone();
         if new_folder {
             self.slide = None;
+            self.shown.clear();
             self.advance();
         }
     }
@@ -141,7 +145,8 @@ impl Wallpaper {
         let folder = &self.appearance.wallpaper_folder;
         let files = if folder.is_empty() { Vec::new() } else { pictures(&expand_home(folder)) };
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos() as usize);
-        let next = pick(&files, self.slide.as_ref().map(|(p, _)| p.as_path()), self.appearance.wallpaper_shuffle, seed).cloned();
+        let current = self.slide.as_ref().map(|(p, _)| p.as_path());
+        let next = pick(&files, current, self.appearance.wallpaper_shuffle, seed, &mut self.shown).cloned();
         self.slide = next.map(|p| (p, Instant::now()));
     }
 
@@ -313,19 +318,24 @@ fn pictures(folder: &Path) -> Vec<PathBuf> {
     files
 }
 
-/// The slideshow's next picture after `current`: the following one by name (wrapping), or with `shuffle` any other
-/// one chosen by `seed`. Without a current one: the first, or a random one.
-// ponytail: shuffle picks independently each time, so a picture can come back before all were shown.
-fn pick<'a>(files: &'a [PathBuf], current: Option<&Path>, shuffle: bool, seed: usize) -> Option<&'a PathBuf> {
-    let n = files.len();
-    let i = match files.iter().position(|f| Some(f.as_path()) == current) {
-        _ if n == 0 => return None,
-        Some(i) if shuffle && n > 1 => (i + 1 + seed % (n - 1)) % n,
-        Some(i) => (i + 1) % n,
-        None if shuffle => seed % n,
-        None => 0,
-    };
-    files.get(i)
+/// The slideshow's next picture after `current`: the following one by name (wrapping, the first without a current
+/// one), or with `shuffle` one chosen by `seed` from those not `shown` this round and not `current`, then added to
+/// `shown`. None left: a new round (`shown` emptied), still not starting with `current`.
+fn pick<'a>(files: &'a [PathBuf], current: Option<&Path>, shuffle: bool, seed: usize, shown: &mut Vec<PathBuf>) -> Option<&'a PathBuf> {
+    if !shuffle {
+        let i = files.iter().position(|f| Some(f.as_path()) == current).map_or(0, |i| (i + 1) % files.len());
+        return files.get(i);
+    }
+    let left = |shown: &[PathBuf]| -> Vec<&'a PathBuf> { files.iter().filter(|f| Some(f.as_path()) != current && !shown.contains(f)).collect() };
+    let mut bag = left(shown);
+    if bag.is_empty() {
+        shown.clear();
+        bag = left(shown);
+    }
+    // One picture: it stays.
+    let next = bag.get(seed % bag.len().max(1)).copied().or(files.first())?;
+    shown.push(next.clone());
+    Some(next)
 }
 
 /// `~/x` → `$HOME/x`.
@@ -481,20 +491,32 @@ mod tests {
         let files: Vec<PathBuf> = ["a.jpg", "b.png", "c.jpeg"].map(PathBuf::from).into();
         let at = |i: usize| Some(files[i].as_path());
         // In order, wrapping; an unknown or missing current starts at the first.
-        assert_eq!(pick(&files, None, false, 7), Some(&files[0]));
-        assert_eq!(pick(&files, at(0), false, 7), Some(&files[1]));
-        assert_eq!(pick(&files, at(2), false, 7), Some(&files[0]));
-        assert_eq!(pick(&files, Some(Path::new("gone.png")), false, 7), Some(&files[0]));
+        let fresh = &mut Vec::new();
+        assert_eq!(pick(&files, None, false, 7, fresh), Some(&files[0]));
+        assert_eq!(pick(&files, at(0), false, 7, fresh), Some(&files[1]));
+        assert_eq!(pick(&files, at(2), false, 7, fresh), Some(&files[0]));
+        assert_eq!(pick(&files, Some(Path::new("gone.png")), false, 7, fresh), Some(&files[0]));
+        assert_eq!(pick(&[], None, false, 7, fresh), None);
         // Shuffled: never the current one, every other one reachable.
         for seed in 0..10 {
-            assert_ne!(pick(&files, at(1), true, seed), Some(&files[1]));
+            assert_ne!(pick(&files, at(1), true, seed, &mut Vec::new()), Some(&files[1]));
         }
-        assert_eq!(pick(&files, at(1), true, 0), Some(&files[2]));
-        assert_eq!(pick(&files, at(1), true, 1), Some(&files[0]));
-        assert_eq!(pick(&files, None, true, 4), Some(&files[1]));
+        assert_eq!(pick(&files, at(1), true, 0, &mut Vec::new()), Some(&files[0]));
+        assert_eq!(pick(&files, at(1), true, 1, &mut Vec::new()), Some(&files[2]));
+        assert_eq!(pick(&files, None, true, 4, &mut Vec::new()), Some(&files[1]));
+        // Each once a round, whatever the seeds; the next round doesn't start with the last one.
+        let (mut shown, mut current, mut round) = (Vec::new(), None::<PathBuf>, Vec::new());
+        for seed in [5, 0, 9] {
+            current = pick(&files, current.as_deref(), true, seed, &mut shown).cloned();
+            round.extend(current.clone());
+        }
+        round.sort();
+        assert_eq!(round, files);
+        assert_ne!(pick(&files, current.as_deref(), true, 0, &mut shown).cloned(), current);
+        assert_eq!(shown.len(), 1, "a new round");
         // One picture stays; none gives none.
-        assert_eq!(pick(&files[..1], at(0), true, 3), Some(&files[0]));
-        assert_eq!(pick(&[], None, true, 3), None);
+        assert_eq!(pick(&files[..1], at(0), true, 3, &mut Vec::new()), Some(&files[0]));
+        assert_eq!(pick(&[], None, true, 3, &mut Vec::new()), None);
     }
 
     #[test]

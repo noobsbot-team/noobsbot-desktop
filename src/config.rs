@@ -1768,9 +1768,8 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
 }
 
 /// Writes the edits `save_later` still holds back and waits for them, 2 s at most (a hung disk must not keep the
-/// desktop from quitting). Called on the way out: log out, restart, shut down, the nested window closed.
-// ponytail: the desktop handles no signals, so a SIGTERM from outside (a shutdown not started from its menus) still
-// ends it without a flush; a calloop signal source calling this if that loses settings.
+/// desktop from quitting). Called on the way out: log out, restart, shut down, the nested window closed, SIGTERM or
+/// SIGINT (`stop_on_signals` in main.rs).
 pub fn flush() {
     let Some(queue) = QUEUE.get() else { return };
     let (tx, rx) = mpsc::channel();

@@ -313,7 +313,8 @@ impl State {
         self.lock.is_some()
     }
 
-    /// Locks now (Super+Ctrl+Q, the logo menu, idle, sleep): popups close, the keyboard and pointer leave every app.
+    /// Locks now (Super+Ctrl+Q, the logo menu, idle, sleep): popups and overlays close, the keyboard and pointer leave
+    /// every app.
     pub fn lock_screen(&mut self) {
         if self.lock.is_some() {
             return;
@@ -321,6 +322,13 @@ impl State {
         tracing::info!("screen locked");
         self.popup = None;
         self.spotlight = None;
+        // The switcher's hold timer finds it gone and drops itself.
+        self.switcher.open = None;
+        self.force_quit = None;
+        self.emoji = None;
+        self.close_drawer();
+        self.close_launchpad();
+        self.close_mission();
         let layout = self.config.keyboard.resolved().layout;
         let keyboard = layout.split(',').next().unwrap_or_default().to_uppercase();
         self.lock = Some(Lock { keyboard, ..Lock::new() });

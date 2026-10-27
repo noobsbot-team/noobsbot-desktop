@@ -718,7 +718,9 @@ impl State {
             if let Some(alpha) = idle_shade.into_iter().chain(lock_shade).reduce(f32::max) {
                 elements.insert(0, SceneElement::Shader(views.lock.shade(&views.shaders, geo.size, alpha, scale)));
             }
-            elements.splice(0..0, switcher_elements);
+            if !locked {
+                elements.splice(0..0, switcher_elements);
+            }
             return Some((elements, animating || views.wallpaper.fading()));
         }
         self.capture_ask();

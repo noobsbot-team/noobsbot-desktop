@@ -256,6 +256,10 @@ impl State {
         if matches!(&self.alert, Some(Alert { kind: Kind::Polkit { .. }, .. })) && !matches!(kind, Kind::Polkit { .. }) {
             self.services.send(Command::PolkitAnswer(None));
         }
+        // A Thunderbolt question under it is asked again once it closes.
+        if let Some(Alert { kind: Kind::Thunderbolt(shown), .. }) = &self.alert {
+            self.thunderbolt.iter_mut().filter(|(a, _)| a.uid == shown.uid).for_each(|(_, asked)| *asked = false);
+        }
         self.close_alert();
         self.popup = None;
         let power = matches!(kind, Kind::Power(_) | Kind::PowerButton);
@@ -378,10 +382,10 @@ impl State {
         self.ask_thunderbolt();
     }
 
-    /// Asks about the next waiting Thunderbolt device, unless locked (unlocking asks) or one is already up.
-    // ponytail: another alert opening over it drops that question; the device stays unauthorized until replugged.
+    /// Asks about the next waiting Thunderbolt device, unless locked (unlocking asks) or an alert is up (closing it
+    /// asks).
     pub fn ask_thunderbolt(&mut self) {
-        if self.lock.is_some() || matches!(&self.alert, Some(Alert { kind: Kind::Thunderbolt(_), .. })) {
+        if self.lock.is_some() || self.alert.is_some() {
             return;
         }
         let Some((accessory, asked)) = self.thunderbolt.iter_mut().find(|(_, asked)| !*asked) else { return };
@@ -396,6 +400,8 @@ impl State {
         }
         if self.alert.take().is_some() {
             self.schedule_redraw();
+            // A turn later, once whatever closed it has opened its own (`open_ask`) or not.
+            self.loop_handle.insert_idle(|state| state.ask_thunderbolt());
         }
     }
 

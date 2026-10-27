@@ -1732,7 +1732,7 @@ fn connection_details<'a>(app: &'a App, k: &'a crate::network::Known) -> Element
         rows.push(line(t, "Router", "", field("gateway6", "fe80::1")));
     }
     rows.push(line(t, "IPv6 DNS servers", "Comma separated; empty = from the network", field("dns6", "2606:4700:4700::1111")));
-    let forget = push(if k.wifi { "Forget This Network" } else { "Forget This Connection" }, false, Message::ForgetNetwork(k.path.clone()));
+    let forget = push(if k.wifi { "Forget This Network" } else { "Forget This Connection" }, false, Message::ForgetNetwork(Some(k.path.clone())));
     let buttons =
         row![forget, space().width(Length::Fill), push("Cancel", false, Message::NetDetails(None)), push("Update", true, Message::UpdateIp)].spacing(8);
     rows.push(container(buttons).padding([8, 12]).into());
@@ -1991,11 +1991,28 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
     parts
 }
 
-/// Users' Add User… sheet or Delete User… alert over the window, when one is open.
+/// Users' Add User… sheet or Delete User… alert, or a network's Forget alert, over the window, when one is open.
 pub fn users_sheet(app: &App) -> Option<Element<'_, Message>> {
     use crate::users::{NEW, Shot};
     let t = app.tokens;
     let push = |label: &'static str, primary: bool, message: Message| button(text(label).size(13)).padding([4, 14]).style(t.push(primary)).on_press(message);
+    if let Some(path) = app.texts.get(crate::network::FORGET) {
+        let k = app.status.wifi.as_ref()?.network.known.iter().find(|k| &k.path == path)?;
+        let (what, after) = if k.wifi {
+            ("network", "This computer stops joining it, and its password is removed.")
+        } else {
+            ("connection", "Its addresses and DNS servers are removed.")
+        };
+        let card = column![
+            text(format!("Forget the {what} “{}”?", k.ssid)).size(15).font(font(Weight::Semibold)),
+            text(after).size(12).color(t.secondary()),
+            row![space().width(Length::Fill), push("Cancel", false, Message::ForgetNetwork(None)), push("Forget", true, Message::ForgetNetworkNow)].spacing(8),
+        ]
+        .spacing(10)
+        .width(420);
+        let sheet = container(card).padding(18).style(t.sheet());
+        return Some(iced::widget::opaque(container(sheet).center(Length::Fill).style(t.dim())));
+    }
     if let Some(e) = &app.enroll {
         let count = if e.stages > 0 { format!("{} of {}", e.touches.min(e.stages), e.stages) } else { e.touches.to_string() };
         let words = match (&e.note, e.done) {
@@ -2429,7 +2446,7 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
     let name: &'a str = &d.name;
     let change = move |changes: Vec<(&'static str, toml_edit::Value)>| Message::Output(name.to_owned(), changes);
     let mut rows = Vec::new();
-    let maker = [d.make.as_str(), d.model.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+    let maker = crate::display_info::maker(&d.make, &d.model);
     let size = (d.width_mm > 0).then(|| {
         let inches = f64::from(d.width_mm).hypot(f64::from(d.height_mm)) / 25.4;
         format!("{inches:.1}-inch, {} × {} mm", d.width_mm, d.height_mm)
