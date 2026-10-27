@@ -111,8 +111,8 @@ pub enum Update {
     Inhibitors(Vec<login::Inhibitor>),
     /// Every widget other processes set (`org.noobsbot.Desktop.Widgets`), in the order they came.
     Widgets(Vec<widgets::Widget>),
-    /// The lock screen's fingerprint verify, after `Command::Fingerprint`.
-    Fingerprint(fingerprint::Verify),
+    /// The lock screen's fingerprint verify, after the `Command::Fingerprint` with this tag.
+    Fingerprint(u64, fingerprint::Verify),
 }
 
 /// Requests from the frame loop.
@@ -247,8 +247,9 @@ pub enum Command {
         owner: String,
         id: String,
     },
-    /// The lock screen shows (this user's fingers are verified) or went or the machine sleeps (`None`).
-    Fingerprint(Option<String>),
+    /// The lock screen shows (this user's fingers are verified) or went or the machine sleeps (`None`). The tag comes
+    /// back on each `Update::Fingerprint`, so a stopped verify's late word is told apart.
+    Fingerprint(u64, Option<String>),
 }
 
 pub struct Services {
@@ -427,7 +428,7 @@ async fn handle(
     secret: &Answer<Option<String>>,
     entry: &Answer<Option<String>>,
     admin: &Answer<polkit::Reply>,
-    fingers: &async_channel::Sender<Option<String>>,
+    fingers: &async_channel::Sender<(u64, Option<String>)>,
 ) {
     // The keyboard backlight's level before idleness turned it off.
     let mut kbd_saved = None;
@@ -482,8 +483,8 @@ async fn handle(
             }
             (Command::ScreenReader(on), _, Some(bus)) => a11y::set_status(bus, on).await,
             (Command::WidgetActivated { owner, id }, _, Some(bus)) => widgets::activated(bus, &owner, &id).await,
-            (Command::Fingerprint(user), ..) => {
-                let _ = fingers.try_send(user);
+            (Command::Fingerprint(tag, user), ..) => {
+                let _ = fingers.try_send((tag, user));
             }
             // Its bus is down, which `run` has logged.
             _ => {}

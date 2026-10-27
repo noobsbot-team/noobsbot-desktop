@@ -436,6 +436,11 @@ impl Screen {
 }
 
 impl State {
+    /// False while another session has the seat (VT switch, another user, the login screen); nested is always active.
+    pub fn session_active(&self) -> bool {
+        !matches!(&self.device, Some(Device::Udev(udev)) if !udev.session.is_active())
+    }
+
     fn udev(&mut self) -> Option<&mut Udev> {
         match self.device.as_mut() {
             Some(Device::Udev(udev)) => Some(udev),
