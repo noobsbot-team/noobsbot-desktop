@@ -156,8 +156,6 @@ pub struct App {
     selected: Option<String>,
     /// A display change waiting for "Keep Changes" before it reverts.
     keep: Option<arrange::Keep>,
-    /// The built-in panel's brightness in percent; `None` without a backlight.
-    brightness: Option<u8>,
     /// Appearance's wallpaper gallery, loaded on start.
     thumbs: Vec<(std::path::PathBuf, iced::widget::image::Handle)>,
     /// General ▸ Login Items, and the apps "+" offers; read when General opens.
@@ -404,7 +402,6 @@ impl App {
             displays: read_displays(),
             selected: None,
             keep: None,
-            brightness: display_info::brightness(),
             thumbs: Vec::new(),
             login_items: Vec::new(),
             installed: Vec::new(),
@@ -577,8 +574,12 @@ impl App {
                     "keyboard.backlight" => return Task::perform(system::set_kbd_backlight(value.round() as u8), Message::Status),
                     "display.brightness" => {
                         let percent = value.round() as u8;
-                        self.brightness = Some(percent);
-                        return Task::perform(system::desktop_call("Displays", "SetBrightness", percent), Message::Called);
+                        let Some(name) = self.selected_display().map(|d| d.name.clone()) else { return Task::none() };
+                        // The slider stays there until `displays.json` catches up.
+                        if let Some(d) = self.displays.iter_mut().find(|d| d.name == name) {
+                            d.brightness = Some(percent);
+                        }
+                        return Task::perform(system::desktop_call("Displays", "SetOutputBrightness", (name, percent)), Message::Called);
                     }
                     _ => {}
                 }
