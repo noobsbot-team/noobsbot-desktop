@@ -1720,10 +1720,13 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   and installing at the next login without a click (opt-in, `[update] install_at_login`, Settings ▸ General ▸ Software
   Update ▸ "Install updates automatically at login"): while a verified download waits, the compositor leaves
   `install-at-login` in its state dir; the session wrapper then runs `noobsbot-desktop-update --verified` before the
-  compositor starts, through a second polkit action (`org.noobsbot.desktop.update.verified`, `allow_active` = `yes`,
-  picked by that first argument). That mode takes no other argument: it finds the caller's own download, checks its
-  signature and refuses anything not newer, as the password path does; the new version then starts with "Updated to
-  x.y.z", under the same rollback. Existing installs need `install.sh --update` once for the new action and wrapper.
+  compositor starts, through a second polkit action (`org.noobsbot.desktop.update.verified`, picked by that first
+  argument, `auth_admin_keep`; a rules file lets only an admin's (`wheel`, `sudo`) active local session through without
+  the password). That mode takes no other argument: it finds the caller's own download (no symlinks, regular files the
+  caller owns), checks its signature and refuses anything not newer, as the password path does, and also any
+  pre-release and any version "Revert to" went back from (`/var/lib/noobsbot-desktop/reverted`); the new version then
+  starts with "Updated to x.y.z", under the same rollback. Existing installs need `install.sh --update` once for the
+  new action, rules and wrapper.
 
 **M6 hardware covered:** GPU (real), monitors, HDMI/USB-C displays, sleep/lid/power button, webcam (via portal),
 phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.

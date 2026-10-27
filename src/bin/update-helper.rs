@@ -66,7 +66,7 @@ enum Mode {
     Verified,
 }
 
-/// The arguments. `--verified` (the passwordless action's) only alone; an unknown `--flag` is no download dir.
+/// The arguments. `--verified` (install at login's action) only alone; an unknown `--flag` is no download dir.
 fn mode(args: &[OsString]) -> Result<Mode, String> {
     match args {
         [flag] if flag == "--verified" => Ok(Mode::Verified),
