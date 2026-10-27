@@ -2,7 +2,8 @@
 //! picking a window), Super+Shift+5 opens the toolbar (Screen · Window · Region · Record · Options · Capture). The
 //! overlay goes away, the next frame is read back (capture.rs), and a worker thread saves it as
 //! `~/Pictures/Screenshots/Screenshot <date> at <time>.png`; then it is on the clipboard and a thumbnail floats at the
-//! bottom right for 5 s (click opens it, drag drops it into an app). Drawn by render/screenshot.rs.
+//! bottom right for 5 s (click opens it, drag drops it into an app). Record pipes the display's frames through ffmpeg
+//! into `~/Videos/Screen Recording <date> at <time>.mp4`. Drawn by render/screenshot.rs.
 
 use std::{
     ffi::OsString,
