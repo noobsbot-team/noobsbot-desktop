@@ -233,7 +233,7 @@ impl State {
         let overflow_menu = self.overflow_menu_rows();
         let battery_menu = self.battery_menu_rows();
         self.refresh_recent();
-        let update_ready = self.update_ready();
+        let update = (self.update_count(), self.update_ready());
         let desktop_menu = (self.popup == Some(Popup::Menu(crate::shell::Menu::Desktop)))
             .then(|| self.desktop_menu_rows())
             .and_then(|rows| Some((self.desktop_menu_anchor(&rows)?, rows)));
@@ -329,7 +329,7 @@ impl State {
                             crate::shell::Menu::Input => input_menu.clone(),
                             crate::shell::Menu::Overflow => overflow_menu.clone(),
                             crate::shell::Menu::Battery(_) => battery_menu.clone(),
-                            _ => crate::shell::menu_rows(kind, &app, tray, update_ready, self.recent_menu.as_deref().unwrap_or_default()),
+                            _ => crate::shell::menu_rows(kind, &app, tray, update, self.recent_menu.as_deref().unwrap_or_default()),
                         },
                         // A tray item opened from "»" hangs from it.
                         crate::shell::Anchor::Below(
