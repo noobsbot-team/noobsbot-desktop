@@ -21,10 +21,12 @@ use crate::{
 
 /// How far the pointer may drift and still be resting (logical px).
 const STILL: f64 = 4.0;
-/// A shake: this many direction changes, covering this distance, within this time.
+/// A shake: this many direction changes along one axis, its strokes covering this distance, within this time.
 const SHAKE_TURNS: usize = 4;
 const SHAKE_DISTANCE: f64 = 600.0;
 const SHAKE_WINDOW: Duration = Duration::from_millis(500);
+/// A stroke (a run of steps one way along an axis) shorter than this is wobble, not a swing.
+const STROKE: f64 = 40.0;
 /// The shaken pointer grows this much, eases in and out, and stays big this long after the last shake.
 pub const SHAKE_GROW: f64 = 4.0;
 const GROW_IN: Duration = Duration::from_millis(150);
@@ -55,13 +57,21 @@ impl Shake {
         while self.steps.front().is_some_and(|(t, _)| now.duration_since(*t) > SHAKE_WINDOW) {
             self.steps.pop_front();
         }
-        // Direction changes along one axis, ignoring sub-pixel jitter.
-        let turns = |axis: fn(&Point<f64, Logical>) -> f64| {
-            let signs: Vec<bool> = self.steps.iter().map(|(_, d)| axis(d)).filter(|v| v.abs() >= 1.0).map(|v| v > 0.0).collect();
-            signs.windows(2).filter(|w| w[0] != w[1]).count()
+        // Back and forth along one axis, in strokes: a fast straight fling wobbles a pixel or two across its path at
+        // every step, which is no shake.
+        let shaken = |axis: fn(&Point<f64, Logical>) -> f64| {
+            let mut strokes: Vec<f64> = Vec::new();
+            for v in self.steps.iter().map(|(_, d)| axis(d)).filter(|v| *v != 0.0) {
+                match strokes.last_mut() {
+                    Some(stroke) if (*stroke > 0.0) == (v > 0.0) => *stroke += v,
+                    _ => strokes.push(v),
+                }
+            }
+            strokes.retain(|s| s.abs() >= STROKE);
+            let turns = strokes.windows(2).filter(|w| (w[0] > 0.0) != (w[1] > 0.0)).count();
+            turns >= SHAKE_TURNS && strokes.iter().map(|s| s.abs()).sum::<f64>() >= SHAKE_DISTANCE
         };
-        let distance: f64 = self.steps.iter().map(|(_, d)| d.x.hypot(d.y)).sum();
-        let shaking = turns(|d| d.x).max(turns(|d| d.y)) >= SHAKE_TURNS && distance >= SHAKE_DISTANCE;
+        let shaking = shaken(|d| d.x) || shaken(|d| d.y);
         if shaking {
             let start = self.grown.filter(|_| self.scale(now) > 1.0).map_or(now, |(start, _)| start);
             self.grown = Some((start, now));
@@ -313,6 +323,9 @@ mod tests {
         // Jitter back and forth by a pixel is no shake either.
         let mut jitter = Shake::default();
         assert!(!(0..40).any(|i| jitter.motion(t0 + Duration::from_millis(i * 5), p(if i % 2 == 0 { 0.5 } else { -0.5 }, 0.0))));
+        // Neither is a quick fling across the screen whose other axis wobbles a pixel or two each step.
+        let mut fling = Shake::default();
+        assert!(!(0..50).any(|i| fling.motion(t0 + Duration::from_millis(i * 5), p(20.0, if i % 2 == 0 { 1.5 } else { -1.5 }))));
     }
 
     #[test]
