@@ -1359,6 +1359,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   virgl, a broken driver), the pixman CPU renderer starts instead, so the system is never unusable.
 - **Done when:** boots into Noobsbot Desktop on Intel, AMD and (with `nvidia-open`) NVIDIA; VT switch and back works; an
   Intel + NVIDIA laptop drives its dGPU HDMI port; QEMU without 3D acceleration still boots to a usable desktop.
+- **Built:** `src/backend/udev.rs` (libseat, libinput, GBM, `DrmCompositor`, a second GPU's monitor through
+  `MultiRenderer`, the GPU from `[display] gpu` else the boot VGA device, VT switching). Not yet: the pixman renderer;
+  without 3D, Mesa's software EGL driver (llvmpipe) runs the shaders instead.
 
 ### E6.2 Displays & multiple monitors
 - **What it is:** monitors, resolution, scaling, refresh rate, Night Shift.
@@ -1379,12 +1382,17 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   and config reload apply at once.
 - **Done when:** laptop + HDMI monitor at different scales works, survives unplug/replug and sleep/wake; unplugging
   every monitor and plugging one back loses no window; clamshell mode works.
+- **Done:** `src/displays.rs` (plan, clamshell, layouts per set of displays), the settle above,
+  `src/protocols/output_management.rs`, fractional scale; Night Light is a final shader pass (`src/render/night.rs`),
+  not the gamma table.
 
 ### E6.3 Direct scanout & idle inhibit
 - **What it is:** fullscreen video and games bypass compositing; videos keep the screen awake.
 - **Built with:** Smithay direct scanout; `idle-inhibit` protocol (Helium uses it during video).
 - **Why:** lower power and latency (R3).
 - **Done when:** fullscreen YouTube in Helium shows lower power use (`powertop`) than windowed, and the screen doesn't dim.
+- **Done:** direct scanout through `DrmCompositor` planes (client buffers passed through the `MultiRenderer` wrapper)
+  and idle inhibit (`src/idle.rs`). While Night Light is on, its pass keeps fullscreen apps off scanout.
 
 ### E6.4 Lock screen
 - **What it is:** protects the session when you step away.
@@ -1418,6 +1426,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   session ends and you return to the login screen; it never "fails open".
 - **Done when:** lock/unlock works from every trigger; no app content is visible or reachable while locked; a
   wrong password shakes the field.
+- **Done:** `src/shell/lock.rs` and `src/render/lock.rs`, PAM on a worker thread (`src/pam.rs`, its own FFI rather
+  than `pam-client`), ext-session-lock (`src/idle.rs`), the watchdog (`src/bin/watchdog.rs`), a logind delay inhibitor
+  so it locks before sleep.
 
 ### E6.5 Idle, sleep & power
 - **Design:** after idle time, the screen dims (2 min) → turns off (5 min) → sleeps (15 min on battery, never on
@@ -1431,11 +1442,14 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   `/etc/UPower/UPower.conf.d/50-noobsbot-desktop.conf` and we only show
   the 20% / 10% notifications (no double action). Hibernate: not in v1 (needs swap sizing at install time; L10).
 - **Done when:** each step happens on time; it locks on wake; videos (idle-inhibit) keep it awake.
+- **Built:** `src/idle.rs` (dim, off, lock and sleep from `[idle]`, low-battery warnings, ext-idle-notify), logind
+  inhibitors and `PrepareForSleep` (`src/services/login.rs`), UPower. Not yet: the power button's Sleep · Restart ·
+  Shut Down alert (it asks "Shut Down?" with a countdown).
 
 ### E6.6 Login screen
 - **What it is:** where you log in after boot.
 - **Design:** greetd + tuigreet (text, centred, clean) for M6. A **graphical glass login** that matches the
-  lock screen comes later (optional, M7+); greetd allows it, and Noobsbot Desktop could run in a "greeter mode".
+  lock screen ~~comes later (optional, M7+)~~ is built, opt-in (E7.2): greetd runs Noobsbot Desktop in its "greeter mode".
 - **Built with:** **greetd** (a tiny login daemon, written in Rust) + **tuigreet**.
 - **How it works:** greetd draws nothing itself. At boot systemd starts greetd → greetd starts the *greeter*
   (the login screen program) → the greeter sends the username and password over greetd's IPC socket → greetd checks
@@ -1471,6 +1485,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why:** minimal, doesn't depend on any desktop, the modern standard for lightweight setups.
   **Rejected:** SDDM (heavier), GDM (pulls in another desktop).
 - **Done when:** boot → tuigreet → log in → Noobsbot Desktop starts; logging out returns to tuigreet.
+- **Done:** greetd + tuigreet (`data/system/etc/greetd/config.toml`, enabled by `install.sh` with its security check);
+  the graphical greeter too (`--greeter`, `src/shell/greeter.rs`, opt-in with `install.sh --greeter`).
 
 ### E6.7 Session startup & system glue
 - **What happens at login:**
@@ -1496,6 +1512,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Session file:** `/usr/share/wayland-sessions/noobsbot-desktop.desktop` with `Exec=noobsbot-desktop-session` (the
   wrapper with watchdog and rollback, E6.13), so every login path starts the same way.
 - **Done when:** after login, screen sharing, file pickers, saved passwords and autostart apps all work.
+- **Done:** the session wrapper (`data/system/usr/bin/noobsbot-desktop-session`: the environment,
+  `dbus-update-activation-environment`), `noobsbot-desktop-session.target`, the portals config, the session file,
+  xwayland-satellite (`src/xwayland.rs`) and our polkit agent (`src/services/polkit.rs`).
 
 ### E6.8 Screenshots & screen recording/sharing
 - **Design:** Super+Shift+3 = whole screen, Super+Shift+4 = drag a region (crosshair, dimmed outside, size label),
@@ -1510,6 +1529,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   PipeWire frames (E7.2).
 - **Why:** browsers only share screens through the portal standard.
 - **Done when:** all three screenshot modes work; screen sharing works in Google Meet in Helium.
+- **Done:** `src/shell/screenshot.rs` and `src/render/screenshot.rs` (screen, window and region; the toolbar; file,
+  clipboard and thumbnail; recording through `wf-recorder`), wlr-screencopy for the portal (`src/capture.rs`).
+  `ext-image-copy-capture` isn't served (E6.11).
 - **Status:** dragging the thumbnail starts a compositor-owned Wayland drag (`text/uri-list` + `image/png`, written
   on a worker thread); it follows the pointer at half size and 60% opacity, and its 5 s timer waits. A drop an app
   takes dismisses it; a cancelled drop brings it back for 5 s; a drop on the dock goes to the dock (Trash trashes the
@@ -1519,6 +1541,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Built with:** **xwayland-satellite** (C10), started automatically.
 - **Limit:** XWayland apps are scaled as bitmaps on HiDPI screens (slightly soft text); native Wayland apps are sharp (L14).
 - **Done when:** an X11-only app (e.g. `xeyes`) opens with our title bar; xwayland-satellite is restarted automatically if it dies (E1.11).
+- **Done:** `src/xwayland.rs` (xwayland-satellite on a free display, restarted when it dies, given up after 5 quick
+  deaths).
 
 ### E6.10 Installer (`install.sh`)
 - **What it is:** one script that turns a fresh Arch install into Noobsbot Desktop.
@@ -1534,6 +1558,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why a script:** simple, readable, repeatable. An AUR `PKGBUILD` may come later (Open-3).
 - **Done when:** fresh Arch in a **QEMU VM** → `install.sh` → reboot → tuigreet → Noobsbot Desktop with every feature
   working; then the same on real hardware.
+- **Done:** `install.sh` (hardware detection, the AUR helper, a minisign-verified release or `--from-source`,
+  `--update`, `--advanced`, `--greeter`, system files, services, defaults, the security check, the Debian path) and
+  `scripts/test-install.sh`.
 - **Debian 13 (trixie):** the same script, same steps, in Debian's names (G4b). Differences: `apt-get
   --no-install-recommends` (the needed Recommends are listed); Helium from its own signed apt repository; WhiteSur
   from its git install scripts (pinned commits); `xwayland-satellite` from the release tarball into `/usr/local/bin`
@@ -1558,7 +1585,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Design:** We ask "‹App› would like to record this computer's screen". These globals are only
   advertised to **trusted clients** (the portals, xwayland-satellite, our Settings app, anything started with
   `noobsbot-desktop --trusted <cmd>`). Any other client that binds one gets a one-time **alert** (D8): "Allow ‹app› to
-  record the screen / control input?" with Allow / Deny, remembered per app in config (Settings ▸ Privacy later). Screen
+  record the screen / control input?" with Allow / Deny, remembered per app in config (Settings ▸ Privacy & Security, E8.2). Screen
   sharing from Helium goes through the portal's own picker, as on every desktop.
 - **Built with:** Smithay's per-client global filter + the client's pid/exe from the socket credentials (`perms.rs`,
   whose table says who sees each global; all of the above but `ext-image-copy-capture` are served);
@@ -1567,6 +1594,11 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   stricter than X11, and we keep that advantage.
 - **Done when:** `wf-recorder` started from a terminal triggers the alert; a portal screen share does not; a denied
   client receives no frames.
+- **Built:** `src/perms.rs` (who sees each global, the trusted socket, `--trusted`), per-client screencopy answers
+  with the screen-recording alert (`src/capture.rs`, `src/shell/alert.rs`), security-context. Not yet: the "control
+  input" alert (virtual keyboard and pointer go to trusted clients without asking); layer-shell, output management,
+  ext-workspace, foreign-toplevel-list and shortcuts-inhibit are offered to every unsandboxed client, as perms.rs's
+  table says.
 
 ### E6.12 Input methods (typing Nepali, Hindi, CJK)
 - **What it is:** the Noto fonts (Part H) let the desktop *show* Devanagari and CJK; this lets the owner *type* them.
@@ -1578,6 +1610,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   `QT_IM_MODULE` are **not** set, so native Wayland apps use text-input-v3).
 - **Why:** fcitx5 is the best-maintained Wayland IME; these two protocols are what Qt 6, GTK 4 and Chromium speak.
 - **Done when:** Nepali can be typed in Kate, Helium and noobsbot-terminal with the candidate popup next to the cursor.
+- **Built:** `src/ime.rs` (text-input-v3 and input-method-v2, the popup next to the cursor, layouts and fcitx5 methods
+  in the keyboard menu), `src/services/fcitx.rs`, `src/ibus.rs`, `XMODIFIERS` in the session wrapper. Not yet:
+  Super+Ctrl+Space cycling input methods (it cycles layouts); `install.sh` offering the fcitx5 set (it prints a hint).
 
 ### E6.13 Versioning, releases & Software Update (auto-updating)
 - **What it is:** how a version number is born, how a release is built, and how every installed desktop learns about
@@ -1654,6 +1689,10 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Done when:** merging a `feat:` commit produces a release PR with the right version and changelog; merging it
   produces a tagged, signed GitHub Release; a VM running 1.2.4 shows the notification, installs 1.3.0 at next login,
   and a deliberately broken 1.3.1 is rolled back automatically.
+- **Built:** release-plz and the release workflows (`release-plz.toml`, `.github/workflows/`), signed tarballs,
+  `src/services/update.rs` (with `curl`, not `ureq`), `src/bin/update-helper.rs`, the watchdog and rollback in the
+  session wrapper, the Settings page above. Not yet: the Report button on "was rolled back"; installing at the next
+  login without a click (Restart to Update and Update Now install it).
 
 **M6 hardware covered:** GPU (real), monitors, HDMI/USB-C displays, sleep/lid/power button, webcam (via portal),
 phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
