@@ -159,6 +159,9 @@ impl State {
     pub fn may_control(&mut self, client: &Client) -> bool {
         let id = client.id();
         if !self.protocols.control.contains_key(&id) {
+            // A new client: the gone ones are forgotten, or the per-connection answers grow for the session.
+            let dh = &self.display_handle;
+            self.protocols.control.retain(|id, _| dh.backend_handle().get_client_data(id.clone()).is_ok());
             let (exe, app) = program(client).map_or((String::new(), "An app".into()), |(e, n)| (e.to_string_lossy().into_owned(), n));
             let privacy = &self.config.privacy;
             let known = (!exe.is_empty()).then_some(exe.as_str());
@@ -175,8 +178,6 @@ impl State {
 
     /// The user's answer about `client`'s virtual input: remembered for this connection and, by path, in `[privacy]`.
     pub fn control_answer(&mut self, client: ClientId, exe: String, allow: bool) {
-        let dh = &self.display_handle;
-        self.protocols.control.retain(|id, _| dh.backend_handle().get_client_data(id.clone()).is_ok());
         self.protocols.control.insert(client, allow);
         if !exe.is_empty() {
             let privacy = &mut self.config.privacy;

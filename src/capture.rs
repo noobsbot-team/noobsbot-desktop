@@ -320,8 +320,11 @@ impl Dispatch<ZwlrScreencopyFrameV1, FrameData> for State {
             return;
         }
         let verdict = state.may_record(client);
-        if let Some(answer) = verdict {
-            state.capture.verdicts.insert(client.id(), answer);
+        if let Some(answer) = verdict
+            && state.capture.verdicts.insert(client.id(), answer).is_none()
+        {
+            // A new client: the gone ones are forgotten, not only when someone answers the alert.
+            state.capture.prune(&state.display_handle);
         }
         if verdict == Some(false) {
             frame.failed();
