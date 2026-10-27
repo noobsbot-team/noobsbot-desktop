@@ -22,7 +22,7 @@ use smithay::{
             compositor::{DrmCompositor, FrameFlags, RenderFrameError},
             exporter::gbm::GbmFramebufferExporter,
         },
-        egl::EGLError,
+        egl::{EGLDevice, EGLError},
         input::{AbsolutePositionEvent, Event, InputEvent, PointerMotionEvent, Switch, SwitchState, SwitchToggleEvent},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
@@ -229,6 +229,26 @@ fn software(err: &Error) -> bool {
     true
 }
 
+/// The software-rendering notification's id, below the X11 one's.
+const SOFTWARE_NOTICE: u32 = 0xFFF7_0000;
+
+/// "Graphics acceleration isn't available".
+fn software_notice() -> crate::services::notifications::Notification {
+    let icon = "dialog-warning";
+    crate::services::notifications::Notification {
+        id: SOFTWARE_NOTICE,
+        app: "Noobsbot Desktop".into(),
+        icon_name: icon.into(),
+        icon: crate::services::notifications::load_icon(icon).map(std::sync::Arc::new),
+        summary: "Graphics acceleration isn't available".into(),
+        body: "The desktop is using software rendering, so it may feel slower.".into(),
+        urgency: 1,
+        expire: -1,
+        time: chrono::Local::now().timestamp(),
+        ..Default::default()
+    }
+}
+
 /// How long connectors must stay unchanged before hotplug re-plans the displays: a dock lights its monitors one
 /// after the other, and each would otherwise move the windows (and pick a remembered layout) on its own.
 const SETTLE: Duration = Duration::from_millis(500);
@@ -314,12 +334,16 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     // every shader. Pixman would be for a system without Mesa, and needs every shell element redrawn without GLES.
     let wallpaper = super::winit::wallpaper(event_loop, state)?;
     let gpu = state.udev().ok_or("no session")?;
-    let (views, formats) = match gpu.start(&wallpaper) {
+    let (views, formats, soft) = match gpu.start(&wallpaper) {
         Err(err) if software(&err) => gpu.soften().and_then(|()| gpu.start(&wallpaper)),
         started => started,
     }?;
     state.backend = Some(views);
     super::dmabuf_global(state, formats, Some(primary));
+    if soft {
+        tracing::info!("using software rendering");
+        state.notify(software_notice());
+    }
 
     event_loop.handle().insert_source(udev, |event, _, state| {
         match event {
@@ -354,10 +378,12 @@ impl Udev {
     }
 
     /// The shell's caches on the primary GPU's renderer (with a copy of `wallpaper`, so a failed try can be made
-    /// again) and the dmabuf formats it imports.
-    fn start(&mut self, wallpaper: &render::Wallpaper) -> Result<(Views, FormatSet), Error> {
+    /// again), the dmabuf formats it imports, and whether it draws in software.
+    fn start(&mut self, wallpaper: &render::Wallpaper) -> Result<(Views, FormatSet, bool), Error> {
         let renderer = self.renderer().ok_or("the primary GPU did not start (EGL)")?;
-        Ok((Views::new(renderer, wallpaper.reupload())?, renderer.dmabuf_formats()))
+        // Mesa's own fallback (no driver for this GPU) says so only through its EGL device.
+        let soft = software_set(|k| std::env::var(k).ok()) || EGLDevice::device_for_display(renderer.egl_context().display()).is_ok_and(|d| d.is_software());
+        Ok((Views::new(renderer, wallpaper.reupload())?, renderer.dmabuf_formats(), soft))
     }
 
     /// Every GPU on new GBM devices and EGL displays, which pick up Mesa's software driver once `software` set it.
