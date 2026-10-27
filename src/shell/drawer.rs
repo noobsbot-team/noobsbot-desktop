@@ -546,8 +546,8 @@ pub enum Command {
     Desktop,
 }
 
-// ponytail: no Uninstall (it needs the package manager behind an admin prompt) and no Properties / Open With; add
-// rows here when Software (M7) can remove packages.
+// ponytail: no Uninstall (it needs the package manager behind an admin prompt) and no Properties / Open With; nothing
+// in the desktop removes packages yet.
 pub fn menu_rows(favorite: bool, docked: bool, desktop: bool) -> Vec<Option<Row>> {
     let row = |label: &str, command| Some(Row { sub: Vec::new(), label: label.to_owned(), shortcut: "", action: Some(Action::Drawer(command)) });
     let mut rows = vec![

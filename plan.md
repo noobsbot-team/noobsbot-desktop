@@ -436,6 +436,9 @@ glass windows with traffic lights.
   real session. The protocol list is what modern apps (Helium, Qt, GTK, games, VMs, noobsbot) need to run fully.
 - **Done when:** noobsbot-terminal and Helium run inside it with working keyboard, mouse, clipboard and
   copy/paste between them.
+- **Done:** every protocol listed is served (`src/state.rs`, `src/protocols.rs`, `src/decorations.rs`; dmabuf v4
+  feedback in `src/backend/mod.rs`; explicit sync in `src/sync.rs` where the render node supports it); the clipboard
+  outlives its app (`src/clipboard.rs`).
 
 ### E1.2 Windows & window management
 - **What it is:** where windows go and how they move, resize, focus, minimise and zoom.
@@ -471,7 +474,7 @@ glass windows with traffic lights.
     | Touchpad | click-drag on a zone; pinch does **not** resize windows (it belongs to apps, E1.7) |
     | Keyboard | ~~Super+Ctrl+arrows nudge/resize by 16 px steps (configurable, off by default)~~ Done: Super+Alt+arrows move the window 16 px, Super+Alt+Shift+arrows its right / bottom edge (Super+Ctrl+arrows went to tiling, E8.5); `nudge` / `resize` actions, active only with `[windows] keyboard_nudge` (off by default); a held key repeats; the move keeps the drag limits, the resize the app's min / max |
   - **Stacking order (bottom → top), fixed so no element can ever be hidden by the wrong one:** wallpaper → desktop
-    icons (later) → normal windows (per Space, most recent on top) → `float_above` windows (rules) → a window's
+    icons (E7.2) → normal windows (per Space, most recent on top) → `float_above` windows (rules) → a window's
     modal/transient dialogs always directly above their parent → fullscreen window of the current Space → the quake terminal (E2.8, `layer = "overlay"` rule) → dock
     (hidden under fullscreen) → menu bar → shell popovers (menus, Control Center, Notification Center, Spotlight) →
     app popups with a grab → banners and OSD → alerts (Force Quit, power) → Mission Control / Launchpad overlay →
@@ -492,6 +495,11 @@ glass windows with traffic lights.
   without flicker; a window being resized by its left edge keeps its content pinned to the right while a
   deliberately slow test app (`sleep 200 ms` per frame) catches up; dragging follows the pointer with no visible lag
   at 120 Hz; magnetic edges and both modifiers work (unit tests for the anchor and sticking math).
+- **Built:** `src/wm.rs` (placement, magnetic edges, resize maths, double-click edge grow, tiling), `src/grabs.rs`
+  (move and resize grabs, Alt symmetric and Shift aspect resize, one configure outstanding), activation-gated focus
+  (`src/state.rs`), remembered frames (`src/sheets.rs`), the snapping preview (shown on arrival, E8.5). Not yet: the
+  frame drawn at the new size while a slow app catches up (only its last buffer is anchored); Mission Control from a
+  3-finger swipe with a window in hand; a display unplug cancelling a drag or resize (the lock does).
 
 ### E1.3 Title bars & traffic lights
 - **What it is:** the bar on top of every window with close / minimise / zoom buttons.
@@ -514,6 +522,8 @@ glass windows with traffic lights.
   every scale. Apps that refuse server-side decorations (GTK4/libadwaita) keep their own (see L2).
 - **Done when:** noobsbot, Dolphin and Kate show our title bar (Helium keeps its own, see F2), and the
   lights work.
+- **Done:** `src/render/titlebar.rs` (28 px bar, SDF lights, glyphs on hover, grey when unfocused) through both
+  decoration protocols (`src/decorations.rs`); the hover glyphs are text, not SDF.
 
 ### E1.4 Glass, corners & shadow shaders
 - **What it is:** the visual engine for Part D materials.
@@ -528,6 +538,7 @@ glass windows with traffic lights.
   per-pixel shadows; re-measure at 4K in M6.*
 - **Done when:** a test scene shows every material in light and dark, matching the mockup; GPU time per frame
   under 1 ms on an Intel iGPU at 1080p.
+- **Built:** `src/render/glass.frag`, `rounded.frag` and `shadow.frag`; shadows stay per pixel, as measured (PERF.md).
 
 ### E1.5 Wallpaper & desktop
 - **What it is:** the background picture.
@@ -535,6 +546,8 @@ glass windows with traffic lights.
 - **Built with:** `png` + `zune-jpeg` decoders → one GPU texture, scaled once per output size.
 - **Why:** small decoders instead of the large `image` crate (less code and RAM); decoding happens once, never per frame.
 - **Done when:** the wallpaper shows and switches with dark mode.
+- **Done:** `src/render/wallpaper.rs` (decoded once on a worker, a light and a dark picture, crossfaded on the
+  switch).
 
 ### E1.6 Keyboard & first shortcuts
 - **What it is:** typing in apps, plus desktop shortcuts.
@@ -567,6 +580,8 @@ glass windows with traffic lights.
 - **Why:** xkbcommon is the Linux standard, the same layout data as every desktop. Configurable bindings let
   the owner change anything without recompiling.
 - **Done when:** typing works in every layout set in config; every M1 shortcut works.
+- **Done:** `src/shortcuts.rs`, `src/input.rs` (no stuck modifiers), the system keyboard layout with `[keyboard]`
+  overrides, `[bindings]` in `data/config.toml`.
 
 ### E1.7 Touchpad & mouse basics
 - **What it is:** pointer, clicking, scrolling and app gestures.
@@ -585,6 +600,8 @@ glass windows with traffic lights.
 - **Why:** libinput is the Linux standard for touchpads, with tuned palm rejection and acceleration.
   Passing 2-finger gestures to apps keeps browser pinch-zoom working.
 - **Done when:** tap, right-click, natural scroll and pinch-zoom in Helium work on a real touchpad.
+- **Done:** tap, natural scroll and the click method on the real screen (`src/backend/udev.rs`, `[touchpad]`); pinches
+  and swipes the desktop doesn't use go to apps (`pointer-gestures`).
 
 ### E1.8 Settings file
 - **What it is:** `~/.config/noobsbot-desktop/config.toml`.
@@ -596,6 +613,9 @@ glass windows with traffic lights.
   debounced 200 ms and the **last good config stays** until the file parses again. Unknown keys warn, never fail.
 - **Done when:** changing accent colour, glass opacity or a shortcut applies without restart; a deliberately broken
   config starts the desktop with defaults and a notification.
+- **Built:** `src/config.rs` (commented defaults in `data/config.toml`, unknown keys warned, the last good config kept
+  when the file breaks, atomic saves, live reload after a 300 ms debounce). Not yet: a notification with the line
+  number for a broken file (it is only logged).
 
 ### E1.9 Window rules
 - **What it is:** per-app rules in `config.toml`, so the desktop remembers how an app's windows behave.
@@ -607,6 +627,8 @@ glass windows with traffic lights.
 - **Why:** several elements need it (E2.8 quake placement, E5.1 Assign To Space, picture-in-picture staying on top);
   one mechanism instead of special cases.
 - **Done when:** the quake-terminal rule and a picture-in-picture-on-top rule both work from config alone.
+- **Done:** `src/rules.rs` (every key above, titles by regex), with the quake and picture-in-picture rules in
+  `data/config.toml`.
 
 ### E1.10 Frame scheduling & input latency (why it feels instant)
 - **What it is:** the rule for *when* we read input, *when* we draw and *when* the picture reaches the screen. This is
@@ -638,6 +660,9 @@ glass windows with traffic lights.
 - **Done when:** a 240 fps phone-camera test of a drag shows the window moving within 1 frame (+ ≤ 2 ms) of the
   pointer; idle CPU 0%; frame-time log stays under budget with 10 windows; no frame is missed while an app is
   deliberately frozen.
+- **Built:** `src/frame.rs` `FrameClock` (draws at vblank − estimate − 1 ms, falls back after missed frames), frame
+  callbacks and presentation feedback in both backends, the hardware cursor plane and direct scanout on udev; the
+  latency figures are PERF.md's to prove.
 
 ### E1.11 Robustness rules (never crash, never block, never leak)
 - **What it is:** the engineering rules that apply to every line of the compositor from M1. Each one is a known way
@@ -657,6 +682,10 @@ glass windows with traffic lights.
   | **Memory and CPU are measured, not hoped for** | | `PERF.md` per milestone + a 24 h soak test in M6 (RSS must not grow) |
 - **Done when:** the fuzzing client and a frozen D-Bus service (`kill -STOP` on NetworkManager) leave the desktop
   fully usable; suspend/resume 20 times in a row on Intel and NVIDIA without a restart; the 24 h soak test holds RSS flat.
+- **Built:** `scripts/fuzz-client.py`, 2 s D-Bus timeouts, GPU reset recovery (`src/backend/udev.rs`), the panic hook,
+  notification rate limits, a capped clipboard, LRU text and icon caches, xwayland-satellite restarted
+  (`src/xwayland.rs`). Not yet: the icon disk cache (icons are rasterised into memory only); a notification when a
+  helper stops being restarted (it is only logged).
 
 **M1 hardware covered:** GPU (nested), keyboard, touchpad, mouse.
 **M1 done when:** all elements pass; idle CPU **0%**; RAM **< 60 MB**; mockup review passed.
@@ -673,6 +702,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   and `~/.local/share/applications` through `notify` so newly installed apps appear without a restart.
 - **Why:** see C6, C8. Every later element is assembled from these, so the design stays identical everywhere.
 - **Done when:** a "component gallery" test screen shows every D8 component in light and dark, matching the mockup.
+- **Built:** `src/text.rs` (cosmic-text, tabular digits, an LRU of rendered labels instead of a glyph atlas),
+  `src/render/ui.rs` and the gallery (`src/render/components.rs`, `--show gallery`), `src/symbols.rs`, the app index
+  and icon threads (`src/apps.rs`). Not yet: the icon disk cache (E1.11).
 
 ### E2.2 Menu bar
 - **What it is:** the bar across the top of every screen.
@@ -699,6 +731,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Why:** this is the menu-bar layout of the design (R1). StatusNotifierItem is the tray standard modern apps use.
 - **Done when:** every item opens its menu (the battery its menu; Wi-Fi, Bluetooth, volume their module); tray icons from apps appear and their menus work; Sleep/Restart/
   Shut Down/Log Out work.
+- **Built:** `src/render/menubar.rs`, `src/shell/mod.rs` (logo, app and status menus), the tray host
+  (`src/services/tray.rs`), power actions through logind with the 60 s alert (`src/shell/alert.rs`). Not yet: a count
+  badge on Software Update… (the row becomes "Restart to Update…" instead).
 
 ### E2.3 Control Center
 - **What it is:** quick controls in one glass panel, opened from ⊞ in the menu bar.
@@ -748,6 +783,10 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   | Dark mode | our theme (D2) | built in |
 - **Done when:** every control changes the real system state, and changes made elsewhere (e.g. unplugging
   headphones) update the panel live with no polling.
+- **Done:** `src/shell/control.rs` and `src/render/control.rs`: the NetworkManager secret agent, the BlueZ agent,
+  logind brightness, PipeWire followed with `pw-dump --monitor` and set with `wpctl` (no `pipewire` crate, E1.11),
+  MPRIS, UPower, and power-profiles-daemon's profiles under Power mode's ▾ (`Module::Power`); the panel opens on a
+  `snappy` fade and scale and fades out over 150 ms.
 
 ### E2.4 Clock
 - **What it is:** date and time at the right end of the menu bar.
@@ -759,6 +798,8 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   date library.
 - **Done when:** the time is correct after boot; it redraws exactly once per minute (once per second only when
   seconds are switched on), aligned to the minute boundary on the monotonic clock (E1.11).
+- **Done:** `src/clock.rs` (formats, tests), a timer on the minute (or second) boundary (`src/state.rs`), tabular
+  digits; a click opens Notification Center.
 
 ### E2.5 Calendar
 - **What it is:** a month calendar (a popover in M2, then the calendar widget inside Notification Center from M4).
@@ -779,10 +820,13 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
     the month title returns to today. Built: the swipe follows the fingers 1:1 with the next month sliding in beside,
     then a `gesture` spring turns it past 30% of the card or on a flick, else back; ‹ ›, the title and ←/→ slide on
     `smooth`; both grids are cut at the card's edge; reduce motion turns the month at once.
-  - Later (optional): event dots under days, from local `.ics` files, then CalDAV/Google.
+  - ~~Later (optional): event dots under days, from local `.ics` files~~, then CalDAV/Google. Done: dots from
+    `[calendar] files` (`src/ical.rs`, `src/events.rs`, E7.2). Not yet: CalDAV/Google.
 - **Built with:** `chrono` (date math); our widgets.
 - **Why:** pure date math, so no calendar library or service is needed until events are added.
 - **Done when:** the correct month grid for any month and year, including leap years (unit tested).
+- **Done:** `src/calendar.rs` (grid, locale week start, week numbers, leap years tested), `src/render/calendar.rs`,
+  the slides and swipe in `src/shell/notify.rs`.
 
 ### E2.6 Time zone & date settings (backend)
 - **What it is:** setting the time zone and automatic time.
@@ -792,6 +836,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   schedule (default 19:00–07:00). `geoclue` (BeaconDB backend) is an optional package, off by default.
 - **Why:** standard; changing the zone needs no terminal; no feature silently depends on a dead service. (UI in M7.)
 - **Done when:** changing `timezone` in config updates the system zone and the clock immediately.
+- **Done:** `SetTimezone` on `org.freedesktop.timedate1` when `timezone` changes (`src/services/mod.rs`), NTP and the
+  time in Settings (`settings/src/system.rs`), dark mode on the 19:00–07:00 schedule; the clock shows the new zone at
+  its next redraw.
 
 ### E2.7 On-screen display (OSD) for media keys
 - **What it is:** the small indicator when you press volume / brightness / mute keys.
@@ -801,6 +848,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   the OSD is visible, banners move down by 56 px (spring `snappy`), so the two never overlap.
 - **Built with:** key events from libinput; PipeWire (`wpctl`) / logind brightness.
 - **Done when:** volume, brightness, mute and play/pause keys all work and show the OSD.
+- **Built:** `src/render/osd.rs`, shown 1.5 s (`OSD_TIME`), for every media key in `src/shortcuts.rs`; a held volume
+  key costs one `wpctl` call per 30 ms (`src/services/sound.rs` `coalesce`, E1.11). Not yet: banners jump the 56 px
+  under the OSD instead of springing.
 
 ### E2.8 Quake terminal hotkey
 - **What it is:** F12 (configurable) drops noobsbot-terminal down from the top, on any Space.
@@ -811,6 +861,8 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Why:** reuses the owner's existing feature; no change to noobsbot needed. F12 is also Helium's DevTools key: while
   the desktop owns F12, DevTools still opens with Ctrl+Shift+I; the key is configurable.
 - **Done when:** F12 slides it in and out at once (a fade with reduce motion), on top of fullscreen apps too.
+- **Built:** F12 shows and hides it (`toggle_quake`, starting `noobsbot --quake` when it isn't running), placed by the
+  quake `[[rules]]` entry (`space = "all"`, `layer = "overlay"`). Not yet: square top corners (all four are rounded).
 
 ### E2.9 Universal glass theme for apps (Dolphin, Kate & every other app)
 - **What it is:** apps that aren't drawn by Noobsbot Desktop (Dolphin, Kate, Partition Manager, System Monitor,
@@ -868,6 +920,9 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Done when (M2):** Dolphin and Kate match the approved mockups in light and dark; **(M6):** Partition Manager, System
   Monitor and Filelight too; the sidebar is glassy (or solid if the L8 fallback was taken), the content area readable (contrast ≥ 4.5:1); changing the accent recolours the desktop
   and these apps together.
+- **Done:** `src/theme.rs` (`noobsbot-desktop theme --write`: the Kvantum theme, Qt colour schemes, kdeglobals,
+  gtk-3.0 / gtk-4.0 css, gsettings), rewritten on an accent or mode change; the session wrapper sets the Qt style
+  variables. The look against the mockups isn't checked here.
 
 **M2 hardware covered:** Wi-Fi, Ethernet, Bluetooth, sound (speakers, mic, headphones, HDMI, Bluetooth audio),
 brightness, battery, media/function keys.
@@ -957,6 +1012,11 @@ Goal: the owner's current dock (Plank, Transparent-Tight theme), rebuilt nativel
   Rebuilding it inside Noobsbot Desktop keeps the same look and behaviour while being native Wayland, faster and lighter.
 - **Done when:** compared side by side with Plank (same icon size, zoom, theme, hide mode and timings), the dock is
   indistinguishable in look and behaviour, and every function in the table works, on each monitor.
+- **Built:** `src/shell/dock.rs`, `src/shell/dock_fx.rs` and `src/render/dock.rs`: zoom, every hide mode, launch and
+  urgent bounces, the urgent glow, running dots, drag to reorder, remove and pin, file drops, badges and progress
+  (`com.canonical.Unity.LauncherEntry`), the Plank import (`src/shell/plank.rs`), a dock per display (E8.3). Not yet:
+  the `whitesur-dark` and `glass` presets; the focused app's highlight fading in over 300 ms; the small shadow behind
+  each icon.
 
 **M3 done when:** all of the above; mockup review passed.
 
@@ -991,6 +1051,9 @@ Goal: everything that informs you and helps you find things.
 - **Why built in:** every Linux app already sends notifications through this standard, so they all work
   unchanged. Built in (not mako/dunst) for RAM and an identical look (C5).
 - **Done when:** `notify-send "Title" "Body"` shows a correct banner; actions call back the app; DND silences everything.
+- **Done:** `src/services/notifications.rs` (actions, urgency, replaces, the progress hint, history) and the banners
+  in `src/shell/notify.rs` (three, then "+N more"; 5 s; alert style; quiet under Do Not Disturb or a fullscreen app;
+  the swipe above).
 
 ### E4.2 Notification Center (the notification panel)
 - **What it is:** a panel on the right side with all notifications plus widgets.
@@ -1031,16 +1094,18 @@ Goal: everything that informs you and helps you find things.
   - **Widgets** (in `card` material, radius 12):
     | Widget | Content | Data from |
     |---|---|---|
-    | Calendar | month grid (E2.5); later "Up Next" events | `chrono`; later `.ics` / CalDAV |
+    | Calendar | month grid (E2.5); ~~later~~ "Up Next" events (done: the card above the month) | `chrono`; `.ics` (`src/ical.rs`, `src/events.rs`); CalDAV not yet |
     | Batteries | laptop + Bluetooth devices (headphones, mouse) | UPower |
     | World Clock (optional) | Built: after Weather, a row per city in `[widgets] clocks` (off while empty): its time in the clock's 12/24 h format, then the day and offset from here ("Tomorrow, +5:45"); redrawn on the menu-bar clock's minute tick | the system zoneinfo, read as `.ics` TZIDs are (no `chrono-tz`) |
-    | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open) | `/proc`, `/sys` |
-    | Weather (optional, later) | needs an online weather API, so off by default | later decision |
+    | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open). Built as a widget app: CPU, memory and disk every 5 s; not yet network ↑/↓ or refreshing only while open | `/proc`, `/sys` (`src/bin/widget-system.rs`) |
+    | Weather (done, off by default) | Open-Meteo forecast for the place in `[weather]` (no key, no account) | `src/services/weather.rs` (E7.2) |
   - "Edit Widgets…" (under the widgets) opens Settings ▸ Notifications, which shows, hides and reorders other apps' widgets (`[widgets]`) for Notification Center and the desktop.
 - **Built with:** our widgets; the notification store from E4.1; UPower; chrono.
 - **Why:** this is the design's notification panel (R1, R13); a single place for missed notifications.
 - **Done when:** notifications arrive in history, group by app, expand/collapse, clear and act; widgets show live data;
   open/close animates at 120 Hz.
+- **Done:** `src/shell/notify.rs` `center` (history of 100, groups, Clear All, the Do Not Disturb row, ⚙ and Edit
+  Widgets…), opened by the clock and Super+N; Up Next and Weather as in the table.
 
 ### E4.3 Spotlight (search & launcher)
 - **What it is:** Super+Space opens a search box to launch apps and calculate.
@@ -1070,6 +1135,9 @@ Goal: everything that informs you and helps you find things.
   Fuzzy matching finds "Helium" from "hlm". Files come from `plocate`'s existing database, not an index of our own
   (Open-4).
 - **Done when:** any installed app is found within 1 frame of typing and launches on Enter.
+- **Done:** `src/shell/spotlight.rs` (a top hit, apps, settings, the calculator, files from recent files and `plocate`
+  off the UI thread) and `src/render/spotlight.rs`; its own matcher and evaluator rather than `nucleo-matcher` /
+  `evalexpr`.
 
 ### E4.4 Launchpad (app grid)
 - **What it is:** a full-screen grid of all apps: Launchpad.
@@ -1092,6 +1160,8 @@ Goal: everything that informs you and helps you find things.
 - **Built with:** the shared app index + icons (M3); our widgets.
 - **Why:** the design calls for it (R1), and it's cheap because the app index and icons already exist.
 - **Done when:** all apps show, paging and search work, and opening/closing is smooth.
+- **Done:** `src/shell/launchpad.rs` (pages and dots, search, folders, `launchpad.json`, drag to the dock),
+  `src/render/launchpad.rs`, the 4-finger pinch.
 
 ### E4.5 App switcher
 - **What it is:** Super+Tab to switch apps.
@@ -1101,6 +1171,8 @@ Goal: everything that informs you and helps you find things.
   Appears only after a 150 ms hold (a quick tap switches instantly).
 - **Built with:** our widgets + the window list the compositor already has (C5 benefit).
 - **Done when:** order is most-recently-used; it switches across Spaces (jumps to the app's Space).
+- **Done:** `src/shell/switcher.rs` (most recently used, Shift back, Q quits, H hides, pointer pick), across Spaces
+  through `reveal`.
 
 ### E4.6 USB drives & devices
 - **What it is:** plug in a USB drive or SD card and it just works.
@@ -1113,6 +1185,8 @@ Goal: everything that informs you and helps you find things.
   drives: Dolphin asks for the passphrase.
 - **Why:** udisks2 is the standard, and Dolphin already integrates with it.
 - **Done when:** plug → notification → open in Dolphin → eject → "safe to remove".
+- **Done:** `src/services/disks.rs` (UDisks2: auto-mount; Eject unmounts and powers off) and `src/shell/disks.rs` (the
+  "connected" and "can be removed" notifications).
 
 ### E4.7 Force Quit window & "not responding" detection
 - **What it is:** a Force Quit Applications window, plus a warning when an app freezes.
@@ -1140,6 +1214,9 @@ Goal: everything that informs you and helps you find things.
 - **Why built in:** the compositor is the only part that knows reliably which window belongs to which process,
   and it keeps working even when the system is busy.
 - **Done when:** a deliberately frozen test app is flagged within 5 s and can be force-quit from both the window and the alert.
+- **Done:** `src/shell/force_quit.rs` (`xdg_wm_base` pings, 5 s, SIGTERM then SIGKILL), "(Not Responding)" in the
+  title, the Wait / Force Quit alert, Super+Alt+Esc and the logo menu. Pings go out with input to the app, not on a
+  timer.
 
 **M4 hardware covered:** USB storage, SD cards.
 **M4 done when:** all elements pass; mockup review passed.
@@ -1154,7 +1231,7 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
 - **Design / behaviour:**
   - **Dynamic**: start with 1 Space; **+** in Mission Control adds one; ✕ on a Space thumbnail removes it
     (its windows move to the neighbouring Space). Option: fixed count (`spaces = 4`).
-  - **Switch:** Super+← / →, Super+1…9 (Ctrl+arrows and Ctrl+digits stay with the apps, E1.6), **3-finger swipe left/right** (E5.3), or click a Space in Mission Control.
+  - **Switch:** Super+← / →, Super+Ctrl+1…9 (Super+1…9 went to the dock, E8.3; Ctrl+arrows and Ctrl+digits stay with the apps, E1.6), **3-finger swipe left/right** (E5.3), or click a Space in Mission Control.
     The whole screen slides (spring `smooth`; follows the fingers with gestures).
   - **Move a window:** Super+Shift+← / → (the window comes with you), drag in Mission Control, or right-click title
     bar → Move to ▸ Space N.
@@ -1168,6 +1245,9 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   are **not drawn** (zero GPU) but their apps keep running. `ext-workspace-v1` (`protocols/workspaces.rs`) so other tools can list Spaces and switch to one.
 - **Why:** dynamic Spaces are the design (R1, R11); not drawing hidden Spaces keeps it free (R3).
 - **Done when:** all behaviours above work by keyboard, gesture and mouse; switching is interruptible midway.
+- **Built:** `src/spaces.rs` (dynamic or fixed Spaces, each display its own, slides that follow the fingers,
+  fullscreen Spaces, jumps through `reveal`), `src/protocols/workspaces.rs`, the menu-bar indicator above. Not yet:
+  the switch pill fading out (it vanishes after 0.8 s).
 
 ### E5.2 Mission Control & App Exposé
 - **What it is:** an overview of all windows and Spaces.
@@ -1195,6 +1275,8 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
 - **Built with:** layout algorithm in `mission.rs` (pure function, unit-tested); live window textures (only while open).
 - **Why:** thumbnails reuse the textures the apps already gave us, so no extra rendering happens while closed.
 - **Done when:** with 10+ windows, opening and closing stays at full frame rate; layout never overlaps.
+- **Done:** `src/mission.rs` (a grid that never overlaps, unit tested; the Spaces bar) and `src/render/mission.rs`
+  (live thumbnails, dim, accent ring and title); Super+↑ / ↓, 3-finger swipes and hot corners open it.
 
 ### E5.3 Touchpad gestures (full system set)
 - **What it is:** the multi-finger gesture set.
@@ -1219,7 +1301,7 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
     3-finger swipes to apps.
   - Gesture settings: sensitivity, natural scrolling, tap-to-click, finger count; in config now, Trackpad page in M7.
 - **Built with:** **libinput** gesture events (swipe / pinch / hold with begin–update–end and finger count) via
-  Smithay; our recogniser in `input.rs` (gesture → action, with velocity tracking); pinch goes to apps through the
+  Smithay; our recogniser in `gestures.rs` (gesture → action, with velocity tracking); pinch goes to apps through the
   `pointer-gestures` protocol, 2-finger movement as normal scroll events.
 - **Why:** libinput already recognises multi-finger gestures reliably on every Linux touchpad (with palm rejection).
   We only map them to actions and animate them. Following the fingers 1:1 is what makes gestures feel physical.
@@ -1227,12 +1309,17 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   libinput doesn't report where fingers are on the pad. Notification Center opens by clicking the clock, Super+N or a hot corner.
 - **Done when:** every gesture in the table works on a real touchpad, is interruptible, and has no false triggers
   while typing (palm rejection) or scrolling.
+- **Built:** `src/gestures.rs` (the recogniser, with velocity and flicks, fed by `src/input.rs`): every row but
+  3-finger drag and the reserved hold; Space and Mission Control swipes follow the fingers. Not yet: 3-finger drag;
+  App Exposé, Launchpad and Show Desktop act on release instead of following the fingers.
 
 ### E5.4 Hot corners (optional, off by default)
 - **Design:** each screen corner can trigger: Mission Control · App Exposé · Desktop · Launchpad · Notification Center ·
   Lock Screen · nothing. 250 ms delay to avoid accidents; a small glass ripple shows the trigger.
-- **Built with:** pointer position in `input.rs`.
+- **Built with:** pointer position in `gestures.rs`.
 - **Done when:** each action triggers reliably and never during a drag.
+- **Done:** `src/gestures.rs` `Corners` (250 ms, once per visit, never while a grab runs), `[hot_corners]`, the
+  ripple.
 
 ### E5.5 Window animation polish
 - **Design:**
@@ -1240,13 +1327,16 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   |---|---|
   | Open | scale 0.92→1 + fade in, `smooth` |
   | Close | scale 1→0.95 + fade out, 150 ms |
-  | Minimise | window shrinks and slides into its dock spot ("scale" effect; a genie effect is optional later) |
+  | Minimise | window shrinks and slides into its dock spot ("scale" effect; the genie is `[dock] minimise_effect = "genie"`, E8.4) |
   | Restore | the reverse |
   | Zoom / un-zoom | frame springs to its new size |
   | Space switch, Mission Control, Show Desktop | follow the gesture, spring to the end |
   | Reduce motion on | 150 ms crossfades only |
 - **Built with:** `anim.rs` springs; the renderer draws window textures with transforms (no app redraw needed).
 - **Done when:** every animation can be interrupted (e.g. grab a window mid-minimise) without glitches.
+- **Built:** `src/anim.rs` (open, close, minimise into its dock spot or tile, the genie as `[dock] minimise_effect`,
+  restore picking up a minimise midway, zoom springs) and the Space slide (`src/spaces.rs`). Not yet: Show Desktop
+  following the gesture; with reduce motion, zoom and Show Desktop jump instead of crossfading.
 
 **M5 hardware covered:** multi-finger touchpad gestures.
 **M5 done when:** all elements pass at full frame rate; mockup review passed.
@@ -1269,6 +1359,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   virgl, a broken driver), the pixman CPU renderer starts instead, so the system is never unusable.
 - **Done when:** boots into Noobsbot Desktop on Intel, AMD and (with `nvidia-open`) NVIDIA; VT switch and back works; an
   Intel + NVIDIA laptop drives its dGPU HDMI port; QEMU without 3D acceleration still boots to a usable desktop.
+- **Built:** `src/backend/udev.rs` (libseat, libinput, GBM, `DrmCompositor`, a second GPU's monitor through
+  `MultiRenderer`, the GPU from `[display] gpu` else the boot VGA device, VT switching). Not yet: the pixman renderer;
+  without 3D, Mesa's software EGL driver (llvmpipe) runs the shaders instead.
 
 ### E6.2 Displays & multiple monitors
 - **What it is:** monitors, resolution, scaling, refresh rate, Night Shift.
@@ -1289,12 +1382,17 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   and config reload apply at once.
 - **Done when:** laptop + HDMI monitor at different scales works, survives unplug/replug and sleep/wake; unplugging
   every monitor and plugging one back loses no window; clamshell mode works.
+- **Done:** `src/displays.rs` (plan, clamshell, layouts per set of displays), the settle above,
+  `src/protocols/output_management.rs`, fractional scale; Night Light is a final shader pass (`src/render/night.rs`),
+  not the gamma table.
 
 ### E6.3 Direct scanout & idle inhibit
 - **What it is:** fullscreen video and games bypass compositing; videos keep the screen awake.
 - **Built with:** Smithay direct scanout; `idle-inhibit` protocol (Helium uses it during video).
 - **Why:** lower power and latency (R3).
 - **Done when:** fullscreen YouTube in Helium shows lower power use (`powertop`) than windowed, and the screen doesn't dim.
+- **Done:** direct scanout through `DrmCompositor` planes (client buffers passed through the `MultiRenderer` wrapper)
+  and idle inhibit (`src/idle.rs`). While Night Light is on, its pass keeps fullscreen apps off scanout.
 
 ### E6.4 Lock screen
 - **What it is:** protects the session when you step away.
@@ -1328,6 +1426,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   session ends and you return to the login screen; it never "fails open".
 - **Done when:** lock/unlock works from every trigger; no app content is visible or reachable while locked; a
   wrong password shakes the field.
+- **Done:** `src/shell/lock.rs` and `src/render/lock.rs`, PAM on a worker thread (`src/pam.rs`, its own FFI rather
+  than `pam-client`), ext-session-lock (`src/idle.rs`), the watchdog (`src/bin/watchdog.rs`), a logind delay inhibitor
+  so it locks before sleep.
 
 ### E6.5 Idle, sleep & power
 - **Design:** after idle time, the screen dims (2 min) → turns off (5 min) → sleeps (15 min on battery, never on
@@ -1341,11 +1442,14 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   `/etc/UPower/UPower.conf.d/50-noobsbot-desktop.conf` and we only show
   the 20% / 10% notifications (no double action). Hibernate: not in v1 (needs swap sizing at install time; L10).
 - **Done when:** each step happens on time; it locks on wake; videos (idle-inhibit) keep it awake.
+- **Built:** `src/idle.rs` (dim, off, lock and sleep from `[idle]`, low-battery warnings, ext-idle-notify), logind
+  inhibitors and `PrepareForSleep` (`src/services/login.rs`), UPower. Not yet: the power button's Sleep · Restart ·
+  Shut Down alert (it asks "Shut Down?" with a countdown).
 
 ### E6.6 Login screen
 - **What it is:** where you log in after boot.
 - **Design:** greetd + tuigreet (text, centred, clean) for M6. A **graphical glass login** that matches the
-  lock screen comes later (optional, M7+); greetd allows it, and Noobsbot Desktop could run in a "greeter mode".
+  lock screen ~~comes later (optional, M7+)~~ is built, opt-in (E7.2): greetd runs Noobsbot Desktop in its "greeter mode".
 - **Built with:** **greetd** (a tiny login daemon, written in Rust) + **tuigreet**.
 - **How it works:** greetd draws nothing itself. At boot systemd starts greetd → greetd starts the *greeter*
   (the login screen program) → the greeter sends the username and password over greetd's IPC socket → greetd checks
@@ -1381,6 +1485,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why:** minimal, doesn't depend on any desktop, the modern standard for lightweight setups.
   **Rejected:** SDDM (heavier), GDM (pulls in another desktop).
 - **Done when:** boot → tuigreet → log in → Noobsbot Desktop starts; logging out returns to tuigreet.
+- **Done:** greetd + tuigreet (`data/system/etc/greetd/config.toml`, enabled by `install.sh` with its security check);
+  the graphical greeter too (`--greeter`, `src/shell/greeter.rs`, opt-in with `install.sh --greeter`).
 
 ### E6.7 Session startup & system glue
 - **What happens at login:**
@@ -1406,10 +1512,13 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Session file:** `/usr/share/wayland-sessions/noobsbot-desktop.desktop` with `Exec=noobsbot-desktop-session` (the
   wrapper with watchdog and rollback, E6.13), so every login path starts the same way.
 - **Done when:** after login, screen sharing, file pickers, saved passwords and autostart apps all work.
+- **Done:** the session wrapper (`data/system/usr/bin/noobsbot-desktop-session`: the environment,
+  `dbus-update-activation-environment`), `noobsbot-desktop-session.target`, the portals config, the session file,
+  xwayland-satellite (`src/xwayland.rs`) and our polkit agent (`src/services/polkit.rs`).
 
 ### E6.8 Screenshots & screen recording/sharing
 - **Design:** Super+Shift+3 = whole screen, Super+Shift+4 = drag a region (crosshair, dimmed outside, size label),
-  Super+Shift+5 = toolbar (glass `hud`: Screen · Window · Region · Record later · Options). A thumbnail floats at the
+  Super+Shift+5 = toolbar (glass `hud`: Screen · Window · Region · Record · Options). A thumbnail floats at the
   bottom-right for 5 s (click = open, drag = drop into apps). Saved to `~/Pictures/Screenshots/Screenshot <date>.png`
   and copied to the clipboard. Shutter sound is optional.
 - **Built with:** the compositor already has the pixels → saved with `png`; screen sharing for Helium
@@ -1420,6 +1529,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   PipeWire frames (E7.2).
 - **Why:** browsers only share screens through the portal standard.
 - **Done when:** all three screenshot modes work; screen sharing works in Google Meet in Helium.
+- **Done:** `src/shell/screenshot.rs` and `src/render/screenshot.rs` (screen, window and region; the toolbar; file,
+  clipboard and thumbnail; recording through `wf-recorder`), wlr-screencopy for the portal (`src/capture.rs`).
+  `ext-image-copy-capture` isn't served (E6.11).
 - **Status:** dragging the thumbnail starts a compositor-owned Wayland drag (`text/uri-list` + `image/png`, written
   on a worker thread); it follows the pointer at half size and 60% opacity, and its 5 s timer waits. A drop an app
   takes dismisses it; a cancelled drop brings it back for 5 s; a drop on the dock goes to the dock (Trash trashes the
@@ -1429,6 +1541,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Built with:** **xwayland-satellite** (C10), started automatically.
 - **Limit:** XWayland apps are scaled as bitmaps on HiDPI screens (slightly soft text); native Wayland apps are sharp (L14).
 - **Done when:** an X11-only app (e.g. `xeyes`) opens with our title bar; xwayland-satellite is restarted automatically if it dies (E1.11).
+- **Done:** `src/xwayland.rs` (xwayland-satellite on a free display, restarted when it dies, given up after 5 quick
+  deaths).
 
 ### E6.10 Installer (`install.sh`)
 - **What it is:** one script that turns a fresh Arch install into Noobsbot Desktop.
@@ -1444,6 +1558,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why a script:** simple, readable, repeatable. An AUR `PKGBUILD` may come later (Open-3).
 - **Done when:** fresh Arch in a **QEMU VM** → `install.sh` → reboot → tuigreet → Noobsbot Desktop with every feature
   working; then the same on real hardware.
+- **Done:** `install.sh` (hardware detection, the AUR helper, a minisign-verified release or `--from-source`,
+  `--update`, `--advanced`, `--greeter`, system files, services, defaults, the security check, the Debian path) and
+  `scripts/test-install.sh`.
 - **Debian 13 (trixie):** the same script, same steps, in Debian's names (G4b). Differences: `apt-get
   --no-install-recommends` (the needed Recommends are listed); Helium from its own signed apt repository; WhiteSur
   from its git install scripts (pinned commits); `xwayland-satellite` from the release tarball into `/usr/local/bin`
@@ -1468,7 +1585,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Design:** We ask "‹App› would like to record this computer's screen". These globals are only
   advertised to **trusted clients** (the portals, xwayland-satellite, our Settings app, anything started with
   `noobsbot-desktop --trusted <cmd>`). Any other client that binds one gets a one-time **alert** (D8): "Allow ‹app› to
-  record the screen / control input?" with Allow / Deny, remembered per app in config (Settings ▸ Privacy later). Screen
+  record the screen / control input?" with Allow / Deny, remembered per app in config (Settings ▸ Privacy & Security, E8.2). Screen
   sharing from Helium goes through the portal's own picker, as on every desktop.
 - **Built with:** Smithay's per-client global filter + the client's pid/exe from the socket credentials (`perms.rs`,
   whose table says who sees each global; all of the above but `ext-image-copy-capture` are served);
@@ -1477,6 +1594,11 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   stricter than X11, and we keep that advantage.
 - **Done when:** `wf-recorder` started from a terminal triggers the alert; a portal screen share does not; a denied
   client receives no frames.
+- **Built:** `src/perms.rs` (who sees each global, the trusted socket, `--trusted`), per-client screencopy answers
+  with the screen-recording alert (`src/capture.rs`, `src/shell/alert.rs`), security-context. Not yet: the "control
+  input" alert (virtual keyboard and pointer go to trusted clients without asking); layer-shell, output management,
+  ext-workspace, foreign-toplevel-list and shortcuts-inhibit are offered to every unsandboxed client, as perms.rs's
+  table says.
 
 ### E6.12 Input methods (typing Nepali, Hindi, CJK)
 - **What it is:** the Noto fonts (Part H) let the desktop *show* Devanagari and CJK; this lets the owner *type* them.
@@ -1488,6 +1610,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   `QT_IM_MODULE` are **not** set, so native Wayland apps use text-input-v3).
 - **Why:** fcitx5 is the best-maintained Wayland IME; these two protocols are what Qt 6, GTK 4 and Chromium speak.
 - **Done when:** Nepali can be typed in Kate, Helium and noobsbot-terminal with the candidate popup next to the cursor.
+- **Built:** `src/ime.rs` (text-input-v3 and input-method-v2, the popup next to the cursor, layouts and fcitx5 methods
+  in the keyboard menu), `src/services/fcitx.rs`, `src/ibus.rs`, `XMODIFIERS` in the session wrapper. Not yet:
+  Super+Ctrl+Space cycling input methods (it cycles layouts); `install.sh` offering the fcitx5 set (it prints a hint).
 
 ### E6.13 Versioning, releases & Software Update (auto-updating)
 - **What it is:** how a version number is born, how a release is built, and how every installed desktop learns about
@@ -1564,6 +1689,10 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Done when:** merging a `feat:` commit produces a release PR with the right version and changelog; merging it
   produces a tagged, signed GitHub Release; a VM running 1.2.4 shows the notification, installs 1.3.0 at next login,
   and a deliberately broken 1.3.1 is rolled back automatically.
+- **Built:** release-plz and the release workflows (`release-plz.toml`, `.github/workflows/`), signed tarballs,
+  `src/services/update.rs` (with `curl`, not `ureq`), `src/bin/update-helper.rs`, the watchdog and rollback in the
+  session wrapper, the Settings page above. Not yet: the Report button on "was rolled back"; installing at the next
+  login without a click (Restart to Update and Update Now install it).
 
 **M6 hardware covered:** GPU (real), monitors, HDMI/USB-C displays, sleep/lid/power button, webcam (via portal),
 phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
@@ -1631,7 +1760,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Own polkit agent (done) | password prompts in our alert design instead of the fallback agent's | polkit agent D-Bus API + `polkit-agent-helper-1` (`services/polkit.rs`); the standard Qt agent is the fallback |
 | Weather widget (done, off by default) | forecast in Notification Center | Open-Meteo (no key, no account; city or lat/long, no IP lookup), `services/weather.rs` |
 | Fingerprint unlock | lock screen + sudo | `fprintd` |
-| Printers | printing from apps | CUPS |
+| Printers (done) | printing from apps | CUPS, through Settings ▸ Printers (`settings/src/printers.rs`, E8.2; untested with a print job) |
 | Desktop icons (done) | files in `~/Desktop` shown on the wallpaper (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
 | Emoji picker (done) | Super+Ctrl+E / Super+. popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
 | Own screen recorder | Super+Shift+5 ▸ Record without `wf-recorder` | compositor frames → PipeWire → `ffmpeg`/`gst` encoder |
@@ -1662,11 +1791,11 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 | ~~Space and Mission Control gestures fire on release instead of following the fingers (D10, E5.3); the README says they follow~~ | `src/gestures.rs` | Done: the slide and Mission Control follow the swipe, then a `gesture` spring from the fingers' speed; reduce motion acts on release |
 | ~~Logo menu "System Settings…" and "About This Computer" rows are disabled~~ | `src/shell/mod.rs` | Done: open Settings at Appearance / About |
 | ~~Do Not Disturb is lost on restart~~ | `src/shell/control.rs` | Done: saved as `[notifications] dnd` |
-| ~~Dock, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one)~~ | `src/backend/winit.rs`, `src/shell/notify.rs` | Done: a dock on every display (`[dock] displays = "all" \| "main" \| "pointer"`), hot corners on every display (closed where displays meet), banners on the main display, Notification Center on the clicked bar's display, alerts on the focused window's display (else the pointer's), the on-screen keyboard on the focused text field's display (else the pointer's), the switcher on the one it opened on; a lock client's surfaces each sized to their own display, ours over every display with the password on the main one; Launchpad on the pointer's display (or its dock's), Spotlight on the focused window's (else the pointer's), the app drawer over its dock icon on that dock's display, the screenshot toolbar and region on the pointer's display (a window shot on the window's), its thumbnail on the shot's |
+| ~~Dock, hot corners, notifications and the switcher appear on the first display only (D13 wants every display or the main one)~~ | `src/backend/winit.rs`, `src/shell/notify.rs` | Done: a dock on every display (`[dock] displays = "all" \| "main" \| "pointer"`), hot corners on every display (closed where displays meet), banners, the OSD, Force Quit, the emoji picker and the desktop icons and widgets on the main display (one output's caches and hit tests), Notification Center on the clicked bar's display, alerts on the focused window's display (else the pointer's), the on-screen keyboard on the focused text field's display (else the pointer's), the switcher on the one it opened on; a lock client's surfaces each sized to their own display, ours over every display with the password on the main one; Launchpad on the pointer's display (or its dock's), Spotlight on the focused window's (else the pointer's), the app drawer over its dock icon on that dock's display, the screenshot toolbar and region on the pointer's display (a window shot on the window's), its thumbnail on the shot's |
 | ~~`show-desktop` has no default key~~ | `data/config.toml` | Done: Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
-Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers (later)**. Every row writes `config.toml` or
+Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers**. Every row writes `config.toml` or
 calls the system service, and applies live.
 | Page | Add |
 |---|---|
@@ -1938,7 +2067,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Webcam | `uvcvideo` | PipeWire camera portal | none (works in Helium) | M6 |
 | Battery / power | ACPI | UPower, power-profiles-daemon | menu bar, Control Center, widget | M2 / M4 |
 | Sleep / lid / power button | ACPI | logind | E6.5 | M6 |
-| Printers (optional) | — | CUPS | app print dialogs | later |
+| Printers (optional) | — | CUPS | app print dialogs, Settings ▸ Printers | M8 |
 | Fingerprint (optional) | kernel | fprintd | lock screen | later |
 | Firmware updates (optional) | — | fwupd | notification | later |
 
