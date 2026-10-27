@@ -121,10 +121,14 @@ impl PointerGrab<State> for MoveGrab {
     }
 
     fn unset(&mut self, data: &mut State) {
-        if data.tile_preview.take().is_some() {
+        // No preview, no tile: a Space switch at the edge, or `end_drag`.
+        let previewed = data.tile_preview.take().is_some();
+        if previewed {
             data.schedule_redraw();
         }
-        if let Some(tile) = self.tile.take().filter(|_| data.edge_end()) {
+        // Always: a release at the edge after a switch must not keep switching.
+        let tiles = data.edge_end();
+        if let Some(tile) = self.tile.take().filter(|_| previewed && tiles) {
             data.tile(&self.window, tile);
         }
     }
@@ -289,6 +293,14 @@ impl State {
             r.start.loc = loc;
         }
         self.set_visible_loc(&window, loc);
+    }
+
+    /// Ends a move or resize in progress as a button release would, except that a move never tiles: a display went
+    /// (E1.2), or Mission Control took the window in hand.
+    pub fn end_drag(&mut self) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        self.tile_preview = None;
+        pointer.unset_grab(self, smithay::utils::SERIAL_COUNTER.next_serial(), 0);
     }
 
     /// Sends the app the size the pointer asks for, unless a configure is still unanswered.
