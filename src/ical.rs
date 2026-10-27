@@ -9,8 +9,8 @@ use std::{collections::HashMap, path::Path, sync::Arc};
 
 use chrono::{Datelike, Days, Local, Months, NaiveDate, NaiveDateTime, NaiveTime, TimeDelta, TimeZone, Weekday};
 
-/// Periods a rule is followed for, at most (a daily rule: 55 years).
-const MAX_PERIODS: u32 = 20_000;
+/// Days of periods a rule is followed for, at most: 110 years of one that repeats every period.
+const MAX_DAYS: u32 = 40_000;
 
 /// Where a wall-clock time is.
 #[derive(Debug, Clone, PartialEq)]
@@ -188,9 +188,11 @@ impl Event {
             (None, Freq::Monthly) => i64::from(near.year() - date.year()) * 12 + i64::from(near.month()) - i64::from(date.month()),
             (None, Freq::Yearly) => i64::from(near.year() - date.year()),
         };
+        // A period is looked at day by day, so each frequency gets the same span.
+        let periods = MAX_DAYS / period_days(rule.freq);
         // One period early, so nothing at the edge is missed.
-        let first = u32::try_from((skip / i64::from(rule.interval) - 1).max(0)).unwrap_or(u32::MAX - MAX_PERIODS);
-        for k in first..first + MAX_PERIODS {
+        let first = u32::try_from((skip / i64::from(rule.interval) - 1).max(0)).unwrap_or(u32::MAX - periods);
+        for k in first..first + periods {
             let Some(days) = k.checked_mul(rule.interval).and_then(|step| period(rule, date, step)) else { return };
             for day in days.into_iter().filter(|d| *d >= date) {
                 let t = day.and_time(time);
@@ -255,41 +257,72 @@ impl Event {
     }
 }
 
-/// The days of period `step` (in units of the rule's frequency, from `date`'s); `None` past chrono's range.
-fn period(rule: &Rule, date: NaiveDate, step: u32) -> Option<Vec<NaiveDate>> {
-    let days_of = |wd: Weekday| rule.by_day.is_empty() || rule.by_day.iter().any(|(_, d)| *d == wd);
-    let mut days: Vec<NaiveDate> = match rule.freq {
-        Freq::Daily => date.checked_add_days(Days::new(step.into())).into_iter().filter(|d| days_of(d.weekday())).collect(),
-        Freq::Weekly => {
-            let monday = date.checked_sub_days(Days::new(date.weekday().num_days_from_monday().into()))?;
-            let week = monday.checked_add_days(Days::new(u64::from(step) * 7))?;
-            let wanted: Vec<Weekday> = if rule.by_day.is_empty() { vec![date.weekday()] } else { rule.by_day.iter().map(|(_, d)| *d).collect() };
-            wanted.into_iter().filter_map(|d| week.checked_add_days(Days::new(d.num_days_from_monday().into()))).collect()
-        }
-        Freq::Monthly => {
-            let first = date.with_day(1)?.checked_add_months(Months::new(step))?;
-            if rule.by_day.is_empty() {
-                first.with_day(date.day()).into_iter().collect()
-            } else {
-                rule.by_day.iter().flat_map(|(n, d)| weekdays_in(first, *n, *d)).collect()
-            }
-        }
-        Freq::Yearly => NaiveDate::from_ymd_opt(date.year().checked_add(i32::try_from(step).ok()?)?, date.month(), date.day()).into_iter().collect(),
-    };
-    days.sort();
-    days.dedup();
-    Some(days)
+/// Days in a period, at most.
+fn period_days(freq: Freq) -> u32 {
+    match freq {
+        Freq::Daily => 1,
+        Freq::Weekly => 7,
+        Freq::Monthly => 31,
+        Freq::Yearly => 366,
+    }
 }
 
-/// The `n`th `wd` of `first`'s month (from the end when negative), or every one for 0.
-fn weekdays_in(first: NaiveDate, n: i32, wd: Weekday) -> Vec<NaiveDate> {
-    let all: Vec<NaiveDate> = first.iter_days().take_while(|d| d.month() == first.month()).filter(|d| d.weekday() == wd).collect();
-    let pick = match n {
-        0 => return all,
-        n if n > 0 => all.get(n as usize - 1),
-        n => all.len().checked_sub(n.unsigned_abs() as usize).and_then(|i| all.get(i)),
+/// The days the rule picks in period `step` (in units of its frequency, from `date`'s), in order; `None` past chrono's
+/// range.
+fn period(rule: &Rule, date: NaiveDate, step: u32) -> Option<Vec<NaiveDate>> {
+    let first = match rule.freq {
+        Freq::Daily => date.checked_add_days(Days::new(step.into()))?,
+        Freq::Weekly => {
+            let monday = date.checked_sub_days(Days::new(date.weekday().num_days_from_monday().into()))?;
+            monday.checked_add_days(Days::new(u64::from(step) * 7))?
+        }
+        Freq::Monthly => date.with_day(1)?.checked_add_months(Months::new(step))?,
+        Freq::Yearly => NaiveDate::from_ymd_opt(date.year().checked_add(i32::try_from(step).ok()?)?, 1, 1)?,
     };
-    pick.copied().into_iter().collect()
+    let inside = |d: &NaiveDate| match rule.freq {
+        Freq::Daily | Freq::Weekly => true,
+        Freq::Monthly => d.month() == first.month(),
+        Freq::Yearly => d.year() == first.year(),
+    };
+    Some(first.iter_days().take(period_days(rule.freq) as usize).take_while(inside).filter(|d| rule.matches(*d, date)).collect())
+}
+
+impl Rule {
+    /// Whether the rule picks day `d` of one of its periods; `start` is DTSTART's date, for what the rule leaves out.
+    fn matches(&self, d: NaiveDate, start: NaiveDate) -> bool {
+        // Without BYDAY a rule keeps DTSTART's weekday (weekly), day of the month (monthly) or date (yearly). Yearly
+        // rules don't read BYDAY.
+        let plain = self.by_day.is_empty() || self.freq == Freq::Yearly;
+        let month = match self.freq {
+            Freq::Yearly if plain => d.month() == start.month(),
+            _ => true,
+        };
+        let month_day = match self.freq {
+            Freq::Monthly | Freq::Yearly if plain => d.day() == start.day(),
+            _ => true,
+        };
+        // An ordinal counts in the month: `2MO` is the second Monday, `-1FR` the last Friday. Daily and weekly rules
+        // have none.
+        let (first, last) = month_of(d);
+        let nth = |n: i32| match n {
+            _ if n == 0 || matches!(self.freq, Freq::Daily | Freq::Weekly) => true,
+            n if n > 0 => (d - first).num_days() / 7 + 1 == i64::from(n),
+            n => (last - d).num_days() / 7 + 1 == -i64::from(n),
+        };
+        let weekday = match self.freq {
+            Freq::Yearly => true,
+            _ if !self.by_day.is_empty() => self.by_day.iter().any(|&(n, wd)| d.weekday() == wd && nth(n)),
+            Freq::Weekly => d.weekday() == start.weekday(),
+            Freq::Daily | Freq::Monthly => true,
+        };
+        month && month_day && weekday
+    }
+}
+
+/// The first and last day of `d`'s month.
+fn month_of(d: NaiveDate) -> (NaiveDate, NaiveDate) {
+    let first = d.with_day(1).unwrap_or(d);
+    (first, first.checked_add_months(Months::new(1)).and_then(|n| n.pred_opt()).unwrap_or(NaiveDate::MAX))
 }
 
 /// Every VEVENT in `text`; anything malformed is skipped.
