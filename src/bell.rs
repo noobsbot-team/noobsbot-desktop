@@ -87,7 +87,7 @@ impl State {
         }
     }
 
-    /// A user interface sound (`screen-capture`, `trash-empty`), unless `[sound] ui_sounds` is off.
+    /// A user interface sound (`screen-capture`, `audio-volume-change`), unless `[sound] ui_sounds` is off.
     pub fn ui_sound(&self, name: &str) {
         if self.config.sound.ui_sounds {
             play(name, 100);

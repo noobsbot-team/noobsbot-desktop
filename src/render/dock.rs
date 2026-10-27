@@ -89,9 +89,7 @@ pub struct DockView {
     peek_labels: Vec<Label>,
     peek_shadow: Option<((Rect, bool, u64), Option<PixelShaderElement>)>,
     peek_dim: Option<((Rect, bool, u64), PixelShaderElement)>,
-    /// The line before the minimised windows' tiles.
-    separator: Option<(Rect, PixelShaderElement)>,
-    /// The dots and the line are made for dark mode: light on the wallpaper, else dark.
+    /// The dots are made for dark mode: light on the wallpaper, else dark.
     dark: bool,
 }
 
@@ -267,7 +265,7 @@ impl DockView {
 }
 
 impl DockView {
-    /// Front to back: icons, their shadows, dots, the separator. Icons are rasterised once at `px` (the zoomed size)
+    /// Front to back: icons, their shadows, dots. Icons are rasterised once at `px` (the zoomed size)
     /// and scaled down by the GPU when smaller; so are their shadows, blurred to match.
     #[expect(clippy::too_many_arguments, reason = "the frame's renderer, shaders and caches, like every shell piece")]
     pub fn elements(
@@ -282,10 +280,10 @@ impl DockView {
         scale: f64,
     ) -> Vec<SceneElement> {
         if self.dark != dark {
-            (self.dark, self.separator) = (dark, None);
+            self.dark = dark;
             self.marks.clear();
         }
-        let (dot_rgba, line_rgba) = if dark { ([1.0, 1.0, 1.0, 0.9], [1.0, 1.0, 1.0, 0.35]) } else { ([0.0, 0.0, 0.0, 0.7], [0.0, 0.0, 0.0, 0.25]) };
+        let dot_rgba = if dark { [1.0, 1.0, 1.0, 0.9] } else { [0.0, 0.0, 0.0, 0.7] };
         // The small shadow under each icon (Plank's IconShadowSize 1): D6 level 1, dark like the dock, in the zoomed
         // bitmap's px. Its σ is blur / 2 at rest; three box passes of radius r give σ ≈ r + ½.
         let d6 = super::Shadow::of(1, true).expect("D6 level 1 casts a shadow");
@@ -379,15 +377,6 @@ impl DockView {
             })
             .collect();
         out.extend(self.marks.iter().map(|(_, e)| SceneElement::Shader(e.clone())));
-        // A thin line as tall as the icons at rest, a sixth of it clear at either end.
-        let line = layout.separator.map(|x| {
-            let (top, h) = (layout.zone.loc.y, layout.icon as i32);
-            Rectangle::new(((x - 0.5).round() as i32, top + h / 6).into(), (1, h - h / 3).into())
-        });
-        if self.separator.as_ref().map(|(r, _)| *r) != line {
-            self.separator = line.map(|rect| (rect, shaders.light(rect, line_rgba, false, scale)));
-        }
-        out.extend(self.separator.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
         out
     }
 }

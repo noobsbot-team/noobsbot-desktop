@@ -672,7 +672,7 @@ impl State {
         frame
     }
 
-    /// Minimises `windows`: into tiles at the dock's right end, or (`[dock] minimise_into_icon`) their app's icon.
+    /// Minimises `windows` into their app's dock icon.
     pub fn minimise(&mut self, windows: Vec<Window>) {
         windows.iter().for_each(|w| super::dock::set_minimised(w, true));
         self.hide_windows(windows);
@@ -881,7 +881,7 @@ mod tests {
 
     #[test]
     fn sliding_moves_the_whole_dock() {
-        let l = super::super::dock::layout(3, 0, (1920, 1200).into(), 84, 1.0, 0.0, None);
+        let l = super::super::dock::layout(3, (1920, 1200).into(), 84, 1.0, 0.0, None);
         let s = l.clone().slid(50.0);
         assert_eq!(s.zone.loc.y, l.zone.loc.y + 50);
         assert_eq!(s.icons[1].loc.y, l.icons[1].loc.y + 50.0);

@@ -430,7 +430,7 @@ impl State {
         let dark = render::is_dark(appearance);
         let accent = render::accent(appearance.accent, dark);
         let zoom = if self.config.dock.zoom { f64::from(self.config.dock.zoom_percent) / 100.0 } else { 1.0 };
-        let Some(Views { shaders, docks, tiles, .. }) = self.backend.as_mut() else { return (Vec::new(), false) };
+        let Some(Views { shaders, docks, .. }) = self.backend.as_mut() else { return (Vec::new(), false) };
         let dock = docks.entry(output.name()).or_default();
         let mut bar = Vec::new();
         // Its window previews in front of it, the window hovered there (over a dim of the others) behind it.
@@ -441,24 +441,11 @@ impl State {
             let mut icons: Vec<DockIcon> = dock_items
                 .iter()
                 .zip(&dock_frame.shades)
-                .map(|(item, shade)| {
-                    let windows = if item.is_tile() { 0 } else { item.windows.len() };
-                    DockIcon { name: item.icon(), windows, shade: *shade }
-                })
+                .map(|(item, shade)| DockIcon { name: item.icon(), windows: item.windows.len(), shade: *shade })
                 .collect();
             let px = (layout.icon * zoom * scale).ceil() as u32;
             // The dragged icon follows the pointer: one more icon, without a column (so without dots).
             let mut layout = layout.clone();
-            // Minimised windows' tiles: the window's last frame, the app's icon small in the corner.
-            tiles.retain(|g| self.hidden.iter().any(|(w, _)| *w == g.window));
-            let mut thumbs = Vec::new();
-            for (i, item) in dock_items.iter().enumerate().filter(|(_, i)| i.is_tile()) {
-                let Some(ghost) = tiles.iter().find(|g| item.windows.contains(&g.window)) else { continue };
-                let (thumb, badge) = crate::shell::dock::tile_rects(layout.icons[i], ghost.frame().size);
-                layout.icons[i] = badge;
-                let alpha = f64::from(dock_frame.shades[i].alpha);
-                thumbs.push(ghost.drawn(renderer, crate::anim::Look { rect: thumb, alpha }, scale));
-            }
             let held = self.dock_ui.dragged().and_then(|key| dock_items.iter().find(|i| i.key == key));
             if let Some((item, at)) = held.zip(held_at) {
                 let s = layout.icon;
@@ -470,7 +457,6 @@ impl State {
             bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &dock_frame.tips, dark, scale));
             bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
             bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, dark, scale));
-            bar.extend(thumbs);
             bar.extend(DockView::poofs(shaders, &dock_frame.poofs, layout.icon, scale));
         } else {
             bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &[], dark, scale));
@@ -777,7 +763,6 @@ impl State {
             mission,
             missions: _,
             ghosts,
-            tiles: _,
             entrances,
             lock: lock_view,
             screenshot: _,

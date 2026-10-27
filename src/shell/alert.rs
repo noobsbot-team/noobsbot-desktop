@@ -85,8 +85,6 @@ pub enum Kind {
     },
     /// A Thunderbolt device waits for boltd's authorization (E8.8): Don't Allow / Allow.
     Thunderbolt(Accessory),
-    /// The Trash's Empty Trash (E8.8).
-    EmptyTrash,
     /// An admin password for polkit (E7.2): `user` indexes `auth.users` (Tab picks the next); `checking` while
     /// polkit's helper has it; `wrong` since the last wrong one (the field shakes, the body says so).
     Polkit {
@@ -129,7 +127,6 @@ impl Alert {
             Kind::ControlInput { app, .. } => format!("Allow “{app}” to control this computer's keyboard and mouse?"),
             Kind::Thunderbolt(a) => format!("Allow “{}” to connect?", a.name),
             Kind::Polkit { auth, .. } => auth.message.clone(),
-            Kind::EmptyTrash => "Are you sure you want to permanently erase the items in the Trash?".into(),
         }
     }
 
@@ -158,7 +155,6 @@ impl Alert {
                 program(exe)
             ),
             Kind::Thunderbolt(_) => "Allow only accessories you trust. Once allowed, it connects by itself next time.".into(),
-            Kind::EmptyTrash => "You can't undo this action.".into(),
             Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
             Kind::Polkit { auth, user, .. } => {
                 let name = auth.users.get(*user).map_or("", String::as_str);
@@ -187,7 +183,6 @@ impl Alert {
             Kind::Wifi { .. } => "Join",
             Kind::Pin { .. } => "Pair",
             Kind::ScreenRecording { .. } | Kind::ControlInput { .. } | Kind::Thunderbolt(_) => "Allow",
-            Kind::EmptyTrash => "Empty Trash",
             Kind::Polkit { .. } => "OK",
         }
     }
@@ -460,13 +455,6 @@ impl State {
                     self.services.send(Command::Thunderbolt(accessory.uid));
                 }
                 return self.ask_thunderbolt();
-            }
-            Kind::EmptyTrash if button == Button::Cancel => return,
-            Kind::EmptyTrash => {
-                // Off the frame thread: a big trash takes a while; the watcher turns the icon empty.
-                let _ = std::thread::Builder::new().name("empty-trash".into()).spawn(crate::shell::trash::empty_all);
-                self.ui_sound("trash-empty");
-                return;
             }
             Kind::Polkit { .. } => return,
         };

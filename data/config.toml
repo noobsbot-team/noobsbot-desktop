@@ -255,8 +255,8 @@ hide_delay = 0
 unhide_delay = 0
 # No dragging icons in, out or around, and no Keep in Dock.
 lock_items = false
-# Show only pinned apps; show only the current Space's running apps and windows (with a dock on every display,
-# each dock shows its own display's).
+# Show only pinned apps (and apps with a minimised window); show only the current Space's running apps and windows
+# (with a dock on every display, each dock shows its own display's).
 pinned_only = false
 current_workspace_only = false
 # The app's name over the hovered icon.
@@ -270,13 +270,9 @@ middle = "new"
 scroll = "on"
 # Cycling by click or scroll goes on past an app's last window into the next dock app's, round the dock.
 cycle_across_apps = false
-# Minimised windows go into their app's icon; false: thumbnail tiles at the dock's right end, after a separator.
-minimise_into_icon = false
 # How windows minimise: "scale" (shrink and slide) or "genie" (narrow into the dock, bottom first).
 # Reduce motion makes either a crossfade.
 minimise_effect = "scale"
-# The Trash at the dock's right end, after a separator: click opens it, drop files on it to trash them.
-show_trash = true
 # The dock menu's Options ▸ Assign To, per app: "all" puts its windows on every Space; "<display>:<n>" opens its new
 # windows on Space n of that display. E.g. assign = { "org.kde.kate" = "all", "kitty" = "DP-1:2" }
 assign = {}
@@ -317,7 +313,7 @@ dim_on_battery = true
 alert = "bell"
 # The alert sound's volume, 0-100 (percent of the output volume). User interface sounds stay at full volume.
 alert_volume = 100
-# Play user interface sound effects: taking a screenshot, emptying the Trash, the volume keys.
+# Play user interface sound effects: taking a screenshot, the volume keys.
 ui_sounds = true
 # Play a sound at login ("desktop-login" from a sound theme, else "service-login"); not again when the desktop restarts.
 startup_sound = false

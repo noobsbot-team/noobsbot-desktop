@@ -736,7 +736,7 @@ pub struct Dock {
     pub unhide_delay: u32,
     /// No dragging icons in, out or around, and no Keep in Dock.
     pub lock_items: bool,
-    /// Only pinned apps, no other running ones.
+    /// Only pinned apps, no other running ones but those with a minimised window.
     pub pinned_only: bool,
     /// Running apps and their windows from the current Space only.
     pub current_workspace_only: bool,
@@ -750,12 +750,8 @@ pub struct Dock {
     pub scroll: DockScroll,
     /// Cycling by click or scroll goes on past an app's last window into the next app's.
     pub cycle_across_apps: bool,
-    /// Minimised windows go into their app's icon instead of tiles after the separator.
-    pub minimise_into_icon: bool,
     /// How a window goes into the dock and comes back (E5.5).
     pub minimise_effect: MinimiseEffect,
-    /// The Trash at the dock's right end, after a separator (E8.8).
-    pub show_trash: bool,
     /// Options ▸ Assign To, per dock app (item key): `"all"` (every Space) or `"<display>:<n>"` (its new windows
     /// open on Space n of that display).
     pub assign: BTreeMap<String, String>,
@@ -1116,9 +1112,7 @@ impl Default for Dock {
             middle: DockMiddle::New,
             scroll: DockScroll::On,
             cycle_across_apps: false,
-            minimise_into_icon: false,
             minimise_effect: MinimiseEffect::Scale,
-            show_trash: true,
             assign: BTreeMap::new(),
             displays: DockDisplays::All,
             outputs: BTreeMap::new(),
@@ -1134,7 +1128,7 @@ pub struct Sound {
     pub alert: String,
     /// The alert sound's volume, 0 … 100 percent.
     pub alert_volume: u8,
-    /// Screenshots, emptying the Trash and the volume keys make their sounds.
+    /// Screenshots and the volume keys make their sounds.
     pub ui_sounds: bool,
     /// A sound as the session starts (once per login).
     pub startup_sound: bool,
@@ -2072,6 +2066,12 @@ mod tests {
         let c = parse("colour = 1\n[windows]\nsnaping = false\n[future]\nx = 1\n[[rules]]\napp_id = \"x\"\nwobbly = true").unwrap();
         assert!(c.windows.snapping);
         assert_eq!(c.rules.len(), 1);
+    }
+
+    #[test]
+    fn retired_dock_keys_still_load() {
+        let c = parse("[dock]\nitems = [\"firefox\", \"trash\"]\nshow_trash = false\nminimise_into_icon = false").unwrap();
+        assert_eq!(c.dock.items, ["firefox", "trash"], "the dock skips the old Trash entry itself");
     }
 
     #[test]
