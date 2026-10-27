@@ -1161,7 +1161,7 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   - Clicking a dock icon or picking an app in the switcher **jumps to the Space** where its window is.
   - **Assign app:** dock → Options ▸ This Space / All Spaces / None (the quake terminal = All Spaces).
   - **Indicator:** on switch, a small `hud` pill at the top centre with dots (current dot = `label`, others @ 30%), fades after 0.8 s.
-  - Optional Space number/dots in the menu bar (off by default).
+  - Optional Space number/dots in the menu bar (off by default). Built: `[menu_bar] space_indicator = "number" | "dots"`, left of the status items; the number counts desktops as Mission Control names them (a fullscreen Space shows its app's name); dots are one per Space on that display (others @ 30%), each display its own with `[spaces] per_display`; a click opens Mission Control.
 - **Built with:** `spaces.rs`: per monitor a list of Spaces, each with its own window stack and focus. Hidden Spaces
   are **not drawn** (zero GPU) but their apps keep running. `ext-workspace-v1` (`protocols/workspaces.rs`) so other tools can list Spaces and switch to one.
 - **Why:** dynamic Spaces are the design (R1, R11); not drawing hidden Spaces keeps it free (R3).

@@ -166,7 +166,7 @@ fn popup_for(item: BarItem) -> Option<Popup> {
         BarItem::ControlCenter => Some(Popup::Control),
         BarItem::Overflow => Some(Popup::Menu(Menu::Overflow)),
         // Its menu comes over D-Bus first: see `tray_press`.
-        BarItem::Status(_) | BarItem::Tray(_) => None,
+        BarItem::Status(_) | BarItem::Tray(_) | BarItem::Space => None,
     }
 }
 
@@ -683,6 +683,7 @@ impl State {
                 self.toggle_recording();
             }
             BarItem::Status(_) => self.module_opened(),
+            BarItem::Space => self.run_action(crate::shortcuts::Action::MissionControl),
             _ => {}
         }
     }
