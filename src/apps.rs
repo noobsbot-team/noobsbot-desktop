@@ -619,11 +619,13 @@ impl Icons {
     /// Icon `name` (an `App::icon`) for a `px`-sized square. `None`: the theme has no such icon, or it isn't drawn
     /// yet and no other size of it is.
     pub fn get(&mut self, name: &str, px: u32) -> Option<Arc<Rendered>> {
-        self.fetch(name, px, 0).or_else(|| {
-            // Until it lands: the same icon at the nearest size there is (the GPU scales it).
-            let other = self.cache.iter().filter(|((n, _, s), r)| n == name && *s == 0 && r.width > 0);
-            other.min_by_key(|((_, p, _), _)| p.abs_diff(px)).map(|(_, r)| r.clone())
-        })
+        let found = self.fetch(name, px, 0);
+        if found.is_some() || !self.pending.contains(&(name.to_owned(), px, 0)) {
+            return found;
+        }
+        // Until it lands: the same icon at the nearest size there is (the GPU scales it).
+        let other = self.cache.iter().filter(|((n, _, s), r)| n == name && *s == 0 && r.width > 0);
+        other.min_by_key(|((_, p, _), _)| p.abs_diff(px)).map(|(_, r)| r.clone())
     }
 
     /// The dock's shadow of icon `name` at `px` (`shadow` at radius `r`): `None` until the thread has made it, with no
