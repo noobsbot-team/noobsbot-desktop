@@ -550,6 +550,9 @@ pub(super) fn window_elements(
     // The frame: content plus our title bar. Content is clipped to the frame's corners, so under a title bar only its
     // bottom corners round.
     let frame = Rectangle::new(geo.loc - Point::from((0, bar)), geo.size + Size::from((0, bar)));
+    // Resizing (E1.2): the frame at the size asked for while the app catches up, its last buffer pinned inside.
+    let asked = crate::grabs::asked(window).map(|r| Rectangle::new(r.loc - output_loc, r.size)).filter(|r| *r != frame);
+    let frame = asked.unwrap_or(frame);
     let frame_px = frame.to_physical_precise_round(scale);
     out.extend(surfaces.into_iter().map(|inner| {
         SceneElement::Rounded(RoundedElement { inner, program: shaders.rounded.clone(), geo: frame_px, radius: WINDOW_RADIUS * scale, clip: None })
@@ -557,6 +560,12 @@ pub(super) fn window_elements(
     let focused = state.states.contains(xdg_toplevel::State::Activated);
     if bar > 0 {
         out.extend(titlebar::elements(renderer, shaders, text, window, frame, focused, dark, scale));
+    }
+    // The strip the old buffer leaves bare: `window-bg` (a title bar's glass already spans the frame).
+    // ponytail: a new element each frame while resizing; keep it on the window like the shadow if that shows.
+    if asked.is_some() && bar == 0 {
+        let bg = f32::from(if dark { 0x1E_u8 } else { 0xEC }) / 255.0;
+        out.push(SceneElement::Shader(shaders.glass_shape(frame, [bg, bg, bg, 1.0], WINDOW_RADIUS, false, dark, scale)));
     }
     let elevation = if focused { 5 } else { 4 };
     out.extend(window_shadow(shaders, window, frame, elevation, dark, scale).map(SceneElement::Shader));

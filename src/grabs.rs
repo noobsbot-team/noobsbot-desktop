@@ -1,5 +1,7 @@
 //! Interactive move and resize (E1.2): pointer grabs that apply the rules in wm.rs to a live window.
 
+use std::cell::Cell;
+
 use smithay::{
     desktop::Window,
     input::pointer::{
@@ -205,6 +207,27 @@ impl PointerGrab<State> for ResizeGrab {
     forward_pointer_events!();
 }
 
+/// The frame a resize asks for, kept on its window for the renderer (`asked`).
+struct Asked(Cell<Option<Rect>>);
+
+/// The frame `window` is being resized to (space coordinates): drawn at once, the app's last buffer pinned inside it
+/// until the app catches up (E1.2).
+pub fn asked(window: &Window) -> Option<Rect> {
+    window.user_data().get::<Asked>().and_then(|a| a.0.get())
+}
+
+fn ask(window: &Window, rect: Option<Rect>) {
+    window.user_data().insert_if_missing(|| Asked(Cell::new(None)));
+    if let Some(asked) = window.user_data().get::<Asked>() {
+        asked.0.set(rect);
+    }
+}
+
+/// The frame of `size` a resize from `start` asks for: pinned like the app's buffers are (`wm::resize_anchor`).
+fn asked_frame(start: Rect, edges: Edges, symmetric: bool, size: Size<i32, Logical>) -> Rect {
+    Rect::new(wm::resize_anchor(start, edges, symmetric, size), size)
+}
+
 pub fn edges_from(edge: xdg_toplevel::ResizeEdge) -> Edges {
     let bits: u32 = edge.into();
     Edges { top: bits & 1 != 0, bottom: bits & 2 != 0, left: bits & 4 != 0, right: bits & 8 != 0 }
@@ -235,7 +258,7 @@ impl State {
     pub fn start_resize(&mut self, window: Window, edges: Edges, start_data: GrabStartData<State>, serial: smithay::utils::Serial) {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let Some(start) = self.frame(&window) else { return };
-        self.resize = Some(Resize { window, edges, start, symmetric: false, desired: start.size, sent: Some(start.size), waiting: false, released: false });
+        self.set_resize(Some(Resize { window, edges, start, symmetric: false, desired: start.size, sent: Some(start.size), waiting: false, released: false }));
         pointer.set_grab(self, ResizeGrab { start_data }, serial, smithay::input::pointer::Focus::Clear);
     }
 
@@ -250,7 +273,7 @@ impl State {
         let (Some(start), Some(area)) = (self.frame(&window), self.window_area(&window)) else { return };
         let desired = wm::grow_to(start, area, edges).size;
         // A released resize: one configure, then the commit pins the window to the opposite edge.
-        self.resize = Some(Resize { window, edges, start, symmetric: false, desired, sent: None, waiting: false, released: true });
+        self.set_resize(Some(Resize { window, edges, start, symmetric: false, desired, sent: None, waiting: false, released: true }));
         self.flush_resize();
     }
 
@@ -278,7 +301,7 @@ impl State {
                         return;
                     }
                     let edges = Edges { right: true, bottom: true, ..Default::default() };
-                    self.resize = Some(Resize { window, edges, start: frame, symmetric: false, desired, sent: None, waiting: false, released: true });
+                    self.set_resize(Some(Resize { window, edges, start: frame, symmetric: false, desired, sent: None, waiting: false, released: true }));
                 }
             }
             return self.flush_resize();
@@ -303,8 +326,18 @@ impl State {
         pointer.unset_grab(self, smithay::utils::SERIAL_COUNTER.next_serial(), 0);
     }
 
-    /// Sends the app the size the pointer asks for, unless a configure is still unanswered.
+    /// Replaces the resize in progress; the old one's window goes back to its own frame.
+    fn set_resize(&mut self, resize: Option<Resize>) {
+        if let Some(old) = std::mem::replace(&mut self.resize, resize) {
+            ask(&old.window, None);
+        }
+    }
+
+    /// Sends the app the size the pointer asks for, unless a configure is still unanswered. The frame follows at once.
     pub fn flush_resize(&mut self) {
+        let Some(resize) = self.resize.as_ref() else { return };
+        ask(&resize.window, Some(asked_frame(resize.start, resize.edges, resize.symmetric, resize.desired)));
+        self.schedule_redraw();
         let Some(resize) = self.resize.as_mut() else { return };
         if resize.waiting || resize.sent == Some(resize.desired) {
             return;
@@ -338,9 +371,31 @@ impl State {
         let done = resize.released && resize.sent == Some(resize.desired);
         self.set_visible_loc(&window, loc);
         if done {
-            self.resize = None;
+            self.set_resize(None);
         } else {
             self.flush_resize();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_asked_frame_holds_the_old_buffer_against_the_far_edge() {
+        let start = Rect::new((100, 100).into(), (400, 300).into());
+        let left = Edges { left: true, ..Default::default() };
+        // Dragging the left edge out 100 px: the frame grows left at once; the buffer the app hasn't redrawn keeps
+        // its right edge on the frame's.
+        let frame = asked_frame(start, left, false, (500, 300).into());
+        assert_eq!(frame, Rect::new((0, 100).into(), (500, 300).into()));
+        let old = asked_frame(start, left, false, start.size);
+        assert_eq!(old, start);
+        assert!(frame.contains_rect(old) && old.loc.x + old.size.w == frame.loc.x + frame.size.w);
+        // Top-left corner in: pinned to the bottom right; Alt: to the centre.
+        let corner = Edges { top: true, left: true, ..Default::default() };
+        assert_eq!(asked_frame(start, corner, false, (300, 200).into()).loc, (200, 200).into());
+        assert_eq!(asked_frame(start, left, true, (600, 300).into()).loc, (0, 100).into());
     }
 }
