@@ -1231,7 +1231,7 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
 - **Design / behaviour:**
   - **Dynamic**: start with 1 Space; **+** in Mission Control adds one; ✕ on a Space thumbnail removes it
     (its windows move to the neighbouring Space). Option: fixed count (`spaces = 4`).
-  - **Switch:** Super+← / →, Super+1…9 (Ctrl+arrows and Ctrl+digits stay with the apps, E1.6), **3-finger swipe left/right** (E5.3), or click a Space in Mission Control.
+  - **Switch:** Super+← / →, Super+Ctrl+1…9 (Super+1…9 went to the dock, E8.3; Ctrl+arrows and Ctrl+digits stay with the apps, E1.6), **3-finger swipe left/right** (E5.3), or click a Space in Mission Control.
     The whole screen slides (spring `smooth`; follows the fingers with gestures).
   - **Move a window:** Super+Shift+← / → (the window comes with you), drag in Mission Control, or right-click title
     bar → Move to ▸ Space N.
@@ -1245,6 +1245,9 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   are **not drawn** (zero GPU) but their apps keep running. `ext-workspace-v1` (`protocols/workspaces.rs`) so other tools can list Spaces and switch to one.
 - **Why:** dynamic Spaces are the design (R1, R11); not drawing hidden Spaces keeps it free (R3).
 - **Done when:** all behaviours above work by keyboard, gesture and mouse; switching is interruptible midway.
+- **Built:** `src/spaces.rs` (dynamic or fixed Spaces, each display its own, slides that follow the fingers,
+  fullscreen Spaces, jumps through `reveal`), `src/protocols/workspaces.rs`, the menu-bar indicator above. Not yet:
+  the switch pill fading out (it vanishes after 0.8 s).
 
 ### E5.2 Mission Control & App Exposé
 - **What it is:** an overview of all windows and Spaces.
@@ -1272,6 +1275,8 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
 - **Built with:** layout algorithm in `mission.rs` (pure function, unit-tested); live window textures (only while open).
 - **Why:** thumbnails reuse the textures the apps already gave us, so no extra rendering happens while closed.
 - **Done when:** with 10+ windows, opening and closing stays at full frame rate; layout never overlaps.
+- **Done:** `src/mission.rs` (a grid that never overlaps, unit tested; the Spaces bar) and `src/render/mission.rs`
+  (live thumbnails, dim, accent ring and title); Super+↑ / ↓, 3-finger swipes and hot corners open it.
 
 ### E5.3 Touchpad gestures (full system set)
 - **What it is:** the multi-finger gesture set.
@@ -1296,7 +1301,7 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
     3-finger swipes to apps.
   - Gesture settings: sensitivity, natural scrolling, tap-to-click, finger count; in config now, Trackpad page in M7.
 - **Built with:** **libinput** gesture events (swipe / pinch / hold with begin–update–end and finger count) via
-  Smithay; our recogniser in `input.rs` (gesture → action, with velocity tracking); pinch goes to apps through the
+  Smithay; our recogniser in `gestures.rs` (gesture → action, with velocity tracking); pinch goes to apps through the
   `pointer-gestures` protocol, 2-finger movement as normal scroll events.
 - **Why:** libinput already recognises multi-finger gestures reliably on every Linux touchpad (with palm rejection).
   We only map them to actions and animate them. Following the fingers 1:1 is what makes gestures feel physical.
@@ -1304,12 +1309,17 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   libinput doesn't report where fingers are on the pad. Notification Center opens by clicking the clock, Super+N or a hot corner.
 - **Done when:** every gesture in the table works on a real touchpad, is interruptible, and has no false triggers
   while typing (palm rejection) or scrolling.
+- **Built:** `src/gestures.rs` (the recogniser, with velocity and flicks, fed by `src/input.rs`): every row but
+  3-finger drag and the reserved hold; Space and Mission Control swipes follow the fingers. Not yet: 3-finger drag;
+  App Exposé, Launchpad and Show Desktop act on release instead of following the fingers.
 
 ### E5.4 Hot corners (optional, off by default)
 - **Design:** each screen corner can trigger: Mission Control · App Exposé · Desktop · Launchpad · Notification Center ·
   Lock Screen · nothing. 250 ms delay to avoid accidents; a small glass ripple shows the trigger.
-- **Built with:** pointer position in `input.rs`.
+- **Built with:** pointer position in `gestures.rs`.
 - **Done when:** each action triggers reliably and never during a drag.
+- **Done:** `src/gestures.rs` `Corners` (250 ms, once per visit, never while a grab runs), `[hot_corners]`, the
+  ripple.
 
 ### E5.5 Window animation polish
 - **Design:**
@@ -1324,6 +1334,9 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   | Reduce motion on | 150 ms crossfades only |
 - **Built with:** `anim.rs` springs; the renderer draws window textures with transforms (no app redraw needed).
 - **Done when:** every animation can be interrupted (e.g. grab a window mid-minimise) without glitches.
+- **Built:** `src/anim.rs` (open, close, minimise into its dock spot or tile, the genie as `[dock] minimise_effect`,
+  restore picking up a minimise midway, zoom springs) and the Space slide (`src/spaces.rs`). Not yet: Show Desktop
+  following the gesture; with reduce motion, zoom and Show Desktop jump instead of crossfading.
 
 **M5 hardware covered:** multi-finger touchpad gestures.
 **M5 done when:** all elements pass at full frame rate; mockup review passed.
