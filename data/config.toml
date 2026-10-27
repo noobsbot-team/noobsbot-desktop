@@ -448,7 +448,7 @@ proxy_pac = ""
 "Super+Space" = "spotlight"
 # The app drawer; it also opens with a lone Super tap ([app_drawer] super_tap) and from an "app-drawer" dock item.
 "Super+A" = "app-drawer"
-# Next keyboard layout (E6.12); fcitx5 keeps its own switch key for its input methods.
+# Next input method while fcitx5 (or ibus) lists several, else next keyboard layout (E6.12).
 "Super+Ctrl+Space" = "input-source"
 "Super+Ctrl+Shift+Space" = "input-source previous"
 # The emoji picker (E7.2): types the emoji into the focused text field, or copies it.

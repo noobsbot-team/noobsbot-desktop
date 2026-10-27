@@ -248,7 +248,7 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   in the calendar, and as reminders.
 - **USB drives:** appear in a notification with Open and Eject.
 - **Typing other languages:** Super+Ctrl+Space switches keyboard layout. With fcitx5 installed, its input methods
-  (Nepali, Hindi, Chinese, Japanese, Korean…) appear in the input menu too.
+  (Nepali, Hindi, Chinese, Japanese, Korean…) appear in the input menu too, and Super+Ctrl+Space cycles them instead.
 - **Force Quit:** Super+Alt+Esc.
 
 ## Keyboard shortcuts
@@ -282,7 +282,7 @@ settings file.
 | Super+Alt+8, Super+Alt+= / - | Zoom on or off, in, out |
 | Super+Shift+Q | log out (asks first) |
 | Super+Alt+Esc | Force Quit |
-| Super+Ctrl+Space | next keyboard layout |
+| Super+Ctrl+Space | next input method (or keyboard layout) |
 | Super+Ctrl+Shift+Space | previous keyboard layout |
 | Super+Ctrl+E, Super+period | emoji picker |
 | F12 | quake terminal |
