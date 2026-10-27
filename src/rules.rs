@@ -43,6 +43,13 @@ pub struct Actions {
     pub opacity: Option<f32>,
 }
 
+impl Actions {
+    /// Hangs from the top edge, above fullscreen apps (the quake terminal, E2.8): its top corners are square.
+    pub fn hangs(&self) -> bool {
+        self.layer == Some(Layer::Overlay) && self.position.is_some_and(|[_, y]| matches!(y, Length::Px(0)) || matches!(y, Length::Fraction(f) if f == 0.0))
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum Space {
@@ -217,6 +224,10 @@ mod tests {
         assert_eq!((quake.layer, quake.decorations, quake.space), (Some(Layer::Overlay), Some(false), Some(Space::All(AllSpaces::All))));
         assert_eq!(quake.size.map(|[w, h]| (w.to_px(1920), h.to_px(1000))), Some((1920, 400)));
         assert_eq!(quake.position.map(|[x, y]| (x.to_px(1920), y.to_px(1000))), Some((0, 0)));
+        assert!(quake.hangs(), "square top corners");
+        assert!(!resolve(&r, "helium", "Picture in picture").hangs());
+        let lower = Actions { position: Some([Length::Px(0), Length::Fraction(0.01)]), ..quake.clone() };
+        assert!(!lower.hangs(), "1% down is off the edge");
         assert_eq!(resolve(&r, "", "Noobsbot Terminal"), Actions::default(), "a normal noobsbot window is left alone");
     }
 

@@ -513,6 +513,13 @@ fn window_shadow(shaders: &Shaders, window: &Window, rect: Rect, elevation: u8, 
     cache.as_ref().map(|(_, element)| element.clone())
 }
 
+/// The rounded rect a window's corners, shadow and fill follow: its frame, or for one hanging from the top edge
+/// (`Actions::hangs`) the frame stretched up by a radius, so its top corners land above it and it shows square ones.
+fn corners(frame: Rect, square_top: bool) -> Rect {
+    let up = if square_top { WINDOW_RADIUS.ceil() as i32 } else { 0 };
+    Rectangle::new(frame.loc - Point::from((0, up)), frame.size + Size::from((0, up)))
+}
+
 /// One window, front to back: popups, its surfaces clipped to rounded corners, our title bar if it has one, its
 /// shadow (5 focused, 4 not). Fullscreen windows get neither corners nor shadow.
 #[allow(clippy::too_many_arguments)]
@@ -540,7 +547,8 @@ pub(super) fn window_elements(
         })
         .collect();
     // The `opacity` window rule (E1.9) fades the app's content; our title bar and shadow stay solid.
-    let alpha = crate::state::ruled(window).and_then(|a| a.opacity).unwrap_or(1.0);
+    let rule = crate::state::ruled(window).unwrap_or_default();
+    let alpha = rule.opacity.unwrap_or(1.0);
     let surfaces: Vec<WaylandSurfaceRenderElement<GlesRenderer>> = render_elements_from_surface_tree(renderer, surface, loc, scale, alpha, Kind::Unspecified);
     // Fullscreen, or not drawn yet (mapped at 0,0 before its first buffer): no corners, no shadow.
     if state.states.contains(xdg_toplevel::State::Fullscreen) || surfaces.is_empty() || geo.size.w <= 0 || geo.size.h <= 0 {
@@ -553,7 +561,8 @@ pub(super) fn window_elements(
     // Resizing (E1.2): the frame at the size asked for while the app catches up, its last buffer pinned inside.
     let asked = crate::grabs::asked(window).map(|r| Rectangle::new(r.loc - output_loc, r.size)).filter(|r| *r != frame);
     let frame = asked.unwrap_or(frame);
-    let frame_px = frame.to_physical_precise_round(scale);
+    let rounded = corners(frame, rule.hangs());
+    let frame_px = rounded.to_physical_precise_round(scale);
     out.extend(surfaces.into_iter().map(|inner| {
         SceneElement::Rounded(RoundedElement { inner, program: shaders.rounded.clone(), geo: frame_px, radius: WINDOW_RADIUS * scale, clip: None })
     }));
@@ -565,10 +574,10 @@ pub(super) fn window_elements(
     // ponytail: a new element each frame while resizing; keep it on the window like the shadow if that shows.
     if asked.is_some() && bar == 0 {
         let bg = f32::from(if dark { 0x1E_u8 } else { 0xEC }) / 255.0;
-        out.push(SceneElement::Shader(shaders.glass_shape(frame, [bg, bg, bg, 1.0], WINDOW_RADIUS, false, dark, scale)));
+        out.push(SceneElement::Shader(shaders.glass_shape(rounded, [bg, bg, bg, 1.0], WINDOW_RADIUS, false, dark, scale)));
     }
     let elevation = if focused { 5 } else { 4 };
-    out.extend(window_shadow(shaders, window, frame, elevation, dark, scale).map(SceneElement::Shader));
+    out.extend(window_shadow(shaders, window, rounded, elevation, dark, scale).map(SceneElement::Shader));
     out
 }
 
@@ -636,6 +645,17 @@ pub fn scene(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hanging_window_rounds_only_below() {
+        let frame = Rect::new((0, 24).into(), (1920, 400).into());
+        assert_eq!(corners(frame, false), frame);
+        let stretched = corners(frame, true);
+        // The rounded top corners sit a radius above the frame; its bottom ones and sides are the frame's.
+        assert_eq!(stretched.loc.y + WINDOW_RADIUS as i32, frame.loc.y);
+        assert_eq!((stretched.loc.x, stretched.size.w), (frame.loc.x, frame.size.w));
+        assert_eq!(stretched.loc.y + stretched.size.h, frame.loc.y + frame.size.h);
+    }
 
     #[test]
     fn auto_is_dark_at_night() {
