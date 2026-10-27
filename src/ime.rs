@@ -211,18 +211,27 @@ impl State {
         self.layouts = Layouts { list: pair(codes, names), ime_settings: ime_settings(self.config.keyboard.engine()), methods, ..Default::default() };
     }
 
-    /// Keyboard focus moved to `focused`: with `[keyboard] per_window_source`, it gets its own layout back.
+    /// Keyboard focus moved to `focused`: with `[keyboard] per_window_source`, it gets its own layout back, on the next
+    /// idle while it still has focus. smithay calls this from `focus_changed` holding the keyboard's lock, which
+    /// `with_xkb_state` takes too.
     pub fn layout_focus(&mut self, focused: Option<&WlSurface>) {
         if !self.config.keyboard.per_window_source {
             return;
         }
-        let remembered = &mut self.layouts.remembered;
-        remembered.retain(WlSurface::is_alive);
-        let index = remembered.focus(focused, self.layouts.active).filter(|&i| i != self.layouts.active && i < self.layouts.list.len());
-        if let (Some(index), Some(keyboard)) = (index, self.seat.get_keyboard()) {
-            keyboard.with_xkb_state(self, |mut ctx| ctx.set_layout(Layout(index as u32)));
-            self.layouts.active = index;
-        }
+        let focused = focused.cloned();
+        self.loop_handle.insert_idle(move |state| {
+            let keyboard = state.seat.get_keyboard();
+            if keyboard.as_ref().and_then(|k| k.current_focus()) != focused || focused.as_ref().is_some_and(|s| !s.is_alive()) {
+                return;
+            }
+            let remembered = &mut state.layouts.remembered;
+            remembered.retain(WlSurface::is_alive);
+            let index = remembered.focus(focused.as_ref(), state.layouts.active).filter(|&i| i != state.layouts.active && i < state.layouts.list.len());
+            if let (Some(index), Some(keyboard)) = (index, keyboard) {
+                keyboard.with_xkb_state(state, |mut ctx| ctx.set_layout(Layout(index as u32)));
+                state.layouts.active = index;
+            }
+        });
     }
 
     /// Switches to layout `index` (past the last one wraps round), or the next one (Super+Ctrl+Space), and says which

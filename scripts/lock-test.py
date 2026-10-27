@@ -3,8 +3,10 @@
 
 Starts the desktop nested twice under dbus-run-session with scratch XDG dirs (the real config is never touched):
 1. `--show lock` (our own screen up): an ext-session-lock client's lock gets `finished`; its unlock_and_destroy
-   changes nothing, so a second client's lock gets `finished` too.
-2. unlocked: the client's lock gets `locked`; after unlock_and_destroy a second client can lock again.
+   changes nothing, so a second and third client's lock gets `finished` too.
+2. unlocked: the client's lock gets `locked`; after unlock_and_destroy a second client can lock again, and so on.
+3. unlocked, and the first locker dies without unlocking: our screen takes over, so the second client's lock gets
+   `finished`, and its unlock_and_destroy changes nothing for the third.
 
 usage: scripts/lock-test.py [path/to/noobsbot-desktop]   (default: target/debug/noobsbot-desktop)
 """
@@ -96,7 +98,7 @@ def stop(proc):
         return "killed"
 
 
-def check(binary, show, want_first, want_second, why):
+def check(binary, show, want, why, die=False):
     env = dict(os.environ, RUST_BACKTRACE="1")
     scratch = tempfile.mkdtemp(prefix="lock-test-xdg-")
     for var in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
@@ -104,26 +106,28 @@ def check(binary, show, want_first, want_second, why):
     proc, log, path = run_desktop(binary, show, env)
     try:
         time.sleep(1)  # the first frame, so the lock screen (if shown) is really up
-        first, sock = try_lock(path)
-        unlock_and_destroy(sock)
-        time.sleep(0.5)  # the unlock is deferred a loop turn
-        second, sock = try_lock(path)
-        if second == "locked":
-            unlock_and_destroy(sock)
-        else:
-            sock.close()
+        got = []
+        for n in range(3):
+            result, sock = try_lock(path)
+            got.append(result)
+            if die and n == 0:
+                sock.close()
+            else:
+                unlock_and_destroy(sock)
+            time.sleep(0.5)  # the unlock is deferred a loop turn
     finally:
         exit_code = stop(proc)
-    ok = (first, second) == (want_first, want_second)
-    print(f"{'ok' if ok else 'FAIL'}: {why}: first lock {first}, second lock {second} (want {want_first}, {want_second}); exit {exit_code}; log {log}")
+    ok = got == want
+    print(f"{'ok' if ok else 'FAIL'}: {why}: locks {got} (want {want}); exit {exit_code}; log {log}")
     return ok
 
 
 def main():
     binary = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "target", "debug", "noobsbot-desktop")
     results = [
-        check(binary, "lock", "finished", "finished", "our lock screen up: a client's lock is refused and its unlock changes nothing"),
-        check(binary, None, "locked", "locked", "unlocked: a client locks, unlocks, and another can lock again"),
+        check(binary, "lock", ["finished"] * 3, "our lock screen up: a client's lock is refused and its unlock changes nothing"),
+        check(binary, None, ["locked"] * 3, "unlocked: a client locks, unlocks, and another can lock again"),
+        check(binary, None, ["locked", "finished", "finished"], "a locker died: ours takes over, no client unlocks it", die=True),
     ]
     sys.exit(0 if all(results) else 1)
 

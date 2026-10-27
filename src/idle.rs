@@ -1,25 +1,27 @@
 //! Idle, sleep & power (E6.5): after `[idle]`'s times without input the screen dims, turns off (and locks), then the
 //! machine sleeps. One timer, armed for the next step only; input just stamps the time, so typing costs nothing and an
 //! idle desktop wakes only at the deadlines. Apps that play video hold `idle-inhibit`, which keeps it all away;
-//! `ext-idle-notify` tells other tools (swayidle) when the seat is idle. Low battery warns at 20% and 10%, the
+//! `ext-idle-notify` tells other unsandboxed tools (swayidle) when the seat is idle, never of input while locked (a
+//! password's key timing). Low battery warns at 20% and 10%, the
 //! computer's and each wireless mouse's, keyboard's or headset's; UPower alone sleeps at 5% (install.sh's drop-in), so
 //! that action has one owner.
 
 use std::time::{Duration, Instant};
 
 use smithay::{
-    delegate_idle_inhibit, delegate_idle_notify,
+    delegate_idle_inhibit,
     reexports::{
         calloop::{
             LoopHandle, RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
-        wayland_server::{DisplayHandle, protocol::wl_surface::WlSurface},
+        wayland_protocols::ext::idle_notify::v1::server::{ext_idle_notification_v1::ExtIdleNotificationV1, ext_idle_notifier_v1::ExtIdleNotifierV1},
+        wayland_server::{Client, DataInit, DisplayHandle, GlobalDispatch, New, delegate_dispatch, protocol::wl_surface::WlSurface},
     },
     utils::IsAlive,
     wayland::{
         idle_inhibit::{IdleInhibitHandler, IdleInhibitManagerState},
-        idle_notify::{IdleNotifierHandler, IdleNotifierState},
+        idle_notify::{IdleNotificationUserData, IdleNotifierHandler, IdleNotifierState},
         session_lock::SessionLockManagerState,
     },
 };
@@ -151,11 +153,13 @@ pub fn battery_dim(brightness: u8, on_battery: bool, taken: u8) -> (u8, u8) {
 }
 
 impl State {
-    /// Input happened: undim, and tell idle-notify clients.
+    /// Input happened: undim, and tell idle-notify clients unless locked.
     pub fn idle_activity(&mut self) {
         self.idle.last_input = Instant::now();
-        let seat = self.seat.clone();
-        self.idle.notifier.notify_activity(&seat);
+        if !self.locked() {
+            let seat = self.seat.clone();
+            self.idle.notifier.notify_activity(&seat);
+        }
         if self.idle.stage != Stage::Active {
             self.idle.stage = Stage::Active;
             // Back to the level before; a no-op when it wasn't turned off.
@@ -319,7 +323,19 @@ impl IdleInhibitHandler for State {
     }
 }
 
-delegate_idle_notify!(State);
+/// smithay's `delegate_idle_notify!`, but sandboxed apps never see the global.
+impl GlobalDispatch<ExtIdleNotifierV1, ()> for State {
+    fn bind(_: &mut Self, _: &DisplayHandle, _: &Client, resource: New<ExtIdleNotifierV1>, _: &(), init: &mut DataInit<'_, Self>) {
+        init.init(resource, ());
+    }
+
+    fn can_view(client: Client, _: &()) -> bool {
+        crate::protocols::unsandboxed(&client)
+    }
+}
+
+delegate_dispatch!(State: [ExtIdleNotifierV1: ()] => IdleNotifierState<State>);
+delegate_dispatch!(State: [ExtIdleNotificationV1: IdleNotificationUserData] => IdleNotifierState<State>);
 delegate_idle_inhibit!(State);
 
 #[cfg(test)]
