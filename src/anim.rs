@@ -350,11 +350,14 @@ impl State {
         self.move_from(window, from, Curve::Spring(SMOOTH));
     }
 
-    /// About to zoom or un-zoom: the frame springs from here to its new size. Reduce motion: it just jumps.
+    /// About to zoom or un-zoom: the frame springs from here to its new size. Reduce motion: the old frame fades out
+    /// over the new one.
     // ponytail: the snapshot is stretched until the app draws at the new size; a crossfade of old and new frames
     // looks cleaner if the stretch shows.
     pub fn window_reframing(&mut self, window: &Window) {
-        if let Some(look) = self.current_look(window).filter(|_| !self.config.appearance.reduce_motion) {
+        if self.config.appearance.reduce_motion {
+            self.leave(window, None, Curve::Ease(CROSSFADE));
+        } else if let Some(look) = self.current_look(window) {
             self.move_from(window, look, Curve::Spring(SMOOTH));
         }
     }
@@ -472,25 +475,56 @@ impl State {
 
     /// Show Desktop (E5.3): the shown Space's windows spring aside, or back.
     pub fn toggle_desktop(&mut self) {
-        if self.desktop_shown.is_some() {
-            self.restore_desktop();
-            return;
+        let moves = self.desktop_moves();
+        self.desktop_let_go(moves, true);
+    }
+
+    /// What Show Desktop does now: each shown window's frame and where it goes aside; while the desktop shows, each
+    /// pushed-aside window still there and its place to come back to.
+    pub fn desktop_moves(&self) -> Vec<DeskMove> {
+        let frame = |window: &Window| {
+            let geo = self.space.element_geometry(window)?;
+            let bar = crate::decorations::bar_height(window);
+            Some(Rectangle::new(geo.loc - Point::from((0, bar)), geo.size + (0, bar).into()))
+        };
+        if let Some(saved) = &self.desktop_shown {
+            return saved.iter().filter_map(|(w, loc)| Some((w.clone(), frame(w)?.loc, *loc))).collect();
         }
         let screens: Vec<crate::wm::Rect> = self.space.outputs().filter_map(|o| self.space.output_geometry(o)).collect();
         let first = self.space.outputs().next().cloned();
-        let windows: Vec<Window> = self.space.elements().filter(|w| self.on_current(w)).cloned().collect();
-        let mut saved = Vec::new();
-        for window in windows {
-            let Some(geo) = self.space.element_geometry(&window) else { continue };
-            let bar = crate::decorations::bar_height(&window);
-            let frame = Rectangle::new(geo.loc - Point::from((0, bar)), geo.size + (0, bar).into());
-            // Aside on its own display.
-            let output = self.window_output(&window).or_else(|| first.clone());
-            let Some(screen) = output.and_then(|o| self.space.output_geometry(&o)) else { continue };
-            self.slide_window(&window, aside(frame, screen, &screens));
-            saved.push((window, frame.loc));
+        let windows = self.space.elements().filter(|w| self.on_current(w));
+        windows
+            .filter_map(|window| {
+                let frame = frame(window)?;
+                // Aside on its own display.
+                let output = self.window_output(window).or_else(|| first.clone());
+                let screen = output.and_then(|o| self.space.output_geometry(&o))?;
+                Some((window.clone(), frame.loc, aside(frame, screen, &screens)))
+            })
+            .collect()
+    }
+
+    /// A spread holds Show Desktop `p` (0 → 1) of the way along `moves`.
+    pub fn desktop_hold(&mut self, moves: &[DeskMove], p: f64) {
+        let p = p.clamp(0.0, 1.0);
+        for (window, from, to) in moves {
+            if self.space.elements().any(|w| w == window) {
+                self.set_visible_loc(window, (from.to_f64() + (*to - *from).to_f64().upscale(p)).to_i32_round());
+            }
         }
-        self.desktop_shown = Some(saved);
+    }
+
+    /// Show Desktop done (`commit`), or let go short: each window still there springs to where `moves` take it, or
+    /// back.
+    pub fn desktop_let_go(&mut self, moves: Vec<DeskMove>, commit: bool) {
+        if commit {
+            self.desktop_shown = self.desktop_shown.is_none().then(|| moves.iter().map(|(w, from, _)| (w.clone(), *from)).collect());
+        }
+        for (window, from, to) in moves {
+            if self.space.elements().any(|w| *w == window) {
+                self.slide_window(&window, if commit { to } else { from });
+            }
+        }
     }
 
     /// Show Desktop off: every pushed-aside window still there springs back.
@@ -502,15 +536,24 @@ impl State {
         }
     }
 
-    /// Moves `window`'s frame to `loc` with a `smooth` spring; reduce motion: it jumps.
+    /// Moves `window`'s frame to `loc` with a `smooth` spring; reduce motion: it fades out there and in here.
+    // ponytail: the fading-out copy is drawn over every window (ghosts are) for the 150 ms.
     fn slide_window(&mut self, window: &Window, loc: Point<i32, Logical>) {
-        let from = self.current_look(window).filter(|_| !self.config.appearance.reduce_motion);
+        let reduce = self.config.appearance.reduce_motion;
+        let from = self.current_look(window);
+        if reduce {
+            self.leave(window, None, Curve::Ease(CROSSFADE));
+        }
         self.set_visible_loc(window, loc);
+        let from = if reduce { self.window_frame(window).map(|rect| Look { rect, alpha: 0.0 }) } else { from };
         if let Some(from) = from {
             self.move_from(window, from, Curve::Spring(SMOOTH));
         }
     }
 }
+
+/// A window Show Desktop moves: from where, to where (frame locations).
+pub type DeskMove = (Window, Point<i32, Logical>, Point<i32, Logical>);
 
 /// `frame` (relative to its display) moved up just past the top edge, its shadow too: where the quake terminal hides.
 fn above(frame: Rectangle<f64, Logical>) -> Rectangle<f64, Logical> {

@@ -287,10 +287,10 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// A swipe up or down holds Mission Control at `p` (0 closed → 1 open), opening it first.
-    pub fn mission_hold(&mut self, p: f64) {
+    /// A swipe up or down holds Mission Control (or App Exposé of `app`) at `p` (0 closed → 1 open), opening it first.
+    pub fn mission_hold(&mut self, p: f64, app: Option<String>) {
         if self.mission.is_none() {
-            self.open_mission(None);
+            self.open_mission(app);
         }
         if let Some(m) = self.mission.as_mut() {
             m.progress = Tween::hold(p.clamp(0.0, 1.0));

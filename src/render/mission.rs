@@ -186,9 +186,19 @@ impl MissionView {
         out
     }
 
-    /// The Space indicator (E5.1): a `hud` pill at the top centre with a dot per Space, the shown one in `label`.
+    /// The Space indicator (E5.1): a `hud` pill at the top centre with a dot per Space, the shown one in `label`, at
+    /// `alpha` as it fades out.
     #[expect(clippy::too_many_arguments, reason = "the frame's drawing context")]
-    pub fn indicator(&mut self, shaders: &Shaders, count: usize, current: usize, width: i32, dark: bool, glass_opacity: f32, scale: f64) -> Vec<SceneElement> {
+    pub fn indicator(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        shaders: &Shaders,
+        (count, current, alpha): (usize, usize, f64),
+        width: i32,
+        dark: bool,
+        glass_opacity: f32,
+        scale: f64,
+    ) -> Vec<SceneElement> {
         const DOT: i32 = 8;
         const STEP: i32 = 16;
         let n = count as i32;
@@ -209,7 +219,7 @@ impl MissionView {
             self.hud_shadow = Some((key, shaders.shadow(pill, 12.0, Material::Hud.spec(dark).elevation, dark, scale, false)));
         }
         out.extend(self.hud_shadow.as_ref().and_then(|(_, s)| s.clone()).map(SceneElement::Shader));
-        out
+        faded(renderer, out, alpha, scale)
     }
 }
 
