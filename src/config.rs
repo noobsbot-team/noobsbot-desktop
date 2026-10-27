@@ -1199,14 +1199,17 @@ impl Appearance {
     }
 }
 
+/// The wallpaper shipped with the desktop (install.sh puts data/system's copy there); missing, the opal is drawn.
+pub const DEFAULT_WALLPAPER: &str = "/usr/share/backgrounds/noobsbot-desktop/purple-crystal.png";
+
 impl Default for Appearance {
     fn default() -> Self {
         Self {
             mode: Mode::Light,
             accent: Accent::Blue,
             glass_opacity: 1.0,
-            wallpaper: String::new(),
-            wallpaper_dark: String::new(),
+            wallpaper: DEFAULT_WALLPAPER.into(),
+            wallpaper_dark: DEFAULT_WALLPAPER.into(),
             theme_apps: false,
             reduce_motion: false,
             wallpaper_fit: WallpaperFit::Fill,

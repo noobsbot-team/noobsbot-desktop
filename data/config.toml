@@ -23,9 +23,9 @@ accent = "blue"
 # Multiplies the opacity of every glass surface (0.0 … 1.0).
 glass_opacity = 1.0
 # Wallpaper picture (PNG or JPEG), placed by wallpaper_fit; empty = the built-in opal gradient.
-wallpaper = ""
+wallpaper = "/usr/share/backgrounds/noobsbot-desktop/purple-crystal.png"
 # Used in dark mode; empty = the built-in dark opal gradient.
-wallpaper_dark = ""
+wallpaper_dark = "/usr/share/backgrounds/noobsbot-desktop/purple-crystal.png"
 # "fill" (cover the screen), "fit" (the whole picture), "centre" (its own size), "stretch" or "tile" (repeated).
 wallpaper_fit = "fill"
 # More folders of pictures for Settings' wallpaper gallery ("+ Add Folder…"), separated by ":".
