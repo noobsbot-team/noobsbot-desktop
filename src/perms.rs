@@ -8,8 +8,8 @@
 //! | `ext-image-copy-capture` | not implemented, so nobody |
 //!
 //! Trusted: clients of the `<WAYLAND_DISPLAY>-trusted` socket (what `noobsbot-desktop --trusted <command>` connects
-//! its command to, and our own `wf-recorder`), and the programs in `TRUSTED` by their path (root-owned, so an app
-//! can't pose as one). Sandboxed: connected through a security context (Flatpak).
+//! its command to), and the programs in `TRUSTED` by their path (root-owned, so an app can't pose as one). Our own
+//! screenshots and recordings read the screen in-process and never ask. Sandboxed: connected through a security context (Flatpak).
 // ponytail: any program of this user can connect to the trusted socket on purpose; Wayland can't tell apart two
 // processes of one user. The real wall is the sandbox (security-context); this catches the casual screen grabber.
 
@@ -154,7 +154,7 @@ mod tests {
         assert_eq!(verdict(false, Some("/usr/libexec/xdg-desktop-portal-wlr"), &privacy), Some(true), "Debian's path");
         assert_eq!(verdict(false, Some("/usr/bin/grim"), &privacy), Some(true));
         assert_eq!(verdict(false, Some("/usr/bin/evil"), &privacy), Some(false));
-        assert_eq!(verdict(false, Some("/usr/bin/wf-recorder"), &privacy), None);
+        assert_eq!(verdict(false, Some("/usr/bin/wf-recorder"), &privacy), None, "an outside recorder asks");
         assert_eq!(verdict(false, None, &privacy), None);
         assert_eq!(trusted_socket(OsStr::new("wayland-1")), "wayland-1-trusted");
     }
