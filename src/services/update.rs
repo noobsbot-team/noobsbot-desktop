@@ -12,13 +12,12 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::Command,
-    sync::{LazyLock, mpsc},
+    sync::mpsc,
     time::Duration,
 };
 
 use smithay::reexports::calloop::channel::Sender;
 
-use regex_lite::Regex;
 use semver::Version;
 
 use super::verify;
@@ -51,6 +50,10 @@ pub struct Release {
     /// The release page (notes, downloads).
     pub url: String,
     pub download: Download,
+    /// The download for this machine's CPU, in bytes.
+    pub size: Option<u64>,
+    /// `published_at` (RFC 3339).
+    pub published: Option<String>,
 }
 
 /// How far the background download got.
@@ -122,7 +125,7 @@ fn latest(channel: Channel) -> Option<Option<Release>> {
         Channel::Stable => format!("{API}/releases/latest"),
         Channel::Beta => format!("{API}/releases?per_page=20"),
     };
-    fetch(&url).map(|json| newer(&json, &running, channel))
+    fetch(&url).map(|json| newer(&json, REPO, &running, channel))
 }
 
 /// `noobsbot-desktop --update`: the same check, download and helper as "Restart to Update", from a terminal.
@@ -214,18 +217,34 @@ fn fetch(url: &str) -> Option<String> {
     String::from_utf8(curl(&["--max-time", "20", "-H", "Accept: application/vnd.github+json", url])?).ok()
 }
 
-/// The newest release in a GitHub `releases/latest` (one) or `releases` (a list) response, if it is newer than
-/// `running`. Stable ignores pre-releases; GitHub never lists drafts to anonymous requests.
-pub fn newer(json: &str, running: &Version, channel: Channel) -> Option<Release> {
-    // Keys are unescaped quotes, so a `"tag_name"` inside the release notes (`\"tag_name\"`) can't match.
-    static TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r#""tag_name"\s*:\s*"(v?([^"]+))""#).unwrap());
-    let (version, tag) = TAG
-        .captures_iter(json)
-        .filter_map(|c| Some((Version::parse(c.get(2)?.as_str()).ok()?, c[1].to_string())))
+/// A release in GitHub's JSON, as far as the checker reads it.
+#[derive(serde::Deserialize)]
+struct Json {
+    tag_name: String,
+    published_at: Option<String>,
+    #[serde(default)]
+    assets: Vec<Asset>,
+}
+
+#[derive(serde::Deserialize)]
+struct Asset {
+    name: String,
+    size: u64,
+}
+
+/// The newest release of `repo` (its web URL) in a GitHub `releases/latest` (one) or `releases` (a list) response,
+/// if it is newer than `running`. Stable ignores pre-releases; GitHub never lists drafts to anonymous requests.
+pub fn newer(json: &str, repo: &str, running: &Version, channel: Channel) -> Option<Release> {
+    let releases: Vec<Json> = serde_json::from_str(json).or_else(|_| serde_json::from_str(json).map(|one| vec![one])).ok()?;
+    let (version, json) = releases
+        .into_iter()
+        .filter_map(|r| Some((Version::parse(r.tag_name.strip_prefix('v').unwrap_or(&r.tag_name)).ok()?, r)))
         .filter(|(v, _)| channel == Channel::Beta || v.pre.is_empty())
         .max_by(|a, b| a.0.cmp(&b.0))?;
-    let url = format!("{REPO}/releases/tag/{tag}");
-    (version > *running).then_some(Release { version, tag, url, download: Download::None })
+    // The tarball for this CPU, not its checksum (smaller) nor another CPU's.
+    let size = json.assets.iter().filter(|a| a.name.contains(ARCH)).map(|a| a.size).max();
+    let url = format!("{repo}/releases/tag/{}", json.tag_name);
+    (version > *running).then_some(Release { version, tag: json.tag_name, url, download: Download::None, size, published: json.published_at })
 }
 
 /// Downloads and verifies `release` (or re-verifies an earlier download).
@@ -453,7 +472,9 @@ mod tests {
     const JSON: &str = r#"{"url":"https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/1",
         "html_url": "https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/v1.3.0",
         "author": {"html_url": "https://github.com/anil0403"},
-        "tag_name": "v1.3.0", "draft": false, "prerelease": false,
+        "tag_name": "v1.3.0", "draft": false, "prerelease": false, "published_at": "2026-10-27T09:41:00Z",
+        "assets": [{"name": "noobsbot-desktop-1.3.0-x86_64.tar.zst", "size": 12345678},
+            {"name": "noobsbot-desktop-1.3.0-aarch64.tar.zst", "size": 99999999}, {"name": "SHA256SUMS", "size": 200}],
         "body": "notes quoting \"tag_name\": \"v9.0.0\""}"#;
 
     const LIST: &str = r#"[{"tag_name": "v1.4.0-beta.2", "prerelease": true}, {"tag_name": "v1.3.0"},
@@ -465,37 +486,40 @@ mod tests {
 
     #[test]
     fn newer_release() {
-        let release = newer(JSON, &v("1.2.4"), Channel::Stable).unwrap();
+        let release = newer(JSON, REPO, &v("1.2.4"), Channel::Stable).unwrap();
         assert_eq!((release.version, release.tag.as_str()), (v("1.3.0"), "v1.3.0"));
         assert_eq!(release.url, "https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/v1.3.0");
         assert_eq!(release.download, Download::None);
+        assert_eq!(release.published.as_deref(), Some("2026-10-27T09:41:00Z"));
+        let size = if ARCH == "aarch64" { 99999999 } else { 12345678 };
+        assert_eq!(release.size, (ARCH == "x86_64" || ARCH == "aarch64").then_some(size));
     }
 
     #[test]
     fn same_or_older_is_none() {
-        assert_eq!(newer(JSON, &v("1.3.0"), Channel::Stable), None);
-        assert_eq!(newer(JSON, &v("1.10.0"), Channel::Stable), None);
+        assert_eq!(newer(JSON, REPO, &v("1.3.0"), Channel::Stable), None);
+        assert_eq!(newer(JSON, REPO, &v("1.10.0"), Channel::Stable), None);
     }
 
     #[test]
     fn beta_before_its_release_updates() {
         // SemVer: 1.3.0-beta.2 < 1.3.0, so a Beta user gets the final release.
-        assert!(newer(JSON, &v("1.3.0-beta.2"), Channel::Stable).is_some());
-        assert!(newer(JSON, &v("1.4.0-beta.1"), Channel::Stable).is_none());
+        assert!(newer(JSON, REPO, &v("1.3.0-beta.2"), Channel::Stable).is_some());
+        assert!(newer(JSON, REPO, &v("1.4.0-beta.1"), Channel::Stable).is_none());
     }
 
     #[test]
     fn channels() {
-        assert_eq!(newer(LIST, &v("1.2.0"), Channel::Beta).unwrap().version, v("1.4.0-beta.2"));
-        assert_eq!(newer(LIST, &v("1.2.0"), Channel::Stable).unwrap().version, v("1.3.0"));
-        assert!(newer(LIST, &v("1.3.0"), Channel::Stable).is_none());
+        assert_eq!(newer(LIST, REPO, &v("1.2.0"), Channel::Beta).unwrap().version, v("1.4.0-beta.2"));
+        assert_eq!(newer(LIST, REPO, &v("1.2.0"), Channel::Stable).unwrap().version, v("1.3.0"));
+        assert!(newer(LIST, REPO, &v("1.3.0"), Channel::Stable).is_none());
     }
 
     #[test]
     fn garbage_is_none() {
-        assert_eq!(newer("", &v("0.1.0"), Channel::Beta), None);
-        assert_eq!(newer(r#"{"message":"Not Found"}"#, &v("0.1.0"), Channel::Stable), None);
-        assert_eq!(newer(r#"{"tag_name":"nightly"}"#, &v("0.1.0"), Channel::Stable), None);
+        assert_eq!(newer("", REPO, &v("0.1.0"), Channel::Beta), None);
+        assert_eq!(newer(r#"{"message":"Not Found"}"#, REPO, &v("0.1.0"), Channel::Stable), None);
+        assert_eq!(newer(r#"{"tag_name":"nightly"}"#, REPO, &v("0.1.0"), Channel::Stable), None);
     }
 
     #[test]
@@ -518,7 +542,7 @@ mod tests {
 
     #[test]
     fn notice_names_major_minor() {
-        let release = newer(r#"{"tag_name":"1.3.2"}"#, &v("1.0.0"), Channel::Stable).unwrap();
+        let release = newer(r#"{"tag_name":"1.3.2"}"#, REPO, &v("1.0.0"), Channel::Stable).unwrap();
         assert_eq!(release.url, "https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/1.3.2");
         let n = notice(&release);
         assert_eq!((n.id, n.summary.as_str(), n.body.as_str()), (NOTICE_ID, "Noobsbot Desktop 1.3 is available", "Version 1.3.2 is ready to install."));

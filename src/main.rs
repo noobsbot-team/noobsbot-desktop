@@ -327,6 +327,8 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
                 tag: "v1.3.0".into(),
                 url: "https://github.com/noobsbot-team/noobsbot-desktop/releases/tag/v1.3.0".into(),
                 download: services::update::Download::Ready(std::env::temp_dir()),
+                size: Some(12_345_678),
+                published: Some("2026-10-27T09:41:00Z".into()),
             };
             // Kept up and hovered (buttons showing) for the screenshot.
             let notice = services::notifications::Notification { expire: 0, ..services::update::notice(&release) };
