@@ -7,7 +7,11 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock, mpsc},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
     time::Duration,
 };
 
@@ -1527,8 +1531,9 @@ pub fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "config path has no file name"))?;
     fs::create_dir_all(dir)?;
-    // ponytail: one temp name per process; two threads of one process saving at once would share it.
-    let tmp = dir.join(format!(".{}.{}.tmp", name.to_string_lossy(), std::process::id()));
+    // One temp name per save, so two threads saving at once never write into each other's.
+    static SAVES: AtomicU64 = AtomicU64::new(0);
+    let tmp = dir.join(format!(".{}.{}.{}.tmp", name.to_string_lossy(), std::process::id(), SAVES.fetch_add(1, Ordering::Relaxed)));
     let written = fs::File::create(&tmp).and_then(|mut f| {
         f.write_all(contents.as_bytes())?;
         f.sync_all()
@@ -2042,6 +2047,22 @@ mod tests {
         save_atomic(&path, "[windows]\nsnapping = false\n").unwrap();
         assert!(!load(&path).windows.snapping);
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "no temp file left behind");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saves_from_two_threads_at_once() {
+        let dir = temp_dir("threads");
+        let path = dir.join("config.toml");
+        let texts = ["a = 1\n".repeat(10_000), "b = 2\n".repeat(10_000)];
+        std::thread::scope(|s| {
+            for text in &texts {
+                let path = &path;
+                s.spawn(move || (0..20).for_each(|_| save_atomic(path, text).unwrap()));
+            }
+        });
+        assert!(texts.contains(&fs::read_to_string(&path).unwrap()), "one save whole, never a mix");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no temp file left behind");
         fs::remove_dir_all(dir).unwrap();
     }
 
