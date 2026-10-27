@@ -100,7 +100,7 @@ fn launcher_id(dockitem: &str) -> Option<String> {
 }
 
 /// The dock imported: Plank's first enabled one.
-// ponytail: one dock; Plank's other docks (dock2 on HDMI-1) come with one dock per monitor (M6 multi-monitor).
+// ponytail: Plank's first dock only; its other docks (dock2 on HDMI-1) could fill `[dock.outputs]`.
 fn first_dock(dump: &Dump) -> String {
     dump.get("/").and_then(|s| s.get("enabled-docks")).and_then(|v| strings(v).into_iter().next()).unwrap_or_else(|| "dock1".into())
 }

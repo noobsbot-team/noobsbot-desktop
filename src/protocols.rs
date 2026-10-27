@@ -122,7 +122,8 @@ pub fn unsandboxed(client: &Client) -> bool {
 
 impl State {
     /// Moves the pointer to where the host cursor is, honouring pointer locks and confinement, and sends the step as
-    /// relative motion (games, maps). ponytail: nested, the host cursor still roams freely; udev feeds raw deltas (M6).
+    /// relative motion (games, maps). ponytail: nested, the host cursor still roams freely; on udev a locked pointer
+    /// stays put, though `delta_unaccel` is the accelerated step too.
     pub fn pointer_motion(&mut self, host: Point<f64, Logical>, utime: u64) {
         let Some(pointer) = self.seat.get_pointer() else { return };
         let delta = self.protocols.last_host_pointer.replace(host).map_or_else(Point::default, |last| host - last);
@@ -211,7 +212,7 @@ impl State {
             window.set_cursor_visible(image != CursorImageStatus::Hidden);
             match &image {
                 CursorImageStatus::Named(icon) => window.set_cursor(*icon),
-                // ponytail: an app-drawn cursor surface shows as the arrow nested; we draw it ourselves with udev (M6).
+                // ponytail: an app-drawn cursor surface shows as the arrow nested; udev.rs draws it.
                 CursorImageStatus::Surface(_) => window.set_cursor(CursorIcon::Default),
                 CursorImageStatus::Hidden => {}
             }
@@ -372,7 +373,7 @@ impl SecurityContextHandler for State {
 
 impl TabletSeatHandler for State {}
 
-/// A surface's wp_tearing_control hint. ponytail: stored only; nested there is no async flip, the udev backend uses it (M6).
+/// A surface's wp_tearing_control hint. ponytail: stored only; neither backend does async page flips yet.
 #[derive(Default)]
 pub struct Tearing {
     controlled: AtomicBool,

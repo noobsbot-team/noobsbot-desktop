@@ -187,7 +187,8 @@ pub fn volume(sound: &Sound) -> Symbol {
 }
 
 /// The name an app goes by: its `.desktop` entry's `Name`, else its id, capitalised (`org.kde.dolphin` → `Dolphin`).
-// ponytail: looks up `<id>.desktop` only; StartupWMClass matching and localised names come with the app index (M3).
+// ponytail: looks up `<id>.desktop` only, not through the app index (`apps.rs`, which matches StartupWMClass and reads
+// localised names).
 pub fn app_name(id: &str) -> String {
     let home = std::env::var("XDG_DATA_HOME").unwrap_or_else(|_| format!("{}/.local/share", std::env::var("HOME").unwrap_or_default()));
     let system = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
