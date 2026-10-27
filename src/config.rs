@@ -1590,10 +1590,31 @@ pub fn bracket_depth(line: &str) -> i32 {
     depth
 }
 
+/// `s` as a TOML basic string: `"`, `\` and every control character escaped, so no value can break the file.
+pub fn quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{c}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            c if c.is_ascii_control() => out.push_str(&format!("\\u{:04X}", u32::from(c))),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// `text` with `key = [items]` set in `[section]`, keeping every other line and comment; adds the section or the
 /// key when missing, and replaces a multi-line array whole.
 pub fn set_array(text: &str, section: &str, key: &str, items: &[String]) -> String {
-    let quoted: Vec<String> = items.iter().map(|s| format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))).collect();
+    let quoted: Vec<String> = items.iter().map(|s| quote(s)).collect();
     let value = format!("{key} = [{}]\n", quoted.join(", "));
     let mut lines: Vec<String> = text.split_inclusive('\n').map(String::from).collect();
     if let Some(last) = lines.last_mut().filter(|l| !l.ends_with('\n')) {
