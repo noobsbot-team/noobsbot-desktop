@@ -521,7 +521,7 @@ impl State {
             output: size,
             position: l.position(now),
             page: l.page,
-            shown: l.shown.at(now),
+            shown: l.shown.value(now),
             field: &l.field,
             lifted,
             offsets: &offsets,
