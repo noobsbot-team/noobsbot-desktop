@@ -1,6 +1,6 @@
 //! Alerts (D8): `sheet` glass, 260 px wide (growing with the text size), radius 12, centred on the output; the system icon at 64 px, Title 2 and
 //! Body centred, a text field when it asks for one (Wi-Fi password), then Cancel and the default (accent) button
-//! side by side. A power alert has a checkbox above the buttons: reopen windows at the next login (E8.8). The power
+//! side by side; a permission alert has no default button (Return doesn't allow), so both are plain. A power alert has a checkbox above the buttons: reopen windows at the next login (E8.8). The power
 //! button's alert (E6.5) has a row of Sleep and Restart above them.
 
 use std::{sync::Arc, time::Instant};
@@ -52,8 +52,9 @@ fn sizes() -> (i32, i32, i32, i32) {
     (width, width - 2 * PAD, ts(BUTTON_H), ts(FIELD_H))
 }
 
-/// What the glass depends on: sheet and confirm-button rects, the checkbox's state, dark, accent, opacity, scale.
-type Key = (Rect, Rect, Option<bool>, bool, [u8; 3], u32, u64);
+/// What the glass depends on: sheet and confirm-button rects, the checkbox's state, a plain confirm button, dark,
+/// accent, opacity, scale.
+type Key = (Rect, Rect, Option<bool>, bool, bool, [u8; 3], u32, u64);
 /// The field drawn (its state, rect, dark, accent, scale): glass front to back, and its text pieces.
 type FieldDrawn = ((TextField, Rect, bool, [u8; 3], u64), Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>);
 
@@ -147,14 +148,15 @@ impl AlertSheet {
         let cancel = Rectangle::new((x + PAD, button_y).into(), (button_w, button_h).into());
         let confirm = Rectangle::new((x + PAD + inner - button_w, button_y).into(), (button_w, button_h).into());
 
-        let key = (rect, confirm, reopen, dark, accent, glass_opacity.to_bits(), scale.to_bits());
+        let plain = alert.consent();
+        let key = (rect, confirm, reopen, plain, dark, accent, glass_opacity.to_bits(), scale.to_bits());
         if self.glass.as_ref().is_none_or(|(k, _)| *k != key) {
             let [r, g, b] = accent.map(|c| f32::from(c) / 255.0);
             // D8 secondary button: `fill` (at 2×, so it shows on the sheet).
             let fill = if dark { [1.0, 1.0, 1.0, 0.16] } else { [0.0, 0.0, 0.0, 0.10] };
             let spec = Material::Sheet.spec(dark);
             let [sr, sg, sb] = spec.tint.map(|c| f32::from(c) / 255.0);
-            let mut glass = vec![shaders.glass_shape(confirm, [r, g, b, 1.0], 6.0, false, dark, scale)];
+            let mut glass = vec![shaders.glass_shape(confirm, if plain { fill } else { [r, g, b, 1.0] }, 6.0, false, dark, scale)];
             match reopen {
                 Some(true) => glass.push(shaders.glass_shape(check, [r, g, b, 1.0], 4.0, false, dark, scale)),
                 Some(false) => glass.push(shaders.glass_shape(check, fill, 4.0, false, dark, scale)),
@@ -186,7 +188,7 @@ impl AlertSheet {
             title,
             words,
             text.label(if cancel == confirm { "" } else { alert.cancel() }, body, button_w as u32, scale),
-            text.label(alert.confirm(), Style { color: [255, 255, 255, 255], ..body }, button_w as u32, scale),
+            text.label(alert.confirm(), if plain { body } else { Style { color: [255, 255, 255, 255], ..body } }, button_w as u32, scale),
             symbols.get(Symbol::Check, Weight::Regular, (CHECK - 4) as u16, scale, if reopen == Some(true) { [255, 255, 255, 255] } else { [0; 4] }),
             check_label,
             text.label(extra.first().map_or("", |e| e.0), body, button_w as u32, scale),
