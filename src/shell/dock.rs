@@ -1167,7 +1167,7 @@ pub fn menu_rows(titles: &[String], active: Option<usize>, recent: &[String], ac
 }
 
 /// Each bookmark in a `recently-used.xbel`: its `href` and the apps that used it, with when (ISO 8601, UTC).
-// ponytail: a string scan, not an XML parser; enough for the files GLib and KDE write.
+// ponytail: a string scan, not an XML parser; enough for the files GLib and Qt apps write.
 fn bookmarks(xbel: &str) -> Vec<(String, Vec<(String, String)>)> {
     let attr = |tag: &str, key: &str| -> Option<String> {
         let start = tag.find(&format!(" {key}=\""))? + key.len() + 3;
