@@ -1736,7 +1736,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
   - Pages: Wi-Fi · Bluetooth · Sound (output; **input device, level, mute**; alert volume) · Displays (drag-to-arrange
     monitors, a Variable refresh rate switch on capable displays) · Appearance (mode Light / Dark / **Auto = schedule**, accent, glass opacity,
     wallpaper picker, Reduce transparency/motion) · Dock · Keyboard (layouts, repeat, shortcuts editor) ·
-    **Trackpad** (each gesture with an animated preview, finger count, tap-to-click, natural scroll, speed) ·
+    **Trackpad** (each gesture with an animated preview (done: a small pad at the row's left, playing while hovered, still trails under Reduce motion), finger count, tap-to-click, natural scroll, speed) ·
     Date & Time (zone search, 12/24 h, automatic) · Spaces · Notifications (per-app allow, banner/alert, DND schedule) ·
     Lock Screen (idle times, password delay) · **Privacy** (screen-recording / input permissions, E6.11) · **General ▸ Software Update** (E6.13) · Users
     (picture, name, password) · About (computer, CPU, RAM, GPU, OS, disk, version + "Check for updates").
