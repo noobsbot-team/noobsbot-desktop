@@ -273,6 +273,7 @@ settings file.
 | Super+Shift+1 … 9 | a new window of the n-th dock app (not 3, 4, 5: screenshots) |
 | Super+Shift+Left / Right | move the window to the previous / next Space |
 | Super+Ctrl+Left / Right / Up / Down | tile the window to the left / right / top / bottom half |
+| Super+Alt+arrows / Super+Alt+Shift+arrows | move the window 16 px / move its right or bottom edge 16 px (off until `[windows] keyboard_nudge`) |
 | Super+` | next window of the same app |
 | Super+Shift+3 / 4 / 5 | screenshot: screen / region (Space: a window) / toolbar |
 | Alt+Print | screenshot of the focused window |
@@ -331,7 +332,7 @@ doesn't understand is skipped and reported in the journal.
 | `[hot_corners]` | an action for each screen corner (off by default) |
 | `[display]` | which GPU draws the desktop, scale for every screen |
 | `[[display.outputs]]` | one screen by connector name: on or off, resolution, refresh rate, scale, rotation, position, which shows the menu bar and Dock, mirroring another display (System Settings › Displays asks to keep or revert), `vrr`: variable refresh rate where the display supports it, `underscan`: shrinks the picture 0–10 % for TVs that crop the edges |
-| `[windows]` | move key, magnetic edges, snapping, double-click title bar, number of Spaces, reopen windows at login |
+| `[windows]` | move key, magnetic edges, snapping, double-click title bar, number of Spaces, reopen windows at login, moving and resizing with the keyboard (off by default) |
 | `[spaces]` | each display with its own Spaces, or one set for all |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week (or the locale's), week numbers |
 | `[menu_bar]` | hide the menu bar until the pointer reaches the top edge; show the current Space as a number or dots |
