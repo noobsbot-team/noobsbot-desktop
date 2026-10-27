@@ -204,6 +204,14 @@ pub fn lerp(a: Rect, b: Rect, t: f64) -> Rect {
     Rectangle::new((mix(a.loc.x, b.loc.x), mix(a.loc.y, b.loc.y)).into(), (mix(a.size.w, b.size.w), mix(a.size.h, b.size.h)).into())
 }
 
+/// A window carried in from a drag (E1.2): `frame` shrunk to `size` around the pointer at `at`, which keeps its spot.
+pub fn held(frame: Rect, size: Size<i32, Logical>, at: Point<f64, Logical>) -> Rect {
+    let fx = (at.x - f64::from(frame.loc.x)) / f64::from(frame.size.w.max(1));
+    let fy = (at.y - f64::from(frame.loc.y)) / f64::from(frame.size.h.max(1));
+    let loc = Point::<f64, Logical>::from((at.x - fx * f64::from(size.w), at.y - fy * f64::from(size.h)));
+    Rectangle::new(loc.to_i32_round(), size)
+}
+
 /// Where a window with frame `from` and grid place `target` is drawn `p` into opening, and its alpha. Under reduce
 /// motion it stays at its place and only fades in (over its real frame fading out).
 pub fn thumb_place(from: Rect, target: Rect, p: f64, reduce: bool) -> (Rect, f64) {
@@ -284,7 +292,23 @@ impl State {
                 });
             }
         }
+        self.carry_held();
         self.schedule_redraw();
+    }
+
+    /// A window being dragged when Mission Control opens stays in hand (E1.2): the move ends without tiling and the
+    /// overview drags it on, shrinking to its grid size around the pointer, so a drop on a Space moves it there.
+    fn carry_held(&mut self) {
+        let Some(pointer) = self.seat.get_pointer() else { return };
+        let grabbed = pointer.with_grab(|_, grab| grab.downcast_ref::<crate::grabs::MoveGrab>().map(|g| g.window.clone())).flatten();
+        let Some(window) = grabbed else { return };
+        self.end_drag();
+        let (Some(frame), Some(output)) = (self.frame(&window), self.pointer_output()) else { return };
+        let place = self.mission_layout(&output).and_then(|l| Some(l.targets[l.windows.iter().position(|w| *w == window)?].size));
+        let at = pointer.current_location();
+        if let Some(m) = self.mission.as_mut() {
+            m.press = Some((window, at, Some(at), held(frame, place.unwrap_or(frame.size), at)));
+        }
     }
 
     /// A swipe up or down holds Mission Control (or App Exposé of `app`) at `p` (0 closed → 1 open), opening it first.
@@ -391,13 +415,14 @@ impl State {
                 Thumb { window: window.clone(), from: *from, to, alpha }
             })
             .collect();
-        // The dragged window over the others, on every display it is over.
+        // The dragged window over the others, on every display it is over; one carried in shrinks as it opens.
         if let Some((window, rect)) = dragged {
             thumbs.retain(|t| t.window != window);
             let screen = self.space.output_geometry(output)?;
             if let Some(frame) = self.frame(&window).filter(|_| rect.overlaps(screen)) {
-                let (from, to) = (Rectangle::new(frame.loc - screen.loc, frame.size), Rectangle::new(rect.loc - screen.loc, rect.size));
-                thumbs.insert(0, Thumb { window, from, to, alpha: 1.0 });
+                let from = Rectangle::new(frame.loc - screen.loc, frame.size);
+                let (to, alpha) = thumb_place(from, Rectangle::new(rect.loc - screen.loc, rect.size), progress, reduce);
+                thumbs.insert(0, Thumb { window, from, to, alpha });
             }
         }
         let hover = mission.hover.as_ref().filter(|_| done).and_then(|h| thumbs.iter().position(|t| t.window == *h));
@@ -811,6 +836,15 @@ mod tests {
         assert!(tiles(output, 4, area)[1].loc.y < tiles(output, 4, area)[2].loc.y);
         // A window filling the left half fills the tile's left half.
         assert_eq!(in_tile(rect(0, 0, 800, 1000), output, rect(100, 100, 400, 250)), rect(100, 100, 200, 250));
+    }
+
+    #[test]
+    fn a_carried_window_shrinks_around_the_pointer() {
+        let frame = rect(100, 100, 800, 600);
+        let at = Point::from((500.0, 112.0));
+        let thumb = held(frame, (400, 300).into(), at);
+        assert_eq!(thumb, rect(300, 106, 400, 300), "the pointer keeps its spot on the title bar");
+        assert_eq!(held(frame, frame.size, at), frame);
     }
 
     #[test]

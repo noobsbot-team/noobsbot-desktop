@@ -413,11 +413,20 @@ impl State {
             let (Some(frame), Some(area)) = (self.frame(&window), self.work_area()) else { continue };
             // Per display, a gone display's Spaces mean nothing on the first: its windows join the shown Space.
             let row = if self.config.spaces.per_display { 0 } else { self.window_row(&window) * crate::spaces::STRIDE };
-            self.set_visible_loc(&window, crate::wm::place(area, frame.size) + smithay::utils::Point::from((0, row)));
+            let loc = crate::wm::place(area, frame.size) + smithay::utils::Point::from((0, row));
+            // A resize the app hasn't drawn yet lands there too.
+            if let Some(r) = self.resize.as_mut().filter(|r| r.window == window) {
+                r.start = Rectangle::new(loc, frame.size);
+            }
+            self.set_visible_loc(&window, loc);
         }
         self.refit_filled();
         self.send_scales();
         let shown: Vec<Display> = shown.into_iter().map(|(d, _)| d).collect();
+        // A display went: a drag or resize in progress ends there, as a button release would (E1.2).
+        if went(self.last_displays(), &shown) {
+            self.end_drag();
+        }
         write_info(&shown);
         self.output_heads(shown);
         self.schedule_redraw();
@@ -504,6 +513,11 @@ pub fn stranded(frame: Rectangle<i32, Logical>, screens: &[Rectangle<i32, Logica
     seen * 2 < area(frame)
 }
 
+/// Whether a display lit in `old` is no longer lit in `new`: unplugged or turned off.
+pub fn went(old: &[Display], new: &[Display]) -> bool {
+    old.iter().any(|o| o.enabled && !new.iter().any(|n| n.enabled && n.name == o.name))
+}
+
 /// The display (index into `screens`, the main one first) holding `wanted` (a text field's caret, a focused window),
 /// else the one under `pointer`, else the main one.
 pub fn display_for(screens: &[Rectangle<i32, Logical>], wanted: Option<Point<i32, Logical>>, pointer: Point<f64, Logical>) -> usize {
@@ -585,6 +599,17 @@ mod tests {
 
     fn display(name: &str, modes: Vec<Mode>, mm: (u32, u32)) -> Display {
         Display { name: name.into(), built_in: display_info::built_in(name), modes, width_mm: mm.0, height_mm: mm.1, ..Default::default() }
+    }
+
+    #[test]
+    fn a_display_went_when_one_lit_is_gone_or_off() {
+        let on = |name: &str| Display { name: name.into(), enabled: true, ..Default::default() };
+        let both = [on("eDP-1"), on("HDMI-A-1")];
+        assert!(!went(&both, &both));
+        assert!(!went(&[], &both), "at start");
+        assert!(!went(&both[..1], &both), "plugged in");
+        assert!(went(&both, &both[..1]), "unplugged");
+        assert!(went(&both, &[on("eDP-1"), Display { enabled: false, ..on("HDMI-A-1") }]), "turned off");
     }
 
     fn laptop_and_monitor() -> Vec<Display> {

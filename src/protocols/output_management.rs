@@ -131,6 +131,11 @@ pub fn settings(displays: &[Display], outputs: &[OutputSettings], changes: &[(St
 }
 
 impl State {
+    /// The displays `apply_displays` left last time.
+    pub fn last_displays(&self) -> &[Display] {
+        &self.protocols.output_management.displays
+    }
+
     /// The displays as `apply_displays` left them: every manager is sent them when they changed.
     pub fn output_heads(&mut self, displays: Vec<Display>) {
         let om = &mut self.protocols.output_management;
