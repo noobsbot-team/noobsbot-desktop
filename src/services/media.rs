@@ -20,7 +20,8 @@ pub struct Media {
     /// Artists joined with `, `; may be empty (a web video).
     pub artist: String,
     pub playing: bool,
-    /// `mpris:artUrl` when it is a local file (the player's own cache); empty otherwise, since nothing is downloaded.
+    /// `mpris:artUrl`'s path, percent-decoded, when it is a local file (the player's own cache); empty otherwise, since
+    /// nothing is downloaded.
     pub art: String,
 }
 
@@ -95,9 +96,8 @@ fn from_raw(player: &str, status: &str, metadata: &HashMap<String, OwnedValue>) 
     };
     let title = metadata.get("xesam:title").and_then(|v| v.downcast_ref::<&str>().ok()).unwrap_or_default().to_owned();
     let artists = metadata.get("xesam:artist").and_then(|v| Vec::<String>::try_from(v.try_clone().ok()?).ok());
-    let art = metadata.get("mpris:artUrl").and_then(|v| v.downcast_ref::<&str>().ok()).and_then(|u| u.strip_prefix("file://")).unwrap_or_default();
-    // ponytail: `%XX` escapes are left as they are; decode them if a player's cache path ever has a space.
-    Some(Media { player: player.to_owned(), title, artist: artists.unwrap_or_default().join(", "), playing, art: art.to_owned() })
+    let art = metadata.get("mpris:artUrl").and_then(|v| v.downcast_ref::<&str>().ok()).and_then(crate::apps::file_path).unwrap_or_default();
+    Some(Media { player: player.to_owned(), title, artist: artists.unwrap_or_default().join(", "), playing, art })
 }
 
 pub async fn control(bus: &Connection, player: &str, action: Action) {
@@ -133,6 +133,8 @@ mod tests {
         metadata.insert("mpris:artUrl".to_owned(), OwnedValue::from(Str::from("file:///tmp/art.png")));
         let media = from_raw("org.mpris.MediaPlayer2.mpv", "Playing", &metadata).unwrap();
         assert_eq!((media.title.as_str(), media.artist.as_str(), media.playing, media.art.as_str()), ("Opal", "A, B", true, "/tmp/art.png"));
+        metadata.insert("mpris:artUrl".to_owned(), OwnedValue::from(Str::from("file:///tmp/My%20Art.png")));
+        assert_eq!(from_raw("org.mpris.MediaPlayer2.mpv", "Playing", &metadata).unwrap().art, "/tmp/My Art.png", "escapes decoded");
         metadata.insert("mpris:artUrl".to_owned(), OwnedValue::from(Str::from("https://i.scdn.co/image/x")));
         assert_eq!(from_raw("org.mpris.MediaPlayer2.mpv", "Playing", &metadata).unwrap().art, "", "a remote picture is not fetched");
         let media = from_raw("org.mpris.MediaPlayer2.helium", "Paused", &HashMap::new()).unwrap();
