@@ -144,6 +144,8 @@ pub struct State {
     pub weather: Option<crate::services::weather::Weather>,
     /// Widgets other processes set over D-Bus (E8.8).
     pub widgets: Vec<crate::services::widgets::Widget>,
+    /// The World Clock widget's (city, zone) rows, from `[widgets] clocks`.
+    pub clocks: Vec<(String, crate::ical::Zone)>,
     /// Every changed `[weather]` goes to the weather thread.
     pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
     /// Every changed `[update] channel` or `check_updates` goes to the update thread, once started (`update_checks`).
@@ -522,6 +524,7 @@ impl State {
             update: None,
             weather: None,
             widgets: Vec::new(),
+            clocks: crate::clock::world_clocks(&config.widgets.clocks),
             weather_settings,
             update_channel: None,
             rules: rules::compile(&config.rules),

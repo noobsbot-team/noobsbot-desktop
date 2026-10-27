@@ -690,6 +690,8 @@ pub struct Widgets {
     pub desktop: Vec<String>,
     /// Shown nowhere unless also in `center` or `desktop`.
     pub hidden: Vec<String>,
+    /// The World Clock widget's IANA zones (`Europe/London`), a row each; empty = no widget.
+    pub clocks: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]

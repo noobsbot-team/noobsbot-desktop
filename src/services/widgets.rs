@@ -216,7 +216,8 @@ mod tests {
     #[test]
     fn placed_in_config_order() {
         let all: Vec<Widget> = ["a", "b", "c", "d"].map(|id| Widget { id: id.into(), ..Default::default() }).into();
-        let mut places = crate::config::Widgets { center: vec!["c".into(), "gone".into(), "a".into()], desktop: vec!["d".into()], hidden: vec![] };
+        let mut places =
+            crate::config::Widgets { center: vec!["c".into(), "gone".into(), "a".into()], desktop: vec!["d".into()], hidden: vec![], ..Default::default() };
         let ids = |places: &_, desktop| shown(&all, places, desktop).iter().map(|w| w.id.as_str()).collect::<Vec<_>>();
         assert_eq!((ids(&places, false), ids(&places, true)), (vec!["c", "a", "b"], vec!["d"]));
         places.hidden = vec!["b".into(), "c".into()];

@@ -341,6 +341,9 @@ units = "celsius"
 center = []
 desktop = []
 hidden = []
+# The World Clock widget in Notification Center, after the weather: a row per IANA zone ("Europe/London",
+# "Asia/Tokyo") with its time and how far it is from here. Empty: no widget.
+clocks = []
 [calendar]
 # Events for Notification Center's Up Next, the calendar's dots and reminders: .ics files, folders, or "dir/*.ics".
 # Saved changes show at once. (CalDAV and Google calendars: later.)
