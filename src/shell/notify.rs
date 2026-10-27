@@ -764,6 +764,8 @@ impl State {
             }
         } else if id == crate::housekeep::LOW_DISK {
             self.spawn(&["noobsbot-desktop-settings".into(), "--page".into(), "general".into()]);
+        } else if id == crate::config::BROKEN_NOTICE {
+            self.spawn(&["xdg-open".into(), crate::config::path().display().to_string()]);
         } else if key == "report" && self.notifications.get(id).is_some_and(|n| n.app == "Noobsbot Desktop") {
             // The session wrapper's "Update … was rolled back" (E6.13).
             self.spawn(&["xdg-open".into(), format!("{}/issues/new", crate::services::update::REPO)]);
