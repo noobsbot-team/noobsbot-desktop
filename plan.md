@@ -1368,7 +1368,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   monitor wired to the dGPU (many laptops' HDMI port) is driven through Smithay's **`MultiRenderer`** (buffers copied
   across GPUs). Without this the external monitor stays black or the compositor crashes on plug-in. The primary GPU is
   chosen from the boot VGA device and can be overridden in config. **Software fallback:** if EGL fails (QEMU without
-  virgl, a broken driver), the pixman CPU renderer starts instead, so the system is never unusable.
+  virgl, a broken driver), Mesa's software renderer (llvmpipe) starts instead, so the system is never unusable.
 - **Done when:** boots into Noobsbot Desktop on Intel, AMD and (with `nvidia-open`) NVIDIA; VT switch and back works; an
   Intel + NVIDIA laptop drives its dGPU HDMI port; QEMU without 3D acceleration still boots to a usable desktop.
 - **Built:** `src/backend/udev.rs` (libseat, libinput, GBM, `DrmCompositor`, a second GPU's monitor through
@@ -1377,9 +1377,10 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   GBM, EGL display, context or shell shaders fail is started once more on it (`GBM_BACKEND=dri`,
   `GBM_ALWAYS_SOFTWARE`, `LIBGL_ALWAYS_SOFTWARE`, inherited by apps). llvmpipe runs every shader, glass included;
   either way the log says "using software rendering" and a notification says graphics acceleration isn't available.
-  Not yet: the pixman renderer, only for a system without Mesa (the shell's elements are all GLES: `SceneElement`
-  over `GlesRenderer` with its own shader elements, ~30 files under `src/render`); fbdev-only machines (efifb, no
-  DRM device); a GPU reset that won't come back still exits rather than going software. Untested on hardware.
+  Dropped (owner decision): a pixman renderer, only useful on a system without Mesa (the shell's elements are all
+  GLES: `SceneElement` over `GlesRenderer` with its own shader elements, ~30 files under `src/render`); fbdev-only
+  machines (efifb, no DRM device). Not yet: a GPU reset that won't come back still exits rather than going software.
+  Untested on hardware.
 
 ### E6.2 Displays & multiple monitors
 - **What it is:** monitors, resolution, scaling, refresh rate, Night Shift.
@@ -2292,7 +2293,7 @@ Rule: **a crate is added only when its feature is built.**
 | Release pipeline | a `feat:` commit on a test branch → release PR → tag → signed tarball; a VM on the previous version updates and a broken build rolls back (E6.13) | M6 |
 | Latency + resize | 240 fps camera drag test; slow-app resize anchoring; screen-size matrix from D13 (720p … 4K @ 200%, portrait) checked in mockups and real runs | M1, every milestone |
 | Robustness | fuzzing client (garbage / out-of-order requests); `kill -STOP` on NetworkManager and BlueZ while using the desktop; 20 × suspend/resume; unplug all monitors; broken `config.toml`; `heaptrack` + 24 h soak (RSS flat) | M1 (fuzz, config), M6 (rest) |
-| VM | QEMU with `virtio-gpu` + virgl for the GPU path **and** without it for the pixman fallback | M6 |
+| VM | QEMU with `virtio-gpu` + virgl for the GPU path **and** without it for the software fallback (llvmpipe) | M6 |
 | Perf log | each milestone's RSS, idle CPU, startup time and frame time recorded in `PERF.md`; the Part I budget is a gate, not a wish | end of each milestone |
 
 ---
@@ -2324,7 +2325,7 @@ Rule: **a crate is added only when its feature is built.**
 |---|---|
 | Smithay API changes | pin version; upgrade between milestones |
 | Shell bug crashes the desktop (C5) | Rust safety; no `unwrap()` in shell code; tests; returns to login, never unlocked |
-| NVIDIA quirks | `nvidia-open` 555+, explicit sync (`linux-drm-syncobj-v1`), GPU-reset recovery (E1.11); test in M6; pixman fallback |
+| NVIDIA quirks | `nvidia-open` 555+, explicit sync (`linux-drm-syncobj-v1`), GPU-reset recovery (E1.11); test in M6; software fallback (llvmpipe) |
 | Hybrid-GPU laptops | `MultiRenderer` from day one of M6 (E6.1); tested on an Intel + NVIDIA machine before M6 closes |
 | Super key taken by the host desktop during nested development | dev config can use Alt |
 | Glass readability on busy wallpapers | ≥ 85% opacity + contrast checks (D2); "Reduce transparency" |
