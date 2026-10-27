@@ -61,6 +61,13 @@ fn main() -> iced::Result {
             if app.page == Page::Sound && app.status.input.is_some() {
                 all.push(iced::Subscription::run(system::level).map(Message::Level));
             }
+            // Software Update's state while General shows; a time limit while Check Now waits.
+            if app.page == Page::General {
+                all.push(iced::Subscription::run_with(system::update_path(), config::changes).map(|()| Message::UpdateRead));
+            }
+            if app.checking {
+                all.push(iced::Subscription::run_with(std::time::Duration::from_secs(30), arrange::ticks).map(|()| Message::UpdateTimeout));
+            }
             // The queues and jobs, re-read every 3 s while Printers shows.
             if app.page == Page::Printers {
                 all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::ReadPrinters));
@@ -161,6 +168,10 @@ pub struct App {
     printer: Option<String>,
     /// Add Printer…, open: `Some(None)` while `lpinfo` looks, then the devices it found.
     devices: Option<Option<Vec<String>>>,
+    /// General ▸ Software Update, from the desktop's `update.json`.
+    update: system::UpdateStatus,
+    /// Check Now was pressed and `update.json` hasn't changed since.
+    checking: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -322,6 +333,14 @@ pub enum Message {
     OpenFile(&'static str),
     /// It answered: the path goes where that field's would; no portal shows the field.
     Chosen(&'static str, chooser::Chosen),
+    /// `update.json` changed.
+    UpdateRead,
+    /// Software Update: `org.noobsbot.Desktop.Update`'s `Check`, `Install` or `Revert`.
+    UpdateCall(&'static str),
+    /// Check Now got no answer in time (offline).
+    UpdateTimeout,
+    /// More Info…: the release page opens in the browser.
+    OpenUrl(String),
 }
 
 impl App {
@@ -360,6 +379,8 @@ impl App {
             printers: None,
             printer: None,
             devices: None,
+            update: system::read_update(),
+            checking: false,
         };
         app.retheme();
         if page == Page::General {
@@ -412,6 +433,7 @@ impl App {
                 self.query.clear();
                 if page == Page::General {
                     (self.login_items, self.installed) = autostart::load();
+                    self.update = system::read_update();
                 }
                 if page == Page::Dock {
                     (self.default_apps, self.terminals) = defaults::load();
@@ -465,7 +487,7 @@ impl App {
                     "display.brightness" => {
                         let percent = value.round() as u8;
                         self.brightness = Some(percent);
-                        return Task::perform(system::displays_call("SetBrightness", percent), Message::Called);
+                        return Task::perform(system::desktop_call("Displays", "SetBrightness", percent), Message::Called);
                     }
                     _ => {}
                 }
@@ -854,13 +876,32 @@ impl App {
                     self.save("terminal", command.clone());
                 }
             }
-            Message::Identify => return Task::perform(system::displays_call("Identify", ()), Message::Called),
+            Message::Identify => return Task::perform(system::desktop_call("Displays", "Identify", ()), Message::Called),
             Message::ResetArrangement => {
                 if self.ask_keep() {
                     self.error = self.config.clear_outputs("position").err().map(|err| format!("Couldn't save the display settings: {err}"));
                 }
             }
             Message::Called(error) => self.error = error,
+            Message::UpdateRead => {
+                self.update = system::read_update();
+                self.checking = false;
+            }
+            Message::UpdateCall(method) => {
+                self.checking |= method == "Check";
+                return Task::perform(system::desktop_call("Update", method, ()), Message::Called);
+            }
+            Message::UpdateTimeout => {
+                if std::mem::take(&mut self.checking) {
+                    self.error = Some("Couldn't check for updates: GitHub can't be reached.".into());
+                }
+            }
+            Message::OpenUrl(url) => {
+                // Waited for on a thread, so it doesn't linger as a zombie.
+                if let Err(err) = std::process::Command::new("xdg-open").arg(&url).spawn().map(|mut child| std::thread::spawn(move || child.wait())) {
+                    self.error = Some(format!("Couldn't open {url}: {err}"));
+                }
+            }
             Message::Keep => self.keep(),
             Message::Revert => self.revert(),
             // Ran out: the desktop is putting the settings back; the sheet just goes.
