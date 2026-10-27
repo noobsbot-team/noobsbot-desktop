@@ -35,8 +35,9 @@ mkdir -p "$state"
 mv -f "$state/session.log" "$state/session.log.old" 2>/dev/null
 exec >"$state/session.log" 2>&1
 # Install at login ([update] install_at_login): the compositor leaves install-at-login while that's on and a verified
-# download waits. The helper's --verified mode needs no password (its own polkit action) and installs only that
-# download, after checking its signature itself; then this login starts the new version, with "Updated to <v>".
+# download waits. The helper's --verified mode needs no password from an admin (its own polkit action and rule; for
+# anyone else this agentless pkexec fails) and installs only that download, after checking its signature itself; then
+# this login starts the new version, with "Updated to <v>".
 updated=""
 if [ -f "$state/install-at-login" ]; then
     rm -f "$state/install-at-login"

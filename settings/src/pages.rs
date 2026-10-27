@@ -781,7 +781,7 @@ pub const SETTINGS: &[Setting] = &[
         "Software Update",
         "update.install_at_login",
         "Install updates automatically at login",
-        "Signed updates only, without asking for the password",
+        "Admins only, no password; never a beta or a reverted version",
         Kind::Toggle,
     ),
     s(Page::General, "Session", "windows.reopen_at_login", "Reopen windows when logging back in", "Also the Log Out alert's checkbox", Kind::Toggle),
