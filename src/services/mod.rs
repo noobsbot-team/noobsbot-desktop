@@ -101,6 +101,8 @@ pub enum Update {
     RevertVersion,
     /// Settings' Displays ▸ Identify (`org.noobsbot.Desktop.Displays.Identify`).
     Identify,
+    /// Settings re-added a CalDAV account with a new password (`org.noobsbot.Desktop.Calendar.Fetch`).
+    CalDavNow,
     /// The keyboard backlight after a key changed it, in percent.
     KbdBacklight(u8),
     /// Thunderbolt devices waiting to be allowed; `None`: boltd isn't running.

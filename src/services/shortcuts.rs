@@ -1,6 +1,6 @@
 //! The desktop's own bus name (`org.noobsbot.Desktop`): `Shortcuts.Record` lets Settings capture keys the desktop
 //! would otherwise take (E8.7); `Displays` lets the Displays page set the brightness and identify the screens;
-//! `Update` is Settings' Software Update (Check Now, Update Now, Revert).
+//! `Update` is Settings' Software Update (Check Now, Update Now, Revert); `Calendar.Fetch` fetches CalDAV now.
 
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
@@ -64,6 +64,18 @@ impl Updates {
     }
 }
 
+struct Calendar {
+    updates: Sender<Update>,
+}
+
+#[zbus::interface(name = "org.noobsbot.Desktop.Calendar")]
+impl Calendar {
+    /// Fetches the CalDAV calendars now (an account's password changed).
+    fn fetch(&self) {
+        let _ = self.updates.send(Update::CalDavNow);
+    }
+}
+
 /// Serves the interfaces; a second desktop on the same bus (nested in a session of ours) leaves the name to the first.
 pub async fn serve(bus: &Connection, updates: &Sender<Update>) {
     let server = bus.object_server();
@@ -72,6 +84,7 @@ pub async fn serve(bus: &Connection, updates: &Sender<Update>) {
         .await
         .and(server.at(PATH, Displays { updates: updates.clone() }).await)
         .and(server.at(PATH, Updates { updates: updates.clone() }).await)
+        .and(server.at(PATH, Calendar { updates: updates.clone() }).await)
     {
         return tracing::warn!("shortcut recording off: {err}");
     }

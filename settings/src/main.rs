@@ -546,11 +546,13 @@ impl App {
                     self.texts.remove(key);
                 }
                 let mut items = self.config.get("calendar.caldav").and_then(toml_edit::Value::as_array).cloned().unwrap_or_default();
-                // The same account again only had its password changed.
-                if !items.iter().any(|v| pages::account(v).is_some_and(|(u, n)| u == url && n == user)) {
-                    items.push(toml_edit::InlineTable::from_iter([("url", url), ("user", user)]));
-                    self.save("calendar.caldav", items);
+                // The same account again only had its password changed: the config doesn't, so the desktop is told to
+                // fetch now (a new account's config write does that).
+                if items.iter().any(|v| pages::account(v).is_some_and(|(u, n)| u == url && n == user)) {
+                    return Task::perform(system::desktop_call("Calendar", "Fetch", ()), Message::Called);
                 }
+                items.push(toml_edit::InlineTable::from_iter([("url", url), ("user", user)]));
+                self.save("calendar.caldav", items);
             }
             Message::WidgetIds(ids) => self.widget_ids = ids,
             Message::Widgets(places) => self.error = self.config.set_all(places.values()).err().map(|err| format!("Couldn't save widgets: {err}")),
