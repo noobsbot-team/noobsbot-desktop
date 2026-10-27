@@ -1217,14 +1217,15 @@ mod tests {
         let (cards, more) = banners(&store, 1280, 0.0, true);
         assert_eq!(cards.len(), 3);
         assert_eq!(cards[0].id, 5);
-        assert_eq!(cards[0].rect, Rectangle::new((1280 - 12 - 344, 32).into(), (344, 70).into()));
-        assert_eq!(cards[1].rect.loc.y, 32 + 70 + 8);
+        let top = menubar::height() + BANNER_TOP;
+        assert_eq!(cards[0].rect, Rectangle::new((1280 - 12 - 344, top).into(), (344, 70).into()));
+        assert_eq!(cards[1].rect.loc.y, top + 70 + 8);
         assert_eq!(more.map(|(_, n)| n), Some(2));
         assert!(cards.iter().all(|c| c.rect.contains_rect(c.icon) && c.rect.contains_rect(c.body) && c.close.is_none()));
-        // The OSD (top 28, 48 tall) never overlaps the first banner.
+        // The OSD (4 px under the bar, 48 tall) never overlaps the first banner.
         let (moved, _) = banners(&store, 1280, 1.0, true);
-        assert_eq!(moved[0].rect.loc.y, 32 + 56);
-        assert_eq!(banners(&store, 1280, 0.5, true).0[0].rect.loc.y, 32 + 28, "half way down its spring");
+        assert_eq!(moved[0].rect.loc.y, top + 56);
+        assert_eq!(banners(&store, 1280, 0.5, true).0[0].rect.loc.y, top + 28, "half way down its spring");
         assert!(!moved[0].rect.overlaps(super::super::osd_rect(1280)));
         // Hovered: the ✕ and the buttons appear, and the card grows to hold them.
         store.list[4].actions = vec![("default".into(), "Open".into()), ("reply".into(), "Reply".into())];
@@ -1287,7 +1288,8 @@ mod tests {
         }
         let size = Size::from((1280, 720));
         let center = center(&store, size, true, (5, false), 0, 1, true, 2, &[true], true);
-        assert_eq!(center.rect, Rectangle::new((1280 - 8 - 360, 28).into(), (360, 720 - 28 - 8).into()));
+        let top = menubar::height() + DROP;
+        assert_eq!(center.rect, Rectangle::new((1280 - 8 - 360, top).into(), (360, 720 - top - 8).into()));
         assert_eq!(center.groups.iter().map(|g| (g.app.as_str(), g.count, g.cards.len())).collect::<Vec<_>>(), vec![("A", 3, 1), ("B", 1, 1)]);
         assert!(center.groups[0].plate.is_some() && center.groups[1].plate.is_none());
         let inside = |r: Rect| center.rect.contains_rect(r);

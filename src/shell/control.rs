@@ -867,7 +867,7 @@ mod tests {
     #[test]
     fn modules_stack_inside_the_panel() {
         let l = layout((1280, 800).into(), &full());
-        assert_eq!(l.rect.loc, (1280 - 8 - 320, 28).into());
+        assert_eq!(l.rect.loc, (1280 - 8 - 320, menubar::height() + DROP).into());
         // 10 + 104 + 10 + 48 + 10 + 62 + 10 + 62 + 10 + 56 + 10 + 44 + 10
         assert_eq!(l.rect.size.h, 446);
         assert!(l.cards.iter().all(|c| l.rect.contains_rect(*c)));
