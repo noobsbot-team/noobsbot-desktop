@@ -463,12 +463,15 @@ impl State {
                     crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                     crate::services::Update::Widgets(widgets) => state.widgets = widgets,
-                    crate::services::Update::SetBrightness(percent) => {
+                    crate::services::Update::SetBrightness(None, percent) => {
                         // Set here, as the keys and slider do: DDC monitors don't report back.
                         if state.brightness.is_some() {
                             state.brightness = Some(percent);
                         }
                         state.services.send(crate::services::Command::Brightness(percent));
+                    }
+                    crate::services::Update::SetBrightness(Some(connector), percent) => {
+                        state.services.send(crate::services::Command::OutputBrightness(connector, percent));
                     }
                     crate::services::Update::Identify => state.identify_displays(),
                     crate::services::Update::CalDavNow => state.caldav_now(),

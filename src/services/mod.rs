@@ -93,8 +93,9 @@ pub enum Update {
     Fcitx(Option<fcitx::Fcitx>),
     /// Settings starts or stops recording a shortcut (`org.noobsbot.Desktop.Shortcuts.Record`).
     Record(bool),
-    /// Settings' Displays page moved the brightness slider (`org.noobsbot.Desktop.Displays.SetBrightness`), in percent.
-    SetBrightness(u8),
+    /// Percent, for every display (`org.noobsbot.Desktop.Displays.SetBrightness`) or one by connector
+    /// (`…SetOutputBrightness`, Settings' Displays page).
+    SetBrightness(Option<String>, u8),
     /// Settings' Software Update ▸ Check Now (`org.noobsbot.Desktop.Update.Check`).
     CheckNow,
     /// Settings' Software Update ▸ Update Now (`org.noobsbot.Desktop.Update.Install`).
