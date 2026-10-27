@@ -2619,12 +2619,12 @@ pub fn version() -> &'static str {
     manifest.lines().find_map(|l| l.strip_prefix("version = ")).map_or("", |v| v.trim_matches('"'))
 }
 
-/// "1.3", "1.0 beta 1", "1.0 RC 2": MAJOR.MINOR and any pre-release, as About names the version (the desktop's
-/// update notice too, `update::short`).
+/// "1.3", "1.0 beta 1", "1.0.1 beta 2", "1.0 RC 2": MAJOR.MINOR and any pre-release, with the patch when the
+/// pre-release leads to one, as About names the version (the desktop's update notice too, `update::short`).
 fn short_version(v: &str) -> String {
     let (core, pre) = v.split_once('-').unwrap_or((v, ""));
-    let minor = core.rsplit_once('.').map_or(core, |(minor, _)| minor);
-    format!("{minor} {}", pre.replace('.', " ").replacen("rc", "RC", 1)).trim_end().to_owned()
+    let name = core.rsplit_once('.').filter(|(_, patch)| pre.is_empty() || *patch == "0").map_or(core, |(minor, _)| minor);
+    format!("{name} {}", pre.replace('.', " ").replacen("rc", "RC", 1)).trim_end().to_owned()
 }
 
 fn note<'a>(t: Tokens, words: &'a str) -> Element<'a, Message> {
@@ -2763,6 +2763,7 @@ mod tests {
     fn about_names_a_pre_release() {
         assert_eq!(short_version("1.3.2"), "1.3");
         assert_eq!(short_version("1.0.0-beta.1"), "1.0 beta 1");
+        assert_eq!(short_version("1.0.1-beta.2"), "1.0.1 beta 2");
         assert_eq!(short_version("1.0.0-rc.2"), "1.0 RC 2");
         assert_eq!(short_version("1.1.0-alpha"), "1.1 alpha");
     }

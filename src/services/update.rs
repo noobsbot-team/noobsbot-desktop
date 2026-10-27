@@ -217,10 +217,12 @@ pub fn cli(channel: Channel) -> i32 {
 /// the server's counter.
 pub const NOTICE_ID: u32 = 0xFFFB_0000;
 
-/// "1.3", "1.0 beta 2", "1.0 RC 1": MAJOR.MINOR and any pre-release, as the notice (and Settings' About) names a version.
+/// "1.3", "1.0 beta 2", "1.0.1 beta 2", "1.0 RC 1": MAJOR.MINOR and any pre-release, with the patch when the pre-release
+/// leads to one, as the notice (and Settings' About) names a version.
 fn short(v: &Version) -> String {
+    let patch = if v.pre.is_empty() || v.patch == 0 { String::new() } else { format!(".{}", v.patch) };
     let pre = v.pre.replace('.', " ").replacen("rc", "RC", 1);
-    format!("{}.{} {pre}", v.major, v.minor).trim_end().to_owned()
+    format!("{}.{}{patch} {pre}", v.major, v.minor).trim_end().to_owned()
 }
 
 /// "Noobsbot Desktop 1.3 is available", "Noobsbot Desktop 1.0 beta 2 is available".
@@ -692,6 +694,7 @@ mod tests {
         let beta = newer(r#"{"tag_name":"v1.0.0-beta.2"}"#, REPO, &v("1.0.0-beta.1"), Channel::Beta).unwrap();
         assert_eq!(notice(&beta).summary, "Noobsbot Desktop 1.0 beta 2 is available");
         assert_eq!(short(&v("1.0.0-rc.1")), "1.0 RC 1");
+        assert_eq!(short(&v("1.0.1-beta.2")), "1.0.1 beta 2");
     }
 
     #[test]
