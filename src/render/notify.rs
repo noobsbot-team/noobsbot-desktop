@@ -1,6 +1,6 @@
 //! Notification banners (E4.1) and Notification Center (E4.2), from the layouts in shell/notify.rs. Banners are
 //! `card` glass, radius 16, elevation 2; Notification Center is a `panel` column holding the same cards, grouped by
-//! app, then the calendar and batteries widgets.
+//! app, then the calendar, weather, world clock and batteries widgets.
 
 use std::sync::Arc;
 
@@ -69,6 +69,8 @@ pub enum View<'a> {
         batteries: &'a [(String, u8)],
         dnd: bool,
         weather: Option<&'a Weather>,
+        /// The World Clock's (city, zone) rows.
+        clocks: &'a [(String, crate::ical::Zone)],
         widgets: &'a [&'a Widget],
     },
     /// Other apps' widgets on the desktop, each in its rect.
@@ -303,7 +305,7 @@ impl NotificationViews {
                     widget_pieces(&mut pieces, &mut shapes, text, symbols, &ink, w, *card, scale);
                 }
             }
-            View::Center { center, month, up_next, batteries, dnd, weather, widgets } => {
+            View::Center { center, month, up_next, batteries, dnd, weather, clocks, widgets } => {
                 let shown = |r: Rect| center.visible(r);
                 let row_w = |r: Rect| r.size.w.max(1) as u32;
                 if shown(center.date) {
@@ -377,6 +379,23 @@ impl NotificationViews {
                 if let (Some(card), Some(w)) = (center.weather.filter(|c| shown(*c)), weather) {
                     weather_pieces(&mut pieces, text, symbols, &ink, w, card, hour24, scale);
                     shapes.push((card, Shape::Widget));
+                }
+                if let Some((card, rows)) = center.clocks.as_ref().filter(|(c, _)| shown(*c)) {
+                    // Redrawn by the menu-bar clock's minute tick.
+                    let now = chrono::Local::now();
+                    let (t, here) = (now.timestamp(), now.offset().local_minus_utc());
+                    let big = Style { size: 22, line_height: 28, weight: 400, color: ink.label, tabular: true };
+                    // The time takes the right of each row, the city over its offset the rest.
+                    let time_w = ts(110);
+                    for (row, (city, zone)) in rows.iter().zip(clocks) {
+                        let (time, ahead) = crate::clock::world(t, zone.offset(t), here, hour24);
+                        let at = |dy: i32, h: i32| Rectangle::new((row.loc.x, row.loc.y + dy).into(), (row.size.w, h).into());
+                        let left = (row.size.w - time_w - 8).max(1) as u32;
+                        pieces.put(text.label(city, ink.headline(), left, scale), at(ts(6), ts(16)), Align::Left);
+                        pieces.put(text.label(&ahead, ink.subheadline(), left, scale), at(ts(24), ts(14)), Align::Left);
+                        pieces.put(text.label(&time, big, time_w as u32, scale), at((row.size.h - ts(28)) / 2, ts(28)), Align::Right);
+                    }
+                    shapes.push((*card, Shape::Widget));
                 }
                 if let Some((card, slots)) = center.batteries.as_ref().filter(|(c, _)| shown(*c)) {
                     let title = Rectangle::new((card.loc.x + 12, card.loc.y + ts(10)).into(), (card.size.w - 24, ts(20)).into());
