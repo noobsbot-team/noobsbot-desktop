@@ -2446,7 +2446,7 @@ fn displays_part<'a>(app: &'a App) -> Vec<Element<'a, Message>> {
     let name: &'a str = &d.name;
     let change = move |changes: Vec<(&'static str, toml_edit::Value)>| Message::Output(name.to_owned(), changes);
     let mut rows = Vec::new();
-    let maker = [d.make.as_str(), d.model.as_str()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ");
+    let maker = crate::display_info::maker(&d.make, &d.model);
     let size = (d.width_mm > 0).then(|| {
         let inches = f64::from(d.width_mm).hypot(f64::from(d.height_mm)) / 25.4;
         format!("{inches:.1}-inch, {} × {} mm", d.width_mm, d.height_mm)

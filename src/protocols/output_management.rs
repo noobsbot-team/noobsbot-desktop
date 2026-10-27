@@ -176,7 +176,7 @@ fn send_heads(dh: &DisplayHandle, manager: &ZwlrOutputManagerV1, displays: &[Dis
         let Ok(head) = client.create_resource::<ZwlrOutputHeadV1, _, State>(dh, manager.version(), d.name.clone()) else { continue };
         manager.head(&head);
         head.name(d.name.clone());
-        let what = [d.make.as_str(), d.model.as_str()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" ");
+        let what = crate::display_info::maker(&d.make, &d.model);
         head.description(if what.is_empty() { d.name.clone() } else { format!("{what} ({})", d.name) });
         if d.width_mm > 0 && d.height_mm > 0 {
             head.physical_size(d.width_mm as i32, d.height_mm as i32);

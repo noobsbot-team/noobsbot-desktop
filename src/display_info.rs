@@ -80,3 +80,56 @@ pub fn previous_path() -> Option<PathBuf> {
 pub fn built_in(name: &str) -> bool {
     ["eDP", "LVDS", "DSI"].iter().any(|p| name.starts_with(p))
 }
+
+/// Common EDID makers (the 3-letter PNP id) by the name people know them by: monitor brands, then laptop panel makers.
+const VENDORS: &[(&str, &str)] = &[
+    ("ACI", "Asus"),
+    ("ACR", "Acer"),
+    ("AOC", "AOC"),
+    ("APP", "Apple"),
+    ("AUS", "Asus"),
+    ("BNQ", "BenQ"),
+    ("DEL", "Dell"),
+    ("ENC", "Eizo"),
+    ("GBT", "Gigabyte"),
+    ("GSM", "LG"),
+    ("HPN", "HP"),
+    ("HWP", "HP"),
+    ("IVM", "Iiyama"),
+    ("LEN", "Lenovo"),
+    ("MSI", "MSI"),
+    ("NEC", "NEC"),
+    ("PHL", "Philips"),
+    ("SAM", "Samsung"),
+    ("SNY", "Sony"),
+    ("VSC", "ViewSonic"),
+    ("AUO", "AU Optronics"),
+    ("BOE", "BOE"),
+    ("CMN", "Innolux"),
+    ("CSO", "CSOT"),
+    ("IVO", "InfoVision"),
+    ("LGD", "LG Display"),
+    ("SDC", "Samsung Display"),
+    ("SHP", "Sharp"),
+];
+
+/// "Dell U2720Q": a display's maker by name (an unknown PNP id as it is), then its model; the maker only once when the
+/// model already starts with it ("DELL U2720Q"). Empty when both are.
+pub fn maker(make: &str, model: &str) -> String {
+    let name = VENDORS.iter().find(|(id, _)| *id == make).map_or(make, |(_, name)| name);
+    let name = if model.to_lowercase().starts_with(&name.to_lowercase()) { "" } else { name };
+    [name, model].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn makers_by_name() {
+        use super::maker;
+        assert_eq!(maker("AUO", ""), "AU Optronics");
+        assert_eq!(maker("GSM", "27GL850"), "LG 27GL850");
+        assert_eq!(maker("DEL", "DELL U2720Q"), "DELL U2720Q", "named once");
+        assert_eq!(maker("XYZ", "Panel"), "XYZ Panel", "unknown: the id");
+        assert_eq!(maker("", ""), "");
+    }
+}

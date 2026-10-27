@@ -190,8 +190,8 @@ fn rotation(degrees: u16) -> Transform {
     }
 }
 
-/// Make (the PNP id: `BOE`, `DEL`) and model (the monitor-name descriptor) from an EDID; empty when missing.
-// ponytail: the 3-letter PNP id, not the vendor's name; a small id → name table if people ask "who is AUO".
+/// Make (the PNP id: `BOE`, `DEL`) and model (the monitor-name descriptor) from an EDID; empty when missing. The id
+/// stays the make (layouts are remembered by it, apps get it); people see `display_info::maker`'s name.
 pub fn edid_names(edid: &[u8]) -> (String, String) {
     if edid.len() < 128 || edid[..8] != [0, 255, 255, 255, 255, 255, 255, 0] {
         return Default::default();
