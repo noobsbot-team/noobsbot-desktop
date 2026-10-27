@@ -346,6 +346,8 @@ pub fn write(appearance: &Appearance, config_home: &Path, data_home: &Path) -> i
             ],
         ),
         ("Icons", vec![("Theme", icons(dark).into())]),
+        // KF6 apps (Dolphin) pick their palette here; without it they fall back to the bundled Breeze Light: dark text.
+        ("UiSettings", vec![("ColorScheme", name(dark).into())]),
     ];
     ours.extend(colour_groups(dark, appearance.accent));
     let (path, text) = read(&config_home.join("kdeglobals"))?;
@@ -539,6 +541,7 @@ mod tests {
         let kdeglobals = fs::read_to_string(config_home.join("kdeglobals")).unwrap();
         assert_eq!(get(&kdeglobals, "General", "TerminalApplication"), Some("noobsbot"));
         assert_eq!(get(&kdeglobals, "General", "ColorScheme"), Some("NoobsbotGlassDark"));
+        assert_eq!(get(&kdeglobals, "UiSettings", "ColorScheme"), Some("NoobsbotGlassDark"));
         assert_eq!(get(&kdeglobals, "Colors:Selection", "BackgroundNormal"), Some("48,209,88"));
         let css = fs::read_to_string(config_home.join("gtk-4.0").join("gtk.css")).unwrap();
         assert!(css.contains("@define-color accent_color #30D158;"));
