@@ -2177,7 +2177,7 @@ fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message
         (None, _) => String::new(),
     };
     let update = u.ready.then(|| button(text("Update Now").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::UpdateCall("Install")).into());
-    let info = u.available.as_ref().map(|_| release_info(u.size, u.published.as_deref())).unwrap_or_default();
+    let info = u.available.as_ref().map(|v| release_info(v, u.size, u.published.as_deref())).unwrap_or_default();
     let mut before = vec![version_row(format!("Noobsbot Desktop {}", version()), status, info, &u.url, update)];
     // Its own installer or package updates it: only shown, with its release page.
     if let Some(term) = &u.terminal {
@@ -2185,7 +2185,7 @@ fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message
             Some(v) => format!("{v} is available; install it with its installer or your package manager"),
             None => "Up to date".to_owned(),
         };
-        let info = term.available.as_ref().map(|_| release_info(term.size, term.published.as_deref())).unwrap_or_default();
+        let info = term.available.as_ref().map(|v| release_info(v, term.size, term.published.as_deref())).unwrap_or_default();
         before.push(version_row(format!("Noobsbot Terminal {}", term.installed), status, info, &term.url, None));
     }
     let check = push(if app.checking { "Checking…" } else { "Check Now" }, (!app.checking).then_some(Message::UpdateCall("Check")));
@@ -2202,11 +2202,13 @@ fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message
     (before, after)
 }
 
-/// "12.3 MB · 27 Oct 2026": a release's download size and date, either left out when unknown.
-fn release_info(size: Option<u64>, published: Option<&str>) -> String {
+/// "Pre-release · 12.3 MB · 27 Oct 2026": whether `version` is a pre-release (Stable offers them while there is no
+/// stable release yet), its download size and date, each left out when not so or unknown.
+fn release_info(version: &str, size: Option<u64>, published: Option<&str>) -> String {
+    let pre = version.contains('-').then(|| "Pre-release".to_owned());
     let size = size.map(|bytes| format!("{:.1} MB", bytes as f64 / 1e6));
     let date = published.and_then(|p| chrono::DateTime::parse_from_rfc3339(p).ok()).map(|d| d.with_timezone(&chrono::Local).format("%-d %b %Y").to_string());
-    size.into_iter().chain(date).collect::<Vec<_>>().join(" · ")
+    pre.into_iter().chain(size).chain(date).collect::<Vec<_>>().join(" · ")
 }
 
 /// "Last checked": Never, Today, 9:41, Yesterday, 9:41, or 12 Oct 2026.
@@ -2607,10 +2609,11 @@ mod tests {
 
     #[test]
     fn release_size_and_date() {
-        assert_eq!(release_info(Some(12_345_678), Some("2026-10-27T12:00:00Z")), "12.3 MB · 27 Oct 2026");
-        assert_eq!(release_info(None, Some("2026-10-27T12:00:00Z")), "27 Oct 2026");
-        assert_eq!(release_info(Some(900_000), Some("garbage")), "0.9 MB");
-        assert_eq!(release_info(None, None), "");
+        assert_eq!(release_info("1.3.0", Some(12_345_678), Some("2026-10-27T12:00:00Z")), "12.3 MB · 27 Oct 2026");
+        assert_eq!(release_info("1.3.0", None, Some("2026-10-27T12:00:00Z")), "27 Oct 2026");
+        assert_eq!(release_info("1.3.0", Some(900_000), Some("garbage")), "0.9 MB");
+        assert_eq!(release_info("1.3.0", None, None), "");
+        assert_eq!(release_info("1.0.0-beta.2", Some(900_000), None), "Pre-release · 0.9 MB");
     }
 
     #[test]
