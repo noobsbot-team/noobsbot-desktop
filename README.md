@@ -100,7 +100,8 @@ Things it does on purpose:
 - **Text:** [cosmic-text](https://github.com/pop-os/cosmic-text) with Inter, JetBrains Mono and Noto fonts.
 - **System services:** [zbus](https://github.com/dbus2/zbus) talks to PipeWire, NetworkManager, BlueZ, UPower,
   udisks2, logind, timedated and power-profiles-daemon on a background thread, so the screen never waits on them.
-- **Old X11 apps:** run through `xwayland-satellite`.
+- **Old X11 apps:** run through `xwayland-satellite`, with a small patch (`vendor/xwayland-satellite`) so they get
+  the display's scale from the first one on.
 - **Settings:** one file, `~/.config/noobsbot-desktop/config.toml`. Saving it applies the change at once. System
   Settings (`noobsbot-desktop-settings`, built with [iced](https://github.com/iced-rs/iced)) edits the same file.
 - **Login:** greetd starts the session, either through `tuigreet` (text, the default) or through Noobsbot Desktop's
@@ -168,8 +169,8 @@ What `install.sh` does:
    on your machine. If there is no prebuilt for your CPU, or it doesn't fit your system's libraries, it builds that
    release from source instead (and installs Rust for it).
 5. Installs noobsbot-terminal, the system files (session, greetd, PAM, polkit, portals), enables the services and
-   writes your default settings, keeping any settings you already have. On Debian it also installs
-   `xwayland-satellite` (for X11 apps; Debian has no package) to `/usr/local/bin`.
+   writes your default settings, keeping any settings you already have. The release carries our patched
+   `xwayland-satellite` (for X11 apps); on Debian, which has no package of it, a copy also goes to `/usr/local/bin`.
 
 Running it again is safe: it only redoes what is missing or changed, so it also repairs an install.
 
@@ -213,9 +214,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   events), the month calendar (‹ ›, ←/→ or a two-finger swipe sideways change the month), the weather (if you turn it
   on), a world clock (`[widgets] clocks`) and battery levels.
 - **Dock:** pinned apps and running apps, with dots for open apps, badges, magnification under the pointer and
-  right-click menus. Minimised windows sit as thumbnail tiles after a separator at the right end (or go into their
-  app's icon with `[dock] minimise_into_icon`); `[dock] minimise_effect = "genie"` swaps the shrink for a genie. The Trash sits at the far right (`[dock] show_trash`):
-  click to open it, drop files on it to trash them, right-click to empty it. A right-click's Options submenu assigns
+  right-click menus. Minimised windows go into their app's icon; `[dock] minimise_effect = "genie"` swaps the shrink
+  for a genie. A right-click's Options submenu assigns
   an app to all Spaces or to this one and moves its windows to another display; Close Others closes every other app.
   Hold a dragged file on an icon to bring that app's window up (App Exposé when it has several). By default it hides when a window of the app you're using overlaps it (Plank's "intelligent"
   mode); touch the bottom edge to bring it back, or pick another mode with `[dock] hide`. On first start your Plank
@@ -244,7 +244,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   the keys you hold light up.
 - **Quake terminal:** F12 drops a terminal down from the top of the screen.
 - **Desktop icons:** files in `~/Desktop` appear on the wallpaper. Drag to arrange, double-click to open,
-  right-click for Open, Rename, Move to Trash and New Folder. Mounted drives show at the top right, with Eject.
+  right-click for Open, Rename, Move to Trash and New Folder. An executable app launcher (`.desktop` file) shows
+  its app's name and icon and starts the app. Mounted drives show at the top right, with Eject.
 - **Calendar events:** put `.ics` files in `~/.local/share/noobsbot-desktop/calendars/`, or add a CalDAV account
   (server address, user and app password) in System Settings ▸ Date & Time. They show in Up Next, as dots in the
   calendar, and as reminders.
@@ -341,7 +342,7 @@ and shows a notification with the line.
 | `[spaces]` | each display with its own Spaces, or one set for all |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week (or the locale's), week numbers |
 | `[menu_bar]` | hide the menu bar until the pointer reaches the top edge; show the current Space as a number or dots |
-| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions, `cycle_across_apps`; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To); `displays`: a dock on every display, the main one or the pointer's; `outputs`: a display's own pinned apps (Options ▸ Separate Items on This Display); `style`: the bar's look, `default`, `whitesur-dark` or `glass` |
+| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions, `cycle_across_apps`; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To); `displays`: a dock on every display, the main one or the pointer's; `outputs`: a display's own pinned apps (Options ▸ Separate Items on This Display) |
 | `[idle]` | when to dim, turn the screen off and sleep (each on battery and on AC), turn the keyboard backlight off, locking |
 | `[battery]` | the percentage beside the menu bar's battery symbol, slightly dim the display on battery |
 | `[sound]` | the alert sound (from the system's sound theme) and its volume, user interface sound effects on or off, the sound at login |

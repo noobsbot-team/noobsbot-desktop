@@ -32,7 +32,7 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// File format version; older files are migrated on load (C11).
+    /// File format version; older files are migrated on load (C11, `migrate`).
     pub version: u32,
     /// Opened by Super+Enter and the `terminal` action.
     pub terminal: String,
@@ -524,7 +524,7 @@ impl Default for HotCorners {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Displays {
     /// The GPU that draws the desktop (`/dev/dri/card1`); empty: the one the firmware booted with. Read at start.
@@ -533,6 +533,12 @@ pub struct Displays {
     pub scale: f64,
     /// `[[display.outputs]]`: one display's own settings, by connector name. Live.
     pub outputs: Vec<OutputSettings>,
+}
+
+impl Default for Displays {
+    fn default() -> Self {
+        Self { gpu: String::new(), scale: 1.15, outputs: Vec::new() }
+    }
 }
 
 /// One display's settings (E6.2); a display without an entry gets the defaults below.
@@ -627,7 +633,7 @@ pub enum TitleAction {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: VERSION,
             terminal: "noobsbot".into(),
             check_updates: true,
             appearance: Appearance::default(),
@@ -730,7 +736,7 @@ pub struct Dock {
     pub unhide_delay: u32,
     /// No dragging icons in, out or around, and no Keep in Dock.
     pub lock_items: bool,
-    /// Only pinned apps, no other running ones.
+    /// Only pinned apps, no other running ones but those with a minimised window.
     pub pinned_only: bool,
     /// Running apps and their windows from the current Space only.
     pub current_workspace_only: bool,
@@ -744,12 +750,8 @@ pub struct Dock {
     pub scroll: DockScroll,
     /// Cycling by click or scroll goes on past an app's last window into the next app's.
     pub cycle_across_apps: bool,
-    /// Minimised windows go into their app's icon instead of tiles after the separator.
-    pub minimise_into_icon: bool,
     /// How a window goes into the dock and comes back (E5.5).
     pub minimise_effect: MinimiseEffect,
-    /// The Trash at the dock's right end, after a separator (E8.8).
-    pub show_trash: bool,
     /// Options ▸ Assign To, per dock app (item key): `"all"` (every Space) or `"<display>:<n>"` (its new windows
     /// open on Space n of that display).
     pub assign: BTreeMap<String, String>,
@@ -758,8 +760,6 @@ pub struct Dock {
     /// A display's own pinned list, by connector name, in place of `items` (the dock menu's Separate Items on This
     /// Display). Kept while the display is away.
     pub outputs: BTreeMap<String, Vec<String>>,
-    /// The bar's look (E3.1).
-    pub style: DockStyle,
 }
 
 impl Dock {
@@ -779,19 +779,6 @@ pub enum DockDisplays {
     Main,
     /// The display the pointer is on: the dock follows it.
     Pointer,
-}
-
-/// The dock bar's preset (E3.1).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum DockStyle {
-    /// Plank's Transparent-Tight: an opaque grey gradient, square.
-    #[default]
-    Default,
-    /// Plank's WhiteSur-Dark: near-black, mostly opaque, a faint light edge.
-    WhitesurDark,
-    /// Part D glass: lighter and see-through, rounded.
-    Glass,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Deserialize)]
@@ -1125,13 +1112,10 @@ impl Default for Dock {
             middle: DockMiddle::New,
             scroll: DockScroll::On,
             cycle_across_apps: false,
-            minimise_into_icon: false,
             minimise_effect: MinimiseEffect::Scale,
-            show_trash: true,
             assign: BTreeMap::new(),
             displays: DockDisplays::All,
             outputs: BTreeMap::new(),
-            style: DockStyle::Default,
         }
     }
 }
@@ -1144,7 +1128,7 @@ pub struct Sound {
     pub alert: String,
     /// The alert sound's volume, 0 … 100 percent.
     pub alert_volume: u8,
-    /// Screenshots, emptying the Trash and the volume keys make their sounds.
+    /// Screenshots and the volume keys make their sounds.
     pub ui_sounds: bool,
     /// A sound as the session starts (once per login).
     pub startup_sound: bool,
@@ -1215,14 +1199,17 @@ impl Appearance {
     }
 }
 
+/// The wallpaper shipped with the desktop (install.sh puts data/system's copy there); missing, the opal is drawn.
+pub const DEFAULT_WALLPAPER: &str = "/usr/share/backgrounds/noobsbot-desktop/purple-crystal.png";
+
 impl Default for Appearance {
     fn default() -> Self {
         Self {
             mode: Mode::Light,
             accent: Accent::Blue,
             glass_opacity: 1.0,
-            wallpaper: String::new(),
-            wallpaper_dark: String::new(),
+            wallpaper: DEFAULT_WALLPAPER.into(),
+            wallpaper_dark: DEFAULT_WALLPAPER.into(),
             theme_apps: false,
             reduce_motion: false,
             wallpaper_fit: WallpaperFit::Fill,
@@ -1413,9 +1400,8 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
     if let (Ok(user), Ok(known)) = (toml::from_str::<toml::Table>(text), toml::from_str::<toml::Table>(DEFAULT_TOML)) {
         warn_unknown("", &user, &known);
     }
-    if config.version != 1 {
-        // ponytail: only version 1 exists; a migration step per version goes here when 2 appears.
-        tracing::warn!("config version {} is not 1; reading the keys this version understands", config.version);
+    if config.version > VERSION {
+        tracing::warn!("config version {} is newer than {VERSION}; reading the keys this version understands", config.version);
     }
     config.bindings = merge_bindings(default_bindings(), std::mem::take(&mut config.bindings));
     config.appearance.glass_opacity = config.appearance.glass_opacity.clamp(0.0, 1.0);
@@ -1486,7 +1472,7 @@ fn warn_unknown(prefix: &str, user: &toml::Table, known: &toml::Table) {
 
 /// Reads and parses the file: the error (logged), "line 3: …", when it can't be read or parsed; a missing file is the
 /// defaults.
-fn read(path: &Path) -> Result<Config, String> {
+pub fn read(path: &Path) -> Result<Config, String> {
     let result = match fs::read_to_string(path) {
         Ok(text) => parse(&text).map_err(|err| {
             let message = err.message().trim().replace('\n', " ");
@@ -1499,24 +1485,67 @@ fn read(path: &Path) -> Result<Config, String> {
     result.inspect_err(|err| tracing::warn!("{}: {err}", path.display()))
 }
 
-/// Startup load: the file, or the defaults if it is missing or broken.
+/// Startup load: the file, or the defaults if it is missing or broken. An older file is migrated (and saved) first.
 pub fn load(path: &Path) -> Config {
+    if let Some(text) = fs::read_to_string(path).ok().and_then(|text| migrate(&text)) {
+        // Through a dotfiles symlink, as `save_edit` does.
+        let file = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        match save_atomic(&file, &text) {
+            Ok(()) => tracing::info!("{}: settings moved to version {VERSION}", file.display()),
+            Err(err) => tracing::warn!("{}: {err}", file.display()),
+        }
+    }
     read(path).unwrap_or_default()
+}
+
+/// The settings file's format version.
+const VERSION: u32 = 2;
+
+/// An older file's text brought up to `VERSION`; `None` when it is current or doesn't parse. Version 2: the display
+/// scale's default went from "picked from the pixel density" (0) to 115%, so a file still on 0 gets that. Choosing 0
+/// again later sticks.
+fn migrate(text: &str) -> Option<String> {
+    let table: toml::Table = toml::from_str(text).ok()?;
+    if table.get("version").and_then(toml::Value::as_integer).unwrap_or(1) >= i64::from(VERSION) {
+        return None;
+    }
+    let scale = table.get("display").and_then(|d| d.get("scale"));
+    let text = match scale {
+        Some(toml::Value::Float(0.0) | toml::Value::Integer(0)) => set_key(text, "display", "scale", &Displays::default().scale.to_string()),
+        _ => text.to_owned(),
+    };
+    // `version` goes above every table; a file without one gets it first.
+    let version = format!("version = {VERSION}\n");
+    let mut lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let tables = lines.iter().position(|l| l.trim_start().starts_with('[')).unwrap_or(lines.len());
+    match lines[..tables].iter().position(|l| l.trim_start().strip_prefix("version").is_some_and(|r| r.trim_start().starts_with('='))) {
+        Some(i) => lines[i] = &version,
+        None => lines.insert(0, &version),
+    }
+    Some(lines.concat())
 }
 
 /// The broken-settings notification's id, below the network portal's.
 pub const BROKEN_NOTICE: u32 = 0xFFF9_0000;
 
-/// "Settings file has an error", with `err` (its line) and Open File.
+/// How `watch`'s error starts when live reload is off (the file itself may be fine).
+const UNWATCHED: &str = "can't be watched";
+
+/// "Settings file has an error", with `err` (its line) and Open File; or that live reload is off.
 pub fn broken_notice(err: &str) -> crate::services::notifications::Notification {
     let icon = "dialog-warning";
+    let (summary, body) = if err.starts_with(UNWATCHED) {
+        ("Settings changes need a new login", format!("config.toml {err}"))
+    } else {
+        ("Settings file has an error", format!("config.toml {err}. The last good settings stay until it is fixed."))
+    };
     crate::services::notifications::Notification {
         id: BROKEN_NOTICE,
         app: "System Settings".into(),
         icon_name: icon.into(),
         icon: crate::services::notifications::load_icon(icon).map(std::sync::Arc::new),
-        summary: "Settings file has an error".into(),
-        body: format!("config.toml {err}. The last good settings stay until it is fixed."),
+        summary: summary.into(),
+        body,
         actions: vec![("default".into(), String::new()), ("open".into(), "Open File".into())],
         urgency: 1,
         expire: -1,
@@ -1694,8 +1723,19 @@ pub fn save_key(table: &str, key: &str, value: &str) {
 pub fn save_edit(edit: impl FnOnce(&str) -> String) -> bool {
     let path = self::path();
     let path = fs::canonicalize(&path).unwrap_or(path);
-    let text = fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_TOML.to_owned());
-    save_atomic(&path, &edit(&text)).inspect_err(|err| tracing::warn!("{}: {err}", path.display())).is_ok()
+    read_config(&path)
+        .and_then(|text| save_atomic(&path, &edit(if text.is_empty() { DEFAULT_TOML } else { &text })))
+        .inspect_err(|err| tracing::warn!("{}: {err}", path.display()))
+        .is_ok()
+}
+
+/// A file's text before an edit: "" when it is missing. Any other error (unreadable, not UTF-8) is returned, so the
+/// write is skipped rather than replacing the whole file with the edit alone.
+pub fn read_config(path: &Path) -> io::Result<String> {
+    match fs::read_to_string(path) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(String::new()),
+        read => read,
+    }
 }
 
 type Edit = Box<dyn FnOnce(&str) -> String + Send>;
@@ -1710,7 +1750,8 @@ static QUEUE: OnceLock<Mutex<mpsc::Sender<Save>>> = OnceLock::new();
 
 /// Rewrites `path` with `edit(current text)` on the `config-save` thread, so a save (a sync and two renames, tens of
 /// ms on a slow disk) never stalls a frame. Edits of one file within `DEBOUNCE` of each other are applied in order
-/// and written once: Ctrl+scrolling the dock's icon size saves at the end, not per notch. A missing file reads as "".
+/// and written once: Ctrl+scrolling the dock's icon size saves at the end, not per notch. A missing file reads as "";
+/// one that can't be read isn't written.
 /// Quitting calls `flush`, so the last edits are kept.
 pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'static) {
     let queue = QUEUE.get_or_init(|| {
@@ -1739,11 +1780,8 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
                     }
                 }
                 for (path, edits) in files {
-                    let mut text = fs::read_to_string(&path).unwrap_or_default();
-                    for edit in edits {
-                        text = edit(&text);
-                    }
-                    if let Err(err) = save_atomic(&path, &text) {
+                    let saved = read_config(&path).and_then(|text| save_atomic(&path, &edits.into_iter().fold(text, |text, edit| edit(&text))));
+                    if let Err(err) = saved {
                         tracing::warn!("{}: {err}", path.display());
                     }
                 }
@@ -1760,8 +1798,7 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
     let edit: Edit = Box::new(edit);
     if let Err(mpsc::SendError(Save::Edit(path, edit))) = queue.lock().unwrap_or_else(|e| e.into_inner()).send(Save::Edit(path, edit)) {
         // The thread never started: do it here rather than lose the save.
-        let text = fs::read_to_string(&path).unwrap_or_default();
-        if let Err(err) = save_atomic(&path, &edit(&text)) {
+        if let Err(err) = read_config(&path).and_then(|text| save_atomic(&path, &edit(&text))) {
             tracing::warn!("{}: {err}", path.display());
         }
     }
@@ -1781,7 +1818,8 @@ pub fn flush() {
 /// Live reload on a worker thread. Watches the file's directory (editors replace the file by renaming), waits for
 /// 300 ms of quiet, and calls `send` with each newly parsed config that differs from the last one sent (or fixes a
 /// broken file). A file that doesn't parse sends its error instead, once per new error (also at start, when the
-/// desktop started with the defaults), so the last good config stays. The thread ends when `send` returns false.
+/// desktop started with the defaults), so the last good config stays. A watch that can't be set up sends one error
+/// starting `UNWATCHED`. The thread ends when `send` returns false.
 ///
 /// The compositor bridges it into calloop without an extra thread:
 /// ```ignore
@@ -1795,13 +1833,16 @@ pub fn watch(path: &Path, mut send: impl FnMut(Result<Config, String>) -> bool +
     let spawned = std::thread::Builder::new().name("config-watch".into()).spawn(move || {
         let _ = fs::create_dir_all(&dir);
         let (tx, rx) = mpsc::channel();
-        let mut watcher = match notify::recommended_watcher(tx) {
+        let watched = notify::recommended_watcher(tx).and_then(|mut w| w.watch(&dir, RecursiveMode::NonRecursive).map(|()| w));
+        // Kept for as long as the thread runs.
+        let _watcher = match watched {
             Ok(w) => w,
-            Err(err) => return tracing::warn!("config live reload off: {err}"),
+            Err(err) => {
+                tracing::warn!("config live reload off: {}: {err}", dir.display());
+                send(Err(format!("{UNWATCHED} ({err}), so a change to it applies at the next login.")));
+                return;
+            }
         };
-        if let Err(err) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
-            return tracing::warn!("config live reload off: {}: {err}", dir.display());
-        }
         // Writes, renames and deletes of our file; our own reads (open / close-after-read) would loop forever.
         let changed = |event: notify::Result<notify::Event>| {
             event.is_ok_and(|e| {
@@ -1916,11 +1957,23 @@ mod tests {
     }
 
     #[test]
+    fn old_files_get_the_new_default_scale() {
+        let old = "# mine\nversion = 1\n\n[display]\nscale = 0.0 # auto\n";
+        assert_eq!(migrate(old).unwrap(), "# mine\nversion = 2\n\n[display]\nscale = 1.15 # auto\n");
+        assert_eq!(migrate("[display]\nscale = 0\n").unwrap(), "version = 2\n[display]\nscale = 1.15\n");
+        // A scale the owner picked stays; so does 0 picked again in a version 2 file.
+        assert_eq!(migrate("version = 1\n[display]\nscale = 1.5\n").unwrap(), "version = 2\n[display]\nscale = 1.5\n");
+        assert_eq!(migrate("version = 2\n[display]\nscale = 0.0\n"), None);
+        assert_eq!(migrate(DEFAULT_TOML), None);
+        assert_eq!(migrate("version = "), None);
+    }
+
+    #[test]
     fn defaults_round_trip() {
         assert_eq!(parse(DEFAULT_TOML).unwrap(), Config::default());
         assert_eq!(parse("").unwrap(), Config::default());
         assert!(!Config::default().update.install_at_login, "installing without the password is opt-in");
-        assert_eq!(parse("[dock]\nstyle = \"whitesur-dark\"").unwrap().dock.style, DockStyle::WhitesurDark);
+        assert_eq!(parse("[dock]\nstyle = \"glass\"").unwrap(), Config::default(), "the dock's old bar style is ignored");
     }
 
     #[test]
@@ -2039,6 +2092,12 @@ mod tests {
     }
 
     #[test]
+    fn retired_dock_keys_still_load() {
+        let c = parse("[dock]\nitems = [\"firefox\", \"trash\"]\nshow_trash = false\nminimise_into_icon = false").unwrap();
+        assert_eq!(c.dock.items, ["firefox", "trash"], "the dock skips the old Trash entry itself");
+    }
+
+    #[test]
     fn bad_toml_keeps_previous() {
         let err = parse("version = 1\n[windows]\nsnapping = maybe").unwrap_err().to_string();
         assert!(err.contains("line 3"), "{err}");
@@ -2123,6 +2182,19 @@ mod tests {
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), "[dock]\nicon_size = 48\n", "the second edit saw the first");
         assert_eq!(fs::read_to_string(dir.join("other.txt")).unwrap(), "other\n");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_file_is_not_saved_over() {
+        let dir = temp_dir("unreadable");
+        let path = dir.join("config.toml");
+        assert_eq!(read_config(&path).unwrap(), "", "missing reads as empty");
+        fs::write(&path, b"[dock]\nicon_size = 40 # \xff\n").unwrap();
+        assert!(read_config(&path).is_err(), "not UTF-8");
+        save_later(path.clone(), |text| set_key(text, "dock", "icon_size", "48"));
+        flush();
+        assert_eq!(fs::read(&path).unwrap(), b"[dock]\nicon_size = 40 # \xff\n", "left as it was");
         fs::remove_dir_all(dir).unwrap();
     }
 

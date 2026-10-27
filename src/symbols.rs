@@ -1,4 +1,4 @@
-//! Phosphor symbols (Part D: menu bar 16 px, Control Center 18–20, OSD 24), bundled in the binary and rasterised by
+//! Phosphor symbols (Part D: menu bar 20 px, Control Center 18–20, OSD 24), bundled in the binary and rasterised by
 //! resvg on first use. Phosphor draws in `currentColor`, so one coverage mask is tinted to any colour.
 
 use std::sync::Arc;

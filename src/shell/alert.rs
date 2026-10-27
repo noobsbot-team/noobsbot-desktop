@@ -38,6 +38,15 @@ fn program(exe: &str) -> &str {
     if exe.is_empty() { "It" } else { exe }
 }
 
+/// Where a privacy answer about `exe` is kept (`perms::remember`).
+fn kept(exe: &str) -> &'static str {
+    if !exe.is_empty() && crate::perms::rememberable(exe, &crate::perms::home()) {
+        "The answer is kept in config.toml."
+    } else {
+        "The answer holds until it quits."
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Power {
     Restart,
@@ -85,8 +94,6 @@ pub enum Kind {
     },
     /// A Thunderbolt device waits for boltd's authorization (E8.8): Don't Allow / Allow.
     Thunderbolt(Accessory),
-    /// The Trash's Empty Trash (E8.8).
-    EmptyTrash,
     /// An admin password for polkit (E7.2): `user` indexes `auth.users` (Tab picks the next); `checking` while
     /// polkit's helper has it; `wrong` since the last wrong one (the field shakes, the body says so).
     Polkit {
@@ -129,7 +136,6 @@ impl Alert {
             Kind::ControlInput { app, .. } => format!("Allow “{app}” to control this computer's keyboard and mouse?"),
             Kind::Thunderbolt(a) => format!("Allow “{}” to connect?", a.name),
             Kind::Polkit { auth, .. } => auth.message.clone(),
-            Kind::EmptyTrash => "Are you sure you want to permanently erase the items in the Trash?".into(),
         }
     }
 
@@ -151,14 +157,12 @@ impl Alert {
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
             // Its path, not its name: an app sets its own name.
             Kind::ScreenRecording { exe, .. } => {
-                format!("{} will see everything on the screen, including other apps' windows. The answer is kept in config.toml.", program(exe))
+                format!("{} will see everything on the screen, including other apps' windows. {}", program(exe), kept(exe))
             }
-            Kind::ControlInput { exe, .. } => format!(
-                "{} could type and click in any app as you. Until you allow it, its keys and clicks go nowhere. The answer is kept in config.toml.",
-                program(exe)
-            ),
+            Kind::ControlInput { exe, .. } => {
+                format!("{} could type and click in any app as you. Until you allow it, its keys and clicks go nowhere. {}", program(exe), kept(exe))
+            }
             Kind::Thunderbolt(_) => "Allow only accessories you trust. Once allowed, it connects by itself next time.".into(),
-            Kind::EmptyTrash => "You can't undo this action.".into(),
             Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
             Kind::Polkit { auth, user, .. } => {
                 let name = auth.users.get(*user).map_or("", String::as_str);
@@ -187,7 +191,6 @@ impl Alert {
             Kind::Wifi { .. } => "Join",
             Kind::Pin { .. } => "Pair",
             Kind::ScreenRecording { .. } | Kind::ControlInput { .. } | Kind::Thunderbolt(_) => "Allow",
-            Kind::EmptyTrash => "Empty Trash",
             Kind::Polkit { .. } => "OK",
         }
     }
@@ -461,13 +464,6 @@ impl State {
                 }
                 return self.ask_thunderbolt();
             }
-            Kind::EmptyTrash if button == Button::Cancel => return,
-            Kind::EmptyTrash => {
-                // Off the frame thread: a big trash takes a while; the watcher turns the icon empty.
-                let _ = std::thread::Builder::new().name("empty-trash".into()).spawn(crate::shell::trash::empty_all);
-                self.ui_sound("trash-empty");
-                return;
-            }
             Kind::Polkit { .. } => return,
         };
         self.power_now(power);
@@ -479,8 +475,9 @@ impl State {
         self.config.windows.reopen_at_login = on;
         let path = crate::config::path();
         let path = std::fs::canonicalize(&path).unwrap_or(path);
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
-        if let Err(err) = crate::config::save_atomic(&path, &crate::config::set_key(&text, "windows", "reopen_at_login", &on.to_string())) {
+        let saved = crate::config::read_config(&path)
+            .and_then(|text| crate::config::save_atomic(&path, &crate::config::set_key(&text, "windows", "reopen_at_login", &on.to_string())));
+        if let Err(err) = saved {
             tracing::warn!("{}: {err}", path.display());
         }
         self.schedule_redraw();

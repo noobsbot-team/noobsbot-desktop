@@ -61,6 +61,9 @@ use crate::{
 /// Marks a window that got its first position (it is placed once its size is known).
 struct Placed;
 
+/// The frame size a placed window last drew (`keep_inside`).
+struct Drawn(std::cell::Cell<Size<i32, Logical>>);
+
 /// Where a zoomed or fullscreen window goes back to.
 struct Restore(std::sync::Mutex<Option<Rect>>);
 
@@ -242,10 +245,14 @@ pub struct State {
     pub display_revert: Option<smithay::reexports::calloop::RegistrationToken>,
     /// Displays ▸ Identify shows each display's name until this timer ends it.
     pub identify: Option<smithay::reexports::calloop::RegistrationToken>,
-    /// The set of displays connected at the last `apply_displays` (`displays::layout_key`).
+    /// The set of displays connected at the last `apply_displays` (`displays::layout_key`); empty until the first,
+    /// which reads the set the desktop last ran with.
     pub layout_key: String,
     /// The laptop's lid is closed (libinput's lid switch): clamshell when another display is on.
     pub lid_closed: bool,
+    /// Where the pointer is, kept by each `motion` and `set_location` on it. Read this, not `current_location()`:
+    /// smithay holds the pointer's lock while it runs a grab, so a helper reached from one would wait on itself.
+    pub pointer_at: Point<f64, Logical>,
     /// Installed apps (E2.1); empty until the first scan lands.
     pub apps: crate::apps::Apps,
     /// Bumped with every `apps` load, so what windows cached against the last one (`dock_key`) is looked up again.
@@ -500,10 +507,6 @@ impl State {
                 state.schedule_redraw();
             }
         })?;
-        // The dock's Trash turns full or empty as files come and go (E8.8).
-        let (trash_tx, trash_rx) = channel::channel();
-        crate::shell::trash::watch(move || trash_tx.send(()).is_ok());
-        handle.insert_source(trash_rx, |_, _, state| state.schedule_redraw())?;
         // The dock's print-queue icon comes and goes with the jobs.
         let (print_tx, print_rx) = channel::channel();
         crate::shell::dock::watch_print_queue(move || print_tx.send(()).is_ok());
@@ -624,6 +627,7 @@ impl State {
             identify: None,
             layout_key: String::new(),
             lid_closed: false,
+            pointer_at: Point::default(),
             apps: Default::default(),
             reopen: Vec::new(),
             apps_epoch: 0,
@@ -785,7 +789,7 @@ impl State {
         }
         let remembered = window.user_data().get::<crate::sheets::Recalled>().map(|r| r.0);
         let parent = window.toplevel().and_then(|t| t.parent()).and_then(|p| self.window_for(&p).cloned()).and_then(|p| self.frame(&p));
-        let pointer = self.seat.get_pointer().map(|p| p.current_location().to_i32_round()).unwrap_or_default();
+        let pointer = self.pointer_at.to_i32_round();
         let screens = self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.clone())));
         crate::displays::opens_on(remembered, parent, pointer, screens).map_or_else(|| self.window_area(window), |o| self.output_area(&o))
     }
@@ -884,7 +888,9 @@ impl State {
         self.window_reframing(window);
         let saved = window.user_data().get::<Restore>().and_then(|r| r.0.lock().ok()?.take());
         surface.with_pending_state(|s| TILED.iter().for_each(|t| _ = s.states.unset(*t)));
-        surface.with_pending_state(|s| s.size = saved.map(|r| self.content_size(window, r.size)));
+        // Outside the closure: content_size reads the same pending state, and its lock isn't reentrant.
+        let size = saved.map(|r| self.content_size(window, r.size));
+        surface.with_pending_state(|s| s.size = size);
         surface.send_pending_configure();
         let saved = saved?;
         let at = at.to_i32_round::<i32>();
@@ -992,6 +998,31 @@ impl State {
             self.set_visible_loc(&window, rect.loc);
         }
         saved
+    }
+
+    /// A placed window drew at frame `size`: if it grew on its own out of its work area (an app restoring a size from
+    /// another scale, an X11 app resizing itself), it is shrunk to fit and moved back inside. Not a window resized by
+    /// hand, tiled, zoomed or full screen, a sheet (it hangs on its parent) or the quake terminal.
+    fn keep_inside(&mut self, window: &Window, size: Size<i32, Logical>) {
+        let Some(old) = window.user_data().get::<Drawn>().map(|d| d.0.replace(size)) else { return };
+        let skip = self.resize.as_ref().is_some_and(|r| r.window == *window)
+            || self.restore_frame(window).is_some()
+            || self.sheet_parent(window).is_some()
+            || self.is_quake(window);
+        if old == size || skip {
+            return;
+        }
+        let (Some(area), Some(frame)) = (self.window_area(window), self.frame(window)) else { return };
+        let Some(fitted) = wm::grown_out(area, frame, old) else { return };
+        if fitted.size != frame.size
+            && let Some(toplevel) = window.toplevel()
+        {
+            // Outside the state lock: content_size reads the window's own.
+            let content = self.content_size(window, fitted.size);
+            toplevel.with_pending_state(|s| s.size = Some(content));
+            toplevel.send_pending_configure();
+        }
+        self.set_visible_loc(window, fitted.loc);
     }
 
     /// Where a tiled, zoomed or full-screen window goes back to.
@@ -1198,6 +1229,7 @@ impl CompositorHandler for State {
                 if size.w > 0 && window.user_data().get::<Placed>().is_none() {
                     let area = self.opening_area(&window);
                     window.user_data().insert_if_missing(|| Placed);
+                    window.user_data().insert_if_missing(|| Drawn(std::cell::Cell::new(size)));
                     if let Some(area) = area {
                         // A window bigger than the work area (the app ignored the bounds) is shrunk to fit.
                         let fitted = Size::from((size.w.min(area.size.w), size.h.min(area.size.h)));
@@ -1213,12 +1245,16 @@ impl CompositorHandler for State {
                         let loc = self.attached_loc(&window, size).unwrap_or_else(|| {
                             position.map_or_else(|| wm::place(area, size), |[x, y]| area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))))
                         });
+                        // A remembered or ruled place, kept for a bigger window than it was for: still wholly inside.
+                        let loc = wm::fit_in(Rect::new(loc, size), area, area).loc;
                         tracing::debug!(?size, ?loc, ?position, "placed");
                         self.set_visible_loc(&window, loc);
                         self.apply_space_rule(&window);
                         self.session_place(&window);
                         self.window_opened(&window);
                     }
+                } else if size.w > 0 {
+                    self.keep_inside(&window, size);
                 }
                 self.centre_sheets(&window);
             }
@@ -1555,7 +1591,9 @@ impl XdgActivationHandler for State {
     }
 
     /// Only the focused app may hand out tokens (a click or key in it opened something); we make our own in `spawn`.
+    /// Expired ones go first, as in `spawn`, so the table never grows.
     fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
+        self.activation_state.retain_tokens(|_, data| data.timestamp.elapsed() < wm::ACTIVATION_TIMEOUT);
         let focused = self.seat.get_keyboard().and_then(|k| k.current_focus());
         focused.and_then(|f| f.client()).is_some_and(|c| data.client_id == Some(c.id()))
     }

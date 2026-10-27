@@ -263,7 +263,7 @@ pub fn account(entry: &toml_edit::Value) -> Option<(String, String)> {
 pub const SETTINGS: &[Setting] = &[
     s(Page::Sound, "Sound Effects", "sound.alert", "Alert sound", "Played when an app rings the bell", Kind::Sound),
     s(Page::Sound, "Sound Effects", "sound.alert_volume", "Alert volume", "", Kind::Slider { min: 0.0, max: 100.0, step: 5.0 }),
-    s(Page::Sound, "Sound Effects", "sound.ui_sounds", "Play user interface sound effects", "Screenshots, emptying the Trash, volume keys", Kind::Toggle),
+    s(Page::Sound, "Sound Effects", "sound.ui_sounds", "Play user interface sound effects", "Screenshots, volume keys", Kind::Toggle),
     s(Page::Sound, "Sound Effects", "sound.startup_sound", "Play sound on startup", "Once each time you log in", Kind::Toggle),
     s(
         Page::Appearance,
@@ -427,7 +427,6 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Dock, "Dock", "dock.icon_size", "Size", "Icons shrink when they don't fit the screen", Kind::Slider { min: 32.0, max: 128.0, step: 2.0 }),
     s(Page::Dock, "Dock", "dock.zoom", "Magnification", "Icons grow under the pointer", Kind::Toggle),
     s(Page::Dock, "Dock", "dock.zoom_percent", "Magnified size", "", Kind::Slider { min: 100.0, max: 300.0, step: 5.0 }),
-    s(Page::Dock, "Dock", "dock.style", "Style", "", Kind::Choice(&[("default", "Default"), ("whitesur-dark", "Dark"), ("glass", "Glass")])),
     s(
         Page::Dock,
         "Dock",
@@ -445,9 +444,7 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Dock, "Dock", "dock.hide_delay", "Wait before hiding", "", Kind::Slider { min: 0.0, max: 2000.0, step: 50.0 }),
     s(Page::Dock, "Dock", "dock.unhide_delay", "Wait before showing", "When the pointer calls it up", Kind::Slider { min: 0.0, max: 2000.0, step: 50.0 }),
-    s(Page::Dock, "Dock", "dock.minimise_into_icon", "Minimise windows into application icon", "", Kind::Toggle),
     s(Page::Dock, "Dock", "dock.minimise_effect", "Minimise windows using", "", Kind::Choice(&[("scale", "Scale Effect"), ("genie", "Genie Effect")])),
-    s(Page::Dock, "Dock", "dock.show_trash", "Show Trash in Dock", "", Kind::Toggle),
     s(
         Page::Dock,
         "Dock",
@@ -475,7 +472,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Toggle,
     ),
     s(Page::Dock, "Dock", "dock.tooltips", "Show app names", "Over the icon under the pointer", Kind::Toggle),
-    s(Page::Dock, "Dock", "dock.pinned_only", "Show only kept apps", "Running apps not kept in the Dock stay out", Kind::Toggle),
+    s(Page::Dock, "Dock", "dock.pinned_only", "Show only kept apps", "Running apps not kept in the Dock stay out, unless minimised", Kind::Toggle),
     s(
         Page::Dock,
         "Dock",

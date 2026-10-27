@@ -575,13 +575,12 @@ impl SessionLockHandler for State {
         &mut self.idle.session_lock
     }
 
-    /// A locker client asks to lock. Refused (dropping `confirmation` says so) while any lock is up: ours, or
-    /// another client's whose surfaces are alive. Otherwise a client could lock over our screen and then unlock the
-    /// session. A locker that died (no surfaces left) can be replaced.
+    /// A locker client asks to lock. Refused (dropping `confirmation` says so) while any lock is up, ours or a
+    /// client's, even one that died: otherwise a client could lock over that screen and then unlock the session.
     /// ponytail: confirmed at once, not after the first frame with its surface is presented; nothing of the apps is
     /// drawn from this point on anyway.
     fn lock(&mut self, confirmation: SessionLocker) {
-        if self.lock.as_ref().is_some_and(|l| !l.client || l.client_surface().is_some()) {
+        if self.lock.is_some() {
             return;
         }
         self.lock_screen();
@@ -594,9 +593,12 @@ impl SessionLockHandler for State {
 
     /// `unlock_and_destroy`. smithay calls this for any client's lock object, confirmed or not (an unconfirmed one
     /// gets a protocol error as well), and doesn't say whose. So the unlock waits a loop turn: by then the confirmed
-    /// object is gone if it was the one destroyed, and still alive if another client asked.
+    /// object is gone if it was the one destroyed, and still alive if another client asked. Gone already, before its
+    /// own request is done: the locker died without unlocking, so ours takes over and only the password unlocks.
     fn unlock(&mut self) {
-        if !self.lock.as_ref().is_some_and(|l| l.client) {
+        let Some(lock) = self.lock.as_mut().filter(|l| l.client) else { return };
+        if lock.locker.as_ref().is_none_or(|l| !l.is_alive()) {
+            (lock.client, lock.locker) = (false, None);
             return;
         }
         self.loop_handle.insert_idle(|state| {

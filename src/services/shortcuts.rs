@@ -2,16 +2,44 @@
 //! would otherwise take (E8.7); `Displays` lets the Displays page set each display's brightness and identify the
 //! screens; `Update` is Settings' Software Update (Check Now, Update Now, Revert); `Calendar.Fetch` fetches CalDAV now.
 
+use std::{
+    ffi::OsStr,
+    os::unix::ffi::OsStrExt,
+    path::{Path, PathBuf},
+};
+
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
-    Connection,
+    Connection, fdo,
     fdo::{RequestNameFlags, RequestNameReply},
+    message::Header,
 };
 
 use super::Update;
 
 const NAME: &str = "org.noobsbot.Desktop";
 const PATH: &str = "/org/noobsbot/Desktop";
+
+/// The caller is our Settings app, the binary beside ours: Record turns every shortcut off (Lock among them), and
+/// Install and Revert run the root helper, which asks no password again for a while.
+// ponytail: by the caller's executable path; a same-user process can still start Settings with LD_PRELOAD.
+async fn settings_only(bus: &Connection, header: &Header<'_>) -> fdo::Result<()> {
+    let denied = || fdo::Error::AccessDenied("only System Settings may call this".into());
+    let sender = header.sender().ok_or_else(denied)?;
+    let pid = fdo::DBusProxy::new(bus).await?.get_connection_unix_process_id(sender.clone().into()).await?;
+    let caller = std::fs::read_link(format!("/proc/{pid}/exe")).map_err(|_| denied())?;
+    let ours = std::env::current_exe().map_err(|_| denied())?;
+    is_settings(&caller, &ours).then_some(()).ok_or_else(denied)
+}
+
+/// Whether `caller` is the Settings binary beside `ours`, either maybe replaced on disk since (`/proc`'s " (deleted)").
+fn is_settings(caller: &Path, ours: &Path) -> bool {
+    let live = |p: &Path| -> PathBuf {
+        let bytes = p.as_os_str().as_bytes();
+        Path::new(OsStr::from_bytes(bytes.strip_suffix(b" (deleted)").unwrap_or(bytes))).to_owned()
+    };
+    live(caller) == live(ours).with_file_name("noobsbot-desktop-settings")
+}
 
 struct Server {
     updates: Sender<Update>,
@@ -20,8 +48,10 @@ struct Server {
 #[zbus::interface(name = "org.noobsbot.Desktop.Shortcuts")]
 impl Server {
     /// On: no shortcut matches and every key goes to the focused window, until focus moves or 15 s pass.
-    fn record(&self, on: bool) {
+    async fn record(&self, on: bool, #[zbus(header)] header: Header<'_>, #[zbus(connection)] bus: &Connection) -> fdo::Result<()> {
+        settings_only(bus, &header).await?;
         let _ = self.updates.send(Update::Record(on));
+        Ok(())
     }
 }
 
@@ -60,13 +90,17 @@ impl Updates {
     }
 
     /// "Restart to Update": installs the verified download (the admin password is asked), then the log-out alert.
-    fn install(&self) {
+    async fn install(&self, #[zbus(header)] header: Header<'_>, #[zbus(connection)] bus: &Connection) -> fdo::Result<()> {
+        settings_only(bus, &header).await?;
         let _ = self.updates.send(Update::InstallNow);
+        Ok(())
     }
 
     /// Points the installed version back at the previous one (within 30 days of an update), then the log-out alert.
-    fn revert(&self) {
+    async fn revert(&self, #[zbus(header)] header: Header<'_>, #[zbus(connection)] bus: &Connection) -> fdo::Result<()> {
+        settings_only(bus, &header).await?;
         let _ = self.updates.send(Update::RevertVersion);
+        Ok(())
     }
 }
 
@@ -98,5 +132,20 @@ pub async fn serve(bus: &Connection, updates: &Sender<Update>) {
         Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {}
         Ok(reply) => tracing::info!("another desktop owns {NAME} ({reply:?}); shortcut recording off"),
         Err(err) => tracing::warn!("shortcut recording off: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_settings_binary_beside_ours_counts() {
+        let ours = Path::new("/usr/lib/noobsbot-desktop/versions/1.0.0/noobsbot-desktop");
+        assert!(is_settings(Path::new("/usr/lib/noobsbot-desktop/versions/1.0.0/noobsbot-desktop-settings"), ours));
+        assert!(is_settings(Path::new("/x/target/debug/noobsbot-desktop-settings (deleted)"), Path::new("/x/target/debug/noobsbot-desktop (deleted)")));
+        assert!(!is_settings(Path::new("/usr/lib/noobsbot-desktop/versions/0.9.0/noobsbot-desktop-settings"), ours));
+        assert!(!is_settings(Path::new("/tmp/noobsbot-desktop-settings"), ours));
+        assert!(!is_settings(Path::new("/usr/bin/busctl"), ours));
     }
 }

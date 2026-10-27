@@ -278,6 +278,23 @@ fn installed(program: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|path| std::env::split_paths(&path).any(|dir| runs(dir.join(program))))
 }
 
+/// The app a launcher (a `.desktop` file on the desktop, by `path`) starts. Only a file the user may execute that parses
+/// as a `Type=Application` entry with an `Exec` is one; anything else stays an ordinary file, so a downloaded `.desktop`
+/// file can't run code by being double-clicked. `NoDisplay` doesn't matter; `Hidden=true` (a deleted entry) leaves a file.
+pub fn launcher(path: &Path) -> Option<App> {
+    use std::os::unix::ffi::OsStrExt;
+    let id = path.file_name()?.to_str()?.strip_suffix(".desktop")?;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    // SAFETY: a valid NUL-terminated path for the duration of the call.
+    if unsafe { libc::access(c_path.as_ptr(), libc::X_OK) } != 0 {
+        return None;
+    }
+    match parse(id, &std::fs::read_to_string(path).ok()?, &locale(), "")? {
+        Entry::App(app) => Some(App { path: path.to_owned(), ..app }),
+        Entry::Hidden => None,
+    }
+}
+
 /// The desktop actions (`Actions=` and their `[Desktop Action …]` groups) of the app with desktop-file id `id`:
 /// (name, Exec). Read from its file when asked, for the dock menu.
 pub fn actions(id: &str) -> Vec<(String, String)> {

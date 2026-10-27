@@ -781,8 +781,8 @@ impl State {
         if self.recent_menu.is_some() {
             return;
         }
-        // ponytail: five of each, files that no longer exist skipped; entries past `[housekeeping] recent_days` go
-        // in the daily cleanup, not here.
+        // ponytail: five of each, files that no longer exist skipped (on local disks); entries past
+        // `[housekeeping] recent_days` go in the daily cleanup, not here.
         let (names, uris) = dock::recent_items(&std::fs::read_to_string(dock::recent_path()).unwrap_or_default());
         let mut apps: Vec<(String, String)> = Vec::new();
         for app in names.iter().filter_map(|n| self.apps.find(n)).filter(|a| !a.no_display) {
@@ -790,12 +790,13 @@ impl State {
                 apps.push((app.name.clone(), app.id.clone()));
             }
         }
+        let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
         let docs: Vec<(String, String)> = uris
             .into_iter()
             .filter_map(|uri| {
                 let path = crate::apps::file_path(&uri)?;
                 let name = std::path::Path::new(&path).file_name()?.to_string_lossy().into_owned();
-                std::path::Path::new(&path).exists().then_some((name, uri))
+                dock::recent_exists(std::path::Path::new(&path), &mounts).then_some((name, uri))
             })
             .take(5)
             .collect();
@@ -858,8 +859,8 @@ impl State {
         self.aim_cancel();
         let timer = self.loop_handle.insert_source(Timer::from_duration(delay), |_, _, state| {
             state.aim_timer = None;
-            let at = state.seat.get_pointer().map(|p| state.to_popup(state.to_output(p.current_location())));
-            if let (Some(Popup::Menu(menu)), Some((d, Some(i)))) = (state.popup, at.and_then(|at| state.menu_level_at(at))) {
+            let at = state.to_popup(state.to_output(state.pointer_at));
+            if let (Some(Popup::Menu(menu)), Some((d, Some(i)))) = (state.popup, state.menu_level_at(at)) {
                 state.menu_hover(menu, d, i);
             }
             TimeoutAction::Drop
@@ -991,7 +992,7 @@ impl State {
             Some((popup, d, i)) if Some(popup) == self.popup && d <= self.open_path().len() => return (d, Some(i)),
             _ => {}
         }
-        let at = self.seat.get_pointer().map(|p| self.to_popup(self.to_output(p.current_location()))).unwrap_or_default();
+        let at = self.to_popup(self.to_output(self.pointer_at));
         self.menu_level_at(at).unwrap_or((0, None))
     }
 
@@ -1283,9 +1284,10 @@ mod tests {
         let output = Size::from((1280, 1200));
         let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
         // 5 rows of 22 + 2 separators of 11 + padding 5 at both ends.
-        assert_eq!(rect, Rectangle::new((8, 28).into(), (200, 142).into()));
-        assert_eq!(cells[0], Rectangle::new((13, 33).into(), (190, 22).into()));
-        assert_eq!(cells[2].loc.y, 33 + 22 + 11);
+        let top = menubar::height() + DROP;
+        assert_eq!(rect, Rectangle::new((8, top).into(), (200, 142).into()));
+        assert_eq!(cells[0], Rectangle::new((13, top + 5).into(), (190, 22).into()));
+        assert_eq!(cells[2].loc.y, top + 5 + 22 + 11);
         assert!(cells.iter().all(|c| rect.contains_rect(*c)));
         // Near the right edge it moves left to fit.
         assert_eq!(menu_layout(Anchor::Below(1200), output, 200, &rows, 0).0.loc.x, 1280 - 8 - 200);
@@ -1331,7 +1333,8 @@ mod tests {
         let shown = |cells: &[Rect]| cells.iter().filter(|c| c.size.h > 0).count();
         // Under the bar: clipped at the bottom margin, whole rows only.
         let (rect, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 0);
-        assert_eq!(rect.loc.y, 28);
+        let top = menubar::height() + DROP;
+        assert_eq!(rect.loc.y, top);
         assert!(rect.loc.y + rect.size.h <= 768 - 8 && rect.size.h > 700);
         assert!(cells[0].size.h == 22 && shown(&cells) < 40 && cells.iter().all(|c| c.size.h == 0 || rect.contains_rect(*c)));
         // Scrolled past the end: clamped so the last row is the last one shown.
@@ -1339,9 +1342,9 @@ mod tests {
         assert!(cells[39].size.h == 22 && cells[0].size.h == 0 && shown(&cells) == shown(&menu_layout(Anchor::Below(6), output, 200, &rows, 0).1));
         // Scrolled one row: the first row goes, the next one shows up at the top.
         let (_, cells) = menu_layout(Anchor::Below(6), output, 200, &rows, 1);
-        assert!(cells[0].size.h == 0 && cells[1].loc.y == 33);
+        assert!(cells[0].size.h == 0 && cells[1].loc.y == top + 5);
         // A dock menu taller than the screen moves down under the bar instead of off the top; a short one is unmoved.
-        assert_eq!(menu_layout(Anchor::Above((640, 740).into()), output, 200, &rows, 0).0.loc.y, 28);
+        assert_eq!(menu_layout(Anchor::Above((640, 740).into()), output, 200, &rows, 0).0.loc.y, top);
         assert_eq!(menu_layout(Anchor::Above((640, 740).into()), output, 200, &rows[..3], 0).0.loc.y, 740 - 4 - 76);
         // A context menu near the bottom is pushed up to fit.
         let (rect, _) = menu_layout(Anchor::At((100, 700).into()), output, 200, &rows[..5], 0);

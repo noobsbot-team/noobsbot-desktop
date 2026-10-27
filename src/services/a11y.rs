@@ -101,10 +101,17 @@ pub struct Keys {
 }
 
 impl Keys {
-    /// Hands `key` to the clients that want it; true when apps and shortcuts must not see it.
-    pub fn key(&self, key: Key) -> bool {
+    /// Hands `key` to the clients that want it; true when apps and shortcuts must not see it. While `locked` a
+    /// password goes in: no client hears it and no grab takes it (any session-bus client can own `READER`).
+    pub fn key(&self, key: Key, locked: bool) -> bool {
         let Ok(mut monitor) = self.monitor.lock() else { return false };
         if monitor.clients.is_empty() {
+            return false;
+        }
+        if locked {
+            // A grabbed key let go now isn't down any more.
+            monitor.down.retain(|m| *m != key.keysym);
+            monitor.held.retain(|c| *c != key.keycode);
             return false;
         }
         let (to, swallow) = monitor.key(&key, Instant::now());
@@ -275,6 +282,20 @@ mod tests {
         assert!(m.key(&key(A, 38, CTRL, false), t).1);
         // The release is swallowed even with Ctrl already up.
         assert!(m.key(&key(A, 38, 0, true), t).1);
+    }
+
+    #[test]
+    fn locked_keys_reach_no_client_and_are_never_swallowed() {
+        let (events, rx) = async_channel::unbounded();
+        let keys =
+            Keys { monitor: Arc::new(Mutex::new(reader(Client { grab_all: true, watch_all: true, modifiers: vec![INSERT], ..Default::default() }))), events };
+        assert!(keys.key(key(INSERT, 118, 0, false), false));
+        assert!(rx.try_recv().is_ok());
+        assert!(!keys.key(key(A, 38, 0, false), true));
+        assert!(!keys.key(key(INSERT, 118, 0, true), true));
+        assert!(rx.try_recv().is_err());
+        let monitor = keys.monitor.lock().unwrap();
+        assert!(monitor.down.is_empty() && monitor.held.is_empty());
     }
 
     #[test]

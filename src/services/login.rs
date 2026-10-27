@@ -65,8 +65,13 @@ pub async fn inhibitors(bus: &Connection) -> Vec<Inhibitor> {
 }
 
 /// Holds the inhibitors and relays `PrepareForSleep`: `start` → `Update::PrepareForSleep`, back awake →
-/// `Update::Resumed` (and the sleep inhibitor again).
+/// `Update::Resumed` (and the sleep inhibitor again). For good: after a bus hiccup it starts again, or the screen would
+/// stop locking before sleep.
 pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
+    super::again("logind", || watch_once(bus, updates)).await;
+}
+
+async fn watch_once(bus: &Connection, updates: &Sender<Update>) {
     let Ok(login) = ManagerProxy::new(bus).await.inspect_err(|err| tracing::warn!("logind off: {err}")) else { return };
     let Ok(mut signals) = login.receive_prepare_for_sleep().await.inspect_err(|err| tracing::warn!("logind off: {err}")) else { return };
     take_sleep(&login).await;

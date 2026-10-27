@@ -514,7 +514,7 @@ impl State {
                 }
             }
             Action::TrayItem(i) => {
-                let at = self.seat.get_pointer().map(|p| self.to_output(p.current_location())).unwrap_or_default();
+                let at = self.to_output(self.pointer_at);
                 self.tray_press(i, at, false);
             }
             Action::Power(power) => self.open_alert(power),

@@ -1,6 +1,7 @@
 //! Desktop icons (E7.2, L12): the files in the Desktop folder on the wallpaper. A grid from the top right
-//! down each column, then leftwards; click selects, double-click opens (xdg-open), drag rearranges (saved), right-click
-//! menu: Open, Rename, Move to Trash (`gio trash`), New Folder. The folder is watched with inotify, so idle costs nothing.
+//! down each column, then leftwards; click selects, double-click opens (xdg-open; a launcher starts its app), drag
+//! rearranges (saved), right-click menu: Open, Rename, Move to Trash (`gio trash`), New Folder. The folder is watched
+//! with inotify, so idle costs nothing.
 //! Mounted drives (E8.8) sit first, at the top right: double-click opens one in the file manager, its menu has Eject.
 
 use std::{
@@ -52,6 +53,8 @@ const DRAG_START: f64 = 4.0;
 const FOLDER: &str = "folder";
 /// Drawn when the theme has no icon for a file's type.
 pub const FALLBACK_ICON: &str = "text-x-generic";
+/// Drawn for a launcher whose own icon the theme lacks.
+const APP_ICON: &str = "application-x-executable";
 
 /// A file on the desktop, or a mounted drive.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,7 +63,7 @@ pub struct Entry {
     pub name: String,
     /// An icon-theme name (or path) for `apps::Icons`.
     pub icon: String,
-    /// A drive's label, shown instead of `name`.
+    /// A drive's label or a launcher's app name, shown instead of `name`.
     pub label: Option<String>,
 }
 
@@ -288,7 +291,8 @@ impl Mime {
     }
 }
 
-/// The visible files of `dir`, by name (dotfiles and `~` backups hidden, as in Dolphin), with their icons.
+/// The visible files of `dir`, by name (dotfiles and `~` backups hidden, as in Dolphin), with their icons; a launcher
+/// (see `apps::launcher`) shows its app's name and icon.
 fn scan(dir: &Path, mime: &Mime, found: &mut HashMap<String, bool>) -> Vec<Entry> {
     let mut has = |name: &str| *found.entry(name.to_owned()).or_insert_with(|| crate::apps::find_icon(name).is_some());
     let mut entries: Vec<Entry> = std::fs::read_dir(dir)
@@ -299,6 +303,10 @@ fn scan(dir: &Path, mime: &Mime, found: &mut HashMap<String, bool>) -> Vec<Entry
             let name = e.file_name().into_string().ok()?;
             if name.starts_with('.') || name.ends_with('~') {
                 return None;
+            }
+            if let Some(app) = crate::apps::launcher(&e.path()) {
+                let icon = if has(&app.icon) { app.icon } else { APP_ICON.into() };
+                return Some(Entry { name, icon, label: Some(app.name) });
             }
             let icon =
                 if e.path().is_dir() { FOLDER.to_owned() } else { mime.icons(&name).into_iter().find(|i| has(i)).unwrap_or_else(|| FALLBACK_ICON.into()) };
@@ -623,11 +631,19 @@ impl State {
         }
     }
 
-    /// A file with its app; a drive in the file manager (as its "connected" notification does).
+    /// A launcher starts its app as the dock does, another file opens with its app, a drive in the file manager (as its
+    /// "connected" notification does).
     fn desktop_open(&mut self, name: &str) {
-        let command =
-            if is_drive(name) { ["dolphin".into(), name.into()] } else { ["xdg-open".into(), self.desktop.dir.join(name).to_string_lossy().into_owned()] };
-        self.spawn(&command);
+        if is_drive(name) {
+            self.spawn(&["dolphin".into(), name.into()]);
+            return;
+        }
+        let path = self.desktop.dir.join(name);
+        // Checked again here: the file may have changed since the scan.
+        match crate::apps::launcher(&path) {
+            Some(app) => _ = self.launch(Some(&app)),
+            None => _ = self.spawn(&["xdg-open".into(), path.to_string_lossy().into_owned()]),
+        }
     }
 
     /// The right-click menu's rows: an icon's, or the desktop's.
@@ -742,10 +758,11 @@ mod tests {
     #[test]
     fn grid_fills_from_the_top_right() {
         let g = grid();
-        // (800 - 32 - 72) / 110 = 6 rows.
-        assert_eq!((g.rows, g.cols, g.top), (6, 12, 32));
-        assert_eq!(g.rect((0, 0)), Rectangle::new((1280 - 12 - 100, 32).into(), (100, 110).into()));
-        assert_eq!(g.rect((1, 2)).loc, (1280 - 12 - 200, 32 + 220).into());
+        // (800 - 38 - 72) / 110 = 6 rows, from 8 px under the bar.
+        let top = menubar::height() + 8;
+        assert_eq!((g.rows, g.cols, g.top), (6, 12, top));
+        assert_eq!(g.rect((0, 0)), Rectangle::new((1280 - 12 - 100, top).into(), (100, 110).into()));
+        assert_eq!(g.rect((1, 2)).loc, (1280 - 12 - 200, top + 220).into());
         // Back from a point to its cell, clamped onto the grid.
         assert_eq!(g.at((1200.0, 40.0).into()), (0, 0));
         assert_eq!(g.at((1100.0, 300.0).into()), (1, 2));
@@ -846,5 +863,39 @@ mod tests {
         let listed: Vec<String> = scan(&dir, &Mime::default(), &mut HashMap::new()).into_iter().map(|e| e.name).collect();
         assert_eq!(listed, ["b", "c"]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn executable_app_entries_are_launchers() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("noobsbot-desktop-launchers-{}", std::process::id()));
+        let dir = root.join("Desktop");
+        std::fs::create_dir_all(&dir).unwrap();
+        let icon = root.join("kitty.svg");
+        std::fs::write(&icon, "<svg/>").unwrap();
+        let write = |file: &str, text: &str, mode: u32| {
+            std::fs::write(dir.join(file), text).unwrap();
+            std::fs::set_permissions(dir.join(file), std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let app = |name: &str, icon: &str| format!("[Desktop Entry]\nType=Application\nName={name}\nExec=kitty --single %U\nIcon={icon}\n");
+        write("kitty.desktop", &app("Kitty", &icon.to_string_lossy()), 0o755);
+        write("wine.desktop", &app("Some Game", "no-such-icon-anywhere"), 0o755);
+        write("download.desktop", &app("Download", "kitty"), 0o644);
+        write("link.desktop", "[Desktop Entry]\nType=Link\nName=Site\nURL=https://example.org\n", 0o755);
+        let shown: Vec<(String, String, Option<String>)> =
+            scan(&dir, &Mime::default(), &mut HashMap::new()).into_iter().map(|e| (e.name, e.icon, e.label)).collect();
+        let file = |name: &str| (name.to_owned(), FALLBACK_ICON.to_owned(), None);
+        assert_eq!(
+            shown,
+            [
+                file("download.desktop"),
+                ("kitty.desktop".into(), icon.to_string_lossy().into_owned(), Some("Kitty".into())),
+                file("link.desktop"),
+                ("wine.desktop".into(), APP_ICON.into(), Some("Some Game".into())),
+            ],
+            "not executable or not an app: a file"
+        );
+        assert_eq!(crate::apps::launcher(&dir.join("kitty.desktop")).unwrap().command(""), ["kitty", "--single"]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

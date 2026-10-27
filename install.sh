@@ -24,9 +24,11 @@ MINISIGN_PUBKEY="RWQgk/P2Bfb6JYQ3p8/ObaP2nG0S1gYPhE/KIJa7jYnCArCLukiRPTyR"
 # release, or the newest pre-release while there is none). The defaults are this project's own.
 MINISIGN_PUBKEY=${NOOBSBOT_MINISIGN_PUBKEY:-$MINISIGN_PUBKEY}
 RELEASE_TAG=${NOOBSBOT_DESKTOP_RELEASE:-}
-# Debian has no packages for these: xwayland-satellite v0.8.3 (when the release has no build of it) and the WhiteSur
-# themes, by commit (the icons by tag).
+# xwayland-satellite v0.8.3, which scripts/build-xwayland-satellite.sh patches, and the WhiteSur themes (Debian has
+# no packages of them), by commit (the icons by tag).
 XWS_REV=b83eab900644e4c7c77982ce3d44cb490f0c5e1d
+# paru (the AUR helper on Arch) by its AUR repo's commit: that PKGBUILD is built and installed with --noconfirm.
+PARU_REV=329be2113c590046cb29858c23d9b96a8d7bd586
 WHITESUR_ICONS=2026-09-10
 WHITESUR_CURSORS=e190baf618ed95ee217d2fd45589bd309b37672b
 WHITESUR_GTK=d5782652d412137e26fb8ff55b55a5572e4c6995
@@ -526,8 +528,13 @@ iface lo inet loopback"
 install_aur() {
     if ! has paru; then
         say "Building the AUR helper (paru)"
-        if [[ -d $CACHE/paru/.git ]]; then run git -C "$CACHE/paru" pull --ff-only
-        else run git clone --depth 1 https://aur.archlinux.org/paru.git "$CACHE/paru"; fi
+        # A whole clone (the repo is tiny), made again when the cached one (shallow, from older runs) lacks the commit.
+        if ! [[ -d $CACHE/paru/.git ]] || ! git -C "$CACHE/paru" cat-file -e "$PARU_REV^{commit}" 2>/dev/null; then
+            run rm -rf "$CACHE/paru"
+            run git clone -q https://aur.archlinux.org/paru.git "$CACHE/paru"
+        fi
+        run git -C "$CACHE/paru" checkout -q --detach "$PARU_REV" ||
+            die "paru's AUR repo has no commit $PARU_REV; install paru yourself, then run ./install.sh again."
         run bash -c 'cd "$1" && makepkg -si --needed --noconfirm' _ "$CACHE/paru"
     fi
     local aur=(whitesur-icon-theme whitesur-cursor-theme-git whitesur-gtk-theme-git kvantum-theme-whitesur-git)
@@ -639,7 +646,7 @@ install_desktop_release() {
     local tag=$REL_TAG ver=$REL_VER name dir
     if [[ -x $LIB/versions/$ver/noobsbot-desktop && $(readlink /usr/bin/noobsbot-desktop) == "$LIB/versions/$ver/noobsbot-desktop" ]]; then
         say "Noobsbot Desktop $ver is already installed"
-        install_xwayland_satellite "$LIB/versions/$ver"
+        install_xwayland_satellite "$ver"
         return
     fi
     name=noobsbot-desktop-$ver-$(uname -m).tar.zst dir=$CACHE/updates/$ver
@@ -653,11 +660,16 @@ install_desktop_release() {
     for f in "$name" SHA256SUMS SHA256SUMS.minisig; do
         run curl -fL --proto '=https' -o "$dir/$f" "https://github.com/$DESKTOP_REPO/releases/download/$tag/$f"
     done
-    # The signature covers SHA256SUMS, and SHA256SUMS the tarball: nothing unsigned ever reaches sudo.
-    run minisign -Vqm "$dir/SHA256SUMS" -P "$MINISIGN_PUBKEY" ||
-        { run rm -rf "$dir"; die "the release signature is wrong; nothing was installed."; }
-    run bash -c 'cd "$1" && grep -E "^[0-9a-f]{64}  $2\$" SHA256SUMS | sha256sum -c --strict --quiet' _ "$dir" "$name" ||
-        { run rm -rf "$dir"; die "the download doesn't match its signed checksum; nothing was installed."; }
+    # Root checks and unpacks its own copy, in a dir only root can write: the download in the user's cache could be
+    # swapped between a check and root's read of it. The signature covers SHA256SUMS, and SHA256SUMS the tarball:
+    # nothing unsigned is ever unpacked as root.
+    local stage=/tmp/tmp.XXXXXXXXXX
+    if ((DRY)); then show sudo mktemp -d; else stage=$(as_root mktemp -d); fi
+    as_root cp -- "$dir/$name" "$dir/SHA256SUMS" "$dir/SHA256SUMS.minisig" "$stage/"
+    as_root minisign -Vqm "$stage/SHA256SUMS" -P "$MINISIGN_PUBKEY" ||
+        { as_root rm -rf "$stage"; run rm -rf "$dir"; die "the release signature is wrong; nothing was installed."; }
+    as_root bash -c 'cd "$1" && grep -E "^[0-9a-f]{64}  $2\$" SHA256SUMS | sha256sum -c --strict --quiet' _ "$stage" "$name" ||
+        { as_root rm -rf "$stage"; run rm -rf "$dir"; die "the download doesn't match its signed checksum; nothing was installed."; }
     # Checked before it is installed: a prebuilt this system can't run is built from source instead.
     if ((!DRY)); then
         rm -rf "$dir/check"
@@ -665,6 +677,7 @@ install_desktop_release() {
         tar --zstd -xf "$dir/$name" -C "$dir/check" --strip-components=1
         if ! usable "$dir/check"; then
             rm -rf "$dir/check"
+            as_root rm -rf "$stage"
             warn "building Noobsbot Desktop $ver from source instead."
             FALLBACK_TAG=$tag
             return
@@ -673,9 +686,10 @@ install_desktop_release() {
     fi
     as_root mkdir -p "$LIB/versions/$ver"
     # --no-same-owner: root's tar would otherwise keep the archive's (the CI user's) uid on the installed files.
-    as_root tar --zstd --no-same-owner --no-same-permissions -xf "$dir/$name" -C "$LIB/versions/$ver" --strip-components=1
+    as_root tar --zstd --no-same-owner --no-same-permissions -xf "$stage/$name" -C "$LIB/versions/$ver" --strip-components=1
+    as_root rm -rf "$stage"
     use_version "$ver"
-    install_xwayland_satellite "$LIB/versions/$ver"
+    install_xwayland_satellite "$ver"
 }
 
 # install_desktop_source <tag>
@@ -703,22 +717,21 @@ install_desktop_source() {
         as_root install -Dm755 "$src/target/release/noobsbot-desktop-widget-system" "$LIB/versions/$ver/noobsbot-desktop-widget-system"
     fi
     use_version "$ver"
-    install_xwayland_satellite "$src/target/release"
+    install_xwayland_satellite "$ver"
 }
 
-# install_xwayland_satellite <dir>: X11 apps (E6.9). Arch has a package; on Debian the release carries one built on
-# Debian 13, and without it (a build from source) it is built here.
+# install_xwayland_satellite <ver>: X11 apps (E6.9). The desktop starts the xwayland-satellite in its version's
+# directory, our patched build: a release carries it, and a build from source makes it here. Debian has no package of
+# it, so there it also goes to /usr/local/bin (for versions from before it shipped beside the desktop).
 install_xwayland_satellite() {
-    debian || return 0
-    if [[ -x $1/xwayland-satellite ]]; then
-        install_file 755 "$1/xwayland-satellite" /usr/local/bin/xwayland-satellite root
-    elif ! has xwayland-satellite; then
+    local dir=$LIB/versions/$1
+    if [[ ! -x $dir/xwayland-satellite ]]; then
         ensure_build_tools
         say "Building xwayland-satellite (for X11 apps)"
-        run cargo install --locked --git https://github.com/Supreeeme/xwayland-satellite --rev "$XWS_REV" \
-            --root "$CACHE/xwayland-satellite"
-        as_root install -Dm755 "$CACHE/xwayland-satellite/bin/xwayland-satellite" /usr/local/bin/xwayland-satellite
+        run sh "$REPO_DIR/scripts/build-xwayland-satellite.sh" "$CACHE/xwayland-satellite-src"
+        as_root install -Dm755 "$CACHE/xwayland-satellite-src/target/release/xwayland-satellite" "$dir/xwayland-satellite"
     fi
+    ! debian || install_file 755 "$dir/xwayland-satellite" /usr/local/bin/xwayland-satellite root
 }
 
 # noobsbot-terminal's own installer, from the pinned tag: on Arch it makes the noobsbot-bin (or, from source,

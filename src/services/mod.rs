@@ -30,7 +30,7 @@ use std::{
     future::Future,
     os::unix::net::UnixStream,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use futures_lite::{StreamExt, future};
@@ -265,8 +265,15 @@ pub struct Services {
 
 impl Services {
     pub fn send(&self, command: Command) {
+        use std::sync::atomic::Ordering;
+        let brightness = matches!(command, Command::Brightness(_));
+        if brightness {
+            brightness::PENDING.fetch_add(1, Ordering::AcqRel);
+        }
         // Unbounded; fails only once the thread has gone, which it has already logged.
-        let _ = self.commands.try_send(command);
+        if self.commands.try_send(command).is_err() && brightness {
+            brightness::PENDING.fetch_sub(1, Ordering::AcqRel);
+        }
     }
 }
 
@@ -365,16 +372,50 @@ async fn follow<'a, T, F>(
     T: Clone + Debug + PartialEq,
     F: Future<Output = Option<T>>,
 {
-    let rule = MatchRule::builder().msg_type(message::Type::Signal).sender(service).and_then(|r| r.path_namespace(path)).map(|r| r.build());
-    let streams = async {
-        let changes = MessageStream::for_match_rule(rule?, bus, Some(16)).await?;
-        let owners = fdo::DBusProxy::new(bus).await?.receive_name_owner_changed_with_args(&[(0, service)]).await?;
-        zbus::Result::Ok(owners.map(drop).or(changes.map(drop)))
-    };
-    match streams.await {
-        Ok(events) => relay(bus, events, service, updates, wrap, read).await,
-        Err(err) => tracing::warn!("{service} off: {err}"),
+    let read = &read;
+    again(service, move || async move {
+        let rule = MatchRule::builder().msg_type(message::Type::Signal).sender(service).and_then(|r| r.path_namespace(path)).map(|r| r.build());
+        let streams = async {
+            let changes = MessageStream::for_match_rule(rule?, bus, Some(16)).await?;
+            let owners = fdo::DBusProxy::new(bus).await?.receive_name_owner_changed_with_args(&[(0, service)]).await?;
+            zbus::Result::Ok(owners.map(drop).or(changes.map(drop)))
+        };
+        match streams.await {
+            Ok(events) => relay(bus, events, service, updates, wrap, read).await,
+            Err(err) => tracing::warn!("{service} off: {err}"),
+        }
+    })
+    .await;
+}
+
+/// Runs `run` for good, again after it ends (a bus hiccup): 1 s later, doubling to a minute while it keeps ending
+/// soon, so a bus that is gone costs one wakeup a minute.
+async fn again<F: Future<Output = ()>>(what: &str, run: impl Fn() -> F) {
+    let mut backoff = Duration::from_secs(1);
+    loop {
+        let started = Instant::now();
+        run().await;
+        if started.elapsed() > Duration::from_secs(60) {
+            backoff = Duration::from_secs(1);
+        }
+        tracing::warn!("{what}: watching again in {backoff:?}");
+        sleep(backoff).await;
+        backoff = (backoff * 2).min(Duration::from_secs(60));
     }
+}
+
+/// Waits `time` on a thread of its own: this thread has no timer, and `blocking`'s pool would wake for good
+/// (`connect`).
+async fn sleep(time: Duration) {
+    let (tx, rx) = async_channel::bounded::<()>(1);
+    let waiter = std::thread::Builder::new().name("backoff".into()).spawn(move || {
+        std::thread::sleep(time);
+        drop(tx);
+    });
+    if waiter.is_err() {
+        std::thread::sleep(time);
+    }
+    let _ = rx.recv().await;
 }
 
 /// Runs `register` now and again whenever `service` comes back (it restarted and forgot our agent), for good.
@@ -584,5 +625,18 @@ impl<T> Answer<T> {
         if let Ok(mut waiting) = self.0.lock() {
             waiting.take();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_watch_that_ends_starts_again_after_a_second() {
+        let runs = &std::cell::Cell::new(0);
+        let watch = again("test", move || async move { runs.set(runs.get() + 1) });
+        future::block_on(future::or(watch, sleep(Duration::from_millis(1500))));
+        assert_eq!(runs.get(), 2);
     }
 }

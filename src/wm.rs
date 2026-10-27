@@ -33,6 +33,12 @@ pub fn fit_in(rect: Rect, from: Rect, to: Rect) -> Rect {
     Rect::new((x, y).into(), size)
 }
 
+/// A window's `frame`, last drawn at size `old`: where it goes when growing took it out of `area` (shrunk to fit,
+/// moved inside). `None` while inside, or when it was partly outside already (moved there by hand).
+pub fn grown_out(area: Rect, frame: Rect, old: Size<i32, Logical>) -> Option<Rect> {
+    (!area.contains_rect(frame) && area.contains_rect(Rect::new(frame.loc, old))).then(|| fit_in(frame, area, area))
+}
+
 /// Moves the span `start..start + len` so whichever end is nearest an edge (within SNAP_DISTANCE) sits on it.
 pub fn stick(start: i32, len: i32, edges: &[i32]) -> i32 {
     let mut best: Option<i32> = None;
@@ -288,16 +294,22 @@ pub fn sheet_loc(parent: Rect, bar: i32, size: Size<i32, Logical>) -> Point<i32,
     (parent.loc.x + (parent.size.w - size.w) / 2, parent.loc.y + bar).into()
 }
 
-/// The stacking order (bottom to top) with every sheet directly above its parent; `parent` gives a sheet's parent.
+/// The stacking order (bottom to top) with every sheet directly above its parent; `parent` gives a sheet's parent,
+/// asked once per window. Without any sheet (the usual case) the order is returned as it is.
+// ponytail: O(n²) window compares while a sheet is open; index by parent if a client ever opens thousands.
 pub fn sheets_above<T: Clone + PartialEq>(order: &[T], parent: impl Fn(&T) -> Option<T>) -> Vec<T> {
+    let parents: Vec<Option<T>> = order.iter().map(parent).collect();
+    if parents.iter().all(Option::is_none) {
+        return order.to_vec();
+    }
     let mut out = Vec::with_capacity(order.len());
-    for root in order.iter().filter(|w| parent(w).is_none_or(|p| !order.contains(&p))) {
+    for (root, _) in order.iter().zip(&parents).filter(|(_, p)| p.as_ref().is_none_or(|p| !order.contains(p))) {
         let mut stack = vec![root.clone()];
         while let Some(w) = stack.pop() {
             if out.contains(&w) {
                 continue;
             }
-            stack.extend(order.iter().rev().filter(|s| parent(s).as_ref() == Some(&w)).cloned());
+            stack.extend(order.iter().zip(&parents).rev().filter(|(_, p)| p.as_ref() == Some(&w)).map(|(s, _)| s.clone()));
             out.push(w);
         }
     }
@@ -331,6 +343,16 @@ pub fn format_frames(frames: &[(String, String, Rect)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_growing_off_its_area_comes_back_inside() {
+        let r = |x, y, w, h| Rect::new((x, y).into(), (w, h).into());
+        let a = r(0, 30, 1670, 1013);
+        assert_eq!(grown_out(a, r(100, 100, 1920, 1130), (800, 600).into()), Some(a), "too big now: the whole area");
+        assert_eq!(grown_out(a, r(1000, 100, 900, 600), (600, 600).into()), Some(r(770, 100, 900, 600)), "only moved");
+        assert_eq!(grown_out(a, r(100, 100, 900, 600), (800, 600).into()), None, "still inside");
+        assert_eq!(grown_out(a, r(1500, 100, 900, 600), (600, 600).into()), None, "dragged partly out by hand");
+    }
 
     #[test]
     fn fit_in_keeps_place_and_size_where_it_fits() {
@@ -526,6 +548,14 @@ mod tests {
             _ => None,
         };
         assert_eq!(sheets_above(&[1, 2, 3, 4, 5, 6], parent), vec![2, 3, 1, 4, 5, 6]);
+        // Each window's parent is asked once, and with no sheet the order stays.
+        let asked = std::cell::Cell::new(0);
+        let none = |_: &i32| {
+            asked.set(asked.get() + 1);
+            None
+        };
+        assert_eq!(sheets_above(&[3, 1, 2], none), vec![3, 1, 2]);
+        assert_eq!(asked.get(), 3);
     }
 
     #[test]

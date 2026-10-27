@@ -1118,13 +1118,14 @@ fn light(
         output.set_preferred(Mode::from(*preferred));
     }
     output.change_current_state(Some(mode), Some(Transform::Normal), None, None);
-    let global = output.create_global::<State>(dh);
 
     let formats = gpus.single_renderer(&card.render)?.as_mut().egl_context().dmabuf_render_formats().clone();
     let allocator = GbmAllocator::new(card.gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
     let exporter = GbmFramebufferExporter::new(card.gbm.clone(), Some(card.render));
     let compositor = DrmCompositor::new(&output, surface, None, allocator, exporter, FORMATS, formats, card.drm.cursor_size(), Some(card.gbm.clone()))
         .map_err(|e| format!("{e}"))?;
+    // Only once nothing above can fail: an output that never lights must not show up in clients' wl_output lists.
+    let global = output.create_global::<State>(dh);
     let clock = FrameClock::new(refresh(&output));
     Ok((
         crtc,

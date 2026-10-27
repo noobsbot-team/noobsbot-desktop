@@ -33,6 +33,9 @@ ok_after=${NOOBSBOT_BOOT_OK_AFTER:-60}
 mkdir -p "$state"
 # greetd leaves stdout and stderr on the VT, where nobody can read them: this session's log and the last one's are kept.
 mv -f "$state/session.log" "$state/session.log.old" 2>/dev/null
+# Owner-only, as it holds the apps' error output (the last one's too, from versions that left it readable to all).
+(umask 077 && : >>"$state/session.log")
+chmod 600 "$state/session.log" "$state/session.log.old" 2>/dev/null
 exec >"$state/session.log" 2>&1
 # Install at login ([update] install_at_login): the compositor leaves install-at-login while that's on and a verified
 # download waits. The helper's --verified mode needs no password from an admin (its own polkit action and rule; for

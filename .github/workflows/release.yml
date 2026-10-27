@@ -5,8 +5,10 @@
 # One tarball for Arch and Debian: it is built on Debian 13, the oldest system supported (glibc 2.41; Arch's is
 # newer, and a program built against an older glibc runs on a newer one). Before it is signed, it must start on both.
 #
-# Secrets (repository settings): MINISIGN_SECRET_KEY = the whole minisign secret key file; MINISIGN_PASSWORD = its
-# password (leave unset for a key made with `minisign -G -W`). The matching public key is compiled into the updater.
+# Secrets, in the `release` environment (not the repository's): MINISIGN_SECRET_KEY = the whole minisign secret key
+# file; MINISIGN_PASSWORD = its password (leave unset for a key made with `minisign -G -W`). The matching public key is
+# compiled into the updater. Only the publish job, which signs, runs in that environment, so its protection rules
+# (required reviewers, `v*` tags only) gate every signing.
 name: Release
 
 on:
@@ -18,8 +20,9 @@ on:
         type: string
         required: true
     secrets:
+      # Not required: when it lives in the `release` environment, the publish job reads it from there.
       MINISIGN_SECRET_KEY:
-        required: true
+        required: false
       MINISIGN_PASSWORD:
         required: false
 
@@ -53,9 +56,8 @@ jobs:
           cargo build --workspace --release --locked
       - name: Build xwayland-satellite
         run: |
-          # Debian has no package for it (X11 apps, E6.9); install.sh puts this one in /usr/local/bin. Arch uses its own.
-          rev="$(sed -n 's/^XWS_REV=//p' install.sh)"
-          cargo install --locked --git https://github.com/Supreeeme/xwayland-satellite --rev "$rev" --root "$RUNNER_TEMP/xws"
+          # X11 apps (E6.9): our patched build, which the desktop starts from beside itself.
+          sh scripts/build-xwayland-satellite.sh "$RUNNER_TEMP/xws"
       - name: Package
         run: |
           version="${TAG#v}"
@@ -63,7 +65,7 @@ jobs:
           mkdir -p "dist/$name"
           cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings target/release/noobsbot-desktop-update \
             target/release/noobsbot-desktop-watchdog target/release/noobsbot-desktop-widget-system \
-            "$RUNNER_TEMP/xws/bin/xwayland-satellite" LICENSE README.md "dist/$name/"
+            "$RUNNER_TEMP/xws/target/release/xwayland-satellite" LICENSE README.md "dist/$name/"
           cp -r data "dist/$name/"
           cd dist
           tar --zstd -cf "$name.tar.zst" "$name"
@@ -109,6 +111,7 @@ jobs:
   publish:
     needs: smoke
     runs-on: ubuntu-latest
+    environment: release
     steps:
       - uses: actions/download-artifact@v4
         with:
