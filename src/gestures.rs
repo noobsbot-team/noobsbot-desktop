@@ -1,9 +1,9 @@
 //! Touchpad system gestures (E5.3) and hot corners (E5.4). The recogniser and the corner logic are pure; the `State`
 //! glue at the bottom feeds them libinput's events and the pointer.
 //!
-//! The Space slide follows a sideways swipe 1:1, Mission Control a swipe up or down, App Exposé one down and Launchpad
-//! a 4-finger pinch; each springs on from where the fingers let go (`Live`). Launchpad pages follow too. Reduce
-//! motion: the action happens on release instead.
+//! The Space slide follows a sideways swipe 1:1, Mission Control a swipe up or down, App Exposé one down, Launchpad a
+//! 4-finger pinch and Show Desktop a spread; each springs on from where the fingers let go (`Live`). Launchpad pages
+//! follow too. Reduce motion: the action happens on release instead.
 
 use std::time::{Duration, Instant};
 
@@ -80,6 +80,8 @@ pub enum Live {
     Expose(String),
     /// Launchpad opening (a pinch in), or (`true`) closing (out).
     Launchpad(bool),
+    /// Show Desktop's windows moving aside, or back (a spread).
+    Desktop(Vec<crate::anim::DeskMove>),
 }
 
 impl Live {
@@ -91,7 +93,7 @@ impl Live {
             Live::Mission(true) | Live::Expose(_) => Gesture::AppExpose,
             Live::Launchpad(false) => Gesture::Launchpad,
             // Spreading over Launchpad closes it, as on release.
-            Live::Launchpad(true) => Gesture::ShowDesktop,
+            Live::Launchpad(true) | Live::Desktop(_) => Gesture::ShowDesktop,
         }
     }
 }
@@ -326,6 +328,7 @@ impl State {
             Some(Live::Mission(closing)) => self.mission_hold(f64::from(u8::from(closing)) - dy / FULL, None),
             Some(Live::Expose(app)) => self.mission_hold(dy / FULL, Some(app)),
             Some(Live::Launchpad(closing)) => self.launchpad_hold(if closing { 1.0 - pinch } else { -pinch }),
+            Some(Live::Desktop(moves)) => self.desktop_hold(&moves, pinch),
             None => {}
         }
         true
@@ -341,12 +344,13 @@ impl State {
         live.filter(|l| self.config.touchpad.allows(l.gesture()))
     }
 
-    /// In opens Launchpad; out closes it.
+    /// In opens Launchpad; out closes it, else shows the desktop (or brings the windows back).
     fn live_pinch(&self, p: f64) -> Option<Live> {
         match (p < 0.0, self.launchpad_open()) {
             (true, false) => Some(Live::Launchpad(false)),
             (false, true) => Some(Live::Launchpad(true)),
-            _ => None,
+            (false, false) => self.config.touchpad.allows(Gesture::ShowDesktop).then(|| Live::Desktop(self.desktop_moves())),
+            (true, true) => None,
         }
     }
 
@@ -393,6 +397,10 @@ impl State {
             Some(Live::Launchpad(closing)) => {
                 let commit = !cancelled && (pinch < 0.0) != closing && pinch_commits(pinch, vp);
                 self.launchpad_let_go(commit != closing, -vp * 1000.0);
+                return true;
+            }
+            Some(Live::Desktop(moves)) => {
+                self.desktop_let_go(moves, !cancelled && pinch > 0.0 && pinch_commits(pinch, vp));
                 return true;
             }
             None if locked => return true,
