@@ -1308,7 +1308,8 @@ fn list_rows<'a>(app: &'a App, key: &'static str, add: Option<&'static str>) -> 
         rows.push(line(t, label, "", input.into()));
     }
     if caldav && app.texts.contains_key(CALDAV_ADD) {
-        let go = button(text("Add Account").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::AddCalDav);
+        let label = if app.caldav_checking { "Checking…" } else { "Add Account" };
+        let go = button(text(label).size(12)).padding([3, 10]).style(t.push(true)).on_press_maybe((!app.caldav_checking).then_some(Message::AddCalDav));
         rows.push(line(t, "", "The calendar is fetched once to check the password", go.into()));
     }
     rows
