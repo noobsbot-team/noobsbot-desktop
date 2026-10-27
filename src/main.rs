@@ -323,6 +323,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
             state.notifications.hovered = Some(notice.id);
             state.notify(notice);
             state.update = Some(release);
+            state.update_changed(None);
         }
         Some("logo-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::Logo)),
         Some("app-menu") => state.popup = Some(shell::Popup::Menu(shell::Menu::App)),

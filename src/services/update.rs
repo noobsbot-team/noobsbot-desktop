@@ -64,31 +64,48 @@ pub enum Download {
     Refused,
 }
 
+/// What the update thread is asked.
+#[derive(Debug, Clone, Copy)]
+pub enum Ask {
+    /// `[update] channel` changed (a check at once), or `None`: `check_updates` went off (idle).
+    Every(Option<Channel>),
+    /// Settings' Check Now: one check, whatever `check_updates` says.
+    Now(Channel),
+}
+
+/// A finished check: the newer release, if any, and whether Check Now asked for it.
+pub struct Checked {
+    pub release: Option<Release>,
+    pub asked: bool,
+}
+
 /// Its own thread: the check and download block on the network, and between checks it only sleeps (no wakeups).
-/// A changed `[update] channel` sent to it checks again at once on the new channel; `None` (`check_updates` off)
-/// idles it until the next `Some`.
-pub fn spawn(found: Sender<Release>, channel: Channel) -> mpsc::Sender<Option<Channel>> {
+/// It idles until the first `Ask`. Offline checks report nothing.
+pub fn spawn(found: Sender<Checked>) -> mpsc::Sender<Ask> {
     let (tx, rx) = mpsc::channel();
     let thread = std::thread::Builder::new().name("update".into()).spawn(move || {
-        let mut channel = Some(channel);
+        let mut every = None;
         loop {
-            if let Some(channel) = channel
-                && let Some(mut release) = latest(channel)
-            {
-                release.download = download(&release);
-                tracing::info!("Noobsbot Desktop {} is available ({:?}): {}", release.version, release.download, release.url);
-                if found.send(release).is_err() {
-                    return;
-                }
-            }
-            let next = match channel {
+            let next = match every {
                 Some(_) => rx.recv_timeout(EVERY),
                 None => rx.recv().map_err(|_| mpsc::RecvTimeoutError::Disconnected),
             };
-            match next {
-                Ok(new) => channel = new,
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            let (channel, asked) = match next {
+                Ok(Ask::Every(channel)) => {
+                    every = channel;
+                    (channel, false)
+                }
+                Ok(Ask::Now(channel)) => (Some(channel), true),
+                Err(mpsc::RecvTimeoutError::Timeout) => (every, false),
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            };
+            let Some(mut release) = channel.and_then(latest) else { continue };
+            if let Some(release) = &mut release {
+                release.download = download(release);
+                tracing::info!("Noobsbot Desktop {} is available ({:?}): {}", release.version, release.download, release.url);
+            }
+            if found.send(Checked { release, asked }).is_err() {
+                return;
             }
         }
     });
@@ -98,21 +115,21 @@ pub fn spawn(found: Sender<Release>, channel: Channel) -> mpsc::Sender<Option<Ch
     tx
 }
 
-/// The newest release on `channel` if it is newer than this build, or `None` (up to date or offline).
-fn latest(channel: Channel) -> Option<Release> {
+/// The newest release on `channel` if it is newer than this build: `Some(None)` when up to date, `None` offline.
+fn latest(channel: Channel) -> Option<Option<Release>> {
     let running = Version::parse(env!("CARGO_PKG_VERSION")).expect("Cargo.toml has a SemVer version");
     let url = match channel {
         Channel::Stable => format!("{API}/releases/latest"),
         Channel::Beta => format!("{API}/releases?per_page=20"),
     };
-    fetch(&url).and_then(|json| newer(&json, &running, channel))
+    fetch(&url).map(|json| newer(&json, &running, channel))
 }
 
 /// `noobsbot-desktop --update`: the same check, download and helper as "Restart to Update", from a terminal.
 /// pkexec asks for the admin password; the new version starts at the next login.
 pub fn cli(channel: Channel) -> i32 {
     println!("Checking for updates…");
-    let Some(release) = latest(channel) else {
+    let Some(release) = latest(channel).flatten() else {
         println!("Noobsbot Desktop {} is up to date (or GitHub can't be reached).", env!("CARGO_PKG_VERSION"));
         return 0;
     };
@@ -258,36 +275,120 @@ fn check(dir: &Path, key: &str, version: &Version, arch: &str) -> Result<(), Str
     (sha256 == signed.sha256).then_some(()).ok_or_else(|| format!("{} doesn't match its signed SHA-256", signed.tarball))
 }
 
+/// `$XDG_STATE_HOME/noobsbot-desktop/update.json`, which Settings ▸ General ▸ Software Update shows.
+fn status_path() -> PathBuf {
+    crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").join("noobsbot-desktop/update.json")
+}
+
+/// What Settings shows; `checked` is a Unix time, 0 never.
+#[derive(Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Status {
+    pub checked: i64,
+    /// A newer version than the running one.
+    pub available: Option<String>,
+    /// Its release page (notes).
+    pub url: Option<String>,
+    /// Downloaded and verified: Update Now installs it.
+    pub ready: bool,
+    /// The version "Revert to" goes back to (`revert_to`).
+    pub revert: Option<String>,
+}
+
+/// How long after an update Settings offers to revert it.
+const REVERT_FOR: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// The version to revert to: the newest installed one older than `current`, while the update to `current` is younger
+/// than 30 days (`age`). Rollback (the session wrapper) goes to the last version that booted instead; after a minute
+/// that is the current one, so it can't name the previous.
+pub fn revert_to(current: &Version, installed: impl IntoIterator<Item = Version>, age: Duration) -> Option<Version> {
+    (age < REVERT_FOR).then(|| installed.into_iter().filter(|v| v < current).max()).flatten()
+}
+
+/// `revert_to` on this machine: `/usr/bin/noobsbot-desktop` → `versions/<current>/`, its link's age, the other dirs.
+fn revert_here() -> Option<Version> {
+    let bin = Path::new("/usr/bin/noobsbot-desktop");
+    let link = fs::read_link(bin).ok()?;
+    let current = Version::parse(link.strip_prefix(VERSIONS).ok()?.parent()?.to_str()?).ok()?;
+    let age = fs::symlink_metadata(bin).ok()?.modified().ok()?.elapsed().unwrap_or_default();
+    let installed = fs::read_dir(VERSIONS).ok()?.flatten().filter(|e| e.path().join("noobsbot-desktop").is_file());
+    revert_to(&current, installed.filter_map(|e| Version::parse(e.file_name().to_str()?).ok()), age)
+}
+
 impl crate::state::State {
     /// Matches the update thread to `check_updates` and `[update] channel`: starts it the first time it is on, tells
     /// it the new channel (a check at once) or to idle. Turning it off also withdraws a pending notice. Off nested
     /// (a dev session: no network).
     pub fn update_checks(&mut self) {
-        if self.nested {
-            return;
-        }
         let on = self.config.check_updates.then_some(self.config.update.channel);
-        if let Some(tx) = &self.update_channel {
-            let _ = tx.send(on);
-        } else if let Some(channel) = on {
-            let (found_tx, found_rx) = smithay::reexports::calloop::channel::channel();
-            let inserted = self.loop_handle.insert_source(found_rx, |event, _, state| {
-                // A check already running when the setting went off still reports.
-                if let smithay::reexports::calloop::channel::Event::Msg(release) = event
-                    && state.config.check_updates
-                {
-                    state.notify(notice(&release));
-                    state.update = Some(release);
-                    state.schedule_redraw();
-                }
-            });
-            match inserted {
-                Ok(_) => self.update_channel = Some(spawn(found_tx, channel)),
-                Err(err) => tracing::warn!("update check off: {err}"),
-            }
+        if on.is_some() || self.update_channel.is_some() {
+            self.ask_update(Ask::Every(on));
         }
         if on.is_none() && self.update.take().is_some() {
             self.close_notification(NOTICE_ID, super::notifications::Reason::Dismissed);
+        }
+        self.update_changed(None);
+    }
+
+    /// Settings' Check Now: one check on the chosen channel, also with `check_updates` off.
+    pub fn check_update_now(&mut self) {
+        self.ask_update(Ask::Now(self.config.update.channel));
+    }
+
+    /// Sends `ask` to the update thread, starting it first.
+    fn ask_update(&mut self, ask: Ask) {
+        if self.nested {
+            return;
+        }
+        if self.update_channel.is_none() {
+            let (found_tx, found_rx) = smithay::reexports::calloop::channel::channel();
+            let inserted = self.loop_handle.insert_source(found_rx, |event, _, state| {
+                let smithay::reexports::calloop::channel::Event::Msg(Checked { release, asked }) = event else { return };
+                // A check already running when the setting went off still reports.
+                if let Some(release) = release
+                    && (asked || state.config.check_updates)
+                {
+                    state.notify(notice(&release));
+                    state.update = Some(release);
+                }
+                state.update_changed(Some(chrono::Local::now().timestamp()));
+                state.schedule_redraw();
+            });
+            match inserted {
+                Ok(_) => self.update_channel = Some(spawn(found_tx)),
+                Err(err) => return tracing::warn!("update check off: {err}"),
+            }
+        }
+        if let Some(tx) = &self.update_channel {
+            let _ = tx.send(ask);
+        }
+    }
+
+    /// A red "1" on System Settings in the dock while an update is pending, and the status file for Settings
+    /// (`checked`: a check just finished; `None` keeps the last time).
+    pub fn update_changed(&mut self, checked: Option<i64>) {
+        let count = self.update.is_some().then_some(1);
+        self.dock_fx.entry("noobsbot-desktop-settings".into(), super::launcher::Entry { count, ..Default::default() });
+        if self.nested {
+            return;
+        }
+        let path = status_path();
+        let checked =
+            checked.unwrap_or_else(|| fs::read_to_string(&path).ok().and_then(|json| serde_json::from_str::<Status>(&json).ok()).map_or(0, |s| s.checked));
+        let status = Status {
+            checked,
+            available: self.update.as_ref().map(|r| r.version.to_string()),
+            url: self.update.as_ref().map(|r| r.url.clone()),
+            ready: self.update_ready(),
+            revert: revert_here().map(|v| v.to_string()),
+        };
+        let write = || {
+            fs::create_dir_all(path.parent()?).ok()?;
+            let tmp = path.with_extension("json.new");
+            fs::write(&tmp, serde_json::to_vec(&status).ok()?).and_then(|_| fs::rename(&tmp, &path)).ok()
+        };
+        if write().is_none() {
+            tracing::debug!("update: couldn't write {}", path.display());
         }
     }
 
@@ -303,28 +404,44 @@ impl crate::state::State {
         let Some(release) = self.update.as_mut().filter(|_| Path::new(HELPER).exists()) else { return };
         // Taken while the helper runs, so a second click doesn't ask twice.
         let Download::Ready(dir) = std::mem::replace(&mut release.download, Download::None) else { return };
-        let (done, finished) = smithay::reexports::calloop::channel::channel();
         let back = dir.clone();
-        let inserted = self.loop_handle.insert_source(finished, move |event, _, state| {
-            let smithay::reexports::calloop::channel::Event::Msg(ok) = event else { return };
+        self.run_helper(vec![dir.into_os_string()], move |state, ok| {
             if ok {
                 state.update = None;
                 state.close_notification(NOTICE_ID, super::notifications::Reason::Dismissed);
-                state.open_alert(crate::shell::alert::Power::LogOut);
             } else if let Some(release) = state.update.as_mut() {
                 // Cancelled or refused (the helper logs why): offered again.
                 release.download = Download::Ready(back.clone());
             }
+        });
+    }
+
+    /// Settings' "Revert to <v>": the helper points the links back at the previous version, then the log-out alert.
+    pub fn revert_update(&mut self) {
+        let Some(version) = revert_here() else { return };
+        self.run_helper(vec!["--revert".into(), version.to_string().into()], |_, _| {});
+    }
+
+    /// Runs the helper with `args` through pkexec on a thread; then `done(ok)`, and on success the log-out alert so the
+    /// next login starts the version it linked.
+    fn run_helper(&mut self, args: Vec<std::ffi::OsString>, mut done: impl FnMut(&mut Self, bool) + 'static) {
+        let (tx, finished) = smithay::reexports::calloop::channel::channel();
+        let inserted = self.loop_handle.insert_source(finished, move |event, _, state| {
+            let smithay::reexports::calloop::channel::Event::Msg(ok) = event else { return };
+            done(state, ok);
+            if ok {
+                state.open_alert(crate::shell::alert::Power::LogOut);
+            }
+            state.update_changed(None);
             state.schedule_redraw();
         });
         if let Err(err) = inserted {
-            tracing::warn!("update: {err}");
-            return;
+            return tracing::warn!("update: {err}");
         }
         std::thread::spawn(move || {
-            let status = Command::new("pkexec").arg(HELPER).arg(&dir).status();
+            let status = Command::new("pkexec").arg(HELPER).args(&args).status();
             tracing::info!("update: {HELPER}: {status:?}");
-            let _ = done.send(status.is_ok_and(|s| s.success()));
+            let _ = tx.send(status.is_ok_and(|s| s.success()));
         });
     }
 }
@@ -379,6 +496,24 @@ mod tests {
         assert_eq!(newer("", &v("0.1.0"), Channel::Beta), None);
         assert_eq!(newer(r#"{"message":"Not Found"}"#, &v("0.1.0"), Channel::Stable), None);
         assert_eq!(newer(r#"{"tag_name":"nightly"}"#, &v("0.1.0"), Channel::Stable), None);
+    }
+
+    #[test]
+    fn revert_for_30_days_to_the_previous() {
+        let day = Duration::from_secs(24 * 60 * 60);
+        let installed = || [v("1.2.4"), v("1.3.0"), v("1.1.0"), v("1.4.0-beta.1")];
+        assert_eq!(revert_to(&v("1.3.0"), installed(), day), Some(v("1.2.4")));
+        assert_eq!(revert_to(&v("1.3.0"), installed(), 29 * day), Some(v("1.2.4")));
+        assert_eq!(revert_to(&v("1.3.0"), installed(), 30 * day), None, "too late");
+        assert_eq!(revert_to(&v("1.1.0"), installed(), day), None, "nothing older");
+        assert_eq!(revert_to(&v("1.4.0"), installed(), day), Some(v("1.4.0-beta.1")));
+    }
+
+    #[test]
+    fn status_reads_back_and_tolerates_missing_keys() {
+        let status = Status { checked: 5, available: Some("1.3.0".into()), url: None, ready: true, revert: Some("1.2.4".into()) };
+        assert_eq!(serde_json::from_str::<Status>(&serde_json::to_string(&status).unwrap()).unwrap(), status);
+        assert_eq!(serde_json::from_str::<Status>(r#"{"checked": 7}"#).unwrap(), Status { checked: 7, ..Default::default() });
     }
 
     #[test]

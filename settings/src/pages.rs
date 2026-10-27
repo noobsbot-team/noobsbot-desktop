@@ -1228,7 +1228,12 @@ pub fn page<'a>(app: &'a App, page: Page) -> Element<'a, Message> {
     let t = app.tokens;
     let mut parts: Vec<Element<'a, Message>> = vec![title(page.name())];
     parts.extend(system_part(app, page));
-    for (header, rows) in settings_of(app, |s| s.page == page) {
+    for (header, mut rows) in settings_of(app, |s| s.page == page) {
+        if header == "Software Update" {
+            let (before, after) = update_rows(app);
+            rows.splice(0..0, before);
+            rows.extend(after);
+        }
         parts.push(group(t, header, rows));
     }
     parts.extend(after_part(app, page));
@@ -1995,13 +2000,60 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         Page::Dock => vec![default_apps(app)],
         Page::General => {
             let clear = button(text("Clear").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ClearRecent);
-            vec![
-                login_items(app),
-                group(t, "Privacy", vec![line(t, "Recent files", "Every app's recent documents list", clear.into())]),
-                group(t, "", vec![fact(t, "Noobsbot Desktop", format!("Version {}", version()))]),
-            ]
+            vec![login_items(app), group(t, "Privacy", vec![line(t, "Recent files", "Every app's recent documents list", clear.into())])]
         }
         _ => Vec::new(),
+    }
+}
+
+/// General ▸ Software Update's rows above the settings (version, Update Now, More Info…) and below them (Last
+/// checked with Check Now, Revert to). The desktop checks; this only shows its `update.json`.
+fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message>>) {
+    let t = app.tokens;
+    let u = &app.update;
+    let push = |label: &'static str, message: Option<Message>| button(text(label).size(12)).padding([3, 10]).style(t.push(false)).on_press_maybe(message);
+    let status = match (&u.available, u.ready) {
+        (Some(v), true) => format!("{v} is available, downloaded and verified"),
+        (Some(v), false) => format!("{v} is available; install it with ./install.sh --update or your package manager"),
+        (None, _) if u.checked > 0 => "Up to date".to_owned(),
+        (None, _) => String::new(),
+    };
+    let mut controls = row![].spacing(8).align_y(Alignment::Center);
+    if let Some(url) = &u.url {
+        controls = controls.push(push("More Info…", Some(Message::OpenUrl(url.clone()))));
+    }
+    if u.ready {
+        controls = controls.push(button(text("Update Now").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::UpdateCall("Install")));
+    }
+    let mut words = column![text(format!("Noobsbot Desktop {}", version())).size(13)].spacing(2);
+    if !status.is_empty() {
+        words = words.push(text(status).size(11).color(t.secondary()));
+    }
+    let head = row![words.width(Length::Fill), controls].spacing(12).align_y(Alignment::Center).padding([8, 12]).into();
+    let check = push(if app.checking { "Checking…" } else { "Check Now" }, (!app.checking).then_some(Message::UpdateCall("Check")));
+    let mut after = vec![line(
+        t,
+        "Last checked",
+        "",
+        row![text(checked(u.checked, chrono::Local::now())).size(13).color(t.secondary()), check].spacing(12).align_y(Alignment::Center).into(),
+    )];
+    if let Some(v) = &u.revert {
+        let revert = push("Revert", Some(Message::UpdateCall("Revert")));
+        after.push(line(t, format!("Revert to {v}"), "The version before the last update, at next login", revert.into()));
+    }
+    (vec![head], after)
+}
+
+/// "Last checked": Never, Today, 9:41, Yesterday, 9:41, or 12 Oct 2026.
+fn checked(unix: i64, now: chrono::DateTime<chrono::Local>) -> String {
+    let Some(at) = chrono::DateTime::from_timestamp(unix, 0).filter(|_| unix > 0).map(|at| at.with_timezone(&chrono::Local)) else {
+        return "Never".into();
+    };
+    let days = (now.date_naive() - at.date_naive()).num_days();
+    match days {
+        0 => at.format("Today, %-H:%M").to_string(),
+        1 => at.format("Yesterday, %-H:%M").to_string(),
+        _ => at.format("%-d %b %Y").to_string(),
     }
 }
 
@@ -2368,6 +2420,17 @@ fn note<'a>(t: Tokens, words: &'a str) -> Element<'a, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn last_checked_reads_like_a_day() {
+        use chrono::TimeZone;
+        let now = chrono::Local.with_ymd_and_hms(2026, 10, 27, 15, 0, 0).unwrap();
+        let at = |d, h, m| chrono::Local.with_ymd_and_hms(2026, 10, d, h, m, 0).unwrap().timestamp();
+        assert_eq!(checked(0, now), "Never");
+        assert_eq!(checked(at(27, 9, 41), now), "Today, 9:41");
+        assert_eq!(checked(at(26, 23, 5), now), "Yesterday, 23:05");
+        assert_eq!(checked(at(12, 9, 41), now), "12 Oct 2026");
+    }
 
     #[test]
     fn widget_lists_toggle_move_and_keep_unknown_ids() {

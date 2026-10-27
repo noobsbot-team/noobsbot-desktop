@@ -147,7 +147,7 @@ pub struct State {
     /// Every changed `[weather]` goes to the weather thread.
     pub weather_settings: std::sync::mpsc::Sender<crate::config::Weather>,
     /// Every changed `[update] channel` or `check_updates` goes to the update thread, once started (`update_checks`).
-    pub update_channel: Option<std::sync::mpsc::Sender<Option<crate::services::update::Channel>>>,
+    pub update_channel: Option<std::sync::mpsc::Sender<crate::services::update::Ask>>,
     pub zones: crate::input::Zones,
     /// Shake to find, dwell click, hold for secondary click (E8.6).
     pub pointer_assist: crate::pointer_assist::Assist,
@@ -445,6 +445,9 @@ impl State {
                         state.services.send(crate::services::Command::Brightness(percent));
                     }
                     crate::services::Update::Identify => state.identify_displays(),
+                    crate::services::Update::CheckNow => state.check_update_now(),
+                    crate::services::Update::InstallNow => state.install_update(),
+                    crate::services::Update::RevertVersion => state.revert_update(),
                     crate::services::Update::Record(on) => {
                         let focus = state.focused_window();
                         state.recording.set(on, focus, std::time::Instant::now());
