@@ -1527,12 +1527,12 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   (Meet, Discord) through **xdg-desktop-portal-wlr** + PipeWire, using the `wlr-screencopy` /
   `ext-image-copy-capture` protocols we implement; portal-wlr's screen chooser is `chooser_type = simple` with `slurp`
   (package `slurp`), otherwise it cannot pick a screen. **Limit:** portal-wlr shares whole screens, not single windows
-  (L7). **Recording** (Super+Shift+5 ▸ Record): `wf-recorder` (optional package) until our own recorder writes
-  PipeWire frames (E7.2).
+  (L7). **Recording** (Super+Shift+5 ▸ Record): our own recorder pipes the compositor's frames through `ffmpeg`
+  (optional package) into an mp4.
 - **Why:** browsers only share screens through the portal standard.
 - **Done when:** all three screenshot modes work; screen sharing works in Google Meet in Helium.
 - **Done:** `src/shell/screenshot.rs` and `src/render/screenshot.rs` (screen, window and region; the toolbar; file,
-  clipboard and thumbnail; recording through `wf-recorder`), wlr-screencopy for the portal (`src/capture.rs`).
+  clipboard and thumbnail; recording through `ffmpeg`), wlr-screencopy for the portal (`src/capture.rs`).
   `ext-image-copy-capture` isn't served (E6.11).
 - **Status:** dragging the thumbnail starts a compositor-owned Wayland drag (`text/uri-list` + `image/png`, written
   on a worker thread); it follows the pointer at half size and 60% opacity, and its 5 s timer waits. A drop an app
@@ -1765,7 +1765,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Printers (done) | printing from apps | CUPS, through Settings ▸ Printers (`settings/src/printers.rs`, E8.2; untested with a print job) |
 | Desktop icons (done) | files in `~/Desktop` shown on the wallpaper (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
 | Emoji picker (done) | Super+Ctrl+E / Super+. popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
-| Own screen recorder | Super+Shift+5 ▸ Record without `wf-recorder` | compositor frames → PipeWire → `ffmpeg`/`gst` encoder |
+| Own screen recorder (done) | Super+Shift+5 ▸ Record without `wf-recorder` | compositor frames (read back only when they change, at most 30 a second) → raw RGBA on `ffmpeg`'s stdin from a thread → H.264 mp4 in `~/Videos`; the toolbar's region is cropped to an even size; no audio, no cursor (`shell/screenshot.rs`) |
 | Own Finder-style file manager | replace Dolphin | big project; only if wanted |
 
 ---
@@ -2107,7 +2107,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Apps | noobsbot-terminal (repo) · `helium-browser-bin` (AUR) · `dolphin` `kio-extras` `kdegraphics-thumbnailers` `ffmpegthumbs` `kimageformats` `qt6-imageformats` `kio-admin` `ark` `archlinux-xdg-menu` · `kate` `nano` · `partitionmanager` `filelight` · `plasma-systemmonitor` `btop` |
 | Disk tools | `smartmontools` `exfatprogs` `dosfstools` `ntfs-3g` `btrfs-progs` `e2fsprogs` |
 | Look | `inter-font` `ttf-jetbrains-mono` `noto-fonts` `noto-fonts-cjk` `noto-fonts-emoji` · `kvantum` `qt6ct` · WhiteSur themes (AUR: `whitesur-icon-theme` `whitesur-cursor-theme-git` `whitesur-gtk-theme-git` `kvantum-theme-whitesur-git`) · Phosphor icons (bundled with Noobsbot Desktop) |
-| Optional | `cups` `fprintd` `fwupd` `bolt` `libimobiledevice` `geoclue` `wf-recorder` · input methods: `fcitx5` `fcitx5-m17n` `fcitx5-configtool` (E6.12) |
+| Optional | `cups` `fprintd` `fwupd` `bolt` `libimobiledevice` `geoclue` `ffmpeg` · input methods: `fcitx5` `fcitx5-m17n` `fcitx5-configtool` (E6.12) |
 | Dev / test only | `qemu-desktop` `virt-manager` (fresh-system VM), `powertop`, `heaptrack` (Part K gates); `paru` is bootstrapped by `install.sh` |
 | Security (optional) | `sbctl` (Secure Boot, E6.6) |
 
