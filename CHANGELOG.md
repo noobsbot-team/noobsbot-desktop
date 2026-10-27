@@ -8,6 +8,806 @@ Entries are written by release-plz from Conventional Commits; don't edit release
 
 ## [Unreleased]
 
+## [1.0.0-beta.1](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.8...v1.0.0-beta.1) - 2026-10-27
+
+### Added
+
+- *(displays)* a display's maker shows by name (Dell, AU Optronics), from a table of common PNP ids
+- *(ical)* RDATE, extra starts beside the rule's
+- *(ical)* BYSETPOS, picking from each period's days
+- *(ical)* yearly BYDAY, and BYDAY limiting when BYMONTHDAY is set
+- *(ical)* BYMONTHDAY, negative days counting from the month's end
+- *(ical)* BYMONTH, expanding yearly rules and limiting the rest
+- *(displays)* Displays.SetOutputBrightness sets one display's brightness
+- *(displays)* displays.json gives each display's brightness
+- *(caldav)* a server address finds the account's calendars, and their events merge
+- *(gpu)* a GPU reset that won't come back switches to software rendering instead of exiting
+- *(brightness)* DDC monitors are known by connector and can be set one at a time
+- *(gpu)* software drawing moves lit displays' buffers onto the new GBM devices
+- *(caldav)* read a principal, its calendar home and the home's event calendars from multistatus replies
+- *(caldav)* a reply's hrefs resolve on its server's origin
+- *(install)* warn when NVIDIA's kernel modesetting is off, which the desktop needs
+- *(calendar)* re-adding a CalDAV account fetches it now through Desktop.Calendar.Fetch
+- *(dock)* a small D6 level-1 shadow under each icon, zoomed, dragged and bounced with it
+- *(calendar)* EXDATE and RECURRENCE-ID overrides drop, move or cancel single occurrences
+- *(dock)* the icon thread makes and caches an icon's shadow, keyed by its blur radius
+- *(dock)* an icon's drop shadow, its alpha box-blurred three times on the CPU
+- *(udev)* software rendering is logged and shown once in a notification
+- *(udev)* a primary GPU that fails to start is retried on Mesa's software driver
+- *(session)* install-at-login runs the helper's --verified mode before the compositor starts, then "Updated to <v>"
+- *(update)* with install_at_login on, a verified download leaves install-at-login for the session wrapper
+- *(calendar)* a worker fetches CalDAV calendars into a cache the calendar reads
+- *(config)* [update] install_at_login, off by default, with its Settings toggle
+- *(update)* polkit action org.noobsbot.desktop.update.verified lets the active session run the helper's --verified mode without a password
+- *(calendar)* CalDAV REPORT for a month back to a year ahead, its calendar-data pulled out
+- *(update)* the helper's --verified mode installs the caller's own download and takes no other argument
+- *(config)* [calendar] caldav lists CalDAV calendars by URL and user
+- *(dock)* the bar draws in its [dock] style's preset, live on reload
+- *(config)* [dock] style picks the bar's preset: default, whitesur-dark or glass
+- *(menubar)* Software Update… in the logo menu shows the pending updates' count
+- *(update)* noobsbot-terminal's releases are checked for a second Software Update row
+- *(update)* a found release carries its download size and release date
+- *(housekeeping)* cached icons not drawn for 30 days are removed
+- *(icons)* rasterised icons are cached on disk and read back without decoding
+- *(mission)* a window dragged when Mission Control opens stays in hand
+- *(rules)* the quake terminal hangs from the top edge with square top corners
+- *(wm)* a resizing window's frame is drawn at the asked size while a slow app catches up
+- *(wm)* a display going away ends a drag or resize in progress, as a button release would
+- *(perms)* virtual keyboard and pointer offered to unsandboxed apps; events pass only once allowed and never while locked
+- *(perms)* the "control this computer's keyboard and mouse" alert, its verdict and remembered answer
+- *(config)* [privacy] input_control lists who may type and click through virtual input
+- *(gestures)* Show Desktop's windows follow a 4-finger spread and spring aside or back
+- *(launchpad)* its fade and zoom follow a 4-finger pinch and spring open or closed
+- *(gestures)* a pinch tracks its progress and speed, and a flick commits it
+- *(gestures)* App Exposé follows a swipe down and springs open or back
+- *(dock)* the focused app's highlight fades in and out over 300 ms
+- *(anim)* with reduce motion, zoom and Show Desktop crossfade instead of jumping
+- *(notify)* banners spring down under the OSD instead of jumping
+- *(spaces)* the Space switch pill fades out instead of vanishing
+- *(xwayland)* giving up on xwayland-satellite posts a notification
+- *(config)* a settings file that doesn't parse posts a notification with its line
+- *(widgets)* the System widget shows network down and up speed
+- *(update)* the rolled-back notification has a Report button that opens a new issue
+- *(install)* --advanced offers fcitx5 with m17n and its settings app
+- *(ime)* Super+Ctrl+Space cycles the input methods while fcitx5 or ibus lists several
+- *(power)* the power button asks Sleep, Restart or Shut Down
+- *(recording)* Record in Region mode records the dragged region, cropped to an even size
+- *(recording)* our own recorder, the compositor's frames piped through ffmpeg instead of wf-recorder
+- *(input)* turn on libinput's three-finger drag on pads that support it, on plug-in and on reload
+- *(gestures)* Space and Mission Control swipes take four fingers while three-finger drag is on
+- *(config)* touchpad.three_finger_drag, off by default; while on, system swipes take four fingers
+- *(lock)* "Touch the fingerprint sensor" under the field, red "Not recognised, try again" on no match
+- *(lock)* fingerprint unlock through fprintd's verify, beside the password field
+- *(notify)* the World Clock card sits after Weather in Notification Center, a row per zone, redrawn by the menu-bar clock's minute tick
+- *(config)* [widgets] clocks lists the World Clock's IANA zones, read from zoneinfo at start and on every change; unknown names are left out
+- *(clock)* World Clock rows: the city from the zone name, the time in the clock's 12/24 h format, and the day and offset from here
+- *(settings)* the Sound page follows volume, mute and device changes made elsewhere (pactl subscribe while it shows)
+- *(shortcuts)* nudge and resize the focused window 16 px with Super+Alt(+Shift)+arrows
+- *(config)* [windows] keyboard_nudge, off by default
+- *(wm)* keyboard nudge and resize step maths, 16 px
+- *(calendar)* ‹ ›, the title and ←/→ in Notification Center slide the next month in on the smooth spring; reduce motion turns it at once
+- *(calendar)* a two-finger swipe on the month grid follows the fingers, then turns the month past 30% or on a flick, else springs back; reduce motion turns it on lift
+- *(calendar)* draw the month grid slid sideways with the month beside it, labels cut at the card's edge
+- *(displays)* hotplug settles 500 ms before the displays are planned
+- *(quake)* the drop-down terminal slides down from the top edge and back up with a smooth spring; reduce motion fades it
+- *(menubar)* show the current Space as a number or dots beside the status items; a click opens Mission Control
+- *(control)* a module's list springs open and closed in place (smooth); reduce motion opens it at once
+- *(control)* power mode opens a ▾ list of power-profiles-daemon's profiles, the current one checked, instead of cycling
+- *(menubar)* [menu_bar] space_indicator key (off, number, dots) with its Settings row
+- *(dock)* a red 1 on System Settings while an update is pending
+- *(update)* Check Now, Update Now and Revert over org.noobsbot.Desktop.Update; the checker writes update.json (last checked, available, ready, revert)
+- *(update)* helper --revert <v> points the links back at an installed older version
+- *(notify)* a swiped banner follows the fingers, rubber-banded leftwards, then springs off and goes or springs back
+- *(brightness)* follow brightness changed outside the shell through the backlight's udev change events
+- *(brightness)* find DDC/CI monitors again 2 s after displays are plugged or unplugged, and set new ones to the current brightness
+- *(install)* cups in both package lists; enable cups.socket, warn when it can't
+- *(dock)* a printer among the running apps while CUPS has jobs (lpstat -o every 5 s while cupsd runs); a click opens Settings › Printers
+- *(underscan)* the real screen draws an underscanned display's frame shrunk and centred on black
+- *(displays)* underscan shrinks a display's logical size by its larger output scale
+- *(config)* a per-display underscan key in [[display.outputs]]
+- *(ime)* with ibus chosen, the compositor starts it, gives apps XMODIFIERS and lists and switches its engines in the input menu
+- *(session)* XMODIFIERS handed to the systemd session when the compositor sets ibus's
+- *(config)* [keyboard] input_method picks fcitx5, ibus, auto or none; ibus's list-engine and preload-engines parsed
+- *(protocols)* wlr-output-management v4 reports adaptive sync per head and sets vrr, refused where not vrr_capable
+- *(brightness)* external monitors follow the brightness over DDC/CI through ddcutil
+- *(widgets)* the shell starts the System widget at login
+- *(dock)* Options › Assign To and Move to Display are submenus
+- *(tray)* a tray menu's submenus open beside one another at every depth, each asked for with AboutToShow
+- *(menu)* submenus nest to any depth; a row opens its submenu after 200 ms of rest, a click at once; Left and Esc close one level
+- *(widgets)* noobsbot-desktop-widget-system, CPU, memory and disk every 5 s
+- *(menu)* submenu placement is a pure function; a submenu keeps its parent's direction
+- *(protocols)* ext-workspace-v1 lists Spaces per display group and activates them, unsandboxed clients only
+- *(udev)* turn variable refresh rate on or off per display, live on reload
+- *(displays)* plan variable refresh rate where the connector is vrr_capable
+- *(config)* a per-display vrr key in [[display.outputs]]
+- *(protocols)* zwlr_output_manager_v1 reports heads and applies them through [[display.outputs]], unsandboxed clients only
+- *(udev)* a GPU reset rebuilds the renderer, the shell's textures and the scanout buffers; three in a minute exit
+- *(settings)* the Wi-Fi page is the Network page (--page network; wi-fi and wifi still open it)
+- *(protocols)* zwlr_virtual_pointer_v1 moves, clicks and scrolls through the pointer path, trusted clients only
+- *(protocols)* ext-foreign-toplevel-list-v1 lists every window with title and app id, unsandboxed clients only
+- *(wm)* a brand-new window opens centred on the pointer's display; ruled sizes and positions use that display's area
+- *(displays)* opens_on picks a new window's display: remembered frame, else parent, else under the pointer
+- *(session)* the session wrapper runs the compositor under its version's watchdog
+- *(notify)* Edit Widgets… under Notification Center's widgets opens Settings ▸ Notifications
+- *(session)* the compositor beats to the watchdog once a second from its event loop
+- *(session)* heartbeat watchdog binary that stops a compositor gone silent for 10 s
+- *(shortcuts)* held volume and brightness keys repeat after the repeat delay, at the repeat rate up to 30 a second; the volume sound plays once per press
+- *(widgets)* the Ids property lists every widget set over D-Bus
+- *(widgets)* [widgets] hidden keeps a widget out of Notification Center; a new [widgets] redraws at once
+- *(notifications)* at most 5 new notifications a second per app; the rest merge into its latest as "and N more"
+- *(screenshot)* record the toolbar's display, else the pointer's (wf-recorder -o)
+- *(screenshot)* the thumbnail shows on the display the shot was of, and on the pointer's while dragged
+- *(screenshot)* the toolbar and region picking show on the pointer's display, a window shot is of the window's, and that display's frame is read
+- *(drawer)* the app drawer opens over its dock icon on that dock's display (else in the pointer's display's corner), its menu with it
+- *(launchpad)* Launchpad opens on the pointer's display, or its dock's, covering that display's bar and windows
+- *(spotlight)* Spotlight opens on the focused window's display, else the pointer's (D13), and takes clicks there
+- *(dock)* an icon dragged onto another display's dock is pinned there; only a drag-off unpins it from its own
+- *(install)* plocate for Spotlight's file results, its index built at install and daily
+- *(dock)* Options ▸ Separate Items on This Display copies the shared list to the display, or drops its own
+- *(dock)* each dock shows and pins to its display's own list when it has one
+- *(config)* [dock] outputs, a display's own pinned list in place of items
+- *(access)* the menu bar's status items are read in bar order by name: Wi-Fi, Bluetooth, Battery, Sound, and the recording's stop item with its time
+- *(dock)* with current_workspace_only, each display's dock shows its own display's current Space
+- *(menubar)* sliding along the bar onto the Wi-Fi item scans for networks, as a click does
+- *(lock)* a lock client's surfaces are each sized to, drawn on and take the pointer on their own display
+- *(menubar)* Left/Right walk the whole bar, through the Wi-Fi, Bluetooth, battery and Sound items, past the stop item
+- *(alert)* alerts show on the focused window's display, else the pointer's (D13)
+- *(osk)* the on-screen keyboard shows on the display with the focused text field, else the pointer's
+- *(screenshot)* dragging the floating thumbnail drops the file into apps (text/uri-list, image/png); it follows the pointer half size and see-through, its timer waits; a cancelled drop brings it back, a drop on the dock goes to the dock
+- *(gestures)* hot corners on every display, acting on the display they are in
+- *(dock)* windows minimise into the dock on their own display
+- *(dock)* an icon's menu opens on the display of the dock it was clicked on
+- *(settings)* Displays › Graphics picks the GPU that draws the desktop (display.gpu), Automatic or each card
+- *(dock)* work areas and Mission Control keep clear of each display's own dock
+- *(dock)* a dock on every display, each with its own hide state and zoom ([dock] displays)
+- *(update)* a changed update channel applies at once and checks again; Settings drops "from the next login"
+- *(network)* the password agent answers WEP keys and PEAP/TTLS logins (user name, then password); certificate logins still get NoSecrets
+- *(screenshot)* a stop item with the elapsed time shows in the menu bar while recording; a click stops it
+- *(menubar)* Wi-Fi, Bluetooth and Sound items open their Control Center module under the item, with its Settings link
+- *(spotlight)* Super+Enter shows a file in the file manager (ShowItems, else its folder), shared with the dock's Show in Files
+- *(dock)* Ctrl+right click opens Settings ▸ Desktop & Dock instead of config.toml
+- *(spotlight)* Files results from recent files and plocate, asked 150 ms after typing stops, stale answers dropped; Enter opens with xdg-open
+- *(desktop)* Change Wallpaper… opens Settings ▸ Appearance
+- *(notify)* the ⚙ in Notification Center opens Settings ▸ Notifications
+- *(spotlight)* Settings pages and rows as results, grouped under the apps; Enter opens Settings on the page
+- *(launchpad)* a folder with more apps than its rows hold pages (dots, wheel, swipe, ←/→)
+- *(launchpad)* a folder fades in and out on the smooth spring; its name is renamed after a click on it
+- *(symbols)* fill-only symbols (the Settings pages' user-circle, mouse, trackpad, clock, gear-six, info)
+- *(launchpad)* an icon dropped on the dock pins its app there; one dragged from a folder stays in the folder
+- *(launchpad)* an app makes a folder only after a 400 ms hold over another icon, which grows meanwhile
+- *(menubar)* "!" on the network item behind a captive portal; its menu has Sign in to network…
+- *(mission)* drag a window onto another display's Spaces bar, or its +, to move it there
+- *(wm)* move_to_output on a window's own display pulls it wholly inside
+- *(sound)* [sound] startup_sound plays desktop-login (else service-login) once per login session, not on a desktop restart
+- *(wm)* move_to_output; Move to Display shrinks a window that doesn't fit
+- *(wm)* fit_in places a rect in another work area, shrunk only if it doesn't fit
+- *(sound)* [sound] alert_volume plays the bell's alert sound quieter (canberra dB, pw-play factor)
+- *(displays)* a display's damage redraws the displays mirroring it
+- *(displays)* a mirror draws its source's frame offscreen at the source's size and shows it letterboxed in its own mode, on its own frame clock
+- *(displays)* plan leaves a mirror out of the arrangement and the space; a gone, off, self or chained source falls back to extended
+- *(displays)* a mirror = "<connector>" key on [[display.outputs]], written back and kept in remembered layouts
+- *(lock)* apps allowed on the lock screen list their latest notifications under the clock (app, title; body only with previews Always)
+- *(notify)* [notification_apps] lock switch (off by default) and its "Show on lock screen" row in app options
+- *(power)* low-battery warning at 20% and 10% for wireless mice, keyboards and headsets, one notification per device
+- *(settings)* Dock row for cycling on into the next app
+- *(dock)* cycle_across_apps carries click and scroll cycling into the next dock app
+- *(keyboard)* Keyboard Viewer in the input menu: the on-screen keyboard read-only, labels from the active layout (Shift's level too), held keys lit
+- *(access)* the lock screen for the screen reader: user, password field, wrong-password hint, Now Playing and power buttons
+- *(access)* the app switcher's selected app is read as it changes
+- *(network)* captive portal: "Sign in to <network>" notification opens NetworkManager's check URL in the browser
+- *(keyboard)* [keyboard] per_window_source: each window gets back the layout it lost focus with
+- *(access)* alert sheets, polkit prompts and Force Quit for the screen reader: title, message, field, buttons and the default one
+- *(network)* [network] proxy (none, manual, PAC) given to apps as *_proxy env and to GTK's proxy settings; Settings rows
+- *(keyboard)* input-source previous (Super+Ctrl+Shift+Space) and input-source 1…9 actions, wrapping round
+- *(access)* notifications for the screen reader: banners read as they come, critical ones assertively, Notification Center's cards with their actions
+- *(control)* VPN rows after the Wi-Fi networks bring a saved VPN up or down
+- *(access)* Launchpad's apps, folders with their count, page and search field for the screen reader
+- *(access)* Spotlight's field and results for the screen reader, the selected row read as it moves
+- *(zoom)* follow the text caret and keyboard focus as well as the pointer ([accessibility] zoom_follows_focus)
+- *(dock)* holding an icon with several windows still for half a second shows its previews instead of dragging
+- *(theme)* export the accent to GTK's gtk.css, the monospace font and overlay scrollbars to GTK and Kvantum
+- *(displays)* clamshell: lid closed with another display on turns the built-in panel off
+- *(wallpaper)* Tile fit repeats the picture at its own size from the top-left corner
+- *(displays)* layouts remembered per set of displays, by make, model and serial
+- *(settings)* + Add Folder… adds a folder of pictures to the wallpaper gallery ([appearance] gallery_folders)
+- *(displays)* Identify shows each display's name on a glass plate for 2 s, from a Displays page button
+- *(settings)* Displays ▸ Brightness slider for the built-in panel, set through the desktop
+- *(mission)* reduce motion crossfades Mission Control in and out with the windows at their places
+- *(spaces)* reduce motion crossfades the Space switch in place instead of sliding
+- *(spaces)* reduce motion times the Space and Mission Control tweens as a 200 ms fade
+- *(settings)* Desktop & Dock ▸ Hot Corners: an action for each corner
+- *(battery)* peripherals' batteries from UPower in the battery menu and the Batteries widget
+- *(idle)* display-off action turns the displays off until the next input
+- *(trackpad)* each system gesture can be turned off
+- *(trackpad)* scroll method: two fingers, edge or off
+- *(idle)* [idle] keyboard_backlight_off turns the keyboard backlight off when inactive, back on at input
+- *(trackpad)* secondary click Off
+- *(calendar)* week_start = "auto" takes the first weekday from the locale
+- *(mouse)* middle-click paste on/off: no primary selection for apps, and GTK's primary paste follows
+- *(calendar)* [clock] week_numbers shows ISO weeks in a column at the left
+- *(battery)* [battery] dim_on_battery lowers brightness 10 points (floor 20%) when unplugged, restores it plugged in
+- *(mouse)* double-click speed for title bars, edges and desktop icons, exported to GTK
+- *(idle)* [idle] screen_off_on_battery, a separate display-off time on battery; re-timed on a plug change
+- *(battery)* the bar's battery opens a menu with time remaining or until full and the power source
+- *(battery)* [battery] show_percentage toggles the percent beside the bar's battery
+- *(spaces)* flings settle with the D10 gesture spring
+- *(mission)* Mission Control follows a swipe up or down and springs open or closed from the fingers
+- *(gestures)* the Space slide follows a sideways swipe and springs on or back from the fingers
+- *(spaces)* the slide a swipe shows, rubber-banding past the first and last Space
+- *(gestures)* commit past 30% or on a flick, axis locks once moved, rubber band
+- *(spaces)* slides and Mission Control spring with D10 smooth, can be flung or held
+- *(menu)* heading diagonally for an open submenu keeps it open (aim triangle, 300 ms grace)
+- *(anim)* springs let go from any position and speed
+- *(menu)* keyboard moves in every shell menu: arrows skip dead rows, Return runs, letters jump, Left/Right walk the bar menus
+- *(dock)* spring-loading: a file held on an icon brings its app's window up, App Exposé with several
+- *(window-menu)* Move to lists every other display by name
+- *(dock)* Close Others closes every other app's windows, as Quit does
+- *(dock)* Options ▸ Move to Display sends the app's windows to the display picked
+- *(dock)* Options is a submenu, with Assign To All Spaces / This Space / None
+- *(spaces)* an app assigned to All Spaces stays on every Space; to one Space, its new windows open there
+- *(config)* [dock] assign holds each app's Assign To choice
+- *(notify)* the Notification Center key opens it on the pointer's display
+- *(sound)* screenshots, emptying the Trash and the volume keys play their sounds unless ui_sounds is off
+- *(sound)* [sound] alert picks the bell's sound
+- *(menubar)* tray icons on every display's bar
+- *(menubar)* every display's bar takes clicks
+- *(sound)* volume changes keep the output's left/right balance (pactl)
+- *(menubar)* draw bar popups on the display they hang from
+- *(control)* a volume row for each app playing sound under the Sound slider
+- *(sound)* read the apps playing sound and set their own volume
+- *(notify)* Do Not Disturb turns on and off on its schedule
+- *(dock)* per-app notification rule can turn an app's badge off
+- *(notify)* per-app sound and Notification Center switches, banners over full screen on request
+- *(notify)* previews setting hides the body in banners and Notification Center
+- *(config)* per-app notification switches, previews, DND schedule and full-screen keys
+- *(mission)* Mission Control, the Space slide and the indicator on every display
+- *(session)* a window's Space is saved and restored among its own display's Spaces
+- *(spaces)* each display has its own Spaces; keys and swipes act on the display under the pointer
+- *(emoji)* the search field and the headers grow with the text size
+- *(force-quit)* the window, its lines, rows and button grow with the text size
+- *(screenshot)* the Options menu, the text buttons and the size pill grow with the text size
+- *(drawer)* the field, sidebar, header and rows grow with the text size
+- *(force-quit)* lines, rows, the button and the window's height grow with the text size
+- *(lock)* clock, user block, buttons, Now Playing and the layout pill grow with the text size
+- *(mission)* Space name pills, names and the window title pill grow with the text size
+- *(alert)* the sheet, its buttons and field grow with the text size
+- *(desktop)* icon names and their cells grow with the text size
+- *(switcher)* the name line and the one-app width grow with the text size
+- *(control)* Control Center rows and cards grow with the text size
+- *(launchpad)* names, the search pill and the folder name grow with the text size
+- *(dock)* tooltips, badges and the field caret grow with the text size
+- *(spotlight)* the field, rows and width grow with the text size
+- *(osd)* the value's column widens with the text size
+- *(notify)* cards, Notification Center rows and widgets grow with the text size
+- *(calendar)* rows, title and today circle grow with the text size
+- *(menubar)* item gaps and the app name's room grow with the text size
+- *(menubar)* the bar grows taller with the text size; popups and work areas follow
+- *(menu)* menu rows, side padding and width grow with the text size
+- *(lock)* draw the Now Playing card: glass, rounded album art, title, artist and the three buttons
+- *(text)* text::ts scales layout px with the text size
+- *(lock)* Now Playing's buttons work while locked
+- *(lock)* keyboard layout pill beside the password field; a click switches layout
+- *(lock)* lay out a Now Playing card above the user block, with its button hit-test
+- *(media)* keep a player's local album art path (mpris:artUrl file://)
+- *(lock)* the volume, brightness and layout OSD shows over the lock screen
+- *(lock)* volume, brightness, media, eject and layout shortcuts run while locked
+- *(mission)* draw the every-Space button, and windows over the bar's cells so they show inside the tiles
+- *(mission)* every Space as a tile grid (Ctrl+Up or the bar's left button); click a tile to go there, drag a window onto one to move it
+- *(access)* the screen reader reads the window highlighted in Mission Control
+- *(mission)* drag a Space in the bar to reorder; a click still shows it on release
+- *(spaces)* move a Space to another place, windows and the shown Space following
+- *(mission)* arrows, Tab, Return/Space, Delete/Super+W and Ctrl+arrows drive Mission Control from the keyboard
+- *(spaces)* [spaces] per_display config switch and Settings row
+- *(spaces)* holding a moved window at a side edge switches Space with it; side tile off after a switch
+- *(spaces)* edge-hold rule for carrying a moved window to the neighbouring Space
+- *(launchpad)* drag an app out of a folder (one left dissolves it) or to a new place in it
+- *(launchpad)* a click opens a folder over the dimmed grid, its name editable; Esc closes it first
+- *(session)* Open Storage on the low-disk notification opens Settings > General
+- *(session)* hourly low-disk check and daily cleanups from login
+- *(launchpad)* drop an icon on another to make a folder
+- *(session)* Thunderbolt accessory alert through boltd (WIP)
+- *(launchpad)* a dragged icon held at a side edge turns the page
+- *(session)* housekeeping cleanups; old Trash items via trash::empty_before
+- *(launchpad)* icons slide aside on a spring for a dragged one
+- *(desktop)* mounted drives as desktop icons with Open and Eject
+- *(launchpad)* drag an icon to rearrange; clicks act on release
+- *(control)* draw the Keep Awake tile, its blocker count and list
+- *(control)* Keep Awake tile toggles and lists the apps blocking sleep
+- *(desktop)* place gives leading drive icons the first cells
+- *(launchpad)* saved order with folders drawn as glass tiles
+- *(menubar)* Recent Items submenu in the logo menu, recent apps and documents, with Clear Menu
+- *(alert)* Reopen windows when logging back in checkbox on power alerts
+- *(session)* save windows to session.toml and put them back at login
+- *(config)* windows.reopen_at_login, default on, with a Settings row
+- *(menubar)* read every recent app and file from recently-used.xbel, and empty it
+- *(dock)* files dropped on the Trash are trashed per the freedesktop spec
+- *(dock)* Trash menu with Open and Empty Trash, asked first
+- *(menubar)* auto-hide slides the bar away; the top edge or an open menu brings it back
+- *(dock)* Trash at the dock's right end, full or empty as files come and go (E8.8)
+- *(dock)* [dock] show_trash setting with its Settings row
+- *(menubar)* [menu_bar] auto_hide setting; zoomed windows take the full height while it is on
+- *(tray)* icons that don't fit the bar go into a » item whose menu opens or activates them
+- *(widgets)* draw other apps' widgets in Notification Center and on the desktop; a click tells the owner
+- *(widgets)* org.noobsbot.Desktop.Widgets (Set, Remove, Activated) with [widgets] placement; widgets go with their owner
+- *(menubar)* a menu bar on every display; the app's name on its window's display, tray icons on the first
+- *(windows)* each display's work area keeps clear of its menu bar; zoom fills the window's own display
+- *(menu)* submenus open beside their row; tray dbusmenus nest and the window menu's Move & Resize and Move to are submenus
+- *(idle)* Keep Awake holds off dimming, screen-off and sleep like an idle inhibitor
+- *(session)* [housekeeping] config keys and Settings rows
+- *(desktop)* [desktop] show_drives key with Settings row
+- *(control)* read logind's sleep blockers when Control Center opens
+- *(a11y)* the shell's tree is on the accessibility bus while the screen reader runs
+- *(a11y)* menu bar, dock and Control Center as an AT-SPI tree via accesskit
+- *(shortcuts)* screen-record toggles recording (Super+Alt+5), with an OSD
+- *(shortcuts)* screenshot-window takes the focused window (Alt+Print)
+- *(shortcuts)* search key opens Spotlight
+- *(shortcuts)* calculator key opens a calculator app
+- *(shortcuts)* explorer key opens the default file manager
+- *(shortcuts)* mail key opens the default mail app
+- *(a11y)* hold the primary button still for a secondary click
+- *(shortcuts)* default-app action; the web key opens the default browser
+- *(a11y)* dwell click with a shrinking ring around the resting pointer
+- *(shortcuts)* display key opens Settings › Displays
+- *(a11y)* shake the pointer to make it grow for a moment
+- *(shortcuts)* trackpad toggle keys, with an OSD
+- *(a11y)* screen-reader action starts or stops Orca, Super+Alt+F5
+- *(a11y)* tell the accessibility bus when a screen reader runs
+- *(config)* [touchpad] enabled turns the trackpad off
+- *(a11y)* [accessibility] shake_to_find, dwell_click_ms, hold_secondary_ms
+- *(shortcuts)* keyboard backlight keys through UPower, with an OSD
+- *(a11y)* [accessibility] screen_reader config key
+- *(perms)* zwp_virtual_keyboard_manager_v1 for trusted clients
+- *(a11y)* show or hide the on-screen keyboard from the input menu
+- *(a11y)* on-screen keyboard panel, typing through the seat, on the lock screen too
+- *(a11y)* [accessibility] on_screen_keyboard key and Settings row
+- *(config)* bindings merge by parsed keys and warn on conflicts
+- *(a11y)* keys pass the screen reader's monitor first; its grabs reach nothing else
+- *(a11y)* screen reader key monitor service with grab matching
+- *(shortcuts)* Shift+Alt+volume keys step a quarter as far
+- *(shortcuts)* eject key ejects the last mounted removable drive
+- *(shortcuts)* org.noobsbot.Desktop Shortcuts.Record lets Settings capture keys
+- *(a11y)* ⇪ in the lock screen's password field while Caps Lock is on
+- *(shortcuts)* media seek keys, ten seconds on or back (MPRIS Seek)
+- *(a11y)* Caps Lock on/off OSD
+- *(shortcuts)* media stop key (MPRIS Stop)
+- *(a11y)* xdg_system_bell plays the bell sound, flashes the screen, or both
+- *(a11y)* increase contrast makes glass near-opaque with a 1 px border
+- *(a11y)* sticky, slow, bounce and mouse keys before the keymap
+- *(a11y)* [accessibility] keys for sticky, slow, bounce and mouse keys and the bell
+- *(a11y)* Super+Alt+8 / = / - turn Zoom on or off and step it in and out
+- *(a11y)* Zoom and colour filters as a final pass over the frame; screenshots stay plain
+- *(a11y)* [accessibility] zoom_style, colour_filter and increase_contrast keys
+- *(windows)* sheets for modal dialogs and per-app remembered frames
+- *(windows)* window menu on title-bar right-click and show_window_menu
+- *(windows)* switcher hover/click/H on the pointer's display, Super+right-drag resize, hover focus
+- *(windows)* tile, fill, center, keep-on-top, move-to-display/space and cycle-app-windows actions
+- *(appearance)* wallpaper slideshow and 1 s crossfade on every wallpaper change
+- *(appearance)* Night Light and sunset auto-dark
+- *(dock)* genie minimise effect as the alternative to scale
+- *(appearance)* text size and pointer size for the shell and apps
+- *(shortcuts)* Spaces on Super+Ctrl+1…9, leaving Ctrl+1…9 to apps
+- *(dock)* icon menu lists windows, recent files, Open at Login and Show in Files
+- *(dock)* minimised windows as thumbnail tiles after a separator
+- *(dock)* [dock] click, middle and scroll actions, Shift-click for a new window
+- *(dock)* window previews strip over icons with several windows
+- *(dock)* Super+1…9 focus, cycle or open the n-th dock app, number pills while Super is held
+- *(lock)* password delay after the display turns off, and a lock screen message
+- *(notifications)* per-app style (banner, alert, none, off) in [notification_apps], set from Settings
+- *(dock)* default items by short app name (dolphin, kate)
+- *(settings)* wallpaper gallery
+- *(wallpaper)* fill, fit, centre and stretch
+- *(settings)* Auto hours, Reduce motion and Desktop icons rows; Settings follows Auto
+- *(appearance)* Auto dark mode hours (dark_from, dark_until)
+- *(settings)* Mouse page and the new trackpad rows
+- *(input)* [mouse] section and more trackpad options (speed, secondary click, tap to drag, ignore while typing)
+- *(keyboard)* key repeat delay and rate in [keyboard], applied live
+- *(windows)* green light goes full screen, Alt+green zooms; zoom and fullscreen key actions
+- *(windows)* tile by dragging to a screen edge, with a glass preview
+- *(rules)* draw the opacity window rule
+- *(notifications)* Do Not Disturb survives restarts ([notifications] dnd)
+- *(keys)* default keys for Show Desktop, Sleep and Log Out
+- *(menu)* About, System Settings and Software Update rows open Settings
+
+### Fixed
+
+- *(install)* --from-source pins v1.0.0-alpha.1, v0.1.0's tag after the renumbering
+- *(update)* the notice names a pre-release, "Noobsbot Desktop 1.0 beta 2 is available"
+- *(install)* installs the newest pre-release while no stable release exists yet
+- *(update)* Stable takes the newest pre-release while no stable release exists yet
+- *(alert)* a title gets three lines, so Shut Down's question is no longer cut after "your…"
+- *(screenshot)* the thumbnail averages each block of pixels instead of picking one
+- *(wallpaper)* a shuffled slideshow shows every picture once before any comes back
+- *(caldav)* a tasks list's own URL says it holds no events instead of adding an empty account
+- *(wm)* magnetic edges count only windows beside the moved one on the other axis
+- *(alert)* an alert without the checkbox no longer panics a debug build
+- *(sheets)* a sheet hangs centred under its parent again when either is resized
+- *(alert)* a Thunderbolt question waits for any open alert and is asked again when one opened over it closes
+- *(session)* SIGTERM and SIGINT stop the loop as logging out does, so unsaved settings edits are written
+- *(lock)* the switcher and other overlays close when the screen locks, and none draws over the lock on another display
+- *(housekeep)* a failed prune save logs and stops without a break value, which a for loop can't take
+- *(housekeep)* pruning recent files never renames over an entry an app wrote meanwhile
+- *(greeter)* a session's Exec is unquoted like an app's
+- *(media)* among paused players, the one that played last shows
+- *(events)* waking from sleep arms the reminder timer again, which stopped while asleep
+- *(lock)* a locker client's surfaces are sized again when a display changes size while locked
+- *(shortcuts)* a MIME type's default app is asked of xdg-mime on a thread, not on the frame loop
+- *(media)* a player's art path has its %XX escapes decoded
+- *(housekeep)* the hourly disk check runs on a thread, so a hung network home never stalls a frame
+- *(config)* quitting flushes the settings edits still waiting out the debounce
+- *(config)* one temp name per save, so two threads saving at once never share it
+- *(gpu)* another GPU that won't come back after a reset leaves its displays dark, not every display in software
+- *(access)* a permission alert has no default button for the screen reader
+- *(alert)* a permission alert draws Allow as a plain button
+- *(alert)* Bluetooth's Pair? alert waits 500 ms and Return no longer pairs
+- *(update)* install at login never reinstalls a reverted version or a pre-release
+- *(alert)* screen recording and input control alerts name the program's full path
+- *(perms)* a client's program is read once as it connects, not at its first request
+- *(protocols)* a virtual keyboard's keymap is copied whole into a sealed file before xkb maps it
+- *(update)* install at login skips the password only for an admin's active local session
+- *(alert)* permission alerts ignore input for 500 ms and Return no longer allows
+- *(update)* the helper opens the download through no symlink, and only regular files the caller owns
+- *(config)* set_array escapes control characters, so a crafted program path can't break config.toml
+- *(screenshot)* a recording thread that fails to start no longer leaves ffmpeg a zombie
+- *(lock)* the fingerprint reader goes free while the session is in the background
+- *(lock)* a fingerprint match counts only for the current verify, never as the machine sleeps
+- *(icons)* only a pending icon shows its nearest other size, as before the shadow key
+- *(update)* the helper reads at most 1 GiB of tarball and never waits on a FIFO in the download
+- *(calendar)* a [calendar] files folder that isn't there yet is watched through its nearest parent, and itself once it appears
+- *(notify)* a banner swipe follows the fingers under natural scrolling, as Launchpad's pages do
+- *(grabs)* apps with no minimum size keep the 200 x 120 floor under our title bar
+- *(udev)* only EGL_CONTEXT_LOST or render failures on every display count as a GPU reset; DRM, allocator and missing-GPU errors leave that display dark; temporary failures retry uncounted
+- *(menu)* rows that went away since the last frame cut the open submenus back and move the keyboard row onto what is left
+- *(menu)* a lit row past the rows drawn this frame lights nothing instead of panicking
+- *(virtual-pointer)* release the buttons a virtual pointer still holds when it is destroyed or its client disconnects
+- *(brightness)* Settings' brightness slider updates the shell's level itself
+- *(displays)* set_outputs keeps vrr when it rewrites [[display.outputs]]
+- *(update)* turning check_updates on or off applies at once; off idles the thread and withdraws a pending notice
+- *(screenshot)* a Screen-mode click captures the display clicked, not the toolbar's
+- *(lock)* button hover uses the dark-mode overlay, as the lock text is always white
+- *(wm)* a new window is shrunk to fit the display it opens on, not the first
+- *(session)* a reopened window fits its own display's bar and dock
+- *(anim)* Show Desktop moves each window aside on its own display, never onto another
+- *(popups)* a popup is kept inside its toplevel's own display
+- *(grabs)* a side shared with another display crosses over instead of tiling
+- *(grabs)* a dragged window follows the pointer onto any display and tiles there
+- *(wm)* window commands act on the window's own display, through one window_area
+- *(install)* a plocate timer that can't be enabled warns instead of stopping the install
+- *(dock)* the screenshot thumbnail resting on an icon springs its app forward, as an app's drag does
+- *(screenshot)* Esc cancels a thumbnail drag and brings the thumbnail back
+- *(network)* an enterprise or open network is joined without our password prompt, so the agent asks once; WEP asks for its key
+- *(screenshot)* a thumbnail dropped on another display's dock is found in that dock's coordinates
+- *(network)* a new secured network is joined as its access point's flags say (WEP, WPA-PSK, SAE), enterprise left to the secret agent
+- *(dock)* the display a following dock left is redrawn without it
+- *(services)* the password and pairing agents register again when NetworkManager or bluetoothd restarts
+- *(network)* a new password for a saved network updates its secrets and activates it, no second connection
+- *(trash)* files on another disk go to its $topdir/.Trash-$uid (0700); emptying, the full icon and auto-empty cover every mounted disk's trash
+- *(apps)* Terminal=true apps start inside a terminal: xdg-terminal-exec when installed, else the configured terminal with -e
+- *(gestures)* a switched-off Spaces or Mission Control swipe no longer follows the fingers
+- *(install)* openssl, which Add User uses to hash the new password
+- *(network)* a captive portal is NM_CONNECTIVITY_PORTAL (2), not LIMITED (3)
+- *(wallpaper)* a pattern needing over 1024 copies fills instead of tiling
+- *(spaces)* the reduce-motion crossfade settles in 150 ms like the shell's other crossfades
+- *(dock)* saving Assign To replaces a hand-written [dock.assign] table instead of duplicating the key
+- *(notify)* no sound when the app sends suppress-sound; advertise the sound capability
+- *(config)* app names in [notification_apps] are not unknown settings
+- *(dock)* the tooltip and badge caches key on the text scale, so a showing one resizes
+- *(update)* the update notice keeps its own id, so low battery no longer replaces it
+- *(a11y)* filter shader uniform named mode, not the reserved word filter
+- *(settings)* hide the Mac keys toggle until the swap is built
+- *(input)* apply trackpad settings to plugged-in devices on reload
+- *(windows)* minimise when an app asks (client-side title bars)
+- *(windows)* honour double_click_title (zoom, minimise or nothing)
+
+### Other
+
+- *(release)* pre-release PRs are opened by hand, as release-plz reads only vX.Y.Z tags
+- Merge branch 'parity/prerelease' into feat/parity
+- *(update)* the channel's comments say Stable takes pre-releases until 1.0.0 is out
+- *(plan)* the version scheme's alpha, beta and rc pre-releases, and Stable before 1.0.0
+- *(release)* release-plz's comments describe the pre-release flow
+- *(readme)* versions go through alpha, beta and rc pre-releases to 1.0.0, the first stable release
+- *(session)* rollback between pre-release versions (1.1.0-rc.1 back to 1.0.0-beta.10)
+- *(update)* Revert to and the helper's newest download order pre-releases by SemVer precedence
+- *(release)* release-plz's comments state Semantic Versioning 2.0.0's 0.y.z rule
+- *(readme)* versions follow Semantic Versioning 2.0.0, with the public API declared
+- Merge branch 'parity/live-test' into feat/parity
+- Merge branch 'parity/debt-ui' into feat/parity
+- Merge branch 'parity/debt-apps' into feat/parity
+- Merge branch 'parity/debt-core' into feat/parity
+- *(screenshot)* as_chunks for the thumbnail's pixels (clippy)
+- Merge branch 'parity/debt-core' into feat/parity
+- *(ical)* a rule's period is its days, filtered by the rule
+- *(dock)* the recent-files scan's comment names the toolkits, not a desktop
+- Merge branch 'parity/monitor-brightness' into feat/parity
+- Merge branch 'parity/caldav-discovery' into feat/parity
+- *(plan)* a GPU reset that won't come back goes software instead of exiting
+- *(plan)* Settings › Displays has a brightness slider per display
+- *(plan)* CalDAV discovery is built
+- *(config)* a CalDAV account's URL may be its server's address
+- *(gpu)* a failed GPU rebuild keeps the shell's views, so it can be tried again
+- *(caldav)* one namespace-blind element scanner, calendar-data read through it
+- *(plan)* the pixman renderer and fbdev-only machines are dropped; Mesa's llvmpipe is the software fallback
+- *(plan)* Google calendars are dropped (they need OAuth); CalDAV covers synced calendars
+- Merge branch 'parity/fix-input' into feat/parity
+- *(update)* install at login is for admins, never a beta or a reverted version
+- the dock and the saved session quote TOML strings through config::quote
+- Merge branch 'parity/icon-shadow' into feat/parity
+- *(calendar)* EXDATE lists, all-day and TZID EXDATEs, moved and cancelled overrides
+- *(plan)* E3.1 dock icons have their small shadow
+- Merge branch 'parity/caldav' into feat/parity
+- Merge branch 'parity/pixman' into feat/parity
+- *(plan)* the glass dock has no blur by design (R2), not a missing pass
+- *(plan)* E6.1 software fallback built through Mesa's driver, pixman left
+- *(udev)* software drawing is tried once, and only Mesa's own counts
+- *(plan)* CalDAV calendars done, Google not
+- *(install)* libsecret's secret-tool, for CalDAV passwords in the keyring
+- *(plan)* E6.13 install at login without a click
+- *(config)* install_at_login is off by default; whitesur-dark parses
+- *(plan)* E3.1 dock style presets
+- *(plan)* E2.2 update count badge, E6.13 terminal row, size and date
+- *(plan)* E1.11 icon disk cache
+- *(plan)* E1.2 resize frame, carried drag and unplug; E2.8 square top corners
+- *(plan)* plainer reason for leaving the other globals open
+- *(plan)* the control-input alert, and why the other privileged globals stay open to unsandboxed apps
+- *(plan)* live App Exposé, Launchpad and Show Desktop gestures, pill fade, banner spring, dock highlight fade
+- *(config)* README says a broken settings file shows a notification
+- *(plan)* broken settings and a given-up xwayland-satellite notify
+- *(widgets)* README says the System widget shows network speed
+- *(plan)* the System widget has network speed
+- *(plan)* the rollback notification's Report button is done
+- *(install)* README lists the input-method question
+- *(plan)* input methods cycle on Super+Ctrl+Space and the installer offers fcitx5
+- *(ime)* README and config say Super+Ctrl+Space cycles the input methods
+- *(power)* README and plan say the power button offers Sleep, Restart and Shut Down
+- *(recording)* synthetic frames through the real ffmpeg arguments make an h264 mp4
+- *(plan)* the own screen recorder is done; ffmpeg replaces wf-recorder as the optional package
+- *(recording)* perms, config and screenshot docs say our recorder runs in-process and needs ffmpeg
+- three-finger drag in the README and plan E5.3
+- Merge branch 'parity/gesture-previews' into feat/parity
+- *(plan)* Trackpad gesture previews are done
+- Merge branch 'parity/fingerprint' into feat/parity
+- *(plan)* fingerprint unlock is done (lock screen and Settings ▸ Users; sudo stays the system's PAM)
+- Merge branch 'parity/plan-marks' into feat/parity
+- *(plan)* desktop icons, genie and the toolbar's Record are no longer "later"
+- *(plan)* Printers marked done in the extras, the pages list and the hardware table
+- *(plan)* M6 sections marked built; the graphical login is done
+- *(plan)* M5 sections marked built; Space keys and the recogniser's file corrected
+- *(plan)* M3 and M4 sections marked built; Up Next and Weather done
+- *(plan)* M2 sections marked built; event dots done, CalDAV not yet
+- *(plan)* M1 sections marked built, with what is not yet
+- Merge branch 'parity/world-clock' into feat/parity
+- ponytail notes that named finished milestones now state today's limits
+- Merge branch 'parity/settings-live' into feat/parity
+- *(plan)* the World Clock widget is built from [widgets] clocks and zoneinfo
+- *(plan)* Network rescans while it shows, Sound follows changes made elsewhere, missing calendar folders are watched
+- Merge branch 'parity/nudge-resize' into feat/parity
+- keyboard nudge and resize keys in the README and plan
+- Merge branch 'parity/calendar-swipe' into feat/parity
+- *(grabs)* the app's frame size limits in one helper
+- *(plan)* the calendar's month slides with the fingers, ‹ › and ←/→
+- Merge branch 'parity/pw-volume' into feat/parity
+- *(plan)* volume changes are coalesced on their own thread; the pipewire crate only if that still lags
+- *(sound)* one reading per burst of changes, none while our own are still queued
+- *(sound)* apply volume, mute and output changes on their own thread, coalesced to the latest value
+- *(plan)* hotplug settle for docks built
+- Merge branch 'parity/space-dots' into feat/parity
+- Merge branch 'parity/update-page' into feat/parity
+- Merge branch 'parity/motion' into feat/parity
+- *(plan)* banner swipe, Control Center module springs and power ▾, quake slide built
+- *(plan)* the menu bar's Space indicator is built
+- *(plan)* Software Update page rows done; terminal row left
+- *(menu)* a menu shrinking under its open path and keyboard row
+- Merge branch 'parity/printers' into feat/parity
+- *(plan)* Printers row
+- Merge branch 'parity/underscan' into feat/parity
+- *(plan)* underscan for TVs ships
+- Merge branch 'parity/camera-picture' into feat/parity
+- *(plan)* Users' Take Photo… ships
+- Merge branch 'parity/ibus' into feat/parity
+- *(install)* the closing hint names fcitx5 or ibus for other scripts; plan row notes ibus
+- *(ime)* ibus's menu read lives with fcitx5's; ibus.rs keeps what Settings shares
+- *(plan)* monitors' brightness over DDC/CI ships
+- *(install)* install ddcutil and load i2c-dev for monitors' brightness
+- Merge branch 'parity/widget-sample' into feat/parity
+- *(widgets)* the System widget ships
+- *(widgets)* ship noobsbot-desktop-widget-system in each version dir
+- Merge branch 'parity/tray-submenus' into feat/parity
+- *(plan)* nested submenus in the tray and dock menus
+- Merge branch 'parity/wlr-protocols' into feat/parity
+- *(plan)* wlr-output-management, ext-workspace, ext-foreign-toplevel-list and virtual-pointer are served
+- Merge branch 'parity/gpu-recover' into feat/parity
+- *(plan)* VRR is a per-display toggle, out of the v1 limits
+- *(plan)* the Network page and the Control and Alt swap
+- *(input)* scroll handling as State::pointer_axis, reusable by virtual devices
+- Merge branch 'parity/session-watchdog' into feat/parity
+- *(plan)* the session watchdog is noobsbot-desktop-watchdog, beating once a second
+- Merge branch 'parity/widgets-page' into feat/parity
+- *(session)* ship noobsbot-desktop-watchdog in each version dir
+- *(plan)* Edit Widgets is done
+- Merge branch 'parity/update-reload' into feat/parity
+- Merge branch 'parity/tokens-a' into feat/parity
+- *(lock)* the date's Title 2 comes from the shared type scale
+- *(menubar)* label, Body and Headline from the shared tokens; the open item's pill is the pressed overlay
+- *(menu)* popover radius, text colours, Body and separator from the shared tokens
+- *(control)* Control Center text and radii from the shared tokens; add Subheadline
+- *(ui)* colour, separator and state-overlay tokens usable without a Ui; public Title 2 and Title 3
+- *(launchpad)* the folder panel takes the panel radius; names, search text and glyph take the D2/D4 tokens
+- *(shell)* to_popup and to_dock go through to_display; to_alert inlined
+- *(lock)* notification and Now Playing cards take the sheet material with its shadow; button hover is the D7 overlay
+- *(spotlight)* the selected row and setting tiles take the D5 radius tokens
+- *(shell)* one first_geometry/first_origin for the first display's area
+- *(osk)* the Keyboard Viewer takes the panel material's own radius
+- *(force-quit)* "not responding" takes the D2 red token
+- *(screenshot)* the recording stop glyph takes the D2 red token
+- *(ui)* the D2 red is one public token, in bytes
+- Merge branch 'parity/md-overlays' into feat/parity
+- *(plan)* E8.1 Launchpad, Spotlight, the app drawer and screenshots on their own display
+- Merge branch 'parity/wifi-sec' into feat/parity
+- *(plan)* docks per display with their own pinned lists done
+- Merge branch 'parity/bar-keys' into feat/parity
+- Merge branch 'parity/multi-display-shell' into feat/parity
+- *(plan)* E8.1 shell on every display and E8.3 one dock per display done
+- Merge branch 'parity/shot-drag' into feat/parity
+- *(plan)* E6.8 thumbnail drag into apps
+- *(plan)* E7.1 every setting has a row; widgets, dock items and rules stay with the desktop
+- Merge branch 'parity/net-join' into feat/parity
+- Merge branch 'parity/launch-files' into feat/parity
+- Merge branch 'parity/shell-wiring' into feat/parity
+- *(plan)* E2.2 status items open their Control Center module; the recording stop item
+- Merge branch 'parity/settings-rows' into feat/parity
+- Merge branch 'parity/spot-search' into feat/parity
+- *(plan)* Spotlight has Settings and Files results; Open-4 decided (recent files + plocate, no own index)
+- *(plan)* Privacy & Security lists the screen-recording programs
+- *(desktop)* Mime::of gives a file's type by extension, for Spotlight's Files kind
+- *(plan)* mac_keys row, XF86Display note and the menu bar bullet match the code
+- Merge branch 'parity/chooser' into feat/parity
+- *(plan)* Users, + Add Folder… and Import WireGuard use the portal's file chooser
+- Merge branch 'parity/lp-folders' into feat/parity
+- *(plan)* Launchpad folders are built (hold to merge, paging panel, rename, pin from a folder)
+- *(launchpad)* saved folders load with uninstalled apps dropped and a folder of one dissolved
+- *(plan)* Users can add and delete accounts
+- *(plan)* WireGuard search domains are built
+- Merge branch 'parity/net-rest' into feat/parity
+- *(plan)* the network row's portal "!", WPA3-only hidden networks and IPv6 are built
+- Merge branch 'parity/sp-drag' into feat/parity
+- *(plan)* dragging onto another display's Spaces bar done
+- Merge branch 'parity/sound-rest' into feat/parity
+- *(plan)* Sound row done
+- Merge branch 'parity/mirror' into feat/parity
+- *(plan)* display mirroring is built
+- Merge branch 'parity/st-privacy' into feat/parity
+- *(plan)* Battery, Notifications and Privacy & Security leftovers done
+- Merge branch 'parity/dock-cycle' into feat/parity
+- *(plan)* dock config bullet done
+- Merge branch 'parity/st-keyboard' into feat/parity
+- *(plan)* keyboard reorder, input methods, previous / n-th source, per-window source and Keyboard Viewer are built
+- Merge branch 'parity/reader-more' into feat/parity
+- *(access)* the screen reader covers the whole shell
+- Merge branch 'feat/parity' into parity/st-network
+- *(plan)* Network leftovers done; what is still missing
+- Merge branch 'parity/smalls' into feat/parity
+- *(plan)* Rename, + Add Folder…, Tile, System Report, GTK accent, dock long-press and zoom focus are built
+- Merge branch 'parity/st-users' into feat/parity; drop a stray live-data test from settings/src/system.rs
+- *(plan)* E8.2 Users row done, adding users later
+- *(plan)* Displays leftovers done; what mirroring needs
+- Merge branch 'parity/st-mouse' into feat/parity
+- *(plan)* E8.2 Mouse and Trackpad rows done
+- Merge branch 'parity/st-battery' into feat/parity
+- *(plan)* Battery page leftovers done
+- *(plan)* Date & Time row done
+- *(config)* drop the unused [keyboard] mac_keys key
+- Merge branch 'parity/gestures-live' into feat/parity
+- Space and Mission Control swipes follow the fingers
+- Merge branch 'parity/st-defaults' into feat/parity
+- Default Apps in Settings writes mimeapps.list
+- Merge branch 'parity/menu-polish' into feat/parity
+- *(plan)* menu keyboard moves, submenu aim and Move to displays done
+- Merge branch 'parity/dock-menu' into feat/parity
+- the dock menu's Options, Close Others and spring-loading
+- Merge branch 'parity/mb-clicks' into feat/parity
+- Merge branch 'parity/st-sound' into feat/parity
+- *(plan)* menu bar clicks on every display done
+- *(menubar)* hits on a second display's bar and popups at its right edge
+- Merge branch 'parity/st-notify' into feat/parity
+- *(plan)* mark the Notifications page done in E8.2
+- *(plan)* Spaces and Mission Control on every display done
+- Merge feat/parity into parity/sp-displays: edge hold, Space reordering and Mission Control keys act on the pointer's display
+- *(plan)* text and pointer size done
+- *(plan)* Spaces reorder and Mission Control keys are built
+- *(plan)* mark E8.8 widgets and Keep Awake done
+- *(plan)* mark the Keyboard Shortcuts dialog done in E8.7
+- *(plan)* mark E8.6 pointer aids, on-screen keyboard and screen reader done
+- *(plan)* mark E8.5 window management done
+- *(plan)* mark auto-dark, Night Light and Genie done in E8.4
+- *(plan)* mark built E8.3 dock previews, Super+n and dock config
+- *(plan)* note what each E8.2 Settings page has and lacks
+- *(plan)* mark built E8.1 settings fixes
+- Merge branch 'feat/parity' into parity/ts-panels
+- *(plan)* lock screen keys, Now Playing and layout pill done
+- *(readme)* the lock screen's Now Playing card
+- Merge branch 'feat/parity' into parity/lk-media
+- Merge branch 'parity/lk-keys' into feat/parity
+- Merge branch 'parity/mc-keys' into feat/parity
+- *(mission)* note the every-Space view's snap
+- *(readme)* Mission Control keys and the every-Space view
+- *(plan)* dock Trash and Launchpad folders done
+- Merge branch 'parity/lp-folders' into feat/parity
+- Merge branch 'parity/ss-bolt' into feat/parity
+- Merge branch 'parity/ss-housekeep' into feat/parity
+- *(plan)* Thunderbolt alert done
+- Merge branch 'feat/parity' into parity/ss-bolt
+- *(plan)* housekeeping done
+- Merge branch 'parity/ss-drives' into feat/parity
+- *(plan)* drive icons on the desktop done
+- Merge branch 'feat/parity' into parity/ss-housekeep
+- *(session)* declare the housekeeping module
+- *(session)* housekeeping module (not wired yet)
+- *(plan)* Keep Awake tile done
+- Merge branch 'feat/parity' into parity/mb-awake
+- Merge branch 'feat/parity' into parity/ss-drives
+- Merge branch 'feat/parity' into parity/lp-folders
+- Merge branch 'feat/parity' into parity/mb-bar
+- Merge branch 'parity/ss-restore' into feat/parity
+- *(plan)* reopen windows at login done
+- Merge branch 'feat/parity' into parity/mb-bar
+- Merge branch 'parity/mb-submenus' into feat/parity
+- *(plan)* tray submenus and the » overflow are built
+- Merge branch 'feat/parity' into parity/mb-submenus
+- Merge branch 'parity/mb-widgets' into feat/parity
+- *(widgets)* the Widgets interface with a busctl example
+- *(menu)* collapse the tray submenu fetch's if
+- remaining comments describe our own behaviour
+- *(render)* comments describe our own behaviour; times_read_naturally test
+- *(shell)* comments describe our own behaviour
+- *(changelog)* title bar entry without the outside comparison
+- *(plan)* app picks and theme table describe our design directly
+- *(plan)* lock, login, updates, Settings and the parity milestone in our own terms
+- *(plan)* notifications, Launchpad, Spaces and gestures without outside comparisons
+- *(plan)* menu bar, Control Center and app theming state our own behaviour
+- *(plan)* window management and title bars (M1) without outside comparisons
+- *(plan)* describe the design in our own terms in the intro, requirements and Part D
+- *(config)* the Cmd keys comment stands on its own
+- describe the desktop as glassy in the package and session descriptions
+- *(readme)* a new introduction in our own words
+- Merge branch 'parity/a11y-reader' into feat/parity
+- Merge branch 'parity/sc-keys' into feat/parity
+- Merge branch 'parity/a11y-pointer' into feat/parity
+- *(plan)* E8.7 default keys done
+- Merge branch 'parity/a11y-osk' into feat/parity
+- Merge branch 'parity/sc-record' into feat/parity
+- *(input)* key handling in key_input, so the shell can inject keys
+- Merge branch 'parity/a11y-keys' into feat/parity
+- *(config)* how [bindings] with the same keys are resolved
+- *(input)* pointer buttons go through State::pointer_button
+- *(config)* no two default bindings share keys
+- *(shortcuts)* bindings parse the same in any case and modifier order
+- *(plan)* E8.6 keyboard and alerts built
+- *(shortcuts)* list the log-out and sleep keys, test them
+- *(a11y)* sticky latch and lock, five Shifts, bounce, slow and mouse keys
+- Merge branch 'parity/sc-editor' into feat/parity
+- Merge branch 'parity/a11y-zoom' into feat/parity
+- Keyboard Shortcuts… in Settings
+- *(plan)* E8.6 Zoom built
+- Merge branch 'parity/wm-pointer' into feat/parity
+- Merge branch 'parity/wm-actions' into feat/parity
+- Merge branch 'parity/wallpaper' into feat/parity
+- Merge branch 'parity/nightlight' into feat/parity
+- Merge branch 'parity/genie' into feat/parity
+- Merge branch 'parity/textsize' into feat/parity
+- Merge branch 'parity/dock-menu' into feat/parity
+- Merge branch 'parity/dock-minimised' into feat/parity
+- Merge branch 'parity/dock-previews' into feat/parity
+- Merge branch 'parity/dock-keys' into feat/parity
+- cargo fmt
+- neutral wording for other desktops in prose, comments and tests
+- cargo fmt
+- Merge branch 'chore/neutral-wording' into feat/parity
+- *(plan)* M8, feature parity with a full traditional desktop
+- neutral wording in the app drawer and display settings comments
+- skip CI and release-plz for pushes that only touch docs or trail files
+- *(trail)* agent wiring from trail 0.25.0
+- *(trail)* release-plz needs Actions allowed to create PRs in the org and repo
+
 ## [1.0.0-alpha.8](https://github.com/noobsbot-team/noobsbot-desktop/compare/v1.0.0-alpha.7...v1.0.0-alpha.8) - 2026-10-26
 
 ### Added
