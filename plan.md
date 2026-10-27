@@ -469,7 +469,7 @@ glass windows with traffic lights.
     | Magnetic edges | the dragged edge sticks to screen and window edges within 8 px, same as moving; Ctrl disables it |
     | Fullscreen / zoomed | resize handles are disabled; dragging a zoomed window's title bar un-zooms it first |
     | Touchpad | click-drag on a zone; pinch does **not** resize windows (it belongs to apps, E1.7) |
-    | Keyboard | Super+Ctrl+arrows nudge/resize by 16 px steps (configurable, off by default) |
+    | Keyboard | ~~Super+Ctrl+arrows nudge/resize by 16 px steps (configurable, off by default)~~ Done: Super+Alt+arrows move the window 16 px, Super+Alt+Shift+arrows its right / bottom edge (Super+Ctrl+arrows went to tiling, E8.5); `nudge` / `resize` actions, active only with `[windows] keyboard_nudge` (off by default); a held key repeats; the move keeps the drag limits, the resize the app's min / max |
   - **Stacking order (bottom → top), fixed so no element can ever be hidden by the wrong one:** wallpaper → desktop
     icons (later) → normal windows (per Space, most recent on top) → `float_above` windows (rules) → a window's
     modal/transient dialogs always directly above their parent → fullscreen window of the current Space → the quake terminal (E2.8, `layer = "overlay"` rule) → dock

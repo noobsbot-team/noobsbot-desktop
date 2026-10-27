@@ -272,6 +272,7 @@ settings file.
 | Super+Shift+1 … 9 | a new window of the n-th dock app (not 3, 4, 5: screenshots) |
 | Super+Shift+Left / Right | move the window to the previous / next Space |
 | Super+Ctrl+Left / Right / Up / Down | tile the window to the left / right / top / bottom half |
+| Super+Alt+arrows / Super+Alt+Shift+arrows | move the window 16 px / move its right or bottom edge 16 px (off until `[windows] keyboard_nudge`) |
 | Super+` | next window of the same app |
 | Super+Shift+3 / 4 / 5 | screenshot: screen / region (Space: a window) / toolbar |
 | Alt+Print | screenshot of the focused window |
