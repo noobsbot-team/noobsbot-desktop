@@ -704,8 +704,8 @@ mod tests {
     fn defaults_without_entries() {
         let p = plan(laptop_and_monitor(), &Displays::default(), false);
         assert!(p.iter().all(|d| d.enabled));
-        assert_eq!((p[0].mode, p[0].scale, p[0].x, p[0].width, p[0].height), (mode(1920, 1200, 60, true), 1.25, 0, 1536, 960));
-        assert_eq!((p[1].mode.refresh, p[1].scale, p[1].x, p[1].y, p[1].width), (144_000, 1.25, 1536, 0, 2048), "highest refresh, placed right");
+        assert_eq!((p[0].mode, p[0].scale, p[0].x, p[0].width, p[0].height), (mode(1920, 1200, 60, true), 1.15, 0, 1670, 1044));
+        assert_eq!((p[1].mode.refresh, p[1].scale, p[1].x, p[1].y, p[1].width), (144_000, 1.15, 1670, 0, 2227), "highest refresh, placed right");
         assert!(p[0].primary && !p[1].primary, "the first is primary");
         let auto = plan(laptop_and_monitor(), &Displays { scale: 0.0, ..Default::default() }, false);
         assert_eq!((auto[0].scale, auto[1].scale), (1.25, 1.0), "0: each from its pixel density");
@@ -826,7 +826,7 @@ mod tests {
         // Gone, off, itself or unknown: extended.
         for bad in ["DP-9", "eDP-1", ""] {
             let p = plan(laptop_and_monitor(), &Displays { outputs: vec![mirror("eDP-1", bad)], ..Default::default() }, false);
-            assert_eq!((p[0].mirror.as_str(), p[1].x), ("", 1536), "{bad:?}");
+            assert_eq!((p[0].mirror.as_str(), p[1].x), ("", 1670), "{bad:?}");
         }
         let off = Displays { outputs: vec![mirror("eDP-1", "HDMI-A-1"), OutputSettings { enabled: false, ..output("HDMI-A-1") }], ..Default::default() };
         let p = plan(laptop_and_monitor(), &off, false);
@@ -861,7 +861,7 @@ mod tests {
     fn unplaced_go_right_of_placed() {
         let config = Displays { outputs: vec![OutputSettings { position: Some([-1536, 100]), ..output("eDP-1") }], ..Default::default() };
         let p = plan(laptop_and_monitor(), &config, false);
-        assert_eq!((p[0].x, p[0].y, p[1].x), (-1536, 100, 0));
+        assert_eq!((p[0].x, p[0].y, p[1].x), (-1536, 100, 134));
     }
 
     #[test]

@@ -166,9 +166,9 @@ bottom_right = "none"
 # The GPU that draws the desktop, e.g. "/dev/dri/card1" or its /dev/dri/by-path link; empty = the one the computer
 # booted with. Applies at next login.
 gpu = ""
-# How big everything is drawn: 1.0 = 100%, 1.25, 1.5, 2.0 …, or 0 = picked from the display's pixel density
+# How big everything is drawn: 1.0 = 100%, 1.15, 1.25, 1.5, 2.0 …, or 0 = picked from the display's pixel density
 # (about 128 px per inch per 100% on a laptop's own panel, 110 on a monitor). Applies at once to every display.
-scale = 1.25
+scale = 1.15
 
 # One display's own settings, by connector name (System Settings ▸ Displays writes these; they apply at once).
 # A display without an entry lights at its preferred resolution and highest refresh rate, at the scale above,

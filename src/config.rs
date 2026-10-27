@@ -537,7 +537,7 @@ pub struct Displays {
 
 impl Default for Displays {
     fn default() -> Self {
-        Self { gpu: String::new(), scale: 1.25, outputs: Vec::new() }
+        Self { gpu: String::new(), scale: 1.15, outputs: Vec::new() }
     }
 }
 
@@ -1499,7 +1499,7 @@ pub fn load(path: &Path) -> Config {
 const VERSION: u32 = 2;
 
 /// An older file's text brought up to `VERSION`; `None` when it is current or doesn't parse. Version 2: the display
-/// scale's default went from "picked from the pixel density" (0) to 125%, so a file still on 0 gets 1.25. Choosing 0
+/// scale's default went from "picked from the pixel density" (0) to 115%, so a file still on 0 gets that. Choosing 0
 /// again later sticks.
 fn migrate(text: &str) -> Option<String> {
     let table: toml::Table = toml::from_str(text).ok()?;
@@ -1508,7 +1508,7 @@ fn migrate(text: &str) -> Option<String> {
     }
     let scale = table.get("display").and_then(|d| d.get("scale"));
     let text = match scale {
-        Some(toml::Value::Float(0.0) | toml::Value::Integer(0)) => set_key(text, "display", "scale", "1.25"),
+        Some(toml::Value::Float(0.0) | toml::Value::Integer(0)) => set_key(text, "display", "scale", &Displays::default().scale.to_string()),
         _ => text.to_owned(),
     };
     // `version` goes above every table; a file without one gets it first.
@@ -1936,8 +1936,8 @@ mod tests {
     #[test]
     fn old_files_get_the_new_default_scale() {
         let old = "# mine\nversion = 1\n\n[display]\nscale = 0.0 # auto\n";
-        assert_eq!(migrate(old).unwrap(), "# mine\nversion = 2\n\n[display]\nscale = 1.25 # auto\n");
-        assert_eq!(migrate("[display]\nscale = 0\n").unwrap(), "version = 2\n[display]\nscale = 1.25\n");
+        assert_eq!(migrate(old).unwrap(), "# mine\nversion = 2\n\n[display]\nscale = 1.15 # auto\n");
+        assert_eq!(migrate("[display]\nscale = 0\n").unwrap(), "version = 2\n[display]\nscale = 1.15\n");
         // A scale the owner picked stays; so does 0 picked again in a version 2 file.
         assert_eq!(migrate("version = 1\n[display]\nscale = 1.5\n").unwrap(), "version = 2\n[display]\nscale = 1.5\n");
         assert_eq!(migrate("version = 2\n[display]\nscale = 0.0\n"), None);
