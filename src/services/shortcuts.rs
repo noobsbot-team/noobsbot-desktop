@@ -1,6 +1,6 @@
 //! The desktop's own bus name (`org.noobsbot.Desktop`): `Shortcuts.Record` lets Settings capture keys the desktop
-//! would otherwise take (E8.7); `Displays` lets the Displays page set the brightness and identify the screens;
-//! `Update` is Settings' Software Update (Check Now, Update Now, Revert); `Calendar.Fetch` fetches CalDAV now.
+//! would otherwise take (E8.7); `Displays` lets the Displays page set each display's brightness and identify the
+//! screens; `Update` is Settings' Software Update (Check Now, Update Now, Revert); `Calendar.Fetch` fetches CalDAV now.
 
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
@@ -31,9 +31,15 @@ struct Displays {
 
 #[zbus::interface(name = "org.noobsbot.Desktop.Displays")]
 impl Displays {
-    /// The built-in panel's brightness, in percent (through logind, as the brightness keys do).
+    /// Every display's brightness, in percent, as the brightness keys set it.
     fn set_brightness(&self, percent: u8) {
-        let _ = self.updates.send(Update::SetBrightness(percent));
+        let _ = self.updates.send(Update::SetBrightness(None, percent));
+    }
+
+    /// One display's brightness, in percent, by connector (`eDP-1`, `DP-1`): the built-in panel's backlight or a
+    /// DDC/CI monitor. Each display's level is in `displays.json`.
+    fn set_output_brightness(&self, connector: String, percent: u8) {
+        let _ = self.updates.send(Update::SetBrightness(Some(connector), percent));
     }
 
     /// Every display shows its name for 2 s.
