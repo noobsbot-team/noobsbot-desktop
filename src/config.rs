@@ -1069,6 +1069,8 @@ pub struct Privacy {
 #[serde(default)]
 pub struct Update {
     pub channel: crate::services::update::Channel,
+    /// A verified download installs at the next login, before the desktop starts, without asking for the password.
+    pub install_at_login: bool,
 }
 
 /// Plank's hide modes, by Plank's names.
