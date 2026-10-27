@@ -92,6 +92,8 @@ pub struct Thumb {
 
 enum Msg {
     Saved(Saved),
+    /// Not saved (a full disk, no Pictures folder); the PNG when it could be made.
+    Failed(Option<Vec<u8>>),
     /// The recording that started then is finished: its file, or why it failed.
     RecordingEnded(Instant, Result<PathBuf, String>),
 }
@@ -714,18 +716,27 @@ impl State {
         let thumb_w = (f64::from(THUMB_W) * scale).round() as u32;
         let spawned = std::thread::Builder::new().name("screenshot".into()).spawn(move || {
             let (w, h) = size;
-            let saved = std::fs::create_dir_all(&dir).map_err(|e| e.to_string()).and_then(|()| {
-                let png = encode_png(&rgba, w, h).map_err(|e| e.to_string())?;
-                let path = file_name(&dir, "Screenshot", "png", &chrono::Local::now());
-                std::fs::write(&path, &png).map_err(|e| format!("{}: {e}", path.display()))?;
-                Ok(Saved { path, png, thumb: shrink(&rgba, w, h, thumb_w) })
-            });
-            match (saved, tx) {
-                (Ok(saved), Some(tx)) => {
-                    let _ = tx.send(Msg::Saved(saved));
+            let msg = match encode_png(&rgba, w, h) {
+                Ok(png) => {
+                    let written = std::fs::create_dir_all(&dir).and_then(|()| {
+                        let path = file_name(&dir, "Screenshot", "png", &chrono::Local::now());
+                        std::fs::write(&path, &png).map(|()| path)
+                    });
+                    match written {
+                        Ok(path) => Msg::Saved(Saved { path, png, thumb: shrink(&rgba, w, h, thumb_w) }),
+                        Err(err) => {
+                            tracing::warn!("screenshot: {}: {err}", dir.display());
+                            Msg::Failed(Some(png))
+                        }
+                    }
                 }
-                (Ok(_), None) => {}
-                (Err(err), _) => tracing::warn!("screenshot: {err}"),
+                Err(err) => {
+                    tracing::warn!("screenshot: {err}");
+                    Msg::Failed(None)
+                }
+            };
+            if let Some(tx) = tx {
+                let _ = tx.send(msg);
             }
         });
         if let Err(err) = spawned {
@@ -739,6 +750,7 @@ impl State {
             let (tx, rx) = channel::channel();
             let inserted = self.loop_handle.insert_source(rx, |event, _, state| match event {
                 channel::Event::Msg(Msg::Saved(saved)) => state.screenshot_saved(saved),
+                channel::Event::Msg(Msg::Failed(png)) => state.screenshot_failed(png),
                 channel::Event::Msg(Msg::RecordingEnded(since, result)) => state.recording_ended(since, result),
                 channel::Event::Closed => {}
             });
@@ -758,6 +770,14 @@ impl State {
             return;
         }
         self.show_thumbnail(saved.thumb, saved.path);
+    }
+
+    /// Still on the clipboard when there is a PNG, and said so rather than shown as taken.
+    fn screenshot_failed(&mut self, png: Option<Vec<u8>>) {
+        if let Some(png) = png {
+            self.clipboard.set_bytes(&self.display_handle, &self.seat.clone(), &["image/png"], png);
+        }
+        self.show_osd(crate::shell::Osd { symbol: crate::symbols::Symbol::X, level: None, text: Some("Screenshot Failed".into()) });
     }
 
     pub fn show_thumbnail(&mut self, thumb: Thumb, path: PathBuf) {
