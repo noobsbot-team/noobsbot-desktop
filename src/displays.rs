@@ -421,6 +421,7 @@ impl State {
             self.set_visible_loc(&window, loc);
         }
         self.refit_filled();
+        self.refit_lock();
         self.send_scales();
         let shown: Vec<Display> = shown.into_iter().map(|(d, _)| d).collect();
         // A display went: a drag or resize in progress ends there, as a button release would (E1.2).

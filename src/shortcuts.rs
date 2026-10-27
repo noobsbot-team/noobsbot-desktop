@@ -5,7 +5,7 @@
 use smithay::{
     desktop::Window,
     input::keyboard::{Keysym, ModifiersState, xkb},
-    reexports::wayland_server::Resource,
+    reexports::{calloop::channel, wayland_server::Resource},
     utils::SERIAL_COUNTER,
 };
 
@@ -437,15 +437,28 @@ impl State {
                     let _ = std::fs::write(&path, empty).inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
                 }
             }
+            // A MIME type's app: xdg-mime takes tens of ms, so it is asked on a thread and the app starts when it answers.
+            Action::DefaultApp(kind) if kind.contains('/') => {
+                let (tx, rx) = channel::channel::<String>();
+                let asked = kind.clone();
+                let answer = self.loop_handle.insert_source(rx, move |event, _, state| {
+                    let channel::Event::Msg(id) = event else { return };
+                    let app = (!id.is_empty()).then(|| state.apps.find(&id).cloned()).flatten();
+                    if !state.launch(app.as_ref()) {
+                        tracing::warn!("no app for {kind}");
+                    }
+                });
+                if let Err(err) = answer {
+                    return tracing::warn!("xdg-mime: {err}");
+                }
+                let spawned = std::thread::Builder::new().name("xdg-mime".into()).spawn(move || {
+                    let id = std::process::Command::new("xdg-mime").args(["query", "default", &asked]).output();
+                    let _ = tx.send(id.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default());
+                });
+                let _ = spawned.inspect_err(|err| tracing::warn!("xdg-mime: {err}"));
+            }
             Action::DefaultApp(kind) => {
-                let app = if kind.contains('/') {
-                    // ponytail: xdg-mime runs on the frame loop (tens of ms, once per key press); a worker thread if it shows.
-                    let id = std::process::Command::new("xdg-mime").args(["query", "default", &kind]).output();
-                    let id = id.map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned()).unwrap_or_default();
-                    (!id.is_empty()).then(|| self.apps.find(&id).cloned()).flatten()
-                } else {
-                    self.apps.list().iter().find(|a| !a.no_display && a.categories.contains(&kind)).cloned()
-                };
+                let app = self.apps.list().iter().find(|a| !a.no_display && a.categories.contains(&kind)).cloned();
                 if !self.launch(app.as_ref()) {
                     tracing::warn!("no app for {kind}");
                 }

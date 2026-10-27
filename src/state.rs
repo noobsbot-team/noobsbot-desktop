@@ -458,6 +458,8 @@ impl State {
                     crate::services::Update::Resumed => {
                         state.idle_activity();
                         state.fingerprint(true);
+                        // Reminders due while asleep come now, not as late again as the sleep was long.
+                        state.calendar_arm();
                     }
                     crate::services::Update::Fingerprint(tag, finger) => state.fingerprint_changed(tag, finger),
                     crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,

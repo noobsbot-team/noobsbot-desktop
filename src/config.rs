@@ -7,7 +7,11 @@ use std::{
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
-    sync::{Mutex, OnceLock, mpsc},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+        mpsc,
+    },
     time::Duration,
 };
 
@@ -1524,22 +1528,32 @@ pub fn broken_notice(err: &str) -> crate::services::notifications::Notification 
 /// Writes `contents` to a temp file next to `path`, syncs it and renames it over `path`, so a reader (or a crash)
 /// only ever sees the old file or the new one.
 pub fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
+    save_atomic_if(path, contents, || true).map(drop)
+}
+
+/// `save_atomic`, but the rename only happens if `still()` holds once the new text is on disk (another writer may
+/// have replaced the file meanwhile); tells whether it did.
+pub fn save_atomic_if(path: &Path, contents: &str, still: impl FnOnce() -> bool) -> io::Result<bool> {
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "config path has no file name"))?;
     fs::create_dir_all(dir)?;
-    // ponytail: one temp name per process; two threads of one process saving at once would share it.
-    let tmp = dir.join(format!(".{}.{}.tmp", name.to_string_lossy(), std::process::id()));
+    // One temp name per save, so two threads saving at once never write into each other's.
+    static SAVES: AtomicU64 = AtomicU64::new(0);
+    let tmp = dir.join(format!(".{}.{}.{}.tmp", name.to_string_lossy(), std::process::id(), SAVES.fetch_add(1, Ordering::Relaxed)));
     let written = fs::File::create(&tmp).and_then(|mut f| {
         f.write_all(contents.as_bytes())?;
         f.sync_all()
     });
-    if let Err(err) = written.and_then(|()| fs::rename(&tmp, path)) {
-        let _ = fs::remove_file(&tmp);
-        return Err(err);
+    match written.and_then(|()| if still() { fs::rename(&tmp, path).map(|()| true) } else { Ok(false) }) {
+        Ok(true) => {}
+        not_renamed => {
+            let _ = fs::remove_file(&tmp);
+            return not_renamed;
+        }
     }
     // The rename itself is durable once the directory is synced; failing that is not worth an error.
     let _ = fs::File::open(dir).and_then(|d| d.sync_all());
-    Ok(())
+    Ok(true)
 }
 
 /// `text` with `[table] key = value` (`value` already TOML, one line); every other line and comment is kept.
@@ -1686,19 +1700,36 @@ pub fn save_edit(edit: impl FnOnce(&str) -> String) -> bool {
 
 type Edit = Box<dyn FnOnce(&str) -> String + Send>;
 
+/// What the `config-save` thread is sent: an edit, or a flush (write what is queued now, then answer).
+enum Save {
+    Edit(PathBuf, Edit),
+    Flush(mpsc::Sender<()>),
+}
+
+static QUEUE: OnceLock<Mutex<mpsc::Sender<Save>>> = OnceLock::new();
+
 /// Rewrites `path` with `edit(current text)` on the `config-save` thread, so a save (a sync and two renames, tens of
 /// ms on a slow disk) never stalls a frame. Edits of one file within `DEBOUNCE` of each other are applied in order
 /// and written once: Ctrl+scrolling the dock's icon size saves at the end, not per notch. A missing file reads as "".
-// ponytail: an edit queued in the last 300 ms before exit is lost; flush on quit if that ever matters.
+/// Quitting calls `flush`, so the last edits are kept.
 pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'static) {
-    static QUEUE: OnceLock<Mutex<mpsc::Sender<(PathBuf, Edit)>>> = OnceLock::new();
     let queue = QUEUE.get_or_init(|| {
-        let (tx, rx) = mpsc::channel::<(PathBuf, Edit)>();
+        let (tx, rx) = mpsc::channel::<Save>();
         let spawned = std::thread::Builder::new().name("config-save".into()).spawn(move || {
             while let Ok(first) = rx.recv() {
-                let mut edits = vec![first];
-                while let Ok(next) = rx.recv_timeout(DEBOUNCE) {
-                    edits.push(next);
+                let (mut edits, mut flushed) = (Vec::new(), None);
+                let mut next = Ok(first);
+                while let Ok(save) = next {
+                    next = match save {
+                        Save::Edit(path, edit) => {
+                            edits.push((path, edit));
+                            rx.recv_timeout(DEBOUNCE)
+                        }
+                        Save::Flush(done) => {
+                            flushed = Some(done);
+                            Err(mpsc::RecvTimeoutError::Timeout)
+                        }
+                    };
                 }
                 let mut files: Vec<(PathBuf, Vec<Edit>)> = Vec::new();
                 for (path, edit) in edits {
@@ -1716,6 +1747,9 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
                         tracing::warn!("{}: {err}", path.display());
                     }
                 }
+                if let Some(done) = flushed {
+                    let _ = done.send(());
+                }
             }
         });
         if let Err(err) = spawned {
@@ -1724,12 +1758,24 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
         Mutex::new(tx)
     });
     let edit: Edit = Box::new(edit);
-    if let Err(mpsc::SendError((path, edit))) = queue.lock().unwrap_or_else(|e| e.into_inner()).send((path, edit)) {
+    if let Err(mpsc::SendError(Save::Edit(path, edit))) = queue.lock().unwrap_or_else(|e| e.into_inner()).send(Save::Edit(path, edit)) {
         // The thread never started: do it here rather than lose the save.
         let text = fs::read_to_string(&path).unwrap_or_default();
         if let Err(err) = save_atomic(&path, &edit(&text)) {
             tracing::warn!("{}: {err}", path.display());
         }
+    }
+}
+
+/// Writes the edits `save_later` still holds back and waits for them, 2 s at most (a hung disk must not keep the
+/// desktop from quitting). Called on the way out: log out, restart, shut down, the nested window closed.
+// ponytail: the desktop handles no signals, so a SIGTERM from outside (a shutdown not started from its menus) still
+// ends it without a flush; a calloop signal source calling this if that loses settings.
+pub fn flush() {
+    let Some(queue) = QUEUE.get() else { return };
+    let (tx, rx) = mpsc::channel();
+    if queue.lock().unwrap_or_else(|e| e.into_inner()).send(Save::Flush(tx)).is_ok() {
+        let _ = rx.recv_timeout(Duration::from_secs(2));
     }
 }
 
@@ -2042,6 +2088,25 @@ mod tests {
         save_atomic(&path, "[windows]\nsnapping = false\n").unwrap();
         assert!(!load(&path).windows.snapping);
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "no temp file left behind");
+        assert!(!save_atomic_if(&path, "version = 1\n", || false).unwrap());
+        assert!(!load(&path).windows.snapping, "not renamed when the file changed meanwhile");
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "nor its temp file left behind");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn saves_from_two_threads_at_once() {
+        let dir = temp_dir("threads");
+        let path = dir.join("config.toml");
+        let texts = ["a = 1\n".repeat(10_000), "b = 2\n".repeat(10_000)];
+        std::thread::scope(|s| {
+            for text in &texts {
+                let path = &path;
+                s.spawn(move || (0..20).for_each(|_| save_atomic(path, text).unwrap()));
+            }
+        });
+        assert!(texts.contains(&fs::read_to_string(&path).unwrap()), "one save whole, never a mix");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1, "no temp file left behind");
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -2059,6 +2124,17 @@ mod tests {
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), "[dock]\nicon_size = 48\n", "the second edit saw the first");
         assert_eq!(fs::read_to_string(dir.join("other.txt")).unwrap(), "other\n");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn flush_writes_at_once() {
+        let dir = temp_dir("flush");
+        let path = dir.join("config.toml");
+        save_later(path.clone(), |_| "x = 1\n".into());
+        flush();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "x = 1\n", "written without waiting out the debounce");
+        flush();
         fs::remove_dir_all(dir).unwrap();
     }
 

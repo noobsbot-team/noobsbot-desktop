@@ -482,6 +482,8 @@ impl State {
 
     /// Restart, shut down or log out without asking (the alert asked, or the lock screen's buttons).
     pub fn power_now(&mut self, power: Power) {
+        // logind stops the session without waiting for the settings saved just now.
+        crate::config::flush();
         match (power, self.nested) {
             (Power::LogOut, _) => self.loop_signal.stop(),
             // A nested session is a window on another desktop: never restart or power off the machine under it.
