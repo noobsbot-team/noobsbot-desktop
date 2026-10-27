@@ -1,9 +1,10 @@
 //! A small iCalendar (`.ics`, RFC 5545) reader for calendar events (E7.2): VEVENTs with SUMMARY, LOCATION,
-//! DTSTART/DTEND/DURATION (UTC, floating, TZID or all-day), a simple RRULE (FREQ DAILY/WEEKLY/MONTHLY/YEARLY with
-//! INTERVAL, COUNT, UNTIL, BYDAY), EXDATE, RECURRENCE-ID overrides (moved, renamed or cancelled occurrences) and VALARM
-//! TRIGGERs, and the occurrences and alarms they make.
-// ponytail: no RDATE, RANGE=THISANDFUTURE, BYMONTH/BYMONTHDAY/BYSETPOS or YEARLY BYDAY, and an override only finds its
-// event in the same file (CalDAV's cache is one file); add them when real calendars need them.
+//! DTSTART/DTEND/DURATION (UTC, floating, TZID or all-day), an RRULE (FREQ DAILY/WEEKLY/MONTHLY/YEARLY with INTERVAL,
+//! COUNT, UNTIL, BYMONTH, BYMONTHDAY, BYDAY and BYSETPOS), RDATE, EXDATE, RECURRENCE-ID overrides (moved, renamed or
+//! cancelled occurrences) and VALARM TRIGGERs, and the occurrences and alarms they make.
+// ponytail: no BYWEEKNO, BYYEARDAY, BYHOUR or finer, WKST (weeks start on Monday) or RANGE=THISANDFUTURE (it would
+// split the series and carry the override's changes on); an RDATE PERIOD keeps the event's length; and an override only
+// finds its event in the same file (CalDAV's cache is one file). Add them when real calendars need them.
 
 use std::{collections::HashMap, path::Path, sync::Arc};
 
@@ -57,6 +58,11 @@ impl Zone {
             Zone::Local => Local.timestamp_opt(t, 0).single().map_or(0, |d| d.offset().local_minus_utc()),
             Zone::Tz(tz) => tz.offset(t),
         }
+    }
+
+    /// Wall time here at unix time `t`.
+    fn wall(&self, t: i64) -> Option<NaiveDateTime> {
+        chrono::DateTime::from_timestamp(t.checked_add(self.offset(t).into())?, 0).map(|d| d.naive_utc())
     }
 }
 
@@ -165,6 +171,8 @@ pub struct Event {
     replaces: Option<i64>,
     /// Starts (unix seconds) that don't happen: EXDATEs and the occurrences overrides replace.
     skip: Vec<i64>,
+    /// RDATEs: more starts, wall time in `zone`.
+    rdates: Vec<NaiveDateTime>,
     /// STATUS:CANCELLED.
     cancelled: bool,
 }
@@ -225,16 +233,21 @@ impl Event {
         // Two days early covers any zone offset.
         let near =
             chrono::DateTime::from_timestamp(from.saturating_sub(self.length.num_seconds() + 2 * 86_400), 0).map_or(self.start.date(), |d| d.date_naive());
+        let wanted = |o: &Occurrence<'_>| o.start < to && (o.end > from || o.start >= from) && !self.skip.contains(&o.start);
         self.each(near, |t| {
             let o = self.occurrence(t);
-            if o.start >= to {
-                return false;
-            }
-            if (o.end > from || o.start >= from) && !self.skip.contains(&o.start) {
+            if wanted(&o) {
                 out.push(o);
             }
-            true
+            o.start < to
         });
+        // RDATEs join the rule's starts (COUNT doesn't count them); one the rule has too happens once.
+        for o in self.rdates.iter().map(|t| self.occurrence(*t)) {
+            if wanted(&o) && !out.iter().any(|x| x.start == o.start) {
+                out.push(o);
+            }
+        }
+        out.sort_by_key(|o| o.start);
         out
     }
 
@@ -582,6 +595,11 @@ fn event(props: &[(String, Params, String)], zones: &mut HashMap<String, Zone>) 
     for (_, p, v) in props.iter().filter(|(n, _, _)| n == "EXDATE") {
         skip.extend(v.split(',').filter_map(|v| instant(v, p, &zone, zones)));
     }
+    // A PERIOD's start; the event's own length is kept.
+    let mut rdates = Vec::new();
+    for (_, p, v) in props.iter().filter(|(n, _, _)| n == "RDATE") {
+        rdates.extend(v.split(',').filter_map(|v| zone.wall(instant(v.split('/').next()?, p, &zone, zones)?)));
+    }
     let replaces = get("RECURRENCE-ID").and_then(|(_, p, v)| instant(v, p, &zone, zones));
     let cancelled = get("STATUS").is_some_and(|(_, _, v)| v.trim().eq_ignore_ascii_case("CANCELLED"));
     let text = |name: &str| get(name).map(|(_, _, v)| unescape(v)).unwrap_or_default();
@@ -597,6 +615,7 @@ fn event(props: &[(String, Params, String)], zones: &mut HashMap<String, Zone>) 
         uid: text("UID"),
         replaces,
         skip,
+        rdates,
         cancelled,
     })
 }
@@ -875,6 +894,41 @@ mod tests {
         // A comma list and a second EXDATE.
         let e = one("DTSTART:20261006T170000Z\r\nRRULE:FREQ=WEEKLY;COUNT=5\r\nEXDATE:20261013T170000Z,20261020T170000Z\r\nEXDATE:20261103T170000Z");
         assert_eq!(starts(&e, "2026-10-01 00:00", "2027-01-01 00:00"), [utc("2026-10-06 17:00"), utc("2026-10-27 17:00")]);
+    }
+
+    #[test]
+    fn rdates_add_starts() {
+        // Weekly twice, and two more starts (one listed twice, one the rule has too); COUNT counts the rule's only.
+        let e = one(
+            "DTSTART:20261006T170000Z\r\nDTEND:20261006T173000Z\r\nRRULE:FREQ=WEEKLY;COUNT=2\r\nRDATE:20261008T090000Z,20261013T170000Z\r\nRDATE:20261008T090000Z",
+        );
+        let o = e.between(utc("2026-10-01 00:00"), utc("2027-01-01 00:00"));
+        assert_eq!(o.iter().map(|o| o.start).collect::<Vec<_>>(), [utc("2026-10-06 17:00"), utc("2026-10-08 09:00"), utc("2026-10-13 17:00")]);
+        assert_eq!(o[1].end, utc("2026-10-08 09:30"));
+        // Without a rule; an EXDATE removes one; a PERIOD's start keeps the event's length.
+        let e = one(
+            "DTSTART:20261020T090000Z\r\nDURATION:PT1H\r\nRDATE:20261021T090000Z,20261022T090000Z\r\nEXDATE:20261022T090000Z\r\nRDATE;VALUE=PERIOD:20261025T120000Z/PT2H",
+        );
+        let o = e.between(utc("2026-10-01 00:00"), utc("2027-01-01 00:00"));
+        let spans: Vec<(i64, i64)> = o.iter().map(|o| (o.start, o.end)).collect();
+        assert_eq!(
+            spans,
+            [
+                (utc("2026-10-20 09:00"), utc("2026-10-20 10:00")),
+                (utc("2026-10-21 09:00"), utc("2026-10-21 10:00")),
+                (utc("2026-10-25 12:00"), utc("2026-10-25 13:00"))
+            ]
+        );
+        // All-day dates, in the desktop's zone.
+        let e = one("DTSTART;VALUE=DATE:20261019\r\nRDATE;VALUE=DATE:20261024");
+        let midnight = |d| Zone::Local.timestamp(date(2026, 10, d));
+        assert_eq!(e.between(0, i64::MAX / 2).iter().map(|o| o.start).collect::<Vec<_>>(), [midnight(19), midnight(24)]);
+        // A UTC RDATE on an event with a TZID: 14:00 UTC is 9:00 in New York after the November change.
+        if Path::new("/usr/share/zoneinfo/America/New_York").exists() {
+            let e = one("DTSTART;TZID=America/New_York:20261030T090000\r\nDTEND;TZID=America/New_York:20261030T100000\r\nRDATE:20261106T140000Z");
+            let o = e.between(utc("2026-10-01 00:00"), utc("2027-01-01 00:00"));
+            assert_eq!((o[1].start, o[1].end), (utc("2026-11-06 14:00"), utc("2026-11-06 15:00")));
+        }
     }
 
     #[test]
