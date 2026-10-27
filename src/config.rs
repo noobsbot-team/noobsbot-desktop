@@ -1525,16 +1525,24 @@ fn migrate(text: &str) -> Option<String> {
 /// The broken-settings notification's id, below the network portal's.
 pub const BROKEN_NOTICE: u32 = 0xFFF9_0000;
 
-/// "Settings file has an error", with `err` (its line) and Open File.
+/// How `watch`'s error starts when live reload is off (the file itself may be fine).
+const UNWATCHED: &str = "can't be watched";
+
+/// "Settings file has an error", with `err` (its line) and Open File; or that live reload is off.
 pub fn broken_notice(err: &str) -> crate::services::notifications::Notification {
     let icon = "dialog-warning";
+    let (summary, body) = if err.starts_with(UNWATCHED) {
+        ("Settings changes need a new login", format!("config.toml {err}"))
+    } else {
+        ("Settings file has an error", format!("config.toml {err}. The last good settings stay until it is fixed."))
+    };
     crate::services::notifications::Notification {
         id: BROKEN_NOTICE,
         app: "System Settings".into(),
         icon_name: icon.into(),
         icon: crate::services::notifications::load_icon(icon).map(std::sync::Arc::new),
-        summary: "Settings file has an error".into(),
-        body: format!("config.toml {err}. The last good settings stay until it is fixed."),
+        summary: summary.into(),
+        body,
         actions: vec![("default".into(), String::new()), ("open".into(), "Open File".into())],
         urgency: 1,
         expire: -1,
@@ -1807,7 +1815,8 @@ pub fn flush() {
 /// Live reload on a worker thread. Watches the file's directory (editors replace the file by renaming), waits for
 /// 300 ms of quiet, and calls `send` with each newly parsed config that differs from the last one sent (or fixes a
 /// broken file). A file that doesn't parse sends its error instead, once per new error (also at start, when the
-/// desktop started with the defaults), so the last good config stays. The thread ends when `send` returns false.
+/// desktop started with the defaults), so the last good config stays. A watch that can't be set up sends one error
+/// starting `UNWATCHED`. The thread ends when `send` returns false.
 ///
 /// The compositor bridges it into calloop without an extra thread:
 /// ```ignore
@@ -1821,13 +1830,16 @@ pub fn watch(path: &Path, mut send: impl FnMut(Result<Config, String>) -> bool +
     let spawned = std::thread::Builder::new().name("config-watch".into()).spawn(move || {
         let _ = fs::create_dir_all(&dir);
         let (tx, rx) = mpsc::channel();
-        let mut watcher = match notify::recommended_watcher(tx) {
+        let watched = notify::recommended_watcher(tx).and_then(|mut w| w.watch(&dir, RecursiveMode::NonRecursive).map(|()| w));
+        // Kept for as long as the thread runs.
+        let _watcher = match watched {
             Ok(w) => w,
-            Err(err) => return tracing::warn!("config live reload off: {err}"),
+            Err(err) => {
+                tracing::warn!("config live reload off: {}: {err}", dir.display());
+                send(Err(format!("{UNWATCHED} ({err}), so a change to it applies at the next login.")));
+                return;
+            }
         };
-        if let Err(err) = watcher.watch(&dir, RecursiveMode::NonRecursive) {
-            return tracing::warn!("config live reload off: {}: {err}", dir.display());
-        }
         // Writes, renames and deletes of our file; our own reads (open / close-after-read) would loop forever.
         let changed = |event: notify::Result<notify::Event>| {
             event.is_ok_and(|e| {
