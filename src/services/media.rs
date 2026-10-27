@@ -58,28 +58,35 @@ pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
         let changes = MessageStream::for_match_rule(changes, bus, Some(16)).await?;
         zbus::Result::Ok(owners.map(drop).or(changes.map(drop)))
     };
+    // The last player seen playing, which wins among paused ones.
+    let last = std::sync::Mutex::new(String::new());
     match streams.await {
-        Ok(events) => super::relay(bus, events, "media", updates, Update::Media, read).await,
+        Ok(events) => super::relay(bus, events, "media", updates, Update::Media, |bus| read(bus, &last)).await,
         Err(err) => tracing::warn!("Now Playing off: {err}"),
     }
 }
 
-/// The playing player, else a paused one; `None` when nothing is playing or paused.
-// ponytail: with several paused players the first by name wins, not the last one used; remember the last player to
-// switch to Playing if that shows up in use.
-async fn read(bus: &Connection) -> Option<Media> {
+/// The player to show (`pick`); `last` is the last one seen playing, updated here.
+async fn read(bus: &Connection, last: &std::sync::Mutex<String>) -> Option<Media> {
     let mut names = fdo::DBusProxy::new(bus).await.ok()?.list_names().await.ok()?;
     names.sort();
-    let mut paused = None;
+    let mut players = Vec::new();
     // playerctld mirrors another player; showing it would show that one twice.
     for name in names.iter().filter(|n| n.strip_prefix(NAMESPACE).is_some_and(|app| app.starts_with('.') && app != ".playerctld")) {
-        let Some(media) = player(bus, name).await else { continue };
-        if media.playing {
-            return Some(media);
-        }
-        paused.get_or_insert(media);
+        players.extend(player(bus, name).await);
     }
-    paused
+    let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+    let media = pick(players, &last)?;
+    if media.playing {
+        last.clone_from(&media.player);
+    }
+    Some(media)
+}
+
+/// The first playing player, else the paused one that played last, else the first paused one; `None` for none.
+fn pick(mut players: Vec<Media>, last: &str) -> Option<Media> {
+    let at = players.iter().position(|m| m.playing).or_else(|| players.iter().position(|m| m.player == last));
+    (!players.is_empty()).then(|| players.swap_remove(at.unwrap_or(0)))
 }
 
 async fn player(bus: &Connection, name: &str) -> Option<Media> {
@@ -140,5 +147,15 @@ mod tests {
         let media = from_raw("org.mpris.MediaPlayer2.helium", "Paused", &HashMap::new()).unwrap();
         assert_eq!((media.title.as_str(), media.artist.as_str(), media.playing), ("", "", false));
         assert_eq!(from_raw("org.mpris.MediaPlayer2.mpv", "Stopped", &metadata), None);
+    }
+
+    #[test]
+    fn last_played_wins_among_paused() {
+        let m = |player: &str, playing| Media { player: player.into(), title: String::new(), artist: String::new(), playing, art: String::new() };
+        let player = |players, last| pick(players, last).map(|m| m.player);
+        assert_eq!(player(vec![m("a", false), m("b", true)], "a").as_deref(), Some("b"), "playing beats paused");
+        assert_eq!(player(vec![m("a", false), m("b", false)], "b").as_deref(), Some("b"), "the last one used");
+        assert_eq!(player(vec![m("a", false), m("b", false)], "gone").as_deref(), Some("a"), "else the first by name");
+        assert_eq!(pick(Vec::new(), "a"), None);
     }
 }
