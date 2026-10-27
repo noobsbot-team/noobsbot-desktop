@@ -28,7 +28,7 @@ use smithay::{
 
 use crate::{
     apps::App,
-    config::{self, Dock, DockClick, DockDisplays, DockMiddle, DockScroll},
+    config::{self, Dock, DockClick, DockDisplays, DockMiddle, DockScroll, quote},
     shell::{Row, dock_fx::CLICK_TIME, drawer, launchpad},
     shortcuts::Action,
     spaces::Assign,
@@ -1280,11 +1280,6 @@ pub fn dropped(slot: Option<usize>, pinned: bool, pinnable: bool, builtin: bool)
 /// `text` (a config.toml) with `[dock] items` set to `items`; every other line, comments included, is kept.
 pub fn set_items(text: &str, items: &[String]) -> String {
     config::set_array(text, "dock", "items", items)
-}
-
-/// `s` as a TOML string.
-fn quote(s: &str) -> String {
-    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
 /// `pairs` (key, TOML value) as a one-line TOML inline table.
