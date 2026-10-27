@@ -54,6 +54,8 @@ pub struct Status {
     pub scroll: usize,
     /// The module showing its list.
     pub expanded: Option<Module>,
+    /// How much of its list is still shut while it springs open or closed: 0 is all of it shown.
+    pub shut: f64,
     /// Keep Awake is on.
     pub awake: bool,
     /// Apps keeping the machine awake: who, and why (may be empty).
@@ -216,8 +218,13 @@ fn app_row() -> i32 {
 /// The rows the Sound card adds under its slider: the apps, then the open outputs list.
 fn sound_extra(status: &Status, open: bool) -> i32 {
     let apps = status.apps.len() as i32 * app_row();
-    let outputs = if open { 2 * LIST_PAD + status.outputs.len() as i32 * ts(LIST_ROW) } else { 0 };
+    let outputs = if open { grown(2 * LIST_PAD + status.outputs.len() as i32 * ts(LIST_ROW), status.shut) } else { 0 };
     apps + outputs
+}
+
+/// `h` of an opening list with `shut` of it still shut.
+fn grown(h: i32, shut: f64) -> i32 {
+    (f64::from(h) * (1.0 - shut.clamp(0.0, 1.0))).round() as i32
 }
 
 /// An app row's slider: right of its icon and name.
@@ -320,23 +327,29 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         let shown = status.rows.len().clamp(1, fit);
         scroll = status.scroll.min(status.rows.len().saturating_sub(shown));
         let rows = shown as i32;
-        let list = card(PAD, y, INNER, 2 * LIST_PAD + rows * list_row);
+        // Springing open, it grows with the gap under it; rows show once there is room for them.
+        let room = grown(2 * LIST_PAD + rows * list_row + GAP, status.shut);
+        let list = card(PAD, y, INNER, (room - GAP).max(0));
         let cells: Vec<Rect> = (0..rows)
             .map(|i| Rectangle::new((list.loc.x + LIST_PAD, list.loc.y + LIST_PAD + i * list_row).into(), (list.size.w - 2 * LIST_PAD, list_row).into()))
+            .take_while(|r| list.contains_rect(*r))
             .collect();
         hits.extend(cells.iter().take(status.rows.len()).enumerate().map(|(i, r)| (Control::Row(scroll + i), *r)));
-        cards.push(list);
-        y += list.size.h + GAP;
+        if list.size.h > 0 {
+            cards.push(list);
+        }
+        y += room;
         (list, cells)
     });
     let (mut awake, mut blockers) = (Rect::default(), Vec::new());
     if full {
         let rows = if status.expanded == Some(Module::Awake) { status.blockers.len().max(1) as i32 } else { 0 };
-        awake = card(PAD, y, INNER, awake_h + if rows > 0 { 2 * LIST_PAD + rows * list_row } else { 0 });
+        awake = card(PAD, y, INNER, awake_h + if rows > 0 { grown(2 * LIST_PAD + rows * list_row, status.shut) } else { 0 });
         blockers = (0..rows)
             .map(|i| {
                 Rectangle::new((awake.loc.x + LIST_PAD, awake.loc.y + awake_h + LIST_PAD + i * list_row).into(), (awake.size.w - 2 * LIST_PAD, list_row).into())
             })
+            .take_while(|r| awake.contains_rect(*r))
             .collect();
         let head = Rectangle::new(awake.loc, (awake.size.w, awake_h).into());
         let toggle = tile_toggle(head);
@@ -375,6 +388,9 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
         if open {
             for (i, (id, _, _)) in status.outputs.iter().enumerate() {
                 let row = Rectangle::new((c.loc.x + LIST_PAD, below + LIST_PAD + i as i32 * list_row).into(), (c.size.w - 2 * LIST_PAD, list_row).into());
+                if !c.contains_rect(row) {
+                    break;
+                }
                 hits.push((Control::Output(*id), row));
                 outputs.push(row);
             }
@@ -392,12 +408,13 @@ pub fn layout(output: Size<i32, Logical>, status: &Status) -> Layout {
     let mut profiles = Vec::new();
     let power = (full && (status.battery.is_some() || status.profile.is_some())).then(|| {
         let rows = if status.expanded == Some(Module::Power) && status.profile.is_some() { status.profiles.len() as i32 } else { 0 };
-        let c = card(PAD, y, INNER, power_h + if rows > 0 { 2 * LIST_PAD + rows * list_row } else { 0 });
+        let c = card(PAD, y, INNER, power_h + if rows > 0 { grown(2 * LIST_PAD + rows * list_row, status.shut) } else { 0 });
         if status.profile.is_some() {
             hits.push((Control::Power, Rectangle::new(c.loc, (c.size.w, power_h).into())));
         }
         profiles = (0..rows)
             .map(|i| Rectangle::new((c.loc.x + LIST_PAD, c.loc.y + power_h + LIST_PAD + i * list_row).into(), (c.size.w - 2 * LIST_PAD, list_row).into()))
+            .take_while(|r| c.contains_rect(*r))
             .collect();
         hits.extend(profiles.iter().enumerate().map(|(i, r)| (Control::Profile(i), *r)));
         cards.push(c);
@@ -506,7 +523,13 @@ impl State {
             }
             _ => None,
         };
-        let expanded = bar.map(|(module, _)| module).or(self.expanded);
+        // A module springing open or closed shows its list part-way.
+        let now = self.frame_time;
+        let moving = self.expanding.filter(|(_, _, anim)| bar.is_none() && !anim.done(now));
+        let (expanded, shut) = match moving {
+            Some((module, opening, anim)) => (Some(module), if opening { 1.0 - anim.progress(now) } else { anim.progress(now) }),
+            None => (bar.map(|(module, _)| module).or(self.expanded), 0.0),
+        };
         let wifi = self.network.as_ref().map(|n| {
             let name = match &n.link {
                 Link::Wifi { ssid, .. } => ssid.clone(),
@@ -591,6 +614,7 @@ impl State {
             },
             scroll: (self.control_scroll / f64::from(ts(LIST_ROW))).round() as usize,
             expanded,
+            shut,
             bar,
             portal: self.network.as_ref().and_then(|n| n.portal.clone()),
             awake: self.keep_awake,
@@ -667,7 +691,9 @@ impl State {
             Control::Previous => self.run_action(Action::Media(crate::services::media::Action::Previous)),
             Control::PlayPause => self.run_action(Action::Media(crate::services::media::Action::PlayPause)),
             Control::Next => self.run_action(Action::Media(crate::services::media::Action::Next)),
-            Control::Power => self.expanded = if self.expanded == Some(Module::Power) { None } else { Some(Module::Power) },
+            Control::Power => {
+                self.expand(Module::Power);
+            }
             Control::Profile(i) => {
                 if let Some(profiles) = self.profiles.as_mut()
                     && let Some(profile) = profiles.available.get(i).cloned()
@@ -675,20 +701,20 @@ impl State {
                     profiles.active = profile.clone();
                     self.services.send(Command::PowerProfile(profile));
                 }
-                self.expanded = None;
+                self.expand(Module::Power);
             }
-            // ponytail: opens at once; the in-place `smooth` spring comes with the animation module.
-            Control::SoundMore => self.expanded = if self.expanded == Some(Module::Sound) { None } else { Some(Module::Sound) },
+            Control::SoundMore => {
+                self.expand(Module::Sound);
+            }
             Control::WifiMore => {
-                self.expanded = if self.expanded == Some(Module::Wifi) { None } else { Some(Module::Wifi) };
                 self.control_scroll = 0.0;
-                if self.expanded.is_some() {
+                if self.expand(Module::Wifi) {
                     self.services.send(Command::WifiScan);
                 }
             }
             Control::BluetoothMore => {
-                self.expanded = if self.expanded == Some(Module::Bluetooth) { None } else { Some(Module::Bluetooth) };
                 self.control_scroll = 0.0;
+                self.expand(Module::Bluetooth);
             }
             // ponytail: no "Connecting…" state; the row flips when the service reports the change.
             Control::Row(i) => match status.expanded {
@@ -722,7 +748,9 @@ impl State {
                 }
             }
             Control::KeepAwake => self.set_keep_awake(!self.keep_awake),
-            Control::AwakeMore => self.expanded = if self.expanded == Some(Module::Awake) { None } else { Some(Module::Awake) },
+            Control::AwakeMore => {
+                self.expand(Module::Awake);
+            }
             Control::Output(id) => {
                 if let Some(sound) = self.sound.as_mut() {
                     sound.outputs.iter_mut().for_each(|o| o.current = o.id == id);
@@ -731,6 +759,20 @@ impl State {
             }
         }
         self.schedule_redraw();
+    }
+
+    /// Opens `module`'s list in place (closing any other), or closes it when open; `true`: now open. It springs open
+    /// or closed (`smooth`); reduce motion: at once. Another module open meanwhile just goes.
+    fn expand(&mut self, module: Module) -> bool {
+        let opening = self.expanded != Some(module);
+        self.expanded = opening.then_some(module);
+        self.expanding = None;
+        if !self.config.appearance.reduce_motion {
+            let anim = crate::anim::Anim::new(crate::anim::Curve::Spring(crate::anim::SMOOTH));
+            self.expanding = Some((module, opening, anim));
+            self.animate(&anim);
+        }
+        opening
     }
 
     /// The pointer at `location` while a slider is held.
@@ -807,6 +849,19 @@ mod tests {
             assert!(card.contains_rect(*row) && !row.overlaps(head));
             assert_eq!(open.hit(row.loc.to_f64() + Point::from((4.0, 4.0))), Some(Control::Profile(i)));
         }
+    }
+
+    #[test]
+    fn opening_lists_grow_and_show_rows_once_they_fit() {
+        let row = |name: &str| ListRow { symbol: Symbol::WifiHigh, name: name.into(), detail: None, lock: false, on: false };
+        let status = Status { expanded: Some(Module::Wifi), rows: vec![row("A"), row("B"), row("C")], ..full() };
+        let (open, half, shut) = [0.0, 0.5, 1.0].map(|shut| layout((1280, 800).into(), &Status { shut, ..status.clone() })).into();
+        let closed = layout((1280, 800).into(), &Status { expanded: None, ..status.clone() });
+        assert_eq!(shut.rect, closed.rect, "all shut: as if closed");
+        assert!(closed.rect.size.h < half.rect.size.h && half.rect.size.h < open.rect.size.h);
+        let (list, rows) = half.list.unwrap();
+        assert!(!rows.is_empty() && rows.len() < 3 && rows.iter().all(|r| list.contains_rect(*r)));
+        assert!(shut.list.unwrap().1.is_empty() && open.list.unwrap().1.len() == 3);
     }
 
     #[test]

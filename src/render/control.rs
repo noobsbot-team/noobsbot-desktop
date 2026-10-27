@@ -213,11 +213,13 @@ impl ControlCenter {
             }
         }
         if let Some((_, rows)) = &layout.list {
-            if status.rows.is_empty() {
+            if status.rows.is_empty()
+                && let Some(first) = rows.first()
+            {
                 let empty = if status.expanded == Some(Module::Wifi) { "No Networks" } else { "No Devices" };
                 put(
                     text.label(empty, Style { color: secondary, ..body }, 200, scale),
-                    row_rect(rows[0].loc.x + 6, rows[0].loc.y, rows[0].loc.x + rows[0].size.w, rows[0].size.h),
+                    row_rect(first.loc.x + 6, first.loc.y, first.loc.x + first.size.w, first.size.h),
                     true,
                 );
             }
