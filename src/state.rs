@@ -672,10 +672,10 @@ impl State {
         }
         let app = focused.as_ref().and_then(|w| self.app_key(w));
         let simple = |kind, symbol| Item { kind, symbol, text: None, badge: false };
-        let recording = self.screenshots.recording.map(|(_, since)| Item {
+        let recording = self.screenshots.recording.as_ref().map(|r| Item {
             kind: menubar::Kind::Recording,
             symbol: crate::symbols::Symbol::Stop,
-            text: Some(crate::shell::screenshot::elapsed(since.elapsed())),
+            text: Some(crate::shell::screenshot::elapsed(r.since.elapsed())),
             badge: false,
         });
         let status = [

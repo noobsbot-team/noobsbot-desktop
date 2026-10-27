@@ -513,7 +513,7 @@ proxy_pac = ""
 "Shift+Print" = "screenshot-region"
 # The focused window; Super+Shift+4 then Space picks one with the pointer.
 "Alt+Print" = "screenshot-window"
-# Starts or stops recording the whole screen into ~/Videos (needs wf-recorder).
+# Starts or stops recording the whole screen into ~/Videos (needs ffmpeg).
 "Super+Alt+5" = "screen-record"
 "F12" = "quake"
 # Launchpad also opens from its dock icon; F4 is free for apps unless you bind it.
