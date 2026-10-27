@@ -1,4 +1,4 @@
-//! The menu bar (E2.2): a 24 px `bar` glass strip (taller with larger text) across the top. Left: the logo and the
+//! The menu bar (E2.2): a 30 px `bar` glass strip (taller with larger text) across the top. Left: the logo and the
 //! active app's name; right: tray icons, Wi-Fi, Bluetooth, battery, volume, Control Center and the clock (E2.4).
 //! Every piece is kept between frames, so a frame where only the minute changed damages only the clock.
 
@@ -29,7 +29,7 @@ use crate::{
 };
 
 /// D: the bar's height in logical px at text size 1; windows stay below it.
-const HEIGHT: i32 = 24;
+const HEIGHT: i32 = 30;
 const EDGE: i32 = 14;
 /// Between right-side items (E2.2); this, `TIGHT`, `APP_WIDTH` and `MIN_APP` grow with the text size.
 const GAP: i32 = 12;
@@ -244,7 +244,7 @@ impl MenuBar {
     /// The pressed pill behind `item`: rounded, a little inside the bar's height. Menus line up with it.
     pub fn pill(&self, item: BarItem) -> Option<Rect> {
         let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
-        Some(Rectangle::new((area.loc.x + ts(GAP) / 2 - 6, 2).into(), (area.size.w - ts(GAP) + 12, height() - 4).into()))
+        Some(Rectangle::new((area.loc.x + ts(GAP) / 2 - 6, 3).into(), (area.size.w - ts(GAP) + 12, height() - 6).into()))
     }
 
     /// How many tray icons, from the first, didn't fit and are in the "»" menu.
@@ -390,7 +390,7 @@ impl MenuBar {
                 if self.pill.as_ref().is_none_or(|(k, _)| *k != key) {
                     // The open item is held down: the D7 pressed overlay.
                     let fill = ui::overlay(ui::State::Pressed, dark).unwrap_or_default();
-                    self.pill = Some((key, shaders.glass_shape(rect, fill, 4.0, false, dark, scale)));
+                    self.pill = Some((key, shaders.glass_shape(rect, fill, 5.0, false, dark, scale)));
                 }
                 out.extend(self.pill.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
             }
@@ -536,12 +536,12 @@ mod tests {
     #[test]
     fn the_bar_grows_with_the_text_size() {
         let area = Rectangle::new((0, 0).into(), (1280, 800).into());
-        assert_eq!(height(), 24);
+        assert_eq!(height(), 30);
         crate::text::with_scale(1.5, || {
-            // A 13 px label shapes into a 24 px line at 1.5: the 36 px bar holds it with room to spare.
-            assert_eq!(height(), 36);
-            assert_eq!(below(area), Rectangle::new((0, 36).into(), (1280, 764).into()));
-            assert!(reveals(true, 30.0), "the whole taller bar keeps it shown");
+            // A 13 px label shapes into a 24 px line at 1.5: the 45 px bar holds it with room to spare.
+            assert_eq!(height(), 45);
+            assert_eq!(below(area), Rectangle::new((0, 45).into(), (1280, 755).into()));
+            assert!(reveals(true, 40.0), "the whole taller bar keeps it shown");
             // Items space out and the app's name keeps a wider minimum.
             assert_eq!(app_room(1280, 16, 400), 1280 - 2 * EDGE - 16 - LOGO_GAP - 18 - 400);
             let tray = [24; 4];
@@ -553,9 +553,9 @@ mod tests {
     #[test]
     fn windows_stay_below_the_bar() {
         let area = Rectangle::new((0, 0).into(), (1280, 800).into());
-        assert_eq!(below(area), Rectangle::new((0, 24).into(), (1280, 776).into()));
+        assert_eq!(below(area), Rectangle::new((0, 30).into(), (1280, 770).into()));
         // A layer bar already reserved more: unchanged.
-        let lower = Rectangle::new((0, 30).into(), (1280, 770).into());
+        let lower = Rectangle::new((0, 36).into(), (1280, 764).into());
         assert_eq!(below(lower), lower);
     }
 }
