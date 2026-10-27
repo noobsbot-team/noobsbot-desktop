@@ -614,8 +614,8 @@ glass windows with traffic lights.
 - **Done when:** changing accent colour, glass opacity or a shortcut applies without restart; a deliberately broken
   config starts the desktop with defaults and a notification.
 - **Built:** `src/config.rs` (commented defaults in `data/config.toml`, unknown keys warned, the last good config kept
-  when the file breaks, atomic saves, live reload after a 300 ms debounce). Not yet: a notification with the line
-  number for a broken file (it is only logged).
+  when the file breaks and a notification with its line and Open File, once per new error, atomic saves, live reload
+  after a 300 ms debounce).
 
 ### E1.9 Window rules
 - **What it is:** per-app rules in `config.toml`, so the desktop remembers how an app's windows behave.
@@ -684,8 +684,8 @@ glass windows with traffic lights.
   fully usable; suspend/resume 20 times in a row on Intel and NVIDIA without a restart; the 24 h soak test holds RSS flat.
 - **Built:** `scripts/fuzz-client.py`, 2 s D-Bus timeouts, GPU reset recovery (`src/backend/udev.rs`), the panic hook,
   notification rate limits, a capped clipboard, LRU text and icon caches, xwayland-satellite restarted
-  (`src/xwayland.rs`). Not yet: the icon disk cache (icons are rasterised into memory only); a notification when a
-  helper stops being restarted (it is only logged).
+  (`src/xwayland.rs`, with a notification when it is given up). Not yet: the icon disk cache (icons are rasterised
+  into memory only).
 
 **M1 hardware covered:** GPU (nested), keyboard, touchpad, mouse.
 **M1 done when:** all elements pass; idle CPU **0%**; RAM **< 60 MB**; mockup review passed.
@@ -1544,7 +1544,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Limit:** XWayland apps are scaled as bitmaps on HiDPI screens (slightly soft text); native Wayland apps are sharp (L14).
 - **Done when:** an X11-only app (e.g. `xeyes`) opens with our title bar; xwayland-satellite is restarted automatically if it dies (E1.11).
 - **Done:** `src/xwayland.rs` (xwayland-satellite on a free display, restarted when it dies, given up after 5 quick
-  deaths).
+  deaths with a notification).
 
 ### E6.10 Installer (`install.sh`)
 - **What it is:** one script that turns a fresh Arch install into Noobsbot Desktop.
