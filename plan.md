@@ -1445,8 +1445,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   the 20% / 10% notifications (no double action). Hibernate: not in v1 (needs swap sizing at install time; L10).
 - **Done when:** each step happens on time; it locks on wake; videos (idle-inhibit) keep it awake.
 - **Built:** `src/idle.rs` (dim, off, lock and sleep from `[idle]`, low-battery warnings, ext-idle-notify), logind
-  inhibitors and `PrepareForSleep` (`src/services/login.rs`), UPower. Not yet: the power button's Sleep · Restart ·
-  Shut Down alert (it asks "Shut Down?" with a countdown).
+  inhibitors and `PrepareForSleep` (`src/services/login.rs`), UPower, the power button's Sleep · Restart · Shut Down
+  alert (`power-button` in `[bindings]`; Shut Down is the default and the countdown's).
 
 ### E6.6 Login screen
 - **What it is:** where you log in after boot.

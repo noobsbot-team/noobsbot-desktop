@@ -295,7 +295,7 @@ settings file.
 | Calculator key | a calculator app |
 | Search key | Spotlight |
 | Display key | System Settings › Displays |
-| Power button | asks before shutting down |
+| Power button | asks Sleep, Restart or Shut Down |
 | Sleep key | lock, then sleep |
 | Eject key | ejects the last mounted USB drive or disc |
 | Ctrl+Alt+F1 … F12 | switch to a text console and back |
