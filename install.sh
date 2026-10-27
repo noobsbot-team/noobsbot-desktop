@@ -14,14 +14,14 @@ set -euo pipefail
 REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DESKTOP_REPO=${NOOBSBOT_DESKTOP_REPO:-noobsbot-team/noobsbot-desktop}
 TERMINAL_REPO=noobsbot-team/noobsbot-terminal
-# --from-source builds these tags (override with the environment for testing a newer one); v1.0.0-alpha.1 was v0.1.0.
-DESKTOP_TAG=${NOOBSBOT_DESKTOP_TAG:-v1.0.0-alpha.1}
+# --from-source builds these tags (override with the environment for testing a newer one).
+DESKTOP_TAG=${NOOBSBOT_DESKTOP_TAG:-v1.0.0}
 # v0.5.1, by commit: its installer runs here with curl | bash, and a tag can be moved while a commit can't.
 TERMINAL_TAG=${NOOBSBOT_TERMINAL_TAG:-a018abda96add824a72be95f3450de0998f71229}
 # The release signing key (E6.13); its private half lives only in the release CI secret.
 MINISIGN_PUBKEY="RWQgk/P2Bfb6JYQ3p8/ObaP2nG0S1gYPhE/KIJa7jYnCArCLukiRPTyR"
-# Only for testing a fork's signed releases: its repo (above), its key, and a release tag (else the latest stable
-# release, or the newest pre-release while there is none). The defaults are this project's own.
+# Only for testing a fork's signed releases: its repo (above), its key, and a release tag (else the latest release,
+# never a beta). The defaults are this project's own.
 MINISIGN_PUBKEY=${NOOBSBOT_MINISIGN_PUBKEY:-$MINISIGN_PUBKEY}
 RELEASE_TAG=${NOOBSBOT_DESKTOP_RELEASE:-}
 # xwayland-satellite v0.8.3, which scripts/build-xwayland-satellite.sh patches, and the WhiteSur themes (Debian has
@@ -602,23 +602,12 @@ use_version() {
     fi
 }
 
-# newest_tag: the newest of the tags on stdin by SemVer precedence, a stable one if there is any. sort -V, with each
-# pre-release's "-" as "~", which sorts v1.0.0-rc.1 before v1.0.0 (and beta.10 after beta.2).
-newest_tag() {
-    local tags stable
-    tags=$(sed 's/-/~/' | sort -V)
-    stable=$(grep -v '~' <<<"$tags" || true)
-    sed 's/~/-/' <<<"${stable:-$tags}" | tail -1
-}
-
 # Finds the latest release, or $RELEASE_TAG: REL_TAG, REL_VER and the release's JSON (its file list) in REL_JSON.
-# GitHub's latest release is never a pre-release: while there is no stable one yet (1.0.0's), the newest pre-release.
+# GitHub's latest release is never a pre-release, so an install never takes a beta unless $RELEASE_TAG names one.
 find_release() {
     local api=https://api.github.com/repos/$DESKTOP_REPO/releases tag=$RELEASE_TAG
     REL_JSON=""
     [[ -n $tag ]] || REL_JSON=$(curl -fsSL "$api/latest" || true)
-    [[ -n $tag || -n $REL_JSON ]] ||
-        tag=$(curl -fsSL "$api?per_page=100" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | newest_tag || true)
     [[ -z $tag ]] || REL_JSON=$(curl -fsSL "$api/tags/$tag" || true)
     REL_TAG=$(sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' <<<"$REL_JSON" | head -1)
     REL_VER=${REL_TAG#v}
@@ -941,10 +930,6 @@ main() {
         if ((!FROM_SOURCE)); then
             install_desktop_release
             [[ -z $FALLBACK_TAG ]] || install_desktop_source "$FALLBACK_TAG"
-        elif debian && [[ -z ${NOOBSBOT_DESKTOP_TAG:-} ]]; then
-            # The pinned DESKTOP_TAG is older than Debian support: build the latest release's tag.
-            find_release
-            install_desktop_source "$REL_TAG"
         else
             install_desktop_source "$DESKTOP_TAG"
         fi

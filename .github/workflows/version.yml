@@ -1,0 +1,118 @@
+# Makes versions from the commits since the last release (the rule is in VERSIONING.md). Read from commit subjects
+# only (bodies can quote other commits):
+#   "type!:" or "BREAKING" → a release now: 2.0.0 after 1.4.2
+#   "feat:"                → a release now: 1.5.0
+#   anything else          → a beta now: 1.4.3-beta.N, released as 1.4.3 by the nightly run
+# docs:, ci: and test: commits, and commits that change only docs, GitHub and trail files, make nothing. Nor does a
+# run when the last CI run on main failed.
+# A release sets the version (set-version.sh), commits and tags it; a beta only tags (release.yml sets its version
+# from the tag). Each gets a draft GitHub release (a beta as a pre-release) and starts release.yml for its tag, which
+# builds, signs and publishes it. Betas stay listed as pre-releases; a release has all the changes of the betas before
+# it. Versions only go up: a version that isn't above every tag, betas included, is refused.
+# Until the first release, the alphas and betas before 1.0.0 are all there is: an automatic run makes nothing, and
+# 1.0.0 is made by hand (Run workflow, bump major).
+name: Version
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: auto, major, minor or patch
+        type: choice
+        options: [auto, major, minor, patch]
+        default: auto
+
+permissions:
+  contents: write
+  actions: write
+
+# One at a time, so two runs can't cut the same version.
+concurrency:
+  group: version
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - run: |
+          set -euo pipefail
+          docs='\.md$|^\.github/|^\.trail/|^\.claude/|^LICENSE$'
+          # Subjects of the commits in a range that count for a version: not docs:, ci: or test:, and changing more
+          # than docs, GitHub and trail files.
+          counted() {
+            git log --format='%H %s' "$1" | while read -r h s; do
+              [[ $s =~ ^(docs|ci|test)(\(.+\))?: ]] && continue
+              git diff-tree --no-commit-id --name-only -r "$h" | grep -Ev "$docs" >/dev/null || continue
+              echo "$s"
+            done
+          }
+          bump=$BUMP
+          last=$(git describe --tags --abbrev=0 --exclude '*-*' 2>/dev/null || true)
+          if [[ -z $last && $bump == auto ]]; then
+            echo "::notice::no release yet: the first, 1.0.0, is made by hand: Run workflow with bump major"
+            exit 0
+          fi
+          range=${last:+$last..}HEAD
+          [[ -n $(git log --format=%s "$range") ]] || { echo "nothing since $last"; exit 0; }
+          log=$(counted "$range")
+          if [[ -z $log && $bump == auto ]]; then echo "only docs, CI and tests since $last"; exit 0; fi
+          # A push looks at what's new since the newest tag, betas included, not at its own commits: a waiting run is
+          # dropped when a newer push comes. A re-run on a tagged commit finds nothing new.
+          if [[ $GITHUB_EVENT_NAME == push ]]; then
+            newest=$(git describe --tags --abbrev=0)
+            [[ -n $(counted "$newest..HEAD") ]] || { echo "nothing new since $newest"; exit 0; }
+          fi
+          # A cancelled run (a newer push replaced it) says nothing about main.
+          ok=$(gh run list --workflow ci.yml --branch main --event push --status completed --limit 20 --json conclusion \
+            -q 'map(select(.conclusion != "cancelled"))[0].conclusion // "success"')
+          [[ $ok == success ]] || { echo "::error::the last ci.yml run on main ended with \"$ok\"; fix main first"; exit 1; }
+          base=${last#v}
+          IFS=. read -r major minor patch <<<"${base:-0.0.0}"
+          if [[ $bump == auto ]]; then
+            if grep -Eq '^[a-z]+(\(.+\))?!:|BREAKING' <<<"$log"; then bump=major
+            elif grep -Eq '^feat(\(.+\))?:' <<<"$log"; then bump=minor
+            elif [[ $GITHUB_EVENT_NAME == push ]]; then bump=beta
+            else bump=patch; fi
+          fi
+          case $bump in
+            major) v="$((major + 1)).0.0" ;;
+            minor) v="$major.$((minor + 1)).0" ;;
+            patch) v="$major.$minor.$((patch + 1))" ;;
+            beta)
+              next="$major.$minor.$((patch + 1))"
+              n=$(git tag -l "v$next-beta.*" | sed 's/.*-beta\.//' | sort -n | tail -1)
+              v="$next-beta.$((${n:-0} + 1))" ;;
+            *) echo "::error::unknown bump \"$bump\""; exit 1 ;;
+          esac
+          # Versions only go up: above the newest tag, betas included, in SemVer order (sort -V, with a pre-release's
+          # "-" as "~", sorts 1.0.1-beta.2 before 1.0.1).
+          top=$(git tag -l 'v*' | sed 's/-/~/' | sort -V | tail -1 | sed 's/~/-/')
+          printf '%s\n' "$top" "v$v" | sed 's/-/~/' | sort -CuV ||
+            { echo "::error::v$v is not above the newest tag, $top: versions only go up"; exit 1; }
+          git config user.name github-actions && git config user.email actions@github.com
+          if [[ $bump == beta ]]; then
+            git tag -a "v$v" -m "v$v"
+            git push origin "v$v"
+            gh release create "v$v" --generate-notes --draft --prerelease
+          else
+            .github/set-version.sh "$v"
+            git commit -am "chore: release v$v"
+            git tag -a "v$v" -m "v$v"
+            # Both or neither: if main moved meanwhile, nothing is pushed and the next run (the push that moved it)
+            # makes a version.
+            git push --atomic origin HEAD:main "v$v" || { echo "::error::main moved during the release; the next run makes a version"; exit 1; }
+            gh release create "v$v" --generate-notes ${last:+--notes-start-tag "$last"} --draft
+          fi
+          gh workflow run release.yml --ref "v$v"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump || 'auto' }}

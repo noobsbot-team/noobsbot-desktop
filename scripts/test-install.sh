@@ -65,10 +65,11 @@ for distro in arch debian; do
     echo "install.sh ($distro): ok"
 done
 
-# The release install.sh takes while there is no stable one yet (1.0.0's pre-releases): the newest by SemVer
-# precedence, whatever GitHub's order; once there is a stable one, only stable ones.
-newest() { printf '%s\n' "$@" | bash -c "$(sed -n '/^newest_tag()/,/^}/p' "$repo/install.sh"); newest_tag"; }
-[ "$(newest v1.0.0-beta.2 v1.0.0-beta.10 v1.0.0-alpha.8)" = v1.0.0-beta.10 ] || { echo "FAIL: beta.10 is newer than beta.2"; exit 1; }
-[ "$(newest v1.0.0-beta.10 v1.0.0-rc.1)" = v1.0.0-rc.1 ] || { echo "FAIL: rc.1 is newer than beta.10"; exit 1; }
-[ "$(newest v1.1.0-beta.1 v1.0.0 v1.0.0-rc.1)" = v1.0.0 ] || { echo "FAIL: a stable release wins"; exit 1; }
+# A normal install takes only GitHub's latest release, which is never a beta: with no release yet (a 404) it finds
+# none, and it never reads the full list, which has the betas.
+pick=$(bash -c "$(sed -n '/^find_release()/,/^}/p' "$repo/install.sh")"'
+    curl() { printf "%s " "${!#}" >&2; case ${!#} in */latest) return 22 ;; *) echo "\"tag_name\": \"v1.0.1-beta.1\"" ;; esac; }
+    die() { echo none >&2; }
+    DESKTOP_REPO=o/r RELEASE_TAG=""; find_release' 2>&1)
+[ "$pick" = "https://api.github.com/repos/o/r/releases/latest none" ] || { echo "FAIL: a normal install took a beta: $pick"; exit 1; }
 echo "install.sh (release pick): ok"
