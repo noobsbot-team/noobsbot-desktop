@@ -427,8 +427,8 @@ impl State {
         if went(self.last_displays(), &shown) {
             self.end_drag();
         }
-        write_info(&shown);
         self.output_heads(shown);
+        self.write_info();
         self.schedule_redraw();
     }
 
@@ -577,15 +577,26 @@ pub fn revert_displays() {
     }
 }
 
-/// Rewrites `displays.json` when it changed.
-fn write_info(displays: &[Display]) {
-    let Some(path) = display_info::path() else { return };
-    let Ok(json) = serde_json::to_string_pretty(displays) else { return };
-    if std::fs::read_to_string(&path).is_ok_and(|old| old == json) {
-        return;
-    }
-    if let Err(err) = crate::config::save_atomic(&path, &json) {
-        tracing::warn!("{}: {err}", path.display());
+impl State {
+    /// Rewrites `displays.json` when it changed: the displays as `apply_displays` left them, with each one's
+    /// brightness.
+    pub fn write_info(&self) {
+        let Some(path) = display_info::path() else { return };
+        let mut displays = self.last_displays().to_vec();
+        for d in &mut displays {
+            d.brightness = if d.built_in {
+                crate::services::brightness::panel()
+            } else {
+                self.monitor_brightness.iter().find(|(name, _)| *name == d.name).map(|(_, percent)| *percent)
+            };
+        }
+        let Ok(json) = serde_json::to_string_pretty(&displays) else { return };
+        if std::fs::read_to_string(&path).is_ok_and(|old| old == json) {
+            return;
+        }
+        if let Err(err) = crate::config::save_atomic(&path, &json) {
+            tracing::warn!("{}: {err}", path.display());
+        }
     }
 }
 

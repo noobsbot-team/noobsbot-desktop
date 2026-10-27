@@ -187,6 +187,8 @@ pub struct State {
     pub profiles: Option<crate::services::profiles::Profiles>,
     /// Percent; `None` without a backlight or DDC/CI monitor.
     pub brightness: Option<u8>,
+    /// DDC/CI monitors' brightness in percent, by connector, for `displays.json`.
+    pub monitor_brightness: Vec<(String, u8)>,
     /// `None`: no output device, or PipeWire isn't running.
     pub sound: Option<crate::services::sound::Sound>,
     /// `None`: nothing playing or paused.
@@ -425,7 +427,15 @@ impl State {
                     }
                     crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,
                     crate::services::Update::Profiles(profiles) => state.profiles = profiles,
-                    crate::services::Update::Brightness(brightness) => state.brightness = brightness,
+                    crate::services::Update::Brightness(brightness) => {
+                        state.brightness = brightness;
+                        // The built-in panel's, for Settings › Displays.
+                        state.write_info();
+                    }
+                    crate::services::Update::Monitors(levels) => {
+                        state.monitor_brightness = levels;
+                        state.write_info();
+                    }
                     crate::services::Update::Sound(sound) => state.sound = sound,
                     crate::services::Update::Media(media) => state.media = media,
                     crate::services::Update::Pairing(pairing) => state.show_pairing(pairing),
@@ -453,12 +463,15 @@ impl State {
                     crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                     crate::services::Update::Widgets(widgets) => state.widgets = widgets,
-                    crate::services::Update::SetBrightness(percent) => {
+                    crate::services::Update::SetBrightness(None, percent) => {
                         // Set here, as the keys and slider do: DDC monitors don't report back.
                         if state.brightness.is_some() {
                             state.brightness = Some(percent);
                         }
                         state.services.send(crate::services::Command::Brightness(percent));
+                    }
+                    crate::services::Update::SetBrightness(Some(connector), percent) => {
+                        state.services.send(crate::services::Command::OutputBrightness(connector, percent));
                     }
                     crate::services::Update::Identify => state.identify_displays(),
                     crate::services::Update::CalDavNow => state.caldav_now(),
@@ -579,6 +592,7 @@ impl State {
             bluetooth: None,
             profiles: None,
             brightness: None,
+            monitor_brightness: Vec::new(),
             sound: None,
             media: None,
             tray: Vec::new(),
