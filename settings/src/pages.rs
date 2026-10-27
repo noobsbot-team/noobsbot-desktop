@@ -1853,6 +1853,22 @@ fn users_part(app: &App) -> Vec<Element<'_, Message>> {
         let go = button(text("Change Password").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::ChangePassword);
         rows.push(line(t, "", "", go.into()));
     }
+    // With a fingerprint reader only.
+    if let Some(n) = users.fingers {
+        let count = match n {
+            0 => "None enrolled".to_owned(),
+            1 => "1 finger".to_owned(),
+            n => format!("{n} fingers"),
+        };
+        let add = button(text("Add Fingerprint…").size(12)).padding([3, 10]).style(t.push(false));
+        let mut controls = row![text(count).size(12).color(t.secondary()), add.on_press_maybe((n < 10).then_some(Message::Enroll(true)))]
+            .spacing(8)
+            .align_y(Alignment::Center);
+        if n > 0 {
+            controls = controls.push(button(text("Delete All").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::DeleteFingerprints));
+        }
+        rows.push(line(t, "Fingerprints", "", controls.into()));
+    }
     if app.texts.contains_key(crate::users::PICTURES) {
         // The wallpaper gallery's pictures, then any file from the chooser (by its path without a portal).
         let tiles = app.thumbs.iter().map(|(path, handle)| {
@@ -1905,6 +1921,26 @@ pub fn users_sheet(app: &App) -> Option<Element<'_, Message>> {
     use crate::users::{NEW, Shot};
     let t = app.tokens;
     let push = |label: &'static str, primary: bool, message: Message| button(text(label).size(13)).padding([4, 14]).style(t.push(primary)).on_press(message);
+    if let Some(e) = &app.enroll {
+        let count = if e.stages > 0 { format!("{} of {}", e.touches.min(e.stages), e.stages) } else { e.touches.to_string() };
+        let words = match (&e.note, e.done) {
+            (Some(note), _) => text(note).size(12).color(crate::style::rgb(0xFF3B30)),
+            (None, true) => text("Fingerprint added").size(12),
+            (None, false) => text("Touch the sensor, lift your finger, and touch again").size(12).color(t.secondary()),
+        };
+        let shown = container(text(count).size(32).font(font(Weight::Semibold))).center(128).style(Tokens::squircle(t.card(), 64.0));
+        let close = push(if e.done { "Done" } else { "Cancel" }, e.done, Message::Enroll(false));
+        let card = column![
+            text("Add Fingerprint").size(15).font(font(Weight::Semibold)),
+            container(shown).center_x(Length::Fill),
+            container(words).center_x(Length::Fill),
+            row![space().width(Length::Fill), close],
+        ]
+        .spacing(12)
+        .width(320);
+        let sheet = container(card).padding(18).style(t.sheet());
+        return Some(iced::widget::opaque(container(sheet).center(Length::Fill).style(t.dim())));
+    }
     if let Some(shot) = &app.shot {
         // A 128 px square, as the picture will be cut.
         let frame = |inner: Element<'static, Message>| container(inner).center(128).style(Tokens::squircle(t.card(), 64.0));
