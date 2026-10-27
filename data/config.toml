@@ -360,8 +360,13 @@ hidden = []
 clocks = []
 [calendar]
 # Events for Notification Center's Up Next, the calendar's dots and reminders: .ics files, folders, or "dir/*.ics".
-# Saved changes show at once. (CalDAV and Google calendars: later.)
+# Saved changes show at once.
 files = ["~/.local/share/noobsbot-desktop/calendars/*.ics"]
+# CalDAV calendars, each a collection URL and a user name; the password (an app password where the server has them)
+# is kept in the keyring: add accounts in System Settings ▸ Date & Time. Fetched at login, every 15 minutes and when
+# the network comes back; the last fetch shows while offline. For example:
+# caldav = [{ url = "https://cloud.example.com/remote.php/dav/calendars/me/personal/", user = "me" }]
+caldav = []
 
 [update]
 # "stable", or "beta" to also get pre-releases (1.4.0-beta.2). Updates download in the background, are checked

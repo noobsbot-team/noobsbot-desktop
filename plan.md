@@ -822,8 +822,11 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
     the month title returns to today. Built: the swipe follows the fingers 1:1 with the next month sliding in beside,
     then a `gesture` spring turns it past 30% of the card or on a flick, else back; ‹ ›, the title and ←/→ slide on
     `smooth`; both grids are cut at the card's edge; reduce motion turns the month at once.
-  - ~~Later (optional): event dots under days, from local `.ics` files~~, then CalDAV/Google. Done: dots from
-    `[calendar] files` (`src/ical.rs`, `src/events.rs`, E7.2). Not yet: CalDAV/Google.
+  - ~~Later (optional): event dots under days, from local `.ics` files~~, then ~~CalDAV~~/Google. Done: dots from
+    `[calendar] files` (`src/ical.rs`, `src/events.rs`, E7.2) and `[calendar] caldav` (`src/caldav.rs`: a `REPORT`
+    through curl for a month back to a year ahead, at login, every 15 minutes and when the network returns, cached for
+    offline; the password in the keyring via `secret-tool`; Settings ▸ Date & Time ▸ CalDAV accounts adds one after a
+    test fetch). Not yet: Google (needs OAuth), CalDAV discovery (the calendar's own URL is typed).
 - **Built with:** `chrono` (date math); our widgets.
 - **Why:** pure date math, so no calendar library or service is needed until events are added.
 - **Done when:** the correct month grid for any month and year, including leap years (unit tested).
@@ -1099,7 +1102,7 @@ Goal: everything that informs you and helps you find things.
   - **Widgets** (in `card` material, radius 12):
     | Widget | Content | Data from |
     |---|---|---|
-    | Calendar | month grid (E2.5); ~~later~~ "Up Next" events (done: the card above the month) | `chrono`; `.ics` (`src/ical.rs`, `src/events.rs`); CalDAV not yet |
+    | Calendar | month grid (E2.5); ~~later~~ "Up Next" events (done: the card above the month) | `chrono`; `.ics` (`src/ical.rs`, `src/events.rs`); CalDAV (`src/caldav.rs`, done); Google not yet |
     | Batteries | laptop + Bluetooth devices (headphones, mouse) | UPower |
     | World Clock (optional) | Built: after Weather, a row per city in `[widgets] clocks` (off while empty): its time in the clock's 12/24 h format, then the day and offset from here ("Tomorrow, +5:45"); redrawn on the menu-bar clock's minute tick | the system zoneinfo, read as `.ics` TZIDs are (no `chrono-tz`) |
     | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open). Built as a widget app: CPU, memory, disk and network ↑/↓ every 5 s; not yet refreshing only while open (the widget protocol doesn't say when a widget is shown) | `/proc`, `/sys` (`src/bin/widget-system.rs`) |
@@ -1782,7 +1785,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Extra | What | Built with |
 |---|---|---|
 | Graphical login screen (done, opt-in) | lock-screen-style login | greetd greeter mode of Noobsbot Desktop (`--greeter`, see E6.6) |
-| Calendar events (done) | "Up Next" widget, event dots, reminders | own `.ics` parser (`ical.rs`, `events.rs`), `[calendar] files` (a folder not there yet is watched through its nearest parent until it appears); CalDAV later |
+| Calendar events (done) | "Up Next" widget, event dots, reminders | own `.ics` parser (`ical.rs`, `events.rs`), `[calendar] files` (a folder not there yet is watched through its nearest parent until it appears); CalDAV (`caldav.rs`, `[calendar] caldav`, cached for offline); Google later |
 | Own polkit agent (done) | password prompts in our alert design instead of the fallback agent's | polkit agent D-Bus API + `polkit-agent-helper-1` (`services/polkit.rs`); the standard Qt agent is the fallback |
 | Weather widget (done, off by default) | forecast in Notification Center | Open-Meteo (no key, no account; city or lat/long, no IP lookup), `services/weather.rs` |
 | Fingerprint unlock (done) | lock screen: fprintd's verify beside the password field ("Touch the fingerprint sensor", red "Not recognised, try again", three tries as pam_fprintd); Settings ▸ Users ▸ Fingerprints counts, enrolls (a sheet counting touches) and deletes them; sudo is the system's PAM config (`pam_fprintd`), untouched | `fprintd` over D-Bus (`services/fingerprint.rs`, `settings/src/users.rs`); optional, not installed by `install.sh` |
