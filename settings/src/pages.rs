@@ -1493,7 +1493,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             let head = column![
                 svg(svg::Handle::from_memory(include_bytes!("../../assets/logo.svg").as_slice())).width(72).height(72).style(Tokens::tint(t.label())),
                 text("Noobsbot Desktop").size(22).font(font(Weight::Semibold)),
-                text(format!("Opal · Version {version}")).size(12).color(t.secondary()),
+                text(format!("{} · Opal · Version {version}", short_version(version))).size(12).color(t.secondary()),
             ]
             .spacing(6)
             .align_x(Alignment::Center);
@@ -2578,6 +2578,14 @@ pub fn version() -> &'static str {
     manifest.lines().find_map(|l| l.strip_prefix("version = ")).map_or("", |v| v.trim_matches('"'))
 }
 
+/// "1.3", "1.0 beta 1", "1.0 RC 2": MAJOR.MINOR and any pre-release, as About names the version (the desktop's
+/// update notice too, `update::short`).
+fn short_version(v: &str) -> String {
+    let (core, pre) = v.split_once('-').unwrap_or((v, ""));
+    let minor = core.rsplit_once('.').map_or(core, |(minor, _)| minor);
+    format!("{minor} {}", pre.replace('.', " ").replacen("rc", "RC", 1)).trim_end().to_owned()
+}
+
 fn note<'a>(t: Tokens, words: &'a str) -> Element<'a, Message> {
     container(text(words).size(11).color(t.secondary())).padding([0, 4]).into()
 }
@@ -2706,6 +2714,14 @@ mod tests {
         assert!(semver_like(version()), "{}", version());
         assert!(semver_like("1.0.0-beta.10") && semver_like("1.0.0-rc.1") && semver_like("1.10.0"));
         assert!(!semver_like("1.0") && !semver_like("1.0.0beta") && !semver_like("1.0.0-"));
+    }
+
+    #[test]
+    fn about_names_a_pre_release() {
+        assert_eq!(short_version("1.3.2"), "1.3");
+        assert_eq!(short_version("1.0.0-beta.1"), "1.0 beta 1");
+        assert_eq!(short_version("1.0.0-rc.2"), "1.0 RC 2");
+        assert_eq!(short_version("1.1.0-alpha"), "1.1 alpha");
     }
 
     /// `MAJOR.MINOR.PATCH`, then maybe a pre-release (`-beta.1`).
