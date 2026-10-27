@@ -1281,6 +1281,10 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   output; nothing is destroyed); lid closed with an external monitor = **clamshell mode** (laptop panel off, windows
   move to the external one, no sleep); a dock bringing up two monitors one after the other (layout applied once both
   are known, 500 ms settle); a monitor coming back with a different scale (remembered positions clamped, D13).
+  Built: the settle (`src/backend/udev.rs` `Settle`): a DRM connector change waits until none has come for 500 ms,
+  then the changed cards are scanned and the displays planned once; an unplugged display stays lit meanwhile (its
+  frames go nowhere or fail and are skipped). Startup, VT return, GPU add/remove, Settings, `wlr-output-management`
+  and config reload apply at once.
 - **Done when:** laptop + HDMI monitor at different scales works, survives unplug/replug and sleep/wake; unplugging
   every monitor and plugging one back loses no window; clamshell mode works.
 
