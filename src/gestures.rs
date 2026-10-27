@@ -1,8 +1,9 @@
 //! Touchpad system gestures (E5.3) and hot corners (E5.4). The recogniser and the corner logic are pure; the `State`
 //! glue at the bottom feeds them libinput's events and the pointer.
 //!
-//! The Space slide follows a sideways swipe 1:1, and Mission Control a swipe up or down; both spring on from where the
-//! fingers let go (`Live`). Launchpad pages follow too. Reduce motion: the action happens on release instead.
+//! The Space slide follows a sideways swipe 1:1, Mission Control a swipe up or down, App Exposé one down, Launchpad a
+//! 4-finger pinch and Show Desktop a spread; each springs on from where the fingers let go (`Live`). Launchpad pages
+//! follow too. Reduce motion: the action happens on release instead.
 
 use std::time::{Duration, Instant};
 
@@ -57,6 +58,12 @@ pub fn commits(d: f64, full: f64, v: f64) -> bool {
     !back && d.abs() >= MIN_TRAVEL && (v.abs() >= FLICK || d.abs() >= COMMIT * full)
 }
 
+/// Does a pinch let go `p` of a whole pinch along (in −, out +), moving at `v` of one per ms, commit? Half way, or
+/// on a flick, as a swipe does (`commits`, a whole pinch counted as a whole swipe).
+pub fn pinch_commits(p: f64, v: f64) -> bool {
+    commits(p * FULL, FULL / (2.0 * COMMIT), v * FULL)
+}
+
 /// `x` past an end, given back as a rubber band: a third as far at first, never more than `RUBBER`.
 pub fn rubber(x: f64) -> f64 {
     RUBBER * x / (x.abs() + 3.0 * RUBBER)
@@ -69,6 +76,12 @@ pub enum Live {
     Space(String, f64),
     /// Mission Control opening, or (`true`) closing.
     Mission(bool),
+    /// App Exposé of this app opening.
+    Expose(String),
+    /// Launchpad opening (a pinch in), or (`true`) closing (out).
+    Launchpad(bool),
+    /// Show Desktop's windows moving aside, or back (a spread).
+    Desktop(Vec<crate::anim::DeskMove>),
 }
 
 impl Live {
@@ -77,7 +90,10 @@ impl Live {
         match self {
             Live::Space(..) => Gesture::Space(0),
             Live::Mission(false) => Gesture::MissionControl,
-            Live::Mission(true) => Gesture::AppExpose,
+            Live::Mission(true) | Live::Expose(_) => Gesture::AppExpose,
+            Live::Launchpad(false) => Gesture::Launchpad,
+            // Spreading over Launchpad closes it, as on release.
+            Live::Launchpad(true) | Live::Desktop(_) => Gesture::ShowDesktop,
         }
     }
 }
@@ -93,9 +109,10 @@ pub struct Tracker {
     dx: f64,
     dy: f64,
     scale: f64,
-    /// Smoothed velocity, units per ms, and the time of the last update.
+    /// Smoothed velocity, units per ms (a pinch's in whole pinches per ms), and the time of the last update.
     vx: f64,
     vy: f64,
+    vs: f64,
     last: u32,
 }
 
@@ -118,6 +135,7 @@ impl Tracker {
             scale: 1.0,
             vx: 0.0,
             vy: 0.0,
+            vs: 0.0,
             last: time,
         })
     }
@@ -128,6 +146,7 @@ impl Tracker {
         let dt = f64::from(time.wrapping_sub(self.last).max(1));
         self.vx = (self.vx + dx / dt) / 2.0;
         self.vy = (self.vy + dy / dt) / 2.0;
+        self.vs = (self.vs + (scale - self.scale) * self.sensitivity / PINCH / dt) / 2.0;
         (self.dx, self.dy, self.scale, self.last) = (self.dx + dx, self.dy + dy, scale, time);
         if self.horizontal.is_none() && self.dx.hypot(self.dy) >= MIN_TRAVEL {
             self.horizontal = Some(self.dx.abs() >= self.dy.abs());
@@ -137,6 +156,13 @@ impl Tracker {
     /// The fingers' speed (units per ms) when let go at `time`: 0 if they had stopped.
     pub fn speed(&self, time: u32) -> (f64, f64) {
         if time.wrapping_sub(self.last) > STILL_MS { (0.0, 0.0) } else { (self.vx, self.vy) }
+    }
+
+    /// A pinch so far, in whole pinches (in −, out +, scaled by sensitivity), and its speed per ms when let go at
+    /// `time`: 0 if the fingers had stopped.
+    pub fn pinch(&self, time: u32) -> (f64, f64) {
+        let v = if time.wrapping_sub(self.last) > STILL_MS { 0.0 } else { self.vs };
+        ((self.scale - 1.0) * self.sensitivity / PINCH, v)
     }
 
     /// Swipe travel so far, scaled by sensitivity.
@@ -150,12 +176,8 @@ impl Tracker {
             return None;
         }
         if self.kind == Kind::Pinch {
-            let change = (self.scale - 1.0) * self.sensitivity;
-            return match change {
-                c if c <= -PINCH / 2.0 => Some(Gesture::Launchpad),
-                c if c >= PINCH / 2.0 => Some(Gesture::ShowDesktop),
-                _ => None,
-            };
+            let (p, v) = self.pinch(time);
+            return pinch_commits(p, v).then_some(if p < 0.0 { Gesture::Launchpad } else { Gesture::ShowDesktop });
         }
         let horizontal = self.horizontal.unwrap_or(self.dx.abs() >= self.dy.abs());
         let (vx, vy) = self.speed(time);
@@ -287,31 +309,49 @@ impl State {
         let fresh = tracker.horizontal.is_none();
         tracker.update(time, delta.x, delta.y, scale);
         let (kind, horizontal, (dx, dy)) = (tracker.kind, tracker.horizontal, tracker.delta());
-        // Fingers left = the next page, as with natural scrolling.
-        if kind != Kind::Swipe || self.launchpad_scroll(-delta.x, -delta.y, 0.0, false) {
-            return true;
-        }
-        if fresh && let Some(horizontal) = horizontal {
-            let live = self.live(horizontal, dy);
+        let (pinch, undecided) = (tracker.pinch(time).0, tracker.live.is_none());
+        let decide = match kind {
+            // A pinch follows once it has gone as far as a swipe must, the way it went then.
+            Kind::Pinch => undecided && pinch.abs() * FULL >= MIN_TRAVEL,
+            // Fingers left = the next page, as with natural scrolling.
+            Kind::Swipe if self.launchpad_scroll(-delta.x, -delta.y, 0.0, false) => return true,
+            Kind::Swipe => fresh && horizontal.is_some(),
+        };
+        if decide {
+            let live = self.live(kind, horizontal.unwrap_or(false), if kind == Kind::Pinch { pinch } else { dy });
             if let Some(tracker) = self.gesture.as_mut() {
                 tracker.live = live;
             }
         }
         match self.gesture.as_ref().and_then(|t| t.live.clone()) {
             Some(Live::Space(key, width)) => self.swipe_space(&key, -dx / width),
-            Some(Live::Mission(closing)) => self.mission_hold(f64::from(u8::from(closing)) - dy / FULL),
+            Some(Live::Mission(closing)) => self.mission_hold(f64::from(u8::from(closing)) - dy / FULL, None),
+            Some(Live::Expose(app)) => self.mission_hold(dy / FULL, Some(app)),
+            Some(Live::Launchpad(closing)) => self.launchpad_hold(if closing { 1.0 - pinch } else { -pinch }),
+            Some(Live::Desktop(moves)) => self.desktop_hold(&moves, pinch),
             None => {}
         }
         true
     }
 
-    /// What follows a swipe that just turned out sideways (or up and down, `dy` so far): nothing under reduce motion
-    /// or with that gesture switched off.
-    fn live(&self, horizontal: bool, dy: f64) -> Option<Live> {
+    /// What follows a swipe that just turned out sideways (or up and down, `d` so far), or a pinch `d` of a whole one
+    /// in (−) or out: nothing under reduce motion or with that gesture switched off.
+    fn live(&self, kind: Kind, horizontal: bool, d: f64) -> Option<Live> {
         if self.config.appearance.reduce_motion {
             return None;
         }
-        self.live_any(horizontal, dy).filter(|l| self.config.touchpad.allows(l.gesture()))
+        let live = if kind == Kind::Pinch { self.live_pinch(d) } else { self.live_any(horizontal, d) };
+        live.filter(|l| self.config.touchpad.allows(l.gesture()))
+    }
+
+    /// In opens Launchpad; out closes it, else shows the desktop (or brings the windows back).
+    fn live_pinch(&self, p: f64) -> Option<Live> {
+        match (p < 0.0, self.launchpad_open()) {
+            (true, false) => Some(Live::Launchpad(false)),
+            (false, true) => Some(Live::Launchpad(true)),
+            (false, false) => self.config.touchpad.allows(Gesture::ShowDesktop).then(|| Live::Desktop(self.desktop_moves())),
+            (true, true) => None,
+        }
     }
 
     fn live_any(&self, horizontal: bool, dy: f64) -> Option<Live> {
@@ -321,9 +361,10 @@ impl State {
             let width = self.space.output_geometry(&output)?.size.w;
             return Some(Live::Space(self.output_key(&output), f64::from(width.max(1))));
         }
-        // Up opens Mission Control, down closes it (or App Exposé); the rest acts on release.
+        // Up opens Mission Control, down App Exposé of the focused app, or closes either; the rest acts on release.
         match self.mission.as_ref().map(|m| m.progress.target() == 1.0) {
             None if !horizontal && dy < 0.0 => Some(Live::Mission(false)),
+            None if !horizontal && dy > 0.0 => self.focused_window().and_then(|w| self.app_key(&w)).map(Live::Expose),
             Some(true) if !horizontal && dy > 0.0 => Some(Live::Mission(true)),
             _ => None,
         }
@@ -337,6 +378,7 @@ impl State {
         let cancelled = cancelled || locked;
         let (dx, dy) = tracker.delta();
         let (vx, vy) = tracker.speed(time);
+        let (pinch, vp) = tracker.pinch(time);
         match tracker.live {
             Some(Live::Space(key, width)) => {
                 self.swipe_space_end(&key, -dx / width, -vx * 1000.0 / width, !cancelled && commits(dx, width, vx));
@@ -346,6 +388,19 @@ impl State {
                 // Only a swipe the way it started commits.
                 let commit = !cancelled && (dy < 0.0) != closing && commits(dy, FULL, vy);
                 self.mission_let_go(commit != closing, -vy * 1000.0 / FULL);
+                return true;
+            }
+            Some(Live::Expose(_)) => {
+                self.mission_let_go(!cancelled && dy > 0.0 && commits(dy, FULL, vy), vy * 1000.0 / FULL);
+                return true;
+            }
+            Some(Live::Launchpad(closing)) => {
+                let commit = !cancelled && (pinch < 0.0) != closing && pinch_commits(pinch, vp);
+                self.launchpad_let_go(commit != closing, -vp * 1000.0);
+                return true;
+            }
+            Some(Live::Desktop(moves)) => {
+                self.desktop_let_go(moves, !cancelled && pinch > 0.0 && pinch_commits(pinch, vp));
                 return true;
             }
             None if locked => return true,
@@ -464,8 +519,14 @@ mod tests {
         touchpad.gesture_mission_control = false;
         assert!(!touchpad.allows(space.gesture()) && !touchpad.allows(open.gesture()));
         assert!(touchpad.allows(close.gesture()));
+        let (pad_open, pad_close) = (Live::Launchpad(false), Live::Launchpad(true));
+        assert!(touchpad.allows(pad_open.gesture()) && touchpad.allows(pad_close.gesture()));
+        touchpad.gesture_show_desktop = false;
+        assert!(touchpad.allows(pad_open.gesture()) && !touchpad.allows(pad_close.gesture()), "a spread closes Launchpad");
+        let expose = Live::Expose("app".into());
+        assert!(touchpad.allows(expose.gesture()));
         touchpad.gesture_app_expose = false;
-        assert!(!touchpad.allows(close.gesture()));
+        assert!(!touchpad.allows(close.gesture()) && !touchpad.allows(expose.gesture()));
     }
 
     #[test]
@@ -507,6 +568,15 @@ mod tests {
     }
 
     #[test]
+    fn pinch_commits_past_half_or_on_a_flick() {
+        assert!(pinch_commits(-0.55, 0.0) && pinch_commits(0.55, 0.0), "past half, let go still");
+        assert!(!pinch_commits(-0.45, 0.0), "short of half: back");
+        assert!(pinch_commits(0.2, 0.01), "a flick out");
+        assert!(!pinch_commits(0.7, -0.002), "past half, but heading back");
+        assert!(!pinch_commits(0.03, 0.05), "a twitch");
+    }
+
+    #[test]
     fn rubber_band_gives_a_little_and_never_much() {
         assert_eq!(rubber(0.0), 0.0);
         assert!((rubber(0.03) - 0.01).abs() < 0.002, "a third as far at first: {}", rubber(0.03));
@@ -543,14 +613,22 @@ mod tests {
 
     #[test]
     fn pinches() {
+        // Pinched to `scale` in one step, let go once the fingers stopped.
         let pinch = |scale: f64| {
             let mut t = Tracker::begin(Kind::Pinch, 4, 3, 1.0, 0).unwrap();
             t.update(10, 0.0, 0.0, scale);
-            t.end(20, false)
+            t.end(200, false)
         };
         assert_eq!(pinch(0.6), Some(Gesture::Launchpad));
         assert_eq!(pinch(1.4), Some(Gesture::ShowDesktop));
         assert_eq!(pinch(0.9), None);
+        // The same short pinch, let go while moving fast: a flick.
+        let mut t = Tracker::begin(Kind::Pinch, 4, 3, 1.0, 0).unwrap();
+        for (i, scale) in [0.97, 0.94, 0.9].into_iter().enumerate() {
+            t.update(10 * (i as u32 + 1), 0.0, 0.0, scale);
+        }
+        assert!((t.pinch(35).0 + 0.2).abs() < 1e-9, "a fifth of a whole pinch in");
+        assert_eq!(t.end(35, false), Some(Gesture::Launchpad));
         let mut t = Tracker::begin(Kind::Pinch, 4, 3, 1.0, 0).unwrap();
         t.update(10, 0.0, 0.0, 0.5);
         assert_eq!(t.end(20, true), None, "cancelled by libinput");

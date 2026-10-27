@@ -24,6 +24,7 @@ use smithay::{
 
 use crate::{
     apps::App,
+    spaces::Tween,
     state::State,
     text::ts,
     ui::field::{Edit, TextField},
@@ -467,8 +468,8 @@ pub struct Launchpad {
     /// The saved order (see `arrange`).
     pub order: Vec<Entry>,
     pub page: usize,
-    /// 0 closed → 1 open: icons zoom from 1.1 and fade in.
-    pub shown: Spring,
+    /// 0 closed → 1 open: icons zoom from 1.1 and fade in; held where a pinch's fingers put it.
+    pub shown: Tween,
     /// The page position the slide is at.
     pub slide: Spring,
     /// A finger swipe in progress, in pages (positive: towards the next page).
@@ -492,7 +493,7 @@ impl Launchpad {
             field: TextField::default(),
             order: load_order(),
             page: 0,
-            shown: Spring::new(0.0, 1.0, now),
+            shown: Tween::new(0.0, 1.0),
             slide: Spring::new(0.0, 0.0, now),
             drag: 0.0,
             swipe_end: None,
@@ -544,7 +545,7 @@ impl Launchpad {
     }
 
     pub fn closing(&self) -> bool {
-        self.shown.to == 0.0
+        self.shown.target() == 0.0
     }
 
     /// The page position in view.
@@ -629,7 +630,7 @@ impl State {
         let now = Instant::now();
         match self.launchpad.as_mut() {
             // Closing: turn back.
-            Some(l) => l.shown.go(1.0, now),
+            Some(l) => l.shown = Tween::new(l.shown.value(now), 1.0),
             None => self.launchpad = Some(Launchpad::new(now, self.pointer_output())),
         }
         self.schedule_redraw();
@@ -638,13 +639,36 @@ impl State {
     /// Fades out; the last frame of the fade drops it (see `launchpad_frame`).
     pub fn close_launchpad(&mut self) -> bool {
         let Some(l) = self.launchpad.as_mut().filter(|l| !l.closing()) else { return false };
-        l.shown.go(0.0, Instant::now());
+        l.shown = Tween::new(l.shown.value(Instant::now()), 0.0);
         l.press = None;
         if let Some(token) = l.swipe_end.take() {
             self.loop_handle.remove(token);
         }
         self.schedule_redraw();
         true
+    }
+
+    /// A pinch holds Launchpad at `p` (0 closed → 1 open), opening it first.
+    pub fn launchpad_hold(&mut self, p: f64) {
+        if self.launchpad.is_none() {
+            self.open_launchpad();
+        }
+        if let Some(l) = self.launchpad.as_mut() {
+            l.shown = Tween::hold(p.clamp(0.0, 1.0));
+        }
+        self.schedule_redraw();
+    }
+
+    /// The fingers lifted, moving at `v` per second: it springs open or closed from where they left it.
+    pub fn launchpad_let_go(&mut self, open: bool, v: f64) {
+        let Some(at) = self.launchpad.as_ref().map(|l| l.shown.value(Instant::now())) else { return };
+        if !open {
+            self.close_launchpad();
+        }
+        if let Some(l) = self.launchpad.as_mut() {
+            l.shown = Tween::fling(at, f64::from(u8::from(open)), v);
+        }
+        self.schedule_redraw();
     }
 
     pub fn toggle_launchpad(&mut self) {
