@@ -385,6 +385,8 @@ pub enum Message {
     UpdateTimeout,
     /// More Info…: the release page opens in the browser.
     OpenUrl(String),
+    /// Noobsbot Account ▸ Sign In, or Return in its fields.
+    SignIn,
 }
 
 impl App {
@@ -589,6 +591,16 @@ impl App {
                     Some(pages::Kind::Slider { step, .. }) if step >= 1.0 => self.save(&key, pages::whole(&key, value)),
                     _ => self.save(&key, (value * 100.0).round() / 100.0),
                 }
+            }
+            Message::SignIn => {
+                if self.texts.get(pages::ACCOUNT_EMAIL).is_none_or(|email| email.trim().is_empty()) {
+                    return Task::none();
+                }
+                let Some(mut password) = self.texts.remove(pages::ACCOUNT_PASSWORD).filter(|p| !p.is_empty()) else { return Task::none() };
+                // ponytail: no account service yet, so Sign In only says so; the backend signs in here with the email and
+                // `password`, then keeps config.toml (preferences, choices, themes) with the account.
+                network::wipe(&mut password);
+                self.error = Some("Noobsbot Account sign-in isn't available yet: your settings stay on this computer.".into());
             }
             Message::Type(key, value) => {
                 // Fields may hold passwords: the old text is zeroed, not just freed.
@@ -1202,18 +1214,18 @@ impl App {
         let user = button(
             row![
                 svg(pages::icon("user-circle")).width(32).height(32).style(Tokens::tint(t.secondary())),
-                column![text(&self.user.1).size(13).font(font(Weight::Semibold)), text("Noobsbot Desktop account").size(11).color(t.secondary())],
+                column![text(&self.user.1).size(13).font(font(Weight::Semibold)), text("Sign in to Noobsbot Account").size(11).color(t.secondary())],
             ]
             .spacing(8)
             .align_y(Alignment::Center),
         )
         .padding([4, 6])
         .width(Length::Fill)
-        .style(t.sidebar_row(self.page == Page::Users && self.query.trim().is_empty()))
-        .on_press(Message::Page(Page::Users));
+        .style(t.sidebar_row(self.page == Page::Account && self.query.trim().is_empty()))
+        .on_press(Message::Page(Page::Account));
         let mut list = column![search, user, container(space()).height(1).width(Length::Fill).style(t.rule())].spacing(8);
         let mut rows = column![].spacing(1);
-        for page in Page::ALL {
+        for page in Page::ALL.into_iter().filter(|&p| p != Page::Account) {
             if page.gap_before() {
                 rows = rows.push(space().height(8));
             }

@@ -19,6 +19,8 @@ use crate::{
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
+    /// The sidebar's top row, not in its list.
+    Account,
     Network,
     Bluetooth,
     Sound,
@@ -42,7 +44,8 @@ pub enum Page {
 }
 
 impl Page {
-    pub const ALL: [Page; 20] = [
+    pub const ALL: [Page; 21] = [
+        Page::Account,
         Page::Network,
         Page::Bluetooth,
         Page::Sound,
@@ -67,6 +70,7 @@ impl Page {
 
     pub fn name(self) -> &'static str {
         match self {
+            Page::Account => "Noobsbot Account",
             Page::Network => "Network",
             Page::Bluetooth => "Bluetooth",
             Page::Sound => "Sound",
@@ -113,6 +117,7 @@ impl Page {
     /// Phosphor fill symbol and squircle colour.
     fn icon(self) -> (&'static str, u32) {
         match self {
+            Page::Account => ("user-circle", 0x007AFF),
             Page::Network => ("wifi-high", 0x007AFF),
             Page::Bluetooth => ("bluetooth", 0x007AFF),
             Page::Sound => ("speaker-high", 0xFF2D55),
@@ -2138,6 +2143,7 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             parts.extend(widget_editors(app));
             parts
         }
+        Page::Account => account_part(app),
         Page::Dock => vec![default_apps(app)],
         Page::General => {
             let clear = button(text("Clear").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::ClearRecent);
@@ -2145,6 +2151,42 @@ fn after_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
         }
         _ => Vec::new(),
     }
+}
+
+/// Noobsbot Account's fields, in `App::texts`.
+pub const ACCOUNT_EMAIL: &str = "account.email";
+pub const ACCOUNT_PASSWORD: &str = "account.password";
+
+/// Noobsbot Account: sign in to keep preferences, choices and themes with the account.
+fn account_part(app: &App) -> Vec<Element<'_, Message>> {
+    let t = app.tokens;
+    let value = |key: &str| app.texts.get(key).map_or("", String::as_str);
+    let field = |key: &'static str, placeholder: &'static str, secure: bool| -> Element<'_, Message> {
+        text_input(placeholder, value(key))
+            .secure(secure)
+            .on_input(move |v| Message::Type(key.into(), v))
+            .on_submit(Message::SignIn)
+            .size(13)
+            .padding([3, 8])
+            .width(220)
+            .style(t.input(false))
+            .into()
+    };
+    let ready = !value(ACCOUNT_EMAIL).trim().is_empty() && !value(ACCOUNT_PASSWORD).is_empty();
+    let sign_in = button(text("Sign In").size(12)).padding([3, 10]).style(t.push(true)).on_press_maybe(ready.then_some(Message::SignIn));
+    let about = "Sign in to keep your preferences, choices and themes with your Noobsbot Account.";
+    vec![
+        text(about).size(13).color(t.secondary()).into(),
+        group(
+            t,
+            "",
+            vec![
+                line(t, "Email", "", field(ACCOUNT_EMAIL, "name@example.com", false)),
+                line(t, "Password", "", field(ACCOUNT_PASSWORD, "Required", true)),
+                container(sign_in).align_right(Length::Fill).padding([8, 12]).into(),
+            ],
+        ),
+    ]
 }
 
 /// General ▸ Software Update's rows above the settings (the desktop's and noobsbot-terminal's versions, Update Now,
@@ -2699,6 +2741,7 @@ mod tests {
         assert_eq!(Page::parse("privacy-security"), Some(Page::Privacy));
         assert_eq!(Page::parse("users"), Some(Page::Users));
         assert_eq!(Page::parse("printers"), Some(Page::Printers));
+        assert_eq!(Page::parse("noobsbot-account"), Some(Page::Account));
         assert_eq!(Page::parse("nope"), None);
     }
 
