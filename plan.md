@@ -1598,10 +1598,15 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Done when:** `wf-recorder` started from a terminal triggers the alert; a portal screen share does not; a denied
   client receives no frames.
 - **Built:** `src/perms.rs` (who sees each global, the trusted socket, `--trusted`), per-client screencopy answers
-  with the screen-recording alert (`src/capture.rs`, `src/shell/alert.rs`), security-context. Not yet: the "control
-  input" alert (virtual keyboard and pointer go to trusted clients without asking); layer-shell, output management,
-  ext-workspace, foreign-toplevel-list and shortcuts-inhibit are offered to every unsandboxed client, as perms.rs's
-  table says.
+  with the screen-recording alert (`src/capture.rs`, `src/shell/alert.rs`), security-context. The "control input"
+  alert: virtual keyboard and pointer are offered to unsandboxed clients; an untrusted one's first virtual keyboard or
+  pointer asks "Allow ‹app› to control this computer's keyboard and mouse?", its events go nowhere until allowed, the
+  answer is kept per app in `[privacy] input_control` / `input_control_denied` (Settings ▸ Privacy & Security), and
+  no virtual input reaches the lock screen or the login screen, even from trusted clients. Decided, not gated:
+  layer-shell, output management, ext-workspace, foreign-toplevel-list and shortcuts-inhibit stay open to every
+  unsandboxed client. Gating them would break ordinary bars, launchers and `wlr-randr`, unsandboxed apps already run
+  as the user (they could read its files or ptrace its programs anyway), and Flatpak apps never see them
+  (security-context).
 
 ### E6.12 Input methods (typing Nepali, Hindi, CJK)
 - **What it is:** the Noto fonts (Part H) let the desktop *show* Devanagari and CJK; this lets the owner *type* them.
