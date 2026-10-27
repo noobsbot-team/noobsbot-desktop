@@ -209,7 +209,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
 - **Control Center:** click its icon in the menu bar. Wi-Fi, Bluetooth, sound output and input with levels,
   brightness, Dark Mode, Do Not Disturb, power mode.
 - **Notification Center:** click the clock or press Super+N. Banners are grouped by app, plus Up Next (your calendar
-  events), the month calendar, the weather (if you turn it on) and battery levels.
+  events), the month calendar (‹ ›, ←/→ or a two-finger swipe sideways change the month), the weather (if you turn it
+  on) and battery levels.
 - **Dock:** pinned apps and running apps, with dots for open apps, badges, magnification under the pointer and
   right-click menus. Minimised windows sit as thumbnail tiles after a separator at the right end (or go into their
   app's icon with `[dock] minimise_into_icon`); `[dock] minimise_effect = "genie"` swaps the shrink for a genie. The Trash sits at the far right (`[dock] show_trash`):
