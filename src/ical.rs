@@ -130,6 +130,8 @@ struct Rule {
     until: Option<i64>,
     /// (ordinal, day): `2MO` is (2, Mon), `-1FR` (-1, Fri), plain `TU` (0, Tue).
     by_day: Vec<(i32, Weekday)>,
+    /// 1 to 12.
+    by_month: Vec<u32>,
 }
 
 /// When an alarm goes off.
@@ -294,6 +296,7 @@ impl Rule {
         // rules don't read BYDAY.
         let plain = self.by_day.is_empty() || self.freq == Freq::Yearly;
         let month = match self.freq {
+            _ if !self.by_month.is_empty() => self.by_month.contains(&d.month()),
             Freq::Yearly if plain => d.month() == start.month(),
             _ => true,
         };
@@ -464,7 +467,7 @@ fn duration(value: &str) -> Option<i64> {
 }
 
 fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<Rule> {
-    let mut rule = Rule { freq: Freq::Daily, interval: 1, count: None, until: None, by_day: Vec::new() };
+    let mut rule = Rule { freq: Freq::Daily, interval: 1, count: None, until: None, by_day: Vec::new(), by_month: Vec::new() };
     let mut freq = None;
     for (key, v) in value.split(';').filter_map(|p| p.split_once('=')) {
         match key.to_ascii_uppercase().as_str() {
@@ -486,6 +489,7 @@ fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<R
                 let (t, z) = if date { (t.checked_add_signed(TimeDelta::seconds(86_399))?, zone) } else { (t, if z == Zone::Utc { &z } else { zone }) };
                 rule.until = Some(z.timestamp(t));
             }
+            "BYMONTH" => rule.by_month = numbers(v, 12)?.into_iter().map(u32::try_from).collect::<Result<_, _>>().ok()?,
             "BYDAY" => {
                 for day in v.split(',') {
                     let day = day.trim().to_ascii_uppercase();
@@ -513,6 +517,11 @@ fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<R
     }
     rule.freq = freq?;
     Some(rule)
+}
+
+/// A comma list of `[+-]n`, each nonzero and at most `max` either way; `None` if one isn't.
+fn numbers(v: &str, max: i32) -> Option<Vec<i32>> {
+    v.split(',').map(|n| n.trim().trim_start_matches('+').parse::<i32>().ok().filter(|n| *n != 0 && (-max..=max).contains(n))).collect()
 }
 
 fn event(props: &[(String, Params, String)], zones: &mut HashMap<String, Zone>) -> Option<Event> {
@@ -723,6 +732,31 @@ mod tests {
         let s = starts(&e, "2026-10-01 00:00", "2027-06-01 00:00");
         assert_eq!(s.len(), 5);
         assert_eq!(s[4], utc("2027-01-06 10:00"));
+    }
+
+    #[test]
+    fn bymonth_expands_yearly_rules_and_limits_others() {
+        // Yearly in January and July, on DTSTART's day.
+        let e = one("DTSTART:20260110T100000Z\r\nRRULE:FREQ=YEARLY;BYMONTH=1,7;COUNT=4");
+        assert_eq!(
+            starts(&e, "2026-01-01 00:00", "2028-01-01 00:00"),
+            [utc("2026-01-10 10:00"), utc("2026-07-10 10:00"), utc("2027-01-10 10:00"), utc("2027-07-10 10:00")]
+        );
+        // Monthly on the 5th, in summer only.
+        let e = one("DTSTART:20260505T100000Z\r\nRRULE:FREQ=MONTHLY;BYMONTH=6,7,8;COUNT=4");
+        assert_eq!(
+            starts(&e, "2026-01-01 00:00", "2028-01-01 00:00"),
+            [utc("2026-06-05 10:00"), utc("2026-07-05 10:00"), utc("2026-08-05 10:00"), utc("2027-06-05 10:00")]
+        );
+        // Daily in December only.
+        let e = one("DTSTART:20261130T080000Z\r\nRRULE:FREQ=DAILY;BYMONTH=12");
+        assert_eq!(starts(&e, "2026-11-29 00:00", "2026-12-03 00:00"), [utc("2026-12-01 08:00"), utc("2026-12-02 08:00")]);
+        assert!(starts(&e, "2027-01-01 00:00", "2027-02-01 00:00").is_empty());
+        // No 13th or -1st month: the rule is unusable, the event stays.
+        for bad in ["13", "-1", "0", "x"] {
+            let e = one(&format!("DTSTART:20261020T090000Z\r\nRRULE:FREQ=YEARLY;BYMONTH={bad}"));
+            assert_eq!(starts(&e, "2026-01-01 00:00", "2030-01-01 00:00").len(), 1, "{bad}");
+        }
     }
 
     #[test]
