@@ -215,9 +215,12 @@ impl State {
             let current = cached.current();
             (current.min_size, current.max_size)
         });
-        // The app's limits are for its content; the frame adds our title bar (0 = no limit stays 0).
+        // The app's limits are for its content; the frame adds our title bar (0 = no limit stays 0, and no minimum
+        // at all keeps `wm::MIN_SIZE`).
         let bar = crate::decorations::bar_height(window);
-        min.h += bar;
+        if min.w > 0 || min.h > 0 {
+            min.h += bar;
+        }
         if max.h > 0 {
             max.h += bar;
         }
