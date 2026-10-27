@@ -65,9 +65,25 @@ impl State {
         }
     }
 
+    /// `window` committed, maybe at a new size: the sheets on it (or on its parent, for a sheet) hang centred under
+    /// the parent's title bar again.
+    pub fn centre_sheets(&mut self, window: &Window) {
+        let parent = self.sheet_parent(window).unwrap_or_else(|| window.clone());
+        let Some(frame) = self.frame(&parent) else { return };
+        let bar = crate::decorations::bar_height(&parent);
+        let sheets: Vec<Window> = self.space.elements().filter(|w| self.sheet_parent(w).as_ref() == Some(&parent)).cloned().collect();
+        for sheet in sheets {
+            // Not placed yet (no size): its first commit puts it there (`attached_loc`).
+            let Some(at) = self.frame(&sheet).filter(|f| f.size.w > 0) else { continue };
+            let loc = wm::sheet_loc(frame, bar, at.size);
+            if loc != at.loc {
+                self.set_visible_loc(&sheet, loc);
+            }
+        }
+    }
+
     /// Where a new window of frame `size` goes instead of the usual placement: under its parent's title bar for a
     /// sheet, else its app's remembered frame.
-    // ponytail: a sheet keeps its place when the parent is resized; re-centre it in the resize path if that shows.
     pub fn attached_loc(&self, window: &Window, size: Size<i32, Logical>) -> Option<Point<i32, Logical>> {
         if let Some(parent) = self.sheet_parent(window) {
             let frame = self.frame(&parent)?;
