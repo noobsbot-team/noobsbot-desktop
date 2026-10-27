@@ -129,9 +129,16 @@ fn clean(settings: &Housekeeping) {
     if settings.recent_days > 0 {
         let path = crate::shell::dock::recent_path();
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(settings.recent_days.into())).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        // ponytail: read, prune, rename; an app writing the file in between loses that one entry.
-        if let Some(pruned) = fs::read_to_string(&path).ok().and_then(|xbel| prune_recent(&xbel, &cutoff)) {
-            let _ = config::save_atomic(&path, &pruned).inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
+        // An app that wrote the file since it was read would lose its entry to the rename: read and prune once more.
+        let modified = || fs::metadata(&path).and_then(|m| m.modified()).ok();
+        for _ in 0..2 {
+            let read = modified();
+            let Some(pruned) = fs::read_to_string(&path).ok().and_then(|xbel| prune_recent(&xbel, &cutoff)) else { break };
+            match config::save_atomic_if(&path, &pruned, || modified() == read) {
+                Ok(false) => {}
+                Ok(true) => break,
+                Err(err) => break tracing::warn!("{}: {err}", path.display()),
+            }
         }
     }
 }

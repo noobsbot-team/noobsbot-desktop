@@ -1528,6 +1528,12 @@ pub fn broken_notice(err: &str) -> crate::services::notifications::Notification 
 /// Writes `contents` to a temp file next to `path`, syncs it and renames it over `path`, so a reader (or a crash)
 /// only ever sees the old file or the new one.
 pub fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
+    save_atomic_if(path, contents, || true).map(drop)
+}
+
+/// `save_atomic`, but the rename only happens if `still()` holds once the new text is on disk (another writer may
+/// have replaced the file meanwhile); tells whether it did.
+pub fn save_atomic_if(path: &Path, contents: &str, still: impl FnOnce() -> bool) -> io::Result<bool> {
     let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let name = path.file_name().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "config path has no file name"))?;
     fs::create_dir_all(dir)?;
@@ -1538,13 +1544,16 @@ pub fn save_atomic(path: &Path, contents: &str) -> io::Result<()> {
         f.write_all(contents.as_bytes())?;
         f.sync_all()
     });
-    if let Err(err) = written.and_then(|()| fs::rename(&tmp, path)) {
-        let _ = fs::remove_file(&tmp);
-        return Err(err);
+    match written.and_then(|()| if still() { fs::rename(&tmp, path).map(|()| true) } else { Ok(false) }) {
+        Ok(true) => {}
+        not_renamed => {
+            let _ = fs::remove_file(&tmp);
+            return not_renamed;
+        }
     }
     // The rename itself is durable once the directory is synced; failing that is not worth an error.
     let _ = fs::File::open(dir).and_then(|d| d.sync_all());
-    Ok(())
+    Ok(true)
 }
 
 /// `text` with `[table] key = value` (`value` already TOML, one line); every other line and comment is kept.
@@ -2079,6 +2088,9 @@ mod tests {
         save_atomic(&path, "[windows]\nsnapping = false\n").unwrap();
         assert!(!load(&path).windows.snapping);
         assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "no temp file left behind");
+        assert!(!save_atomic_if(&path, "version = 1\n", || false).unwrap());
+        assert!(!load(&path).windows.snapping, "not renamed when the file changed meanwhile");
+        assert_eq!(fs::read_dir(path.parent().unwrap()).unwrap().count(), 1, "nor its temp file left behind");
         fs::remove_dir_all(dir).unwrap();
     }
 
