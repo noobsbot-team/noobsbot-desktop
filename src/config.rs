@@ -1044,6 +1044,9 @@ impl Default for Calendar {
 pub struct Privacy {
     pub screen_recording: Vec<String>,
     pub screen_recording_denied: Vec<String>,
+    /// Programs that may type and click through a virtual keyboard or pointer, and those denied.
+    pub input_control: Vec<String>,
+    pub input_control_denied: Vec<String>,
 }
 
 /// Software Update (E6.13); a changed channel checks again at once.
