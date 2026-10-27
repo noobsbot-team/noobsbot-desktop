@@ -1760,7 +1760,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Own polkit agent (done) | password prompts in our alert design instead of the fallback agent's | polkit agent D-Bus API + `polkit-agent-helper-1` (`services/polkit.rs`); the standard Qt agent is the fallback |
 | Weather widget (done, off by default) | forecast in Notification Center | Open-Meteo (no key, no account; city or lat/long, no IP lookup), `services/weather.rs` |
 | Fingerprint unlock | lock screen + sudo | `fprintd` |
-| Printers | printing from apps | CUPS |
+| Printers (done) | printing from apps | CUPS, through Settings ▸ Printers (`settings/src/printers.rs`, E8.2; untested with a print job) |
 | Desktop icons (done) | files in `~/Desktop` shown on the wallpaper (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
 | Emoji picker (done) | Super+Ctrl+E / Super+. popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
 | Own screen recorder | Super+Shift+5 ▸ Record without `wf-recorder` | compositor frames → PipeWire → `ffmpeg`/`gst` encoder |
@@ -1795,7 +1795,7 @@ features and appearance** (E8.2–E8.4), then the rest. Each E8.x gets its own m
 | ~~`show-desktop` has no default key~~ | `data/config.toml` | Done: Super+F11 |
 
 ### E8.2 System Settings pages (priority 1)
-Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers (later)**. Every row writes `config.toml` or
+Extends E7.1. New pages: **Network, Battery, Mouse, Accessibility, Printers**. Every row writes `config.toml` or
 calls the system service, and applies live.
 | Page | Add |
 |---|---|
@@ -2067,7 +2067,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Webcam | `uvcvideo` | PipeWire camera portal | none (works in Helium) | M6 |
 | Battery / power | ACPI | UPower, power-profiles-daemon | menu bar, Control Center, widget | M2 / M4 |
 | Sleep / lid / power button | ACPI | logind | E6.5 | M6 |
-| Printers (optional) | — | CUPS | app print dialogs | later |
+| Printers (optional) | — | CUPS | app print dialogs, Settings ▸ Printers | M8 |
 | Fingerprint (optional) | kernel | fprintd | lock screen | later |
 | Firmware updates (optional) | — | fwupd | notification | later |
 
