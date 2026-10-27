@@ -4,7 +4,7 @@
 //! |---|---|
 //! | `wlr-screencopy` (screenshots, recording, screen sharing) | trusted clients; any other unsandboxed app once the user allows it in the "would like to record this computer's screen" alert (remembered in `[privacy]`); never sandboxed apps |
 //! | `virtual-keyboard`, `virtual-pointer` (external on-screen keyboards, wtype, remote desktops) | unsandboxed clients; trusted ones type and click at once, any other only once the user allows it in the "control this computer's keyboard and mouse" alert (remembered in `[privacy]`), its events going nowhere until then. Never while locked (the login screen too) |
-//! | `wlr-layer-shell`, `keyboard-shortcuts-inhibit`, `security-context`, `ext-foreign-toplevel-list`, `wlr-output-management`, `ext-workspace` | unsandboxed clients (third-party bars, launchers, `wlr-randr`, VMs): they already run as the user, and sandboxed apps never see them |
+//! | `wlr-layer-shell`, `keyboard-shortcuts-inhibit`, `security-context`, `ext-foreign-toplevel-list`, `wlr-output-management`, `ext-workspace`, `ext-idle-notify` | unsandboxed clients (third-party bars, launchers, `wlr-randr`, VMs, swayidle): they already run as the user, and sandboxed apps never see them. `ext-idle-notify` hears no input while locked |
 //! | `ext-image-copy-capture` | not implemented, so nobody |
 //!
 //! Trusted: clients of the `<WAYLAND_DISPLAY>-trusted` socket (what `noobsbot-desktop --trusted <command>` connects
