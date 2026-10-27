@@ -6,9 +6,16 @@
 
 use std::{
     io::{BufRead, BufReader},
-    os::unix::process::CommandExt,
+    os::{
+        fd::{AsRawFd, RawFd},
+        unix::process::CommandExt,
+    },
     process::{Command, Stdio},
-    sync::{OnceLock, mpsc},
+    sync::{
+        OnceLock,
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    },
     time::Duration,
 };
 
@@ -102,25 +109,49 @@ fn monitor(updates: &Sender<Update>) -> std::io::Result<bool> {
         });
     }
     let mut child = command.spawn()?;
-    let stdout = child.stdout.take().expect("piped");
+    let mut stdout = BufReader::new(child.stdout.take().expect("piped"));
+    let fd = stdout.get_ref().as_raw_fd();
     let mut last = None;
     let mut chunk = Chunk::default();
-    for line in BufReader::new(stdout).lines() {
-        if !chunk.line(&line?) {
+    let mut line = String::new();
+    // A watched object changed since the last reading.
+    let mut dirty = false;
+    loop {
+        if dirty && stdout.buffer().is_empty() && !readable(fd, GAP) {
+            // Quiet for `GAP`: one reading for the whole burst (a held volume key), unless our own changes are still
+            // on their way. The shell already shows those; an older value would make its slider jump back.
+            if PENDING.load(Ordering::SeqCst) == 0 {
+                let sound = read();
+                // Asked for while reading: this one is already old.
+                if PENDING.load(Ordering::SeqCst) == 0 {
+                    dirty = false;
+                    if sound != last {
+                        tracing::debug!(?sound, "sound");
+                        if updates.send(Update::Sound(sound.clone())).is_err() {
+                            let _ = child.kill();
+                            return Ok(false);
+                        }
+                        last = sound;
+                    }
+                }
+            }
             continue;
         }
-        let sound = read();
-        if sound != last {
-            tracing::debug!(?sound, "sound");
-            if updates.send(Update::Sound(sound.clone())).is_err() {
-                let _ = child.kill();
-                return Ok(false);
-            }
-            last = sound;
+        line.clear();
+        if stdout.read_line(&mut line)? == 0 {
+            break;
         }
+        dirty |= chunk.line(line.trim_end());
     }
     let _ = child.wait();
     Ok(true)
+}
+
+/// Whether `fd` has input (or hung up) within `wait`.
+fn readable(fd: RawFd, wait: Duration) -> bool {
+    let mut poll = libc::pollfd { fd, events: libc::POLLIN, revents: 0 };
+    // SAFETY: one valid pollfd, which outlives the call.
+    unsafe { libc::poll(&mut poll, 1, wait.as_millis() as i32) > 0 }
 }
 
 /// Which `pw-dump` chunks matter. Every `wpctl` run is a PipeWire client whose arrival and departure is itself a
@@ -266,21 +297,30 @@ impl Set {
 
 /// The changes' thread, from `spawn`.
 static SETTER: OnceLock<mpsc::Sender<Set>> = OnceLock::new();
+/// Changes asked for and not yet applied (or applied less than `GAP` ago).
+static PENDING: AtomicUsize = AtomicUsize::new(0);
 /// The least time between two applies: a held key or a slider drag in between is coalesced to its latest value.
 const GAP: Duration = Duration::from_millis(30);
 
 /// Queues a change; never blocks (`wpctl` takes ~20 ms).
 pub fn set(change: Set) {
     if let Some(setter) = SETTER.get() {
-        let _ = setter.send(change);
+        PENDING.fetch_add(1, Ordering::SeqCst);
+        if setter.send(change).is_err() {
+            PENDING.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 }
 
 /// Applies changes as they come, each batch coalesced to the latest value per target.
 fn setter(rx: &mpsc::Receiver<Set>) {
     while let Ok(first) = rx.recv() {
-        coalesce(std::iter::once(first).chain(rx.try_iter()).collect()).into_iter().for_each(apply);
+        let batch: Vec<_> = std::iter::once(first).chain(rx.try_iter()).collect();
+        let asked = batch.len();
+        coalesce(batch).into_iter().for_each(apply);
         std::thread::sleep(GAP);
+        // After the gap: a held key's next step is usually queued by now, so the monitor doesn't read in between.
+        PENDING.fetch_sub(asked, Ordering::SeqCst);
     }
 }
 
