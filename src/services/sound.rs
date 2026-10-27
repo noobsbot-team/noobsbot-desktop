@@ -1,11 +1,14 @@
-//! Sound (E2.3, E2.7) through PipeWire's own tools, the plan's M2 path until the `pipewire` crate replaces it:
-//! `pw-dump --monitor` prints a JSON chunk on every graph change (nothing while idle), and after each chunk `wpctl`
-//! reads the default output and input. No polling: a plugged-in headset shows up through the next chunk.
+//! Sound (E2.3, E2.7) through PipeWire's own tools: `pw-dump --monitor` prints a JSON chunk on every graph change
+//! (nothing while idle), and after each chunk `wpctl` reads the default output and input. No polling: a plugged-in
+//! headset shows up through the next chunk. Changes go through their own thread, coalesced to the latest value, so
+//! a held volume key (30 steps a second) costs one `wpctl` run per apply, not one per step (E1.11).
+//! ponytail: still a process per apply; the `pipewire` crate (libpipewire headers at build time) if that shows.
 
 use std::{
     io::{BufRead, BufReader},
     os::unix::process::CommandExt,
     process::{Command, Stdio},
+    sync::{OnceLock, mpsc},
     time::Duration,
 };
 
@@ -58,8 +61,14 @@ pub struct Device {
     pub muted: bool,
 }
 
-/// Runs on its own thread for the life of the desktop; restarts the monitor when PipeWire restarts.
+/// Runs on its own thread for the life of the desktop; restarts the monitor when PipeWire restarts. Changes get a
+/// thread of their own (`set`).
 pub fn spawn(updates: Sender<Update>) {
+    let (tx, rx) = mpsc::channel();
+    match std::thread::Builder::new().name("sound-set".into()).spawn(move || setter(&rx)) {
+        Ok(_) => _ = SETTER.set(tx),
+        Err(err) => tracing::warn!("sound changes off: {err}"),
+    }
     let thread = std::thread::Builder::new().name("sound".into()).spawn(move || {
         let mut backoff = Duration::from_secs(1);
         loop {
@@ -222,34 +231,100 @@ fn parse_name(inspect: &str) -> String {
     prop(inspect, "node.nick").or_else(|| prop(inspect, "node.description")).unwrap_or_default()
 }
 
-/// Volume and mute go through `wpctl`; the change comes back through the monitor like any other.
-pub fn set_volume(output: bool, percent: u8) {
-    // wpctl would centre the balance; pactl keeps it.
-    if output && crate::pactl::read().is_some_and(|(_, balance)| balance != 0.0 && crate::pactl::set(percent.min(100), balance)) {
-        return;
+/// A change; each comes back through the monitor like any other.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Set {
+    /// Percent of the default output (`true`) or input.
+    Volume {
+        output: bool,
+        percent: u8,
+    },
+    /// An app's stream, by node id.
+    Stream {
+        id: u32,
+        percent: u8,
+    },
+    Mute {
+        output: bool,
+        muted: bool,
+    },
+    /// Output `id` becomes the default.
+    Output(u32),
+}
+
+impl Set {
+    /// What it changes: a newer `Set` with the same target replaces it.
+    fn target(self) -> (u8, u32) {
+        match self {
+            Self::Volume { output, .. } => (0, output.into()),
+            Self::Stream { id, .. } => (1, id),
+            Self::Mute { output, .. } => (2, output.into()),
+            Self::Output(_) => (3, 0),
+        }
     }
-    let target = if output { OUTPUT } else { INPUT };
-    let _ = wpctl(&["set-volume", target, &format!("{}%", percent.min(100))]);
 }
 
-/// An app's stream volume, by node id.
-pub fn set_stream_volume(id: u32, percent: u8) {
-    let _ = wpctl(&["set-volume", &id.to_string(), &format!("{}%", percent.min(100))]);
+/// The changes' thread, from `spawn`.
+static SETTER: OnceLock<mpsc::Sender<Set>> = OnceLock::new();
+/// The least time between two applies: a held key or a slider drag in between is coalesced to its latest value.
+const GAP: Duration = Duration::from_millis(30);
+
+/// Queues a change; never blocks (`wpctl` takes ~20 ms).
+pub fn set(change: Set) {
+    if let Some(setter) = SETTER.get() {
+        let _ = setter.send(change);
+    }
 }
 
-/// Makes output `id` the default; the change comes back through the monitor.
-pub fn set_output(id: u32) {
-    let _ = wpctl(&["set-default", &id.to_string()]);
+/// Applies changes as they come, each batch coalesced to the latest value per target.
+fn setter(rx: &mpsc::Receiver<Set>) {
+    while let Ok(first) = rx.recv() {
+        coalesce(std::iter::once(first).chain(rx.try_iter()).collect()).into_iter().for_each(apply);
+        std::thread::sleep(GAP);
+    }
 }
 
-pub fn set_muted(output: bool, muted: bool) {
-    let target = if output { OUTPUT } else { INPUT };
-    let _ = wpctl(&["set-mute", target, if muted { "1" } else { "0" }]);
+/// The latest change per target, in the order they were last asked for (a new default output before its volume).
+fn coalesce(batch: Vec<Set>) -> Vec<Set> {
+    let mut out: Vec<Set> = Vec::new();
+    for change in batch {
+        out.retain(|c| c.target() != change.target());
+        out.push(change);
+    }
+    out
+}
+
+fn apply(change: Set) {
+    let target = |output| if output { OUTPUT } else { INPUT };
+    match change {
+        Set::Volume { output, percent } => {
+            // wpctl would centre the balance; pactl keeps it.
+            if output && crate::pactl::read().is_some_and(|(_, balance)| balance != 0.0 && crate::pactl::set(percent.min(100), balance)) {
+                return;
+            }
+            let _ = wpctl(&["set-volume", target(output), &format!("{}%", percent.min(100))]);
+        }
+        Set::Stream { id, percent } => _ = wpctl(&["set-volume", &id.to_string(), &format!("{}%", percent.min(100))]),
+        Set::Mute { output, muted } => _ = wpctl(&["set-mute", target(output), if muted { "1" } else { "0" }]),
+        Set::Output(id) => _ = wpctl(&["set-default", &id.to_string()]),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn latest_change_per_target() {
+        use Set::*;
+        let held = [Volume { output: true, percent: 55 }, Mute { output: true, muted: false }, Volume { output: true, percent: 60 }];
+        assert_eq!(coalesce(held.to_vec()), [Mute { output: true, muted: false }, Volume { output: true, percent: 60 }]);
+        // Output and input, or two streams, are separate targets.
+        let mixed = [Volume { output: true, percent: 50 }, Volume { output: false, percent: 20 }, Stream { id: 7, percent: 30 }, Stream { id: 9, percent: 40 }];
+        assert_eq!(coalesce(mixed.to_vec()), mixed);
+        assert_eq!(coalesce(vec![Output(60), Output(63)]), [Output(63)]);
+        assert_eq!(coalesce(Vec::new()), []);
+    }
 
     #[test]
     fn volume() {

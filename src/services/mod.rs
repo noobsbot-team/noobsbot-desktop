@@ -446,17 +446,16 @@ async fn handle(
             (Command::PinEntry(typed), ..) => entry.give(typed),
             (Command::PolkitAnswer(reply), ..) => admin.give(reply),
             (Command::WifiJoin { ssid, ap, device, password }, Some(bus), _) => network::join(bus, &ssid, &ap, &device, password.as_deref()).await,
-            // wpctl takes ~10 ms; blocking this thread that long is fine (it never blocks the frame loop).
-            (Command::Volume { output, percent }, ..) => sound::set_volume(output, percent),
-            (Command::StreamVolume { id, percent }, ..) => sound::set_stream_volume(id, percent),
-            (Command::Mute { output, muted }, ..) => sound::set_muted(output, muted),
-            (Command::Output(id), ..) => sound::set_output(id),
+            (Command::Volume { output, percent }, ..) => sound::set(sound::Set::Volume { output, percent }),
+            (Command::StreamVolume { id, percent }, ..) => sound::set(sound::Set::Stream { id, percent }),
+            (Command::Mute { output, muted }, ..) => sound::set(sound::Set::Mute { output, muted }),
+            (Command::Output(id), ..) => sound::set(sound::Set::Output(id)),
             (Command::NotificationClosed { id, reason }, _, Some(bus)) => notifications::closed(bus, id, reason).await,
             (Command::NotificationAction { id, key }, _, Some(bus)) => notifications::invoked(bus, id, &key).await,
             (Command::SaveNotifications(text), ..) => notifications::save_history(&text),
             (Command::Mount { block, name }, Some(bus), _) => disks::mount(bus, &block, name, updates).await,
             (Command::Eject { drive, blocks, name }, Some(bus), _) => disks::eject(bus, &drive, &blocks, name, updates).await,
-            // The `ibus` CLI, blocking this thread like wpctl below.
+            // The `ibus` CLI, blocking this thread (it never blocks the frame loop).
             (Command::ImeRead { ibus: true }, ..) => {
                 let _ = updates.send(Update::Fcitx(fcitx::read_ibus()));
             }
