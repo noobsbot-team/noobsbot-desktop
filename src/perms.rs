@@ -60,13 +60,22 @@ pub fn exec_trusted(mut args: impl Iterator<Item = String>) -> i32 {
     127
 }
 
-/// The client's program and its name (`/proc/<pid>/exe`, `comm`).
-fn program(dh: &DisplayHandle, client: &Client) -> Option<(PathBuf, String)> {
-    let pid = client.get_credentials(dh).ok()?.pid;
-    let exe = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+/// Records the client's program and its name (`/proc/<pid>/exe`, `comm`) as it connects, for every later verdict:
+/// read later, a process could hand its socket to a child and exec a `TRUSTED` program, or its pid be reused.
+// ponytail: still races a process that execs between its connect() and our accept; the header's ceiling covers that.
+pub fn record_program(dh: &DisplayHandle, client: &Client) {
+    let Ok(pid) = client.get_credentials(dh).map(|c| c.pid) else { return };
+    let Ok(exe) = std::fs::read_link(format!("/proc/{pid}/exe")) else { return };
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok().map(|c| c.trim().to_owned());
     let name = comm.filter(|c| !c.is_empty()).unwrap_or_else(|| exe.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
-    Some((exe, name))
+    if let Some(data) = client.get_data::<ClientState>() {
+        let _ = data.program.set((exe, name));
+    }
+}
+
+/// The client's program and its name, as it connected.
+fn program(client: &Client) -> Option<(PathBuf, String)> {
+    client.get_data::<ClientState>()?.program.get().cloned()
 }
 
 /// Connected through the trusted socket.
@@ -116,7 +125,7 @@ impl State {
         if let Some(answer) = self.capture.verdicts.get(&client.id()) {
             return Some(*answer);
         }
-        let exe = program(&self.display_handle, client).map(|(exe, _)| exe.to_string_lossy().into_owned());
+        let exe = program(client).map(|(exe, _)| exe.to_string_lossy().into_owned());
         let privacy = &self.config.privacy;
         verdict(!unsandboxed(client), trusted(client), exe.as_deref(), &privacy.screen_recording, &privacy.screen_recording_denied)
     }
@@ -126,7 +135,7 @@ impl State {
     pub fn may_control(&mut self, client: &Client) -> bool {
         let id = client.id();
         if !self.protocols.control.contains_key(&id) {
-            let (exe, app) = program(&self.display_handle, client).map_or((String::new(), "An app".into()), |(e, n)| (e.to_string_lossy().into_owned(), n));
+            let (exe, app) = program(client).map_or((String::new(), "An app".into()), |(e, n)| (e.to_string_lossy().into_owned(), n));
             let privacy = &self.config.privacy;
             let known = (!exe.is_empty()).then_some(exe.as_str());
             match verdict(!unsandboxed(client), trusted(client), known, &privacy.input_control, &privacy.input_control_denied) {
@@ -158,7 +167,7 @@ impl State {
         }
         let Some(handle) = self.capture.waiting_clients().into_iter().find(|c| !self.capture.verdicts.contains_key(&c.id())) else { return };
         let client = handle.id();
-        let (exe, app) = program(&self.display_handle, &handle).map_or((String::new(), "An app".into()), |(e, n)| (e.to_string_lossy().into_owned(), n));
+        let (exe, app) = program(&handle).map_or((String::new(), "An app".into()), |(e, n)| (e.to_string_lossy().into_owned(), n));
         self.open_ask(Kind::ScreenRecording { app, exe, client });
     }
 
