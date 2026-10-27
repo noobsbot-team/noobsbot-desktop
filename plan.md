@@ -1605,7 +1605,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   no virtual input reaches the lock screen or the login screen, even from trusted clients. Decided, not gated:
   layer-shell, output management, ext-workspace, foreign-toplevel-list and shortcuts-inhibit stay open to every
   unsandboxed client. Gating them would break ordinary bars, launchers and `wlr-randr`, unsandboxed apps already run
-  as the user (they could read its files or ptrace its programs anyway), and Flatpak apps never see them
+  as the user (with its files and its programs), and Flatpak apps never see them
   (security-context).
 
 ### E6.12 Input methods (typing Nepali, Hindi, CJK)
