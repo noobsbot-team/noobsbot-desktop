@@ -40,6 +40,16 @@ const SYMBOL: u16 = 16;
 /// The app's name is ellipsised past this, and dropped when less than `MIN_APP` is free.
 const APP_WIDTH: i32 = 300;
 const MIN_APP: i32 = 40;
+/// The Space dots' size and the step from one to the next.
+const DOT: i32 = 6;
+const DOT_STEP: i32 = 10;
+
+/// The Space dots' x offsets for `count` Spaces, and their whole width.
+pub fn dots(count: usize) -> (Vec<i32>, i32) {
+    let xs: Vec<i32> = (0..count as i32).map(|i| i * ts(DOT_STEP)).collect();
+    let width = xs.last().map_or(0, |x| x + ts(DOT));
+    (xs, width)
+}
 
 /// The bar's height in logical px, grown with the text size.
 pub fn height() -> i32 {
@@ -72,7 +82,22 @@ pub struct Content {
     pub status: Vec<Item>,
     /// The input item's text, the active layout's code ("US", E6.12); `None`: one layout, no input method.
     pub input: Option<String>,
+    /// `[menu_bar] space_indicator`: the current Space on this display.
+    pub space: Option<Space>,
     pub clock: String,
+}
+
+/// The current Space, as the bar shows it.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Space {
+    /// A desktop's number.
+    Number(usize),
+    /// A fullscreen app's own Space: the app's id.
+    App(String),
+    Dots {
+        count: usize,
+        current: usize,
+    },
 }
 
 /// What a click on the bar hit.
@@ -86,6 +111,8 @@ pub enum BarItem {
     Overflow,
     /// `Content::status[i]`.
     Status(usize),
+    /// The current Space: opens Mission Control.
+    Space,
     /// The keyboard layout / input method menu.
     Input,
     ControlCenter,
@@ -193,6 +220,9 @@ pub struct MenuBar {
     pill: Option<((Rect, bool, u64), PixelShaderElement)>,
     /// The first this many tray icons are in the "»" menu instead of on the bar.
     overflow: usize,
+    /// A blank piece as wide as the Space dots, which are drawn over it.
+    spacer: Option<Arc<Rendered>>,
+    dots: Option<(Vec<super::mission::Shape>, bool, u64, Vec<PixelShaderElement>)>,
 }
 
 impl MenuBar {
@@ -265,6 +295,22 @@ impl MenuBar {
         let mut right = Vec::new();
         let px = (f64::from(SYMBOL) * scale).round() as u32;
         let tray: Vec<_> = content.tray.iter().map(|images| icons.tray(images, px)).collect();
+        match &content.space {
+            Some(Space::Number(n)) => right.push((text.label(&n.to_string(), Style { weight: 600, ..body }, 100, scale), ts(GAP), BarItem::Space)),
+            Some(Space::App(id)) => {
+                let name = self.names.entry(id.clone()).or_insert_with(|| app_name(id));
+                right.push((text.label(name, Style { weight: 600, ..body }, 120, scale), ts(GAP), BarItem::Space));
+            }
+            Some(Space::Dots { count, .. }) => {
+                let w = (f64::from(dots(*count).1) * scale).round() as u32;
+                if self.spacer.as_ref().is_none_or(|s| s.width != w) {
+                    let blank = Rendered { pixels: vec![0; w as usize * 4], width: w, height: 1, baseline: 0, truncated: false };
+                    self.spacer = Some(Arc::new(blank));
+                }
+                right.extend(self.spacer.clone().map(|s| (s, ts(GAP), BarItem::Space)));
+            }
+            None => {}
+        }
         if let Some(code) = &content.input {
             right.push((text.label(code, Style { weight: 600, ..body }, 100, scale), ts(GAP), BarItem::Input));
         }
@@ -311,6 +357,19 @@ impl MenuBar {
 
         // An item's click area spans its pieces plus half a gap each side.
         let items: Vec<BarItem> = left.iter().chain(&right).map(|(_, _, item)| *item).collect();
+        let dot_list = match (&content.space, items.iter().position(|i| *i == BarItem::Space)) {
+            (Some(Space::Dots { count, current }), Some(at)) => {
+                let [r, g, b, a] = color.map(|c| f32::from(c) / 255.0);
+                let (d, y) = (ts(DOT), (height() - ts(DOT)) / 2);
+                let at = rects[at].loc.x;
+                let dot = |(i, x): (usize, &i32)| {
+                    let rect = Rectangle::new((at + x, y).into(), (d, d).into());
+                    (rect, [r, g, b, if i == *current { a } else { a * 0.3 }], f64::from(d) / 2.0, false, 0)
+                };
+                dots(*count).0.iter().enumerate().map(dot).collect()
+            }
+            _ => Vec::new(),
+        };
         self.hits.clear();
         for (item, rect) in items.iter().zip(&rects) {
             let rect = Rectangle::new((rect.loc.x - ts(GAP) / 2, 0).into(), (rect.size.w + ts(GAP), height()).into());
@@ -323,6 +382,7 @@ impl MenuBar {
         self.labels = keep_buffers(&self.labels, left.into_iter().chain(right).map(|(piece, _, _)| piece));
         let mut out: Vec<SceneElement> =
             self.labels.iter().zip(rects).filter_map(|(label, rect): (&Label, Rect)| label_element(renderer, label, rect, scale)).collect();
+        out.extend(super::mission::shapes(&mut self.dots, shaders, dot_list, dark, scale).iter().cloned().map(SceneElement::Shader));
         match active.and_then(|item| self.pill(item)) {
             Some(rect) => {
                 let key = (rect, dark, scale.to_bits());
@@ -422,6 +482,15 @@ mod tests {
         // Below its bar, or on the first display: not this bar.
         assert_eq!(on_bar(second, (1290.0, f64::from(height()) + 1.0).into()), None);
         assert_eq!(on_bar(second, (20.0, 5.0).into()), None);
+    }
+
+    #[test]
+    fn space_dots_step_evenly() {
+        assert_eq!(dots(0), (vec![], 0));
+        assert_eq!(dots(1), (vec![0], DOT));
+        assert_eq!(dots(3), (vec![0, DOT_STEP, 2 * DOT_STEP], 2 * DOT_STEP + DOT));
+        // Grown with the text size, still evenly spaced.
+        crate::text::with_scale(1.5, || assert_eq!(dots(2), (vec![0, 15], 15 + 9)));
     }
 
     #[test]

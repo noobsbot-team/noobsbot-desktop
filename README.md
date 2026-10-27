@@ -333,7 +333,7 @@ doesn't understand is skipped and reported in the journal.
 | `[windows]` | move key, magnetic edges, snapping, double-click title bar, number of Spaces, reopen windows at login |
 | `[spaces]` | each display with its own Spaces, or one set for all |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week (or the locale's), week numbers |
-| `[menu_bar]` | hide the menu bar until the pointer reaches the top edge |
+| `[menu_bar]` | hide the menu bar until the pointer reaches the top edge; show the current Space as a number or dots |
 | `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions, `cycle_across_apps`; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To); `displays`: a dock on every display, the main one or the pointer's; `outputs`: a display's own pinned apps (Options ▸ Separate Items on This Display) |
 | `[idle]` | when to dim, turn the screen off and sleep (each on battery and on AC), turn the keyboard backlight off, locking |
 | `[battery]` | the percentage beside the menu bar's battery symbol, slightly dim the display on battery |
