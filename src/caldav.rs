@@ -78,26 +78,38 @@ pub fn fetch(url: &str, user: &str, password: &str, now: i64) -> Result<String, 
 
 /// Each `<…:calendar-data>` in a multistatus reply, unescaped (or out of its CDATA).
 pub fn calendar_data(xml: &str) -> Vec<String> {
-    const TAG: &str = "calendar-data";
-    let mut out = Vec::new();
-    let mut rest = xml;
-    while let Some(at) = rest.find(TAG) {
-        // The tag from its `<` (a prefix like `C:` before the name) to its `>`.
-        let start = rest[..at].rfind('<').unwrap_or(0);
-        let Some(close) = rest[at..].find('>') else { break };
-        let open = &rest[start..at + close];
-        rest = &rest[at + close + 1..];
-        if open.starts_with("</") || open.ends_with('/') {
-            continue;
-        }
-        let Some(end) = rest.find(&format!("{TAG}>")) else { break };
-        let text = rest[..end].rfind("</").map_or("", |i| &rest[..i]).trim();
-        rest = &rest[end + TAG.len() + 1..];
-        out.push(match text.strip_prefix("<![CDATA[").and_then(|t| t.strip_suffix("]]>")) {
+    let texts = elements(xml, "calendar-data").into_iter().map(str::trim).filter(|t| !t.is_empty());
+    texts
+        .map(|text| match text.strip_prefix("<![CDATA[").and_then(|t| t.strip_suffix("]]>")) {
             // A `]]>` in the text splits it into two sections.
             Some(raw) => raw.replace("]]><![CDATA[", ""),
             None => unescape(text),
-        });
+        })
+        .collect()
+}
+
+/// What's inside each `<name>` element in `xml`, whatever its namespace prefix (`d:href`, `D:href`, `href`); empty
+/// for `<name/>`. Not nested in itself.
+fn elements<'a>(xml: &'a str, name: &str) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(lt) = rest.find('<') {
+        rest = &rest[lt + 1..];
+        let qname = &rest[..rest.find(|c: char| c.is_whitespace() || c == '/' || c == '>').unwrap_or(rest.len())];
+        if qname.rsplit(':').next() != Some(name) {
+            continue;
+        }
+        let Some(gt) = rest.find('>') else { break };
+        let empty = rest[..gt].ends_with('/');
+        rest = &rest[gt + 1..];
+        if empty {
+            out.push("");
+            continue;
+        }
+        let close = format!("</{qname}>");
+        let Some(end) = rest.find(&close) else { break };
+        out.push(&rest[..end]);
+        rest = &rest[end + close.len()..];
     }
     out
 }
