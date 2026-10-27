@@ -1,8 +1,9 @@
 //! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s; the power
 //! button (E6.5) asks Shut Down with Sleep and Restart beside it.
 //! Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. A frozen app asks
-//! Wait / Force Quit (E4.7). A permission alert (screen recording, input control, Thunderbolt) is kept as answered:
-//! Return never allows, and it ignores clicks and keys for its first `INPUT_DELAY`, so a press meant for an app can't.
+//! Wait / Force Quit (E4.7). A permission alert (screen recording, input control, Thunderbolt, Bluetooth's Pair?) is kept
+//! as answered: Return never allows, and it ignores clicks and keys for its first `INPUT_DELAY`, so a press meant for an
+//! app can't.
 //! Drawn by render/alert.rs, which keeps the button rects of the last frame.
 
 use std::time::{Duration, Instant};
@@ -209,7 +210,7 @@ impl Alert {
 
     /// Asks for a permission that is kept once given (`INPUT_DELAY`, and Return doesn't allow).
     pub fn consent(&self) -> bool {
-        matches!(self.kind, Kind::ScreenRecording { .. } | Kind::ControlInput { .. } | Kind::Thunderbolt(_))
+        matches!(self.kind, Kind::ScreenRecording { .. } | Kind::ControlInput { .. } | Kind::Thunderbolt(_) | Kind::Pair(Pairing { answer: true, .. }))
     }
 
     /// Whether a click or key may answer it, `shown` after it appeared.
@@ -358,12 +359,7 @@ impl State {
     /// BlueZ asks (`Some`) or gives up (`None`, which closes only a pairing alert).
     pub fn show_pairing(&mut self, pairing: Option<Pairing>) {
         match pairing {
-            Some(pairing) => {
-                self.close_alert();
-                self.popup = None;
-                self.alert = Some(Alert { kind: Kind::Pair(pairing), deadline: None });
-                self.schedule_redraw();
-            }
+            Some(pairing) => self.open_ask(Kind::Pair(pairing)),
             None if matches!(&self.alert, Some(Alert { kind: Kind::Pair(_) | Kind::Pin { .. }, .. })) => self.close_alert(),
             None => {}
         }
@@ -575,6 +571,9 @@ mod tests {
         let ask = Alert { kind: Kind::Thunderbolt(Accessory { uid: "u".into(), name: "Dock".into() }), deadline: None };
         assert!(ask.consent() && !ask.ready(Duration::ZERO) && !ask.ready(Duration::from_millis(499)));
         assert!(ask.ready(INPUT_DELAY));
+        let pair = |answer| Alert { kind: Kind::Pair(Pairing { device: "Keyboard".into(), code: None, answer }), deadline: None };
+        assert!(pair(true).consent() && !pair(true).ready(Duration::ZERO), "pairing is kept too");
+        assert!(!pair(false).consent(), "a code to type asks nothing");
         let power = Alert::power(Power::ShutDown, Instant::now());
         assert!(!power.consent() && power.ready(Duration::ZERO), "other alerts answer at once");
     }
