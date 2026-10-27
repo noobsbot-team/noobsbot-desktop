@@ -64,3 +64,12 @@ for distro in arch debian; do
     fi
     echo "install.sh ($distro): ok"
 done
+
+# A normal install takes only GitHub's latest release, which is never a beta: with no release yet (a 404) it finds
+# none, and it never reads the full list, which has the betas.
+pick=$(bash -c "$(sed -n '/^find_release()/,/^}/p' "$repo/install.sh")"'
+    curl() { printf "%s " "${!#}" >&2; case ${!#} in */latest) return 22 ;; *) echo "\"tag_name\": \"v1.0.1-beta.1\"" ;; esac; }
+    die() { echo none >&2; }
+    DESKTOP_REPO=o/r RELEASE_TAG=""; find_release' 2>&1)
+[ "$pick" = "https://api.github.com/repos/o/r/releases/latest none" ] || { echo "FAIL: a normal install took a beta: $pick"; exit 1; }
+echo "install.sh (release pick): ok"
