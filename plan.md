@@ -1996,8 +1996,8 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
     replace. We don't install Konsole, so those panels are hidden; "Open Terminal Here" opens noobsbot instead.
 - **Quake mode:** F12 (E2.8).
 - **Installed by:** `install.sh`, from its signed GitHub Release (or from source with `--from-source`); updated by
-  Software Update (E6.13). This needs the noobsbot-terminal repo to adopt the same release pipeline (release-plz +
-  signed tarballs) before M6.
+  Software Update (E6.13). This needs the noobsbot-terminal repo to adopt the same release pipeline (the version
+  workflow + signed tarballs) before M6.
 
 ## F2. Browser → **Helium** (default) — https://helium.computer
 - **Why:** owner requirement (R6, changed from Brave on 2026-10-18). Helium (by imput, GPL-3.0) is Chromium-based
@@ -2255,8 +2255,8 @@ custom-desktop-environemt/
   assets/          Phosphor symbols (SVG), noobsbot-desktop logo
   data/            config.toml (commented defaults) · helium-browser-flags.conf · wallpapers/ · system/ (mirrors `/`: greetd config, pam.d/noobsbot-desktop, portals.conf, UPower.conf.d drop-in, wayland-sessions .desktop, session target, polkit action)
   themes/          Noobsbot Glass Kvantum + colour scheme + GTK (GPL-3.0, generated from theme.rs)
-  install.sh  LICENSE (MIT)  CHANGELOG.md (generated)  release-plz.toml
-  .github/workflows/  ci.yml (fmt, clippy, tests) · release-plz.yml (version PR + tag) · release.yml (build, sign, publish)
+  install.sh  LICENSE (MIT)  VERSIONING.md  CHANGELOG.md (up to 1.0.0-beta.1)
+  .github/workflows/  ci.yml (fmt, clippy, tests) · version.yml (version + tag, with set-version.sh) · release.yml (build, sign, publish)
 ```
 
 ## J2. Rust crates and why
@@ -2299,7 +2299,7 @@ Rule: **a crate is added only when its feature is built.**
 | Safety net | Ctrl+Alt+F3 → text console | M6+ |
 | **Spikes** | three pass/fail experiments in the first coding week: (a) the nested compositor runs Helium + Dolphin + the portal file picker with the portals.conf; (b) Dolphin translucent through Kvantum on Wayland (E2.9); (c) a GTK3 dialog takes our title bar through `kde-server-decoration` (E1.3). A failed spike updates the plan before M1 continues | first week |
 | Lints + CI | `cargo clippy -D warnings`, with `unwrap_used` / `expect_used` / `panic` denied in `src/shell` and `src/ui`; GitHub Actions runs fmt, clippy and tests on every push | every commit |
-| Release pipeline | a `feat:` commit on a test branch → release PR → tag → signed tarball; a VM on the previous version updates and a broken build rolls back (E6.13) | M6 |
+| Release pipeline | a `feat:` commit → the version workflow → tag → signed tarball; a VM on the previous version updates and a broken build rolls back (E6.13) | M6 |
 | Latency + resize | 240 fps camera drag test; slow-app resize anchoring; screen-size matrix from D13 (720p … 4K @ 200%, portrait) checked in mockups and real runs | M1, every milestone |
 | Robustness | fuzzing client (garbage / out-of-order requests); `kill -STOP` on NetworkManager and BlueZ while using the desktop; 20 × suspend/resume; unplug all monitors; broken `config.toml`; `heaptrack` + 24 h soak (RSS flat) | M1 (fuzz, config), M6 (rest) |
 | VM | QEMU with `virtio-gpu` + virgl for the GPU path **and** without it for the software fallback (llvmpipe) | M6 |
