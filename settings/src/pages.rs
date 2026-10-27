@@ -1262,7 +1262,7 @@ fn settings_of<'a>(app: &'a App, filter: impl Fn(&Setting) -> bool) -> Vec<(&'st
 /// the city, or a CalDAV account's.
 fn list_rows<'a>(app: &'a App, key: &'static str, add: Option<&'static str>) -> Vec<Element<'a, Message>> {
     let t = app.tokens;
-    let items = app.config.get(key).and_then(toml_edit::Value::as_array).map(|a| a.iter().collect()).unwrap_or(Vec::new());
+    let items = app.config.get(key).and_then(toml_edit::Value::as_array).map(|a| a.iter().collect::<Vec<_>>()).unwrap_or_default();
     let mut rows: Vec<Element<'a, Message>> = items
         .iter()
         .enumerate()
