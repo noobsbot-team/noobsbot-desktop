@@ -1128,7 +1128,7 @@ pub struct Sound {
     pub alert: String,
     /// The alert sound's volume, 0 … 100 percent.
     pub alert_volume: u8,
-    /// Screenshots, emptying the Trash and the volume keys make their sounds.
+    /// Screenshots and the volume keys make their sounds.
     pub ui_sounds: bool,
     /// A sound as the session starts (once per login).
     pub startup_sound: bool,

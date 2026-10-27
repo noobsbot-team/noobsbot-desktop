@@ -30,7 +30,7 @@ const BUTTON_H: i32 = 28;
 const BUTTON_GAP: i32 = 8;
 const RADIUS: f64 = 12.0;
 const FIELD_H: i32 = 22;
-/// Room for the longest questions ("…shut down your computer now?", Empty Trash's) at the default text size.
+/// Room for the longest questions ("…shut down your computer now?") at the default text size.
 const TITLE_LINES: u8 = 3;
 const BODY_LINE: i32 = 16;
 /// The checkbox, and the gap between it and its label.
@@ -182,9 +182,7 @@ impl AlertSheet {
                 Kind::ScreenRecording { .. } => symbols.get(Symbol::Record, Weight::Regular, ICON as u16, scale, label),
                 Kind::ControlInput { .. } => symbols.get(Symbol::Keyboard, Weight::Regular, ICON as u16, scale, label),
                 Kind::Thunderbolt(_) => symbols.get(Symbol::Lightning, Weight::Regular, ICON as u16, scale, label),
-                Kind::Power(_) | Kind::PowerButton | Kind::NotResponding { .. } | Kind::EmptyTrash => {
-                    symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label)
-                }
+                Kind::Power(_) | Kind::PowerButton | Kind::NotResponding { .. } => symbols.get(Symbol::Logo, Weight::Regular, ICON as u16, scale, label),
             },
             title,
             words,

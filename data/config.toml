@@ -313,7 +313,7 @@ dim_on_battery = true
 alert = "bell"
 # The alert sound's volume, 0-100 (percent of the output volume). User interface sounds stay at full volume.
 alert_volume = 100
-# Play user interface sound effects: taking a screenshot, emptying the Trash, the volume keys.
+# Play user interface sound effects: taking a screenshot, the volume keys.
 ui_sounds = true
 # Play a sound at login ("desktop-login" from a sound theme, else "service-login"); not again when the desktop restarts.
 startup_sound = false
