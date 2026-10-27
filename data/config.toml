@@ -364,9 +364,8 @@ files = ["~/.local/share/noobsbot-desktop/calendars/*.ics"]
 caldav = []
 
 [update]
-# "stable", or "beta" to also get pre-releases (1.1.0-beta.2; Stable gets them too until 1.0.0, the first stable
-# release, is out). Updates download in the background, are checked against the release signature, and install with
-# "Restart to Update" (asks for the admin password).
+# "stable" for releases only, or "beta" to also get betas (1.0.1-beta.2). Updates download in the background, are
+# checked against the release signature, and install with "Restart to Update" (asks for the admin password).
 channel = "stable"
 # Install a downloaded, verified update at the next login without asking for the admin password (admins only; the
 # helper checks the release signature itself, and this only installs a newer signed release, never a pre-release or a
