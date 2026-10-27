@@ -170,8 +170,11 @@ impl canvas::Program<Message> for Arrangement<'_> {
             let face = Path::rounded_rectangle(Point::new(rect.x + 1.0, rect.y + 1.0), Size::new(rect.width - 2.0, rect.height - 2.0), 6.0.into());
             let fill = if t.dark { Color::from_rgb8(0x3A, 0x5A, 0x8C) } else { Color::from_rgb8(0x8F, 0xB8, 0xE8) };
             frame.fill(&face, fill);
+            // Inside the face: the renderer repaints only a stroke's path bounds, so a ring centred on the face's edge
+            // left its outer half behind when the selection moved.
             if selected {
-                frame.stroke(&face, Stroke::default().with_color(t.accent).with_width(2.5));
+                let ring = Path::rounded_rectangle(Point::new(rect.x + 2.5, rect.y + 2.5), Size::new(rect.width - 5.0, rect.height - 5.0), 4.5.into());
+                frame.stroke(&ring, Stroke::default().with_color(t.accent).with_width(2.5));
             }
             // The primary one has the menu bar: a white strip along its top.
             if d.primary {
