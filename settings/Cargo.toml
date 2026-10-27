@@ -19,6 +19,8 @@ zune-jpeg = "0.5.15"
 zbus = "5.19.0"
 futures-lite = "2.6.1"
 notify = "8.2.0"
+# Sound's `pactl subscribe` dies with the app (PR_SET_PDEATHSIG), as the desktop's `pw-dump` does.
+libc = "0.2.191"
 # displays.json, which the desktop writes (src/display_info.rs, shared).
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.140"

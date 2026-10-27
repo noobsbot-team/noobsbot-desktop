@@ -1,6 +1,6 @@
 //! What the system pages show: NetworkManager, BlueZ, UPower and power-profiles-daemon over D-Bus, PipeWire through `wpctl` (the desktop's own
-//! paths, `src/services/`), and the About facts from `/proc`, `/sys` and `/etc`. Read once when a page opens.
-//! ponytail: no change signals; the page re-reads after its own changes, a live follow if that falls short.
+//! paths, `src/services/`), and the About facts from `/proc`, `/sys` and `/etc`. Read once when a page opens, and
+//! again after the page's own changes; Sound also follows changes made elsewhere (`sound_changes`).
 
 use std::{collections::HashMap, os::unix::net::UnixStream, process::Command, time::Duration};
 
@@ -638,6 +638,66 @@ pub fn level() -> impl iced::futures::Stream<Item = f32> {
     })
 }
 
+/// While Sound shows: `()` once a burst of output or input changes (volume, mute, balance, plugging, the default
+/// device), made here or anywhere else (keys, the Control Center, other apps), has been quiet for 100 ms. `pactl
+/// subscribe` is ended with the subscription, or with the app; without `pactl` nothing comes.
+pub fn sound_changes() -> impl iced::futures::Stream<Item = ()> {
+    iced::stream::channel(1, async |tx: iced::futures::channel::mpsc::Sender<()>| {
+        use std::{io::BufRead, os::unix::process::CommandExt};
+        let mut command = Command::new("pactl");
+        command.arg("subscribe").stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+        // SAFETY: prctl is async-signal-safe. An idle `pactl subscribe` writes nothing, so it would outlive a killed
+        // app until the next change; the death signal ends it with this (pool) thread, which lives as long as the app.
+        unsafe {
+            command.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                Ok(())
+            });
+        }
+        let Ok(mut child) = command.spawn() else { return std::future::pending().await };
+        let stdout = child.stdout.take().expect("piped");
+        let (events, rx) = std::sync::mpsc::channel();
+        let mut sender = tx.clone();
+        // Both threads end when the child does: its output closes, then `events`.
+        let spawned = std::thread::Builder::new().name("sound-changes".into()).spawn(move || {
+            for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+                if sound_event(&line) && events.send(()).is_err() {
+                    return;
+                }
+            }
+        });
+        let debounce = std::thread::Builder::new().name("sound-debounce".into()).spawn(move || {
+            while rx.recv().is_ok() {
+                while rx.recv_timeout(Duration::from_millis(100)).is_ok() {}
+                let _ = sender.try_send(());
+            }
+        });
+        if let Some(err) = spawned.err().or(debounce.err()) {
+            eprintln!("sound changes: {err}");
+        }
+        // Killed and reaped when the subscription drops this future.
+        let _child = Ended(child);
+        std::future::pending::<()>().await;
+        drop(tx);
+    })
+}
+
+/// A child process, killed and reaped when this is dropped.
+struct Ended(std::process::Child);
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// A `pactl subscribe` line about an output, an input, the defaults or a card; not an app's stream or a client
+/// (every `wpctl` and `pactl` run is one, re-reads included).
+fn sound_event(line: &str) -> bool {
+    line.split_once(" on ").is_some_and(|(_, what)| ["sink #", "source #", "server", "card #"].iter().any(|w| what.starts_with(w)))
+}
+
 /// The peak of `samples` on a 60 dB scale: -60 dBFS and below is 0, full scale is 1.
 pub fn meter(samples: impl Iterator<Item = i16>) -> f32 {
     let peak = samples.map(i16::unsigned_abs).max().unwrap_or(0);
@@ -847,6 +907,18 @@ mod tests {
         assert_eq!(meter([12, i16::MIN, 5].into_iter()), 1.0);
         // -20 dBFS: two thirds up.
         assert!((meter([3277].into_iter()) - 2.0 / 3.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn sound_events_skip_clients_and_streams() {
+        assert!(sound_event("Event 'change' on sink #56"));
+        assert!(sound_event("Event 'new' on source #57"));
+        assert!(sound_event("Event 'change' on server #4294967295"));
+        assert!(sound_event("Event 'change' on card #42"));
+        assert!(!sound_event("Event 'new' on client #1048"));
+        assert!(!sound_event("Event 'change' on sink-input #90"));
+        assert!(!sound_event("Event 'remove' on source-output #91"));
+        assert!(!sound_event("Got SIGINT, exiting."));
     }
 
     #[test]
