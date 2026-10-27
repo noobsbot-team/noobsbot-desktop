@@ -1691,19 +1691,36 @@ pub fn save_edit(edit: impl FnOnce(&str) -> String) -> bool {
 
 type Edit = Box<dyn FnOnce(&str) -> String + Send>;
 
+/// What the `config-save` thread is sent: an edit, or a flush (write what is queued now, then answer).
+enum Save {
+    Edit(PathBuf, Edit),
+    Flush(mpsc::Sender<()>),
+}
+
+static QUEUE: OnceLock<Mutex<mpsc::Sender<Save>>> = OnceLock::new();
+
 /// Rewrites `path` with `edit(current text)` on the `config-save` thread, so a save (a sync and two renames, tens of
 /// ms on a slow disk) never stalls a frame. Edits of one file within `DEBOUNCE` of each other are applied in order
 /// and written once: Ctrl+scrolling the dock's icon size saves at the end, not per notch. A missing file reads as "".
-// ponytail: an edit queued in the last 300 ms before exit is lost; flush on quit if that ever matters.
+/// Quitting calls `flush`, so the last edits are kept.
 pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'static) {
-    static QUEUE: OnceLock<Mutex<mpsc::Sender<(PathBuf, Edit)>>> = OnceLock::new();
     let queue = QUEUE.get_or_init(|| {
-        let (tx, rx) = mpsc::channel::<(PathBuf, Edit)>();
+        let (tx, rx) = mpsc::channel::<Save>();
         let spawned = std::thread::Builder::new().name("config-save".into()).spawn(move || {
             while let Ok(first) = rx.recv() {
-                let mut edits = vec![first];
-                while let Ok(next) = rx.recv_timeout(DEBOUNCE) {
-                    edits.push(next);
+                let (mut edits, mut flushed) = (Vec::new(), None);
+                let mut next = Ok(first);
+                while let Ok(save) = next {
+                    next = match save {
+                        Save::Edit(path, edit) => {
+                            edits.push((path, edit));
+                            rx.recv_timeout(DEBOUNCE)
+                        }
+                        Save::Flush(done) => {
+                            flushed = Some(done);
+                            Err(mpsc::RecvTimeoutError::Timeout)
+                        }
+                    };
                 }
                 let mut files: Vec<(PathBuf, Vec<Edit>)> = Vec::new();
                 for (path, edit) in edits {
@@ -1721,6 +1738,9 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
                         tracing::warn!("{}: {err}", path.display());
                     }
                 }
+                if let Some(done) = flushed {
+                    let _ = done.send(());
+                }
             }
         });
         if let Err(err) = spawned {
@@ -1729,12 +1749,24 @@ pub fn save_later(path: PathBuf, edit: impl FnOnce(&str) -> String + Send + 'sta
         Mutex::new(tx)
     });
     let edit: Edit = Box::new(edit);
-    if let Err(mpsc::SendError((path, edit))) = queue.lock().unwrap_or_else(|e| e.into_inner()).send((path, edit)) {
+    if let Err(mpsc::SendError(Save::Edit(path, edit))) = queue.lock().unwrap_or_else(|e| e.into_inner()).send(Save::Edit(path, edit)) {
         // The thread never started: do it here rather than lose the save.
         let text = fs::read_to_string(&path).unwrap_or_default();
         if let Err(err) = save_atomic(&path, &edit(&text)) {
             tracing::warn!("{}: {err}", path.display());
         }
+    }
+}
+
+/// Writes the edits `save_later` still holds back and waits for them, 2 s at most (a hung disk must not keep the
+/// desktop from quitting). Called on the way out: log out, restart, shut down, the nested window closed.
+// ponytail: the desktop handles no signals, so a SIGTERM from outside (a shutdown not started from its menus) still
+// ends it without a flush; a calloop signal source calling this if that loses settings.
+pub fn flush() {
+    let Some(queue) = QUEUE.get() else { return };
+    let (tx, rx) = mpsc::channel();
+    if queue.lock().unwrap_or_else(|e| e.into_inner()).send(Save::Flush(tx)).is_ok() {
+        let _ = rx.recv_timeout(Duration::from_secs(2));
     }
 }
 
@@ -2080,6 +2112,17 @@ mod tests {
         }
         assert_eq!(fs::read_to_string(&path).unwrap(), "[dock]\nicon_size = 48\n", "the second edit saw the first");
         assert_eq!(fs::read_to_string(dir.join("other.txt")).unwrap(), "other\n");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn flush_writes_at_once() {
+        let dir = temp_dir("flush");
+        let path = dir.join("config.toml");
+        save_later(path.clone(), |_| "x = 1\n".into());
+        flush();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "x = 1\n", "written without waiting out the debounce");
+        flush();
         fs::remove_dir_all(dir).unwrap();
     }
 
