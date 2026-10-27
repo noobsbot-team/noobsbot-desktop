@@ -27,6 +27,8 @@ RELEASE_TAG=${NOOBSBOT_DESKTOP_RELEASE:-}
 # xwayland-satellite v0.8.3, which scripts/build-xwayland-satellite.sh patches, and the WhiteSur themes (Debian has
 # no packages of them), by commit (the icons by tag).
 XWS_REV=b83eab900644e4c7c77982ce3d44cb490f0c5e1d
+# paru (the AUR helper on Arch) by its AUR repo's commit: that PKGBUILD is built and installed with --noconfirm.
+PARU_REV=329be2113c590046cb29858c23d9b96a8d7bd586
 WHITESUR_ICONS=2026-09-10
 WHITESUR_CURSORS=e190baf618ed95ee217d2fd45589bd309b37672b
 WHITESUR_GTK=d5782652d412137e26fb8ff55b55a5572e4c6995
@@ -526,8 +528,13 @@ iface lo inet loopback"
 install_aur() {
     if ! has paru; then
         say "Building the AUR helper (paru)"
-        if [[ -d $CACHE/paru/.git ]]; then run git -C "$CACHE/paru" pull --ff-only
-        else run git clone --depth 1 https://aur.archlinux.org/paru.git "$CACHE/paru"; fi
+        # A whole clone (the repo is tiny), made again when the cached one (shallow, from older runs) lacks the commit.
+        if ! [[ -d $CACHE/paru/.git ]] || ! git -C "$CACHE/paru" cat-file -e "$PARU_REV^{commit}" 2>/dev/null; then
+            run rm -rf "$CACHE/paru"
+            run git clone -q https://aur.archlinux.org/paru.git "$CACHE/paru"
+        fi
+        run git -C "$CACHE/paru" checkout -q --detach "$PARU_REV" ||
+            die "paru's AUR repo has no commit $PARU_REV; install paru yourself, then run ./install.sh again."
         run bash -c 'cd "$1" && makepkg -si --needed --noconfirm' _ "$CACHE/paru"
     fi
     local aur=(whitesur-icon-theme whitesur-cursor-theme-git whitesur-gtk-theme-git kvantum-theme-whitesur-git)
