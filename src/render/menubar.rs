@@ -30,17 +30,17 @@ use crate::{
 
 /// D: the bar's height in logical px at text size 1; windows stay below it.
 const HEIGHT: i32 = 30;
-const EDGE: i32 = 14;
+const EDGE: i32 = 18;
 /// Between right-side items (E2.2); this, `TIGHT`, `APP_WIDTH` and `MIN_APP` grow with the text size.
-const GAP: i32 = 12;
-const LOGO_GAP: i32 = 18;
+const GAP: i32 = 16;
+const LOGO_GAP: i32 = 22;
 /// Between a battery's percentage and its symbol.
-const TIGHT: i32 = 4;
+const TIGHT: i32 = 5;
 /// Symbols, the logo and tray icons, square.
 const SYMBOL: u16 = 20;
 /// The app's name is ellipsised past this, and dropped when less than `MIN_APP` is free.
-const APP_WIDTH: i32 = 300;
-const MIN_APP: i32 = 40;
+const APP_WIDTH: i32 = 375;
+const MIN_APP: i32 = 50;
 /// Body a step up (13 / 16 → 16 / 20) for the taller bar; its labels are this, or this at 600.
 const BODY: Style = Style { size: 16, line_height: 20, ..ui::BODY };
 /// The Space dots' size and the step from one to the next.
@@ -247,7 +247,7 @@ impl MenuBar {
     /// The pressed pill behind `item`: rounded, a little inside the bar's height. Menus line up with it.
     pub fn pill(&self, item: BarItem) -> Option<Rect> {
         let (_, area) = self.hits.iter().find(|(i, _)| *i == item)?;
-        Some(Rectangle::new((area.loc.x + ts(GAP) / 2 - 6, 3).into(), (area.size.w - ts(GAP) + 12, height() - 6).into()))
+        Some(Rectangle::new((area.loc.x + ts(GAP) / 2 - 8, 3).into(), (area.size.w - ts(GAP) + 16, height() - 6).into()))
     }
 
     /// How many tray icons, from the first, didn't fit and are in the "»" menu.
@@ -504,14 +504,14 @@ mod tests {
 
     #[test]
     fn the_app_name_gives_way_to_the_right_group() {
-        // 1280 wide with a usual right group: the full 300 px name fits.
-        assert!(app_room(1280, 16, 400) >= APP_WIDTH);
+        // 1280 wide with a usual right group: the full 375 px name fits.
+        assert!(app_room(1280, 20, 400) >= APP_WIDTH);
         // 1024 wide with tray icons, a battery and a long clock: ellipsised to what is left, still clear of the group.
-        let room = app_room(1024, 16, 700);
+        let room = app_room(1024, 20, 700);
         assert!((MIN_APP..APP_WIDTH).contains(&room));
-        assert_eq!(EDGE + 16 + LOGO_GAP + room + GAP, 1024 - EDGE - 700);
+        assert_eq!(EDGE + 20 + LOGO_GAP + room + GAP, 1024 - EDGE - 700);
         // Portrait: the right group leaves nothing worth showing, so the name goes.
-        assert!(app_room(600, 16, 540) < MIN_APP);
+        assert!(app_room(600, 20, 540) < MIN_APP);
     }
 
     #[test]
@@ -525,15 +525,15 @@ mod tests {
 
     #[test]
     fn tray_icons_overflow_from_the_left() {
-        let tray = [16, 16, 16, 16];
+        let tray = [20, 20, 20, 20];
         // Room for all: none hidden.
-        assert_eq!(tray_overflow(1280, 16, 400, &tray, 10), 0);
+        assert_eq!(tray_overflow(1280, 20, 400, &tray, 10), 0);
         // Tight: just enough go that the name keeps its minimum beside the "»".
-        let fixed = 1024 - 2 * EDGE - 16 - LOGO_GAP - GAP - MIN_APP - (10 + GAP) - 2 * (16 + GAP);
-        assert_eq!(tray_overflow(1024, 16, fixed, &tray, 10), 2);
+        let fixed = 1024 - 2 * EDGE - 20 - LOGO_GAP - GAP - MIN_APP - (10 + GAP) - 2 * (20 + GAP);
+        assert_eq!(tray_overflow(1024, 20, fixed, &tray, 10), 2);
         // Nothing fits even with every icon gone: all of them are in the menu.
-        assert_eq!(tray_overflow(600, 16, 700, &tray, 10), 4);
-        assert_eq!(tray_overflow(600, 16, 700, &[], 10), 0);
+        assert_eq!(tray_overflow(600, 20, 700, &tray, 10), 4);
+        assert_eq!(tray_overflow(600, 20, 700, &[], 10), 0);
     }
 
     #[test]
@@ -548,9 +548,9 @@ mod tests {
             assert_eq!(below(area), Rectangle::new((0, 45).into(), (1280, 755).into()));
             assert!(reveals(true, 40.0), "the whole taller bar keeps it shown");
             // Items space out and the app's name keeps a wider minimum.
-            assert_eq!(app_room(1280, 16, 400), 1280 - 2 * EDGE - 16 - LOGO_GAP - 18 - 400);
+            assert_eq!(app_room(1280, 20, 400), 1280 - 2 * EDGE - 20 - LOGO_GAP - 24 - 400);
             let tray = [24; 4];
-            let fixed = 1024 - 2 * EDGE - 24 - LOGO_GAP - 18 - 60 - (15 + 18) - 2 * (24 + 18);
+            let fixed = 1024 - 2 * EDGE - 24 - LOGO_GAP - 24 - 75 - (15 + 24) - 2 * (24 + 24);
             assert_eq!(tray_overflow(1024, 24, fixed, &tray, 15), 2);
         });
     }
