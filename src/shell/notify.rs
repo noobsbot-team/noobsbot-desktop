@@ -1,7 +1,7 @@
 //! Notification banners (E4.1) and Notification Center (E4.2): the store the server feeds, banner timers, where each
 //! card and button sits, and what clicks, hovers and swipes do. Drawn by render/notify.rs from the same layouts.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use smithay::{
     reexports::calloop::{
@@ -51,8 +51,8 @@ pub const WIDGET_H: i32 = WEATHER_H;
 /// Up Next: its title, then rows of a title and a time line.
 const UP_NEXT_TOP: i32 = 36;
 const UP_NEXT_ROW: i32 = 40;
-/// A horizontal swipe this long dismisses a banner.
-const SWIPE: f64 = 80.0;
+/// A dismissed banner springs this far right: past the screen edge with its shadow.
+const OFF: f64 = (BANNER_W + BANNER_RIGHT + 24) as f64;
 
 /// Notification body text (Part D Body), measured when one arrives so layouts stay pure.
 pub const BODY: Style = Style { size: 13, line_height: 16, weight: 400, color: [0, 0, 0, 255], tabular: false };
@@ -73,7 +73,61 @@ pub struct Store {
     pub expanded: Option<String>,
     /// Notification Center's scroll offset, px.
     pub scroll: i32,
-    swipe: f64,
+    swipe: Option<Swipe>,
+}
+
+/// A banner following two fingers sideways, then springing off or back once they lift.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Swipe {
+    id: u32,
+    /// Finger travel, px, and its smoothed speed, px per ms, at libinput time `last`.
+    dx: f64,
+    v: f64,
+    last: u32,
+    /// When the fingers lifted, and whether it goes.
+    released: Option<(Instant, bool)>,
+}
+
+impl Swipe {
+    /// How far right of its place the banner is drawn at `now`.
+    fn offset(&self, now: Instant) -> f64 {
+        let from = swipe_offset(self.dx);
+        match self.released {
+            None => from,
+            Some((t0, gone)) => fling(from, self.speed(), gone, now.saturating_duration_since(t0).as_secs_f64()),
+        }
+    }
+
+    /// The speed it is let go with: none out of the rubber band.
+    fn speed(&self) -> f64 {
+        if self.dx > 0.0 { self.v } else { 0.0 }
+    }
+}
+
+/// Where a banner swiped `dx` is drawn: right 1:1 with the fingers, left only as a rubber band.
+fn swipe_offset(dx: f64) -> f64 {
+    let w = f64::from(BANNER_W);
+    if dx >= 0.0 { dx } else { crate::gestures::rubber(dx / w) * w }
+}
+
+/// Let go `dx` along at `v` px per ms: it goes when far enough right, or flicked right (as a touchpad gesture).
+fn swipe_dismisses(dx: f64, v: f64) -> bool {
+    dx > 0.0 && crate::gestures::commits(dx, f64::from(BANNER_W), v)
+}
+
+/// Let go `from` px right of its place moving `v` px per ms: its offset `t` s later, springing (`gesture`) off to
+/// `OFF` when it `gone`, else back to 0.
+fn fling(from: f64, v: f64, gone: bool, t: f64) -> f64 {
+    let to = if gone { OFF } else { 0.0 };
+    to + crate::anim::GESTURE.release(from - to, v * 1000.0, t)
+}
+
+/// How long a fling plays: until it is out of sight, or settled back.
+fn fling_time(from: f64, v: f64, gone: bool) -> Duration {
+    let to = if gone { OFF } else { 0.0 };
+    let settle = crate::anim::GESTURE.settle_release((from - to) / OFF, v * 1000.0 / OFF);
+    let out = (0..settle.as_millis() as u64).find(|ms| gone && fling(from, v, true, *ms as f64 / 1000.0) >= OFF - 1.0);
+    out.map_or(settle, Duration::from_millis)
 }
 
 impl Store {
@@ -150,6 +204,17 @@ pub struct Card {
     pub close: Option<Rect>,
     /// Action buttons, while hovered: (rect, key).
     pub actions: Vec<(Rect, String)>,
+}
+
+impl Card {
+    /// Moved `dx` px right, buttons and all.
+    fn shift(&mut self, dx: i32) {
+        let rects = [&mut self.rect, &mut self.icon, &mut self.app, &mut self.time, &mut self.title, &mut self.body];
+        let more = self.progress.iter_mut().chain(self.close.iter_mut()).chain(self.actions.iter_mut().map(|(r, _)| r));
+        for r in rects.into_iter().chain(more) {
+            r.loc.x += dx;
+        }
+    }
 }
 
 /// A card for `n` at (`x`, `y`), `w` wide; hovered, it shows the ✕ (when `close`) and its buttons.
@@ -458,7 +523,14 @@ impl State {
         if self.center_open() {
             return (Vec::new(), None);
         }
-        banners(&self.notifications, self.first_geometry().map_or(0, |g| g.size.w), self.osd.is_some(), self.previews())
+        let (mut cards, more) = banners(&self.notifications, self.first_geometry().map_or(0, |g| g.size.w), self.osd.is_some(), self.previews());
+        // Reduce motion: it stays put, and goes or stays when the fingers lift.
+        if let Some(s) = self.notifications.swipe.filter(|_| !self.config.appearance.reduce_motion)
+            && let Some(card) = cards.iter_mut().find(|c| c.id == s.id)
+        {
+            card.shift(s.offset(self.frame_time).round() as i32);
+        }
+        (cards, more)
     }
 
     /// Laptop battery, then Bluetooth devices that report one, then UPower's other peripherals: (name, percent).
@@ -757,7 +829,9 @@ impl State {
             return;
         }
         self.notifications.hovered = hovered;
-        self.notifications.swipe = 0.0;
+        if let Some(s) = self.notifications.swipe.filter(|s| s.released.is_none()) {
+            self.banner_let_go(s.last, Some(false));
+        }
         if let Some(id) = old.filter(|id| self.notifications.banners.contains(id)) {
             self.arm(id);
         }
@@ -767,8 +841,9 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// A scroll at `location`: scrolls Notification Center, or swipes a banner away. `true`: the shell took it.
-    pub fn notify_scroll(&mut self, location: Point<f64, Logical>, dx: f64, dy: f64) -> bool {
+    /// A scroll at `location`: scrolls Notification Center, or swipes a banner away (`finger`: on a touchpad, at
+    /// libinput `time`, `lifted` when the fingers left it). `true`: the shell took it.
+    pub fn notify_scroll(&mut self, location: Point<f64, Logical>, dx: f64, dy: f64, finger: bool, lifted: bool, time: u32) -> bool {
         if let Some(center) = self.center_layout() {
             if !center.rect.to_f64().contains(self.to_popup(location)) {
                 return false;
@@ -781,15 +856,81 @@ impl State {
             }
             return true;
         }
-        let Some(id) = self.notifications.hovered.filter(|id| self.notifications.banners.contains(id)) else { return false };
-        // ponytail: dismissed at the threshold, without following the finger; that comes with the spring module.
-        self.notifications.swipe += dx;
-        if self.notifications.swipe.abs() > SWIPE {
-            self.notifications.swipe = 0.0;
-            self.notifications.hovered = None;
-            self.close_notification(id, Reason::Dismissed);
+        let tracking = self.notifications.swipe.filter(|s| s.released.is_none());
+        if lifted && tracking.is_some() {
+            self.banner_let_go(time, None);
+            return true;
         }
+        let Some(id) = self.notifications.hovered.filter(|id| self.notifications.banners.contains(id)) else { return false };
+        if dx == 0.0 {
+            return true;
+        }
+        // A wheel tilted right flicks it away.
+        if !finger {
+            if dx > 0.0 {
+                self.banner_swipe_start(id, time);
+                self.banner_let_go(time, Some(true));
+            }
+            return true;
+        }
+        if tracking.is_none_or(|s| s.id != id) {
+            self.banner_swipe_start(id, time);
+        }
+        if let Some(s) = self.notifications.swipe.as_mut() {
+            // Smoothed like a touchpad gesture's (gestures::Tracker).
+            let dt = f64::from(time.wrapping_sub(s.last).max(1));
+            (s.v, s.dx, s.last) = ((s.v + dx / dt) / 2.0, s.dx + dx, time);
+        }
+        self.schedule_redraw();
         true
+    }
+
+    /// A new swipe on banner `id`; one still flying off goes now.
+    fn banner_swipe_start(&mut self, id: u32, time: u32) {
+        if let Some(old) = self.notifications.swipe.take().filter(|s| s.released.is_some_and(|(_, gone)| gone)) {
+            self.close_notification(old.id, Reason::Dismissed);
+        }
+        self.notifications.swipe = Some(Swipe { id, dx: 0.0, v: 0.0, last: time, released: None });
+    }
+
+    /// The fingers lifted at libinput `time`: far or fast enough right (or `go` says so), it springs off and is
+    /// dismissed; else it springs back. Reduce motion: it goes or stays at once.
+    fn banner_let_go(&mut self, time: u32, go: Option<bool>) {
+        let Some(mut s) = self.notifications.swipe.take() else { return };
+        if time.wrapping_sub(s.last) > 50 {
+            s.v = 0.0;
+        }
+        let gone = go.unwrap_or_else(|| swipe_dismisses(s.dx, s.v));
+        if self.config.appearance.reduce_motion {
+            if gone {
+                self.close_notification(s.id, Reason::Dismissed);
+            }
+            self.schedule_redraw();
+            return;
+        }
+        let now = Instant::now();
+        s.released = Some((now, gone));
+        self.notifications.swipe = Some(s);
+        if gone {
+            self.notifications.hovered = None;
+            self.disarm(s.id);
+        }
+        let time = fling_time(swipe_offset(s.dx), s.speed(), gone);
+        crate::anim::extend(&mut self.anim_until, now + time);
+        self.schedule_redraw();
+        let timer = self.loop_handle.insert_source(Timer::from_duration(time), move |_, _, state| {
+            if state.notifications.swipe == Some(s) {
+                state.notifications.swipe = None;
+                if gone {
+                    state.close_notification(s.id, Reason::Dismissed);
+                }
+                state.schedule_redraw();
+            }
+            TimeoutAction::Drop
+        });
+        if let Err(err) = timer {
+            tracing::warn!("banner swipe timer: {err}");
+        }
     }
 
     /// Whether `location` is on a banner.
@@ -868,6 +1009,23 @@ mod tests {
         let (shown, hidden) = (card(&n, 0, 0, BANNER_W, false, false, true), card(&n, 0, 0, BANNER_W, false, false, false));
         assert!(shown.preview && shown.body.size.h > 0);
         assert!(!hidden.preview && hidden.body.size.h == 0 && hidden.rect.size.h < shown.rect.size.h);
+    }
+
+    #[test]
+    fn banners_follow_the_fingers_and_spring_off_or_back() {
+        // Right 1:1; left a rubber band that never gives more than a tenth of the banner.
+        assert_eq!(swipe_offset(60.0), 60.0);
+        assert!(swipe_offset(-30.0) < 0.0 && swipe_offset(-30.0) > -30.0);
+        assert!(swipe_offset(-10_000.0) > -f64::from(BANNER_W) / 10.0);
+        // Far enough right, or flicked right, goes; slow, short, left or heading back stays.
+        assert!(swipe_dismisses(150.0, 0.0) && swipe_dismisses(40.0, 1.0));
+        assert!(!swipe_dismisses(60.0, 0.0) && !swipe_dismisses(-150.0, -1.0) && !swipe_dismisses(150.0, -0.5));
+        // Springs start where let go, and end off-screen or back in place.
+        assert_eq!(fling(120.0, 0.5, true, 0.0), 120.0);
+        let out = fling_time(120.0, 0.5, true);
+        assert!(out < Duration::from_millis(600) && fling(120.0, 0.5, true, out.as_secs_f64()) >= OFF - 1.0, "{out:?}");
+        let back = fling_time(50.0, 0.0, false);
+        assert!(fling(50.0, 0.0, false, back.as_secs_f64()).abs() < 1.0);
     }
 
     #[test]
