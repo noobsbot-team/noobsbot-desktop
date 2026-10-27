@@ -33,6 +33,12 @@ pub fn fit_in(rect: Rect, from: Rect, to: Rect) -> Rect {
     Rect::new((x, y).into(), size)
 }
 
+/// A window's `frame`, last drawn at size `old`: where it goes when growing took it out of `area` (shrunk to fit,
+/// moved inside). `None` while inside, or when it was partly outside already (moved there by hand).
+pub fn grown_out(area: Rect, frame: Rect, old: Size<i32, Logical>) -> Option<Rect> {
+    (!area.contains_rect(frame) && area.contains_rect(Rect::new(frame.loc, old))).then(|| fit_in(frame, area, area))
+}
+
 /// Moves the span `start..start + len` so whichever end is nearest an edge (within SNAP_DISTANCE) sits on it.
 pub fn stick(start: i32, len: i32, edges: &[i32]) -> i32 {
     let mut best: Option<i32> = None;
@@ -337,6 +343,16 @@ pub fn format_frames(frames: &[(String, String, Rect)]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_window_growing_off_its_area_comes_back_inside() {
+        let r = |x, y, w, h| Rect::new((x, y).into(), (w, h).into());
+        let a = r(0, 30, 1670, 1013);
+        assert_eq!(grown_out(a, r(100, 100, 1920, 1130), (800, 600).into()), Some(a), "too big now: the whole area");
+        assert_eq!(grown_out(a, r(1000, 100, 900, 600), (600, 600).into()), Some(r(770, 100, 900, 600)), "only moved");
+        assert_eq!(grown_out(a, r(100, 100, 900, 600), (800, 600).into()), None, "still inside");
+        assert_eq!(grown_out(a, r(1500, 100, 900, 600), (600, 600).into()), None, "dragged partly out by hand");
+    }
 
     #[test]
     fn fit_in_keeps_place_and_size_where_it_fits() {

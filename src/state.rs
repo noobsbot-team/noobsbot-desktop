@@ -61,6 +61,9 @@ use crate::{
 /// Marks a window that got its first position (it is placed once its size is known).
 struct Placed;
 
+/// The frame size a placed window last drew (`keep_inside`).
+struct Drawn(std::cell::Cell<Size<i32, Logical>>);
+
 /// Where a zoomed or fullscreen window goes back to.
 struct Restore(std::sync::Mutex<Option<Rect>>);
 
@@ -997,6 +1000,31 @@ impl State {
         saved
     }
 
+    /// A placed window drew at frame `size`: if it grew on its own out of its work area (an app restoring a size from
+    /// another scale, an X11 app resizing itself), it is shrunk to fit and moved back inside. Not a window resized by
+    /// hand, tiled, zoomed or full screen, a sheet (it hangs on its parent) or the quake terminal.
+    fn keep_inside(&mut self, window: &Window, size: Size<i32, Logical>) {
+        let Some(old) = window.user_data().get::<Drawn>().map(|d| d.0.replace(size)) else { return };
+        let skip = self.resize.as_ref().is_some_and(|r| r.window == *window)
+            || self.restore_frame(window).is_some()
+            || self.sheet_parent(window).is_some()
+            || self.is_quake(window);
+        if old == size || skip {
+            return;
+        }
+        let (Some(area), Some(frame)) = (self.window_area(window), self.frame(window)) else { return };
+        let Some(fitted) = wm::grown_out(area, frame, old) else { return };
+        if fitted.size != frame.size
+            && let Some(toplevel) = window.toplevel()
+        {
+            // Outside the state lock: content_size reads the window's own.
+            let content = self.content_size(window, fitted.size);
+            toplevel.with_pending_state(|s| s.size = Some(content));
+            toplevel.send_pending_configure();
+        }
+        self.set_visible_loc(window, fitted.loc);
+    }
+
     /// Where a tiled, zoomed or full-screen window goes back to.
     pub fn restore_frame(&self, window: &Window) -> Option<Rect> {
         *window.user_data().get::<Restore>()?.0.lock().ok()?
@@ -1201,6 +1229,7 @@ impl CompositorHandler for State {
                 if size.w > 0 && window.user_data().get::<Placed>().is_none() {
                     let area = self.opening_area(&window);
                     window.user_data().insert_if_missing(|| Placed);
+                    window.user_data().insert_if_missing(|| Drawn(std::cell::Cell::new(size)));
                     if let Some(area) = area {
                         // A window bigger than the work area (the app ignored the bounds) is shrunk to fit.
                         let fitted = Size::from((size.w.min(area.size.w), size.h.min(area.size.h)));
@@ -1216,12 +1245,16 @@ impl CompositorHandler for State {
                         let loc = self.attached_loc(&window, size).unwrap_or_else(|| {
                             position.map_or_else(|| wm::place(area, size), |[x, y]| area.loc + Point::from((x.to_px(area.size.w), y.to_px(area.size.h))))
                         });
+                        // A remembered or ruled place, kept for a bigger window than it was for: still wholly inside.
+                        let loc = wm::fit_in(Rect::new(loc, size), area, area).loc;
                         tracing::debug!(?size, ?loc, ?position, "placed");
                         self.set_visible_loc(&window, loc);
                         self.apply_space_rule(&window);
                         self.session_place(&window);
                         self.window_opened(&window);
                     }
+                } else if size.w > 0 {
+                    self.keep_inside(&window, size);
                 }
                 self.centre_sheets(&window);
             }
