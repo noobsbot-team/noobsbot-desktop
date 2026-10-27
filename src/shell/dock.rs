@@ -1187,6 +1187,17 @@ impl State {
     }
 }
 
+/// Whether the recent file at `path` is still there. Asked on the event loop, so only on a local disk: on a network or
+/// FUSE mount (by `mounts`, `/proc/self/mounts`) a stale server would hang the desktop, and its entries stay listed.
+// ponytail: by the path as written; a symlink into such a mount, or a mount point with `\040` in it, isn't seen.
+pub fn recent_exists(path: &std::path::Path, mounts: &str) -> bool {
+    let fs = mounts.lines().filter_map(|l| l.split(' ').nth(1).zip(l.split(' ').nth(2))).filter(|(at, _)| path.starts_with(at)).max_by_key(|(at, _)| at.len());
+    let remote = fs.is_some_and(|(_, fs)| {
+        fs.starts_with("nfs") || fs.starts_with("fuse") || ["cifs", "smb3", "smbfs", "9p", "ceph", "afs", "glusterfs", "davfs"].contains(&fs)
+    });
+    remote || path.exists()
+}
+
 /// `~/.local/share/recently-used.xbel`.
 pub fn recent_path() -> std::path::PathBuf {
     config::xdg_dir("XDG_DATA_HOME", ".local/share").join("recently-used.xbel")
@@ -1379,7 +1390,8 @@ impl State {
             let xbel = std::fs::read_to_string(recent_path()).unwrap_or_default();
             let program = a.program();
             let files = recent_files(&xbel, &[&a.id, &a.name, &program]);
-            files.into_iter().filter(|u| crate::apps::file_path(u).is_none_or(|p| std::path::Path::new(&p).exists())).take(5).collect()
+            let mounts = std::fs::read_to_string("/proc/self/mounts").unwrap_or_default();
+            files.into_iter().filter(|u| crate::apps::file_path(u).is_none_or(|p| recent_exists(std::path::Path::new(&p), &mounts))).take(5).collect()
         });
         self.dock_ui.menu = Some((key, at));
         self.dock_fx.tip_hidden = true;
@@ -1679,6 +1691,16 @@ const URI_LIST: &str = "text/uri-list";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recent_files_on_network_mounts_are_not_checked() {
+        let mounts = "/dev/sda2 / ext4 rw 0 0\nserver:/x /mnt/nfs nfs4 rw 0 0\nme@host: /home/me/remote fuse.sshfs rw 0 0\n";
+        let exists = |p: &str| recent_exists(std::path::Path::new(p), mounts);
+        assert!(exists("/mnt/nfs/gone.txt"));
+        assert!(exists("/home/me/remote/gone.txt"));
+        assert!(!exists("/mnt/nfsx/noobsbot-gone.txt"), "a mount point, not a prefix");
+        assert!(!exists("/noobsbot-gone/a.txt"), "local: checked");
+    }
 
     const SCREEN: (i32, i32) = (1920, 1200);
 

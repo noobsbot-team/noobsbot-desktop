@@ -36,12 +36,18 @@ const MAX_SIDE: usize = 8192;
 /// Opal gradients kept, one per (output size, dark); the outputs of one desktop are a handful.
 const MAX_OPALS: usize = 8;
 
-/// A decoded picture on its way from the worker thread to the GPU.
-pub struct Decoded {
-    path: PathBuf,
-    /// The output size it was shrunk to cover; an older decode is dropped when a bigger output has turned up.
-    limit: Size<i32, Buffer>,
-    image: Result<Image, String>,
+/// A worker thread's result on its way to the loop: a decoded picture for the GPU, or the slideshow folder listed.
+pub struct Decoded(Done);
+
+enum Done {
+    Picture {
+        path: PathBuf,
+        /// The output size it was shrunk to cover; an older decode is dropped when a bigger output has turned up.
+        limit: Size<i32, Buffer>,
+        image: Result<Image, String>,
+    },
+    /// The folder setting it was listed for, and its pictures.
+    Listed(String, Vec<PathBuf>),
 }
 
 /// 8-bit RGBX pixels.
@@ -71,6 +77,8 @@ pub struct Wallpaper {
     appearance: Appearance,
     /// The slideshow's picture and when it was picked.
     slide: Option<(PathBuf, Instant)>,
+    /// The folder being listed on a worker thread: a hung network folder isn't listed again while it is.
+    listing: Option<(String, std::thread::JoinHandle<()>)>,
     /// Shuffled, the pictures shown this round: each comes once before any comes back.
     shown: Vec<PathBuf>,
     /// The file asked for; `None` = the opal gradient.
@@ -99,6 +107,7 @@ impl Wallpaper {
             tx,
             appearance: Appearance::default(),
             slide: None,
+            listing: None,
             shown: Vec::new(),
             wanted: None,
             limit: Size::default(),
@@ -118,35 +127,57 @@ impl Wallpaper {
     }
 
     /// Takes the wallpaper settings; the next frame picks the file (decoded on a worker thread once an output's size
-    /// is known, then crossfaded in). A new slideshow folder picks its first picture now.
-    // ponytail: the folder is listed on the frame thread (one read_dir); move it to the decode thread if a huge one stalls.
+    /// is known, then crossfaded in). A new slideshow folder picks its first picture once it is listed; the picture
+    /// shown stays until then.
     pub fn set(&mut self, appearance: &Appearance) {
         let new_folder = appearance.wallpaper_folder != self.appearance.wallpaper_folder;
         self.appearance = appearance.clone();
         if new_folder {
-            self.slide = None;
             self.shown.clear();
             self.advance();
         }
     }
 
-    /// Slideshow: moves to the next picture when its time is up; true when it did (redraw to show it).
+    /// Slideshow: lists the folder for the next picture when its time is up. False: nothing to redraw yet, the
+    /// list's arrival (`receive`) is.
     pub fn tick(&mut self) -> bool {
         let interval = Duration::from_secs(u64::from(self.appearance.wallpaper_interval) * 60);
         if self.appearance.wallpaper_folder.is_empty() || interval.is_zero() || self.slide.as_ref().is_some_and(|(_, at)| at.elapsed() < interval) {
             return false;
         }
-        let was = self.slide.as_ref().map(|(p, _)| p.clone());
         self.advance();
-        self.slide.as_ref().map(|(p, _)| p) != was.as_ref()
+        false
     }
 
+    /// Lists the slideshow folder on a worker thread, not the frame thread: a stale network folder would hang the
+    /// desktop. `listed` picks from what comes back.
     fn advance(&mut self) {
-        let folder = &self.appearance.wallpaper_folder;
-        let files = if folder.is_empty() { Vec::new() } else { pictures(&expand_home(folder)) };
+        let folder = self.appearance.wallpaper_folder.clone();
+        if folder.is_empty() {
+            return self.listed(&folder, &[]);
+        }
+        if self.listing.as_ref().is_some_and(|(f, thread)| *f == folder && !thread.is_finished()) {
+            return;
+        }
+        let (tx, listed) = (self.tx.clone(), folder.clone());
+        let spawned = std::thread::Builder::new().name("wallpaper-list".into()).spawn(move || {
+            let files = pictures(&expand_home(&listed));
+            let _ = tx.send(Decoded(Done::Listed(listed, files)));
+        });
+        match spawned {
+            Ok(thread) => self.listing = Some((folder, thread)),
+            Err(err) => tracing::warn!("wallpaper folder: {err}"),
+        }
+    }
+
+    /// The slideshow's next picture from the pictures of `folder`, if that is still the folder set.
+    fn listed(&mut self, folder: &str, files: &[PathBuf]) {
+        if folder != self.appearance.wallpaper_folder {
+            return;
+        }
         let seed = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.subsec_nanos() as usize);
         let current = self.slide.as_ref().map(|(p, _)| p.as_path());
-        let next = pick(&files, current, self.appearance.wallpaper_shuffle, seed, &mut self.shown).cloned();
+        let next = pick(files, current, self.appearance.wallpaper_shuffle, seed, &mut self.shown).cloned();
         self.slide = next.map(|p| (p, Instant::now()));
     }
 
@@ -178,7 +209,7 @@ impl Wallpaper {
         self.asked = Some(limit);
         let spawned = std::thread::Builder::new().name("wallpaper-decode".into()).spawn(move || {
             let image = decode(&path, limit);
-            let _ = tx.send(Decoded { path, limit, image });
+            let _ = tx.send(Decoded(Done::Picture { path, limit, image }));
         });
         if let Err(err) = spawned {
             tracing::warn!("wallpaper: {err}, using the built-in one");
@@ -186,12 +217,13 @@ impl Wallpaper {
     }
 
     /// Uploads a decoded picture if it is still the one wanted and crossfades to it; a failure is logged and fades to
-    /// the opal gradient.
+    /// the opal gradient. A folder listing picks the slideshow's next picture (the next frame decodes it).
     pub fn receive(&mut self, renderer: &mut GlesRenderer, decoded: Decoded) {
-        if self.wanted.as_ref() != Some(&decoded.path) || self.asked != Some(decoded.limit) {
-            return;
-        }
-        let Decoded { path, image, .. } = decoded;
+        let (path, image) = match decoded.0 {
+            Done::Listed(folder, files) => return self.listed(&folder, &files),
+            Done::Picture { path, limit, image } if self.wanted.as_ref() == Some(&path) && self.asked == Some(limit) => (path, image),
+            Done::Picture { .. } => return,
+        };
         let uploaded = image.and_then(|image| {
             let texture = renderer.import_memory(&image.rgbx, Fourcc::Xbgr8888, image.size, false).map_err(|e| e.to_string())?;
             Ok((TextureBuffer::from_texture(renderer, texture, 1, Transform::Normal, Some(vec![Rectangle::from_size(image.size)])), image.size, image.shrunk))
