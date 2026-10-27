@@ -858,8 +858,8 @@ impl State {
         self.aim_cancel();
         let timer = self.loop_handle.insert_source(Timer::from_duration(delay), |_, _, state| {
             state.aim_timer = None;
-            let at = state.seat.get_pointer().map(|p| state.to_popup(state.to_output(p.current_location())));
-            if let (Some(Popup::Menu(menu)), Some((d, Some(i)))) = (state.popup, at.and_then(|at| state.menu_level_at(at))) {
+            let at = state.to_popup(state.to_output(state.pointer_at));
+            if let (Some(Popup::Menu(menu)), Some((d, Some(i)))) = (state.popup, state.menu_level_at(at)) {
                 state.menu_hover(menu, d, i);
             }
             TimeoutAction::Drop
@@ -991,7 +991,7 @@ impl State {
             Some((popup, d, i)) if Some(popup) == self.popup && d <= self.open_path().len() => return (d, Some(i)),
             _ => {}
         }
-        let at = self.seat.get_pointer().map(|p| self.to_popup(self.to_output(p.current_location()))).unwrap_or_default();
+        let at = self.to_popup(self.to_output(self.pointer_at));
         self.menu_level_at(at).unwrap_or((0, None))
     }
 

@@ -148,6 +148,7 @@ impl State {
         }
         // The screenshot overlay keeps the pointer from every app (and its cursor).
         if self.shot_motion(self.to_output(host)) {
+            self.pointer_at = host;
             pointer.motion(self, None, &MotionEvent { location: host, serial: SERIAL_COUNTER.next_serial(), time: (utime / 1000) as u32 });
             pointer.frame(self);
             return;
@@ -204,6 +205,7 @@ impl State {
             let lights = zone.is_none().then(|| self.bar_under(host)).flatten().filter(|(_, p)| *p != crate::decorations::Part::Title).map(|(w, _)| w);
             self.set_lights_hover(lights);
         }
+        self.pointer_at = host;
         pointer.motion(self, new_under.clone(), &MotionEvent { location: host, serial: SERIAL_COUNTER.next_serial(), time: (utime / 1000) as u32 });
         pointer.frame(self);
 
@@ -352,7 +354,8 @@ impl PointerConstraintsHandler for State {
         }
         let window = self.space.elements().find(|w| w.toplevel().is_some_and(|t| t.wl_surface() == surface));
         if let Some(origin) = window.and_then(|w| Some(self.space.element_location(w)? - w.geometry().loc)) {
-            pointer.set_location(origin.to_f64() + location);
+            self.pointer_at = origin.to_f64() + location;
+            pointer.set_location(self.pointer_at);
         }
     }
 }

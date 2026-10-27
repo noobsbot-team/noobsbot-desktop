@@ -306,8 +306,7 @@ impl State {
 
     /// The display under the pointer, else the first: the one Space keys, swipes and Mission Control clicks act on.
     pub fn pointer_output(&self) -> Option<Output> {
-        let at = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default();
-        self.space.output_under(at).next().or_else(|| self.space.outputs().next()).cloned()
+        self.space.output_under(self.pointer_at).next().or_else(|| self.space.outputs().next()).cloned()
     }
 
     /// The key of `output`'s Spaces in `spaces.outputs`.

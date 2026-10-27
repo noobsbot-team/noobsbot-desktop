@@ -247,6 +247,9 @@ pub struct State {
     pub layout_key: String,
     /// The laptop's lid is closed (libinput's lid switch): clamshell when another display is on.
     pub lid_closed: bool,
+    /// Where the pointer is, kept by each `motion` and `set_location` on it. Read this, not `current_location()`:
+    /// smithay holds the pointer's lock while it runs a grab, so a helper reached from one would wait on itself.
+    pub pointer_at: Point<f64, Logical>,
     /// Installed apps (E2.1); empty until the first scan lands.
     pub apps: crate::apps::Apps,
     /// Bumped with every `apps` load, so what windows cached against the last one (`dock_key`) is looked up again.
@@ -625,6 +628,7 @@ impl State {
             identify: None,
             layout_key: String::new(),
             lid_closed: false,
+            pointer_at: Point::default(),
             apps: Default::default(),
             reopen: Vec::new(),
             apps_epoch: 0,
@@ -786,7 +790,7 @@ impl State {
         }
         let remembered = window.user_data().get::<crate::sheets::Recalled>().map(|r| r.0);
         let parent = window.toplevel().and_then(|t| t.parent()).and_then(|p| self.window_for(&p).cloned()).and_then(|p| self.frame(&p));
-        let pointer = self.seat.get_pointer().map(|p| p.current_location().to_i32_round()).unwrap_or_default();
+        let pointer = self.pointer_at.to_i32_round();
         let screens = self.space.outputs().filter_map(|o| Some((self.space.output_geometry(o)?, o.clone())));
         crate::displays::opens_on(remembered, parent, pointer, screens).map_or_else(|| self.window_area(window), |o| self.output_area(&o))
     }

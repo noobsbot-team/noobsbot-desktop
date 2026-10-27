@@ -138,7 +138,7 @@ impl State {
         let geo = self.space.output_geometry(output)?;
         let scale = output.current_scale().fractional_scale();
         let zooming = self.zoom.advance(self.frame_time, self.config.appearance.reduce_motion);
-        let pointer = self.seat.get_pointer().map(|p| p.current_location()).filter(|p| geo.to_f64().contains(*p)).map(|p| p - geo.loc.to_f64());
+        let pointer = Some(self.pointer_at).filter(|p| geo.to_f64().contains(*p)).map(|p| p - geo.loc.to_f64());
         // The focused text field's caret and the focused window, if Zoom follows them and they are on this output.
         let relative = |r: smithay::utils::Rectangle<i32, smithay::utils::Logical>| {
             r.intersection(geo).map(|_| smithay::utils::Rectangle::new(r.loc - geo.loc, r.size).to_f64())
@@ -345,7 +345,7 @@ impl State {
                 crate::shell::fit_menu(&rows, self.popup, &mut self.submenu, &mut self.menu_cursor);
                 let path = self.submenu.as_ref().filter(|(p, _)| Some(*p) == self.popup).map_or(Vec::new(), |(_, path)| path.clone());
                 let cursor = self.menu_cursor.filter(|(p, d, _)| Some(*p) == self.popup && *d <= path.len());
-                let hover = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default() - geo_origin.to_f64();
+                let hover = self.pointer_at - geo_origin.to_f64();
                 // The keyboard's row is lit instead of the pointer's, which goes nowhere; a row whose submenu is
                 // open stays lit.
                 let hover = if cursor.is_some() { (f64::MIN, f64::MIN).into() } else { hover };
@@ -423,7 +423,7 @@ impl State {
         let dock_frame = self.dock_frame(output, &dock_items);
         let peek = self.dock_peek().filter(|_| here);
         let peek_hover = self.dock_ui.peek.as_ref().and_then(|p| p.hover);
-        let held_at = self.dock_ui.dragged().filter(|_| here).and(self.seat.get_pointer()).map(|p| self.to_dock(self.to_output(p.current_location())));
+        let held_at = self.dock_ui.dragged().filter(|_| here).map(|_| self.to_dock(self.to_output(self.pointer_at)));
         let output_rect = self.space.output_geometry(output).unwrap_or_default();
         let scale = output.current_scale().fractional_scale();
         let appearance = &self.config.appearance;

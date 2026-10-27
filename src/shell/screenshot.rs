@@ -802,7 +802,7 @@ impl State {
         if !self.screenshots.dragging {
             return Some((rect, thumb, 1.0));
         }
-        let at = self.to_display(self.thumbnail_output().as_ref(), self.to_output(self.seat.get_pointer()?.current_location())).to_i32_round();
+        let at = self.to_display(self.thumbnail_output().as_ref(), self.to_output(self.pointer_at)).to_i32_round();
         let size = rect.size.downscale(2);
         Some((Rectangle::new(at - Point::from((size.w / 2, size.h / 2)), size), thumb, 0.6))
     }
@@ -876,7 +876,7 @@ impl State {
             return;
         }
         let Some(path) = self.screenshots.drag_file.clone() else { return };
-        let on_dock = self.seat.get_pointer().is_some_and(|p| self.dock_covers(self.to_dock(self.to_output(p.current_location()))));
+        let on_dock = self.dock_covers(self.to_dock(self.to_output(self.pointer_at)));
         if on_dock {
             *self.dock_ui.uris.lock().unwrap_or_else(|e| e.into_inner()) = Some(file_uri(&path));
             self.dock_drop();

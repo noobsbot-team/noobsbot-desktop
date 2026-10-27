@@ -242,8 +242,7 @@ impl State {
         let wait = ms(self.config.accessibility.hold_secondary_ms);
         self.pointer_assist.dwell.cancel();
         if button == BTN_LEFT && state == ButtonState::Pressed && !wait.is_zero() {
-            let Some(at) = self.seat.get_pointer().map(|p| p.current_location()) else { return };
-            self.pointer_assist.hold.press(at, time);
+            self.pointer_assist.hold.press(self.pointer_at, time);
             self.drop_hold_timer();
             let timer = self.loop_handle.insert_source(Timer::from_duration(wait), |_, _, state| {
                 state.pointer_assist.hold_timer = None;
@@ -279,7 +278,7 @@ impl State {
     /// The dwell countdown ring around the pointer, output-relative (logical).
     pub fn dwell_ring(&self, output_origin: Point<i32, Logical>) -> Option<Rectangle<i32, Logical>> {
         let progress = self.pointer_assist.dwell.progress(self.frame_time, self.dwell_wait())?;
-        let at = self.seat.get_pointer()?.current_location().to_i32_round() - output_origin;
+        let at = self.pointer_at.to_i32_round() - output_origin;
         // Shrinks from 24 px to 6 px across.
         let r = (12.0 - 9.0 * progress).round() as i32;
         Some(Rectangle::new(at - Point::from((r, r)), (2 * r, 2 * r).into()))

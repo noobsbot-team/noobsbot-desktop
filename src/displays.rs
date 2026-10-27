@@ -418,6 +418,7 @@ impl State {
             let at = pointer.current_location();
             let kept = crate::backend::udev::clamp_pointer(&screens, at, at);
             if kept != at {
+                self.pointer_at = kept;
                 pointer.set_location(kept);
             }
         }
@@ -552,7 +553,7 @@ impl State {
     pub fn display_with(&self, wanted: Option<Point<i32, Logical>>) -> Option<Output> {
         let outputs: Vec<Output> = self.space.outputs().cloned().collect();
         let screens: Vec<Rectangle<i32, Logical>> = outputs.iter().map(|o| self.space.output_geometry(o).unwrap_or_default()).collect();
-        let pointer = self.seat.get_pointer().map(|p| p.current_location()).unwrap_or_default();
+        let pointer = self.pointer_at;
         outputs.get(display_for(&screens, wanted, pointer)).cloned()
     }
 

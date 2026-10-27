@@ -1704,7 +1704,7 @@ impl State {
     /// are pinned where they land (not while items are locked), other files open with the app they land on.
     // ponytail: only `.desktop` files of installed apps (in an `applications/` dir) pin; others are ignored.
     pub fn dock_drop(&mut self) {
-        let Some(location) = self.seat.get_pointer().map(|p| self.to_dock(self.to_output(p.current_location()))) else { return };
+        let location = self.to_dock(self.to_output(self.pointer_at));
         let text = self.dock_ui.uris.lock().unwrap_or_else(|e| e.into_inner()).take();
         let uris = uri_list(&text.unwrap_or_default());
         if uris.is_empty() || !self.dock_covers(location) {
