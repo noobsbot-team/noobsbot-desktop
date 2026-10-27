@@ -40,8 +40,6 @@ pub const CLICK_TIME: Duration = Duration::from_millis(300);
 /// Plank's ITEM_HOVER_DURATION: the hovered icon lightens by HOVER_LIGHTEN over it.
 const HOVER_TIME: Duration = Duration::from_millis(150);
 const HOVER_LIGHTEN: f64 = 0.2;
-/// ActiveTime: the focused app's highlight fades in, and the last one's out, over this.
-const ACTIVE_TIME: Duration = Duration::from_millis(300);
 /// ItemMoveTime: icons sliding to a new place, or rising into the dock.
 const MOVE_TIME: Duration = Duration::from_millis(450);
 /// Plank's poof (PoofWindow RUN_LENGTH).
@@ -295,9 +293,6 @@ pub struct Fx {
     /// The hovered item and the one before it, and since when (the lighten fades in and out).
     hover: Option<(String, Instant)>,
     unhover: Option<(String, Instant)>,
-    /// The focused app's item and the one before it, and since when (the highlight fades in and out).
-    active: Option<(String, Instant)>,
-    inactive: Option<(String, Instant)>,
     /// A click or scroll hid the tooltip until the pointer moves to another icon.
     pub tip_hidden: bool,
     /// Windows that asked for attention, and since when.
@@ -319,8 +314,6 @@ pub struct Shade {
     /// 0..1: towards brighter (Plank adds the icon to itself), or black.
     pub lighten: f32,
     pub darken: f32,
-    /// 0..1: the focused app's highlight behind it.
-    pub active: f32,
 }
 
 /// What the dock draws this frame.
@@ -426,14 +419,6 @@ impl Fx {
     /// The lighten of item `key`: Plank's hover fade.
     fn lighten(&self, key: &str, now: Instant) -> f64 {
         HOVER_LIGHTEN * fade(&self.hover, &self.unhover, key, now, HOVER_TIME)
-    }
-
-    /// The focused app is item `key` (or none): its highlight fades in, the last one's out.
-    fn activated(&mut self, key: Option<&str>, now: Instant) {
-        if self.active.as_ref().map(|(k, _)| k.as_str()) != key {
-            self.inactive = self.active.take().map(|(k, _)| (k, now));
-            self.active = key.map(|k| (k.to_owned(), now));
-        }
     }
 
     /// Asks for a wake-up at `at` (a hide delay or the window settle time): a one-shot timer, set once per deadline.
@@ -569,13 +554,11 @@ impl State {
         let fx = &mut self.dock_fx;
         fx.urgent.retain(|(w, _)| w.alive() && focused.as_ref() != Some(w));
         fx.launched.retain(|_, at| now - *at < LAUNCH_TIME);
-        fx.activated(items.iter().find(|i| focused.as_ref().is_some_and(|w| i.windows.contains(w))).map(|i| i.key.as_str()), now);
         fx.clicked.retain(|_, at| now - *at < CLICK_TIME);
         let keys: Vec<&str> = items.iter().map(|i| i.key.as_str()).collect();
         fx.track(&keys, now);
         let hide = side.hide.value(now);
         let hover_fading = here && [&fx.hover, &fx.unhover].iter().any(|h| h.as_ref().is_some_and(|(_, at)| now - *at < HOVER_TIME));
-        let active_fading = [&fx.active, &fx.inactive].iter().any(|a| a.as_ref().is_some_and(|(_, at)| now - *at < ACTIVE_TIME));
         let mut animating = side.hide.moving(now)
             || side.zoom.moving(now)
             || !fx.launched.is_empty()
@@ -583,8 +566,7 @@ impl State {
             || !fx.moves.is_empty()
             || !fx.added.is_empty()
             || !frame.poofs.is_empty()
-            || hover_fading
-            || active_fading;
+            || hover_fading;
 
         let urgent_since: Vec<Option<Instant>> = items
             .iter()
@@ -631,8 +613,7 @@ impl State {
                     layout.columns[i].1 += dx;
                 }
                 let lighten = if here { fx.lighten(&item.key, now) } else { 0.0 };
-                let active = fade(&fx.active, &fx.inactive, &item.key, now, ACTIVE_TIME) as f32;
-                let mut shade = Shade { alpha: 1.0, lighten: lighten as f32, darken: 0.0, active };
+                let mut shade = Shade { alpha: 1.0, lighten: lighten as f32, darken: 0.0 };
                 // Arriving: it rises from below the screen edge and fades in (EASE_IN_EXPO).
                 if let Some(at) = fx.added.get(&item.key) {
                     let p = progress(now - *at, MOVE_TIME).min(1.0);
@@ -726,23 +707,6 @@ mod tests {
         assert!(second > 0.0 && second < 52.0 * 0.5, "the second hop is lower: {second}");
         assert_eq!(launch_bounce(ms(600), 84.0), 0.0);
         assert_eq!(launch_bounce(ms(5000), 84.0), 0.0);
-    }
-
-    #[test]
-    fn the_focused_apps_highlight_fades_in_and_the_last_one_out() {
-        let t0 = Instant::now();
-        let mut fx = Fx::default();
-        fx.activated(Some("a"), t0);
-        let at = |fx: &Fx, key: &str, n: u64| fade(&fx.active, &fx.inactive, key, t0 + ms(n), ACTIVE_TIME);
-        assert_eq!(at(&fx, "a", 0), 0.0);
-        assert!((at(&fx, "a", 150) - 0.5).abs() < 1e-9, "half way at 150 ms");
-        assert_eq!(at(&fx, "a", 400), 1.0);
-        fx.activated(Some("a"), t0 + ms(400));
-        assert_eq!(at(&fx, "a", 400), 1.0, "still focused: no new fade");
-        fx.activated(Some("b"), t0 + ms(400));
-        assert_eq!((at(&fx, "a", 400), at(&fx, "b", 400)), (1.0, 0.0));
-        assert_eq!((at(&fx, "a", 700), at(&fx, "b", 700)), (0.0, 1.0));
-        assert_eq!(at(&fx, "c", 700), 0.0);
     }
 
     #[test]

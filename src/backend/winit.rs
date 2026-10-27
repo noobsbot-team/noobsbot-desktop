@@ -463,7 +463,7 @@ impl State {
             if let Some((item, at)) = held.zip(held_at) {
                 let s = layout.icon;
                 layout.icons.push(smithay::utils::Rectangle::new((at.x - s / 2.0, at.y - s / 2.0).into(), (s, s).into()));
-                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0, active: 0.0 };
+                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0 };
                 icons.push(DockIcon { name: item.icon(), windows: 0, shade });
             }
             let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
