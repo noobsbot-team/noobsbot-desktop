@@ -864,4 +864,38 @@ mod tests {
         assert_eq!(listed, ["b", "c"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    #[test]
+    fn executable_app_entries_are_launchers() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("noobsbot-desktop-launchers-{}", std::process::id()));
+        let dir = root.join("Desktop");
+        std::fs::create_dir_all(&dir).unwrap();
+        let icon = root.join("kitty.svg");
+        std::fs::write(&icon, "<svg/>").unwrap();
+        let write = |file: &str, text: &str, mode: u32| {
+            std::fs::write(dir.join(file), text).unwrap();
+            std::fs::set_permissions(dir.join(file), std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        let app = |name: &str, icon: &str| format!("[Desktop Entry]\nType=Application\nName={name}\nExec=kitty --single %U\nIcon={icon}\n");
+        write("kitty.desktop", &app("Kitty", &icon.to_string_lossy()), 0o755);
+        write("wine.desktop", &app("Some Game", "no-such-icon-anywhere"), 0o755);
+        write("download.desktop", &app("Download", "kitty"), 0o644);
+        write("link.desktop", "[Desktop Entry]\nType=Link\nName=Site\nURL=https://example.org\n", 0o755);
+        let shown: Vec<(String, String, Option<String>)> =
+            scan(&dir, &Mime::default(), &mut HashMap::new()).into_iter().map(|e| (e.name, e.icon, e.label)).collect();
+        let file = |name: &str| (name.to_owned(), FALLBACK_ICON.to_owned(), None);
+        assert_eq!(
+            shown,
+            [
+                file("download.desktop"),
+                ("kitty.desktop".into(), icon.to_string_lossy().into_owned(), Some("Kitty".into())),
+                file("link.desktop"),
+                ("wine.desktop".into(), APP_ICON.into(), Some("Some Game".into())),
+            ],
+            "not executable or not an app: a file"
+        );
+        assert_eq!(crate::apps::launcher(&dir.join("kitty.desktop")).unwrap().command(""), ["kitty", "--single"]);
+        std::fs::remove_dir_all(&root).unwrap();
+    }
 }
