@@ -1379,7 +1379,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   either way the log says "using software rendering" and a notification says graphics acceleration isn't available.
   Dropped (owner decision): a pixman renderer, only useful on a system without Mesa (the shell's elements are all
   GLES: `SceneElement` over `GlesRenderer` with its own shader elements, ~30 files under `src/render`); fbdev-only
-  machines (efifb, no DRM device). Not yet: a GPU reset that won't come back still exits rather than going software.
+  machines (efifb, no DRM device). A GPU reset that won't come back (or keeps resetting) goes software the same way.
   Untested on hardware.
 
 ### E6.2 Displays & multiple monitors
