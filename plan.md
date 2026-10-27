@@ -849,8 +849,8 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Built with:** key events from libinput; PipeWire (`wpctl`) / logind brightness.
 - **Done when:** volume, brightness, mute and play/pause keys all work and show the OSD.
 - **Built:** `src/render/osd.rs`, shown 1.5 s (`OSD_TIME`), for every media key in `src/shortcuts.rs`; a held volume
-  key costs one `wpctl` call per 30 ms (`src/services/sound.rs` `coalesce`, E1.11). Not yet: banners jump the 56 px
-  under the OSD instead of springing.
+  key costs one `wpctl` call per 30 ms (`src/services/sound.rs` `coalesce`, E1.11); banners spring the 56 px down
+  under the OSD and back (`banners_dodge`, `smooth`).
 
 ### E2.8 Quake terminal hotkey
 - **What it is:** F12 (configurable) drops noobsbot-terminal down from the top, on any Space.
@@ -1014,9 +1014,10 @@ Goal: the owner's current dock (Plank, Transparent-Tight theme), rebuilt nativel
   indistinguishable in look and behaviour, and every function in the table works, on each monitor.
 - **Built:** `src/shell/dock.rs`, `src/shell/dock_fx.rs` and `src/render/dock.rs`: zoom, every hide mode, launch and
   urgent bounces, the urgent glow, running dots, drag to reorder, remove and pin, file drops, badges and progress
-  (`com.canonical.Unity.LauncherEntry`), the Plank import (`src/shell/plank.rs`), a dock per display (E8.3). Not yet:
-  the `whitesur-dark` and `glass` presets; the focused app's highlight fading in over 300 ms; the small shadow behind
-  each icon.
+  (`com.canonical.Unity.LauncherEntry`), the Plank import (`src/shell/plank.rs`), a dock per display (E8.3), the
+  focused app's highlight fading in and out over 300 ms (ActiveTime). Not yet: the `whitesur-dark` and `glass` presets
+  (the bar's look is constants in `src/render/dock.rs`, no preset layer); the small shadow behind each icon (the
+  shadow shader draws rounded rects, not an icon's shape).
 
 **M3 done when:** all of the above; mockup review passed.
 
@@ -1246,8 +1247,8 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
 - **Why:** dynamic Spaces are the design (R1, R11); not drawing hidden Spaces keeps it free (R3).
 - **Done when:** all behaviours above work by keyboard, gesture and mouse; switching is interruptible midway.
 - **Built:** `src/spaces.rs` (dynamic or fixed Spaces, each display its own, slides that follow the fingers,
-  fullscreen Spaces, jumps through `reveal`), `src/protocols/workspaces.rs`, the menu-bar indicator above. Not yet:
-  the switch pill fading out (it vanishes after 0.8 s).
+  fullscreen Spaces, jumps through `reveal`), `src/protocols/workspaces.rs`, the menu-bar indicator above; the switch
+  pill fades out after 0.8 s.
 
 ### E5.2 Mission Control & App Exposé
 - **What it is:** an overview of all windows and Spaces.
@@ -1310,10 +1311,10 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
 - **Done when:** every gesture in the table works on a real touchpad, is interruptible, and has no false triggers
   while typing (palm rejection) or scrolling.
 - **Built:** `src/gestures.rs` (the recogniser, with velocity and flicks, fed by `src/input.rs`): every row but
-  the reserved hold; Space and Mission Control swipes follow the fingers. 3-finger drag is libinput's own
+  the reserved hold; Space, Mission Control and App Exposé swipes, the Launchpad pinch and the Show Desktop spread
+  follow the fingers (a flick or past the commit point goes on, else it springs back). 3-finger drag is libinput's own
   (`touchpad.three_finger_drag`, set in `src/backend/udev.rs`); while it's on the system swipes take 4 fingers
-  (`Touchpad::effective_swipe_fingers`), untested on a real pad. Not yet: App Exposé, Launchpad and Show Desktop act
-  on release instead of following the fingers.
+  (`Touchpad::effective_swipe_fingers`), untested on a real pad.
 
 ### E5.4 Hot corners (optional, off by default)
 - **Design:** each screen corner can trigger: Mission Control · App Exposé · Desktop · Launchpad · Notification Center ·
@@ -1337,8 +1338,8 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
 - **Built with:** `anim.rs` springs; the renderer draws window textures with transforms (no app redraw needed).
 - **Done when:** every animation can be interrupted (e.g. grab a window mid-minimise) without glitches.
 - **Built:** `src/anim.rs` (open, close, minimise into its dock spot or tile, the genie as `[dock] minimise_effect`,
-  restore picking up a minimise midway, zoom springs) and the Space slide (`src/spaces.rs`). Not yet: Show Desktop
-  following the gesture; with reduce motion, zoom and Show Desktop jump instead of crossfading.
+  restore picking up a minimise midway, zoom springs, Show Desktop following the spread) and the Space slide
+  (`src/spaces.rs`); with reduce motion, zoom and Show Desktop crossfade.
 
 **M5 hardware covered:** multi-finger touchpad gestures.
 **M5 done when:** all elements pass at full frame rate; mockup review passed.
