@@ -115,7 +115,7 @@ fn read_displays() -> Vec<display_info::Display> {
     display_info::path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
 }
 
-/// CalDAV ▸ Add's check: the typed password fetches the calendar, then goes into the keyring. `(url, user, error)`.
+/// CalDAV ▸ Add's check: the typed password fetches the account's calendars, then goes into the keyring. `(url, user, error)`.
 async fn add_caldav(url: String, user: String, password: String) -> (String, String, Option<String>) {
     let checked = caldav::fetch(&url, &user, &password, chrono::Local::now().timestamp());
     let label = format!("CalDAV {user} at {url}");
