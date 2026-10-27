@@ -14,6 +14,7 @@ use smithay::{
         SwapBuffersError,
         allocator::{
             Fourcc,
+            format::FormatSet,
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
@@ -21,7 +22,7 @@ use smithay::{
             compositor::{DrmCompositor, FrameFlags, RenderFrameError},
             exporter::gbm::GbmFramebufferExporter,
         },
-        egl::EGLError,
+        egl::{EGLDevice, EGLError},
         input::{AbsolutePositionEvent, Event, InputEvent, PointerMotionEvent, Switch, SwitchState, SwitchToggleEvent},
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{
@@ -204,6 +205,50 @@ fn multi_fail(err: MultiError<Api, Api>) -> Fail {
     }
 }
 
+/// What turns Mesa's software driver on (kms_swrast with llvmpipe) for every GBM device and EGL display made after:
+/// Mesa's own GBM backend rather than a vendor's, drawing on the CPU.
+const SOFTWARE: [(&str, &str); 3] = [("GBM_BACKEND", "dri"), ("GBM_ALWAYS_SOFTWARE", "1"), ("LIBGL_ALWAYS_SOFTWARE", "1")];
+
+/// Whether the environment (`var`) asks for software drawing already, so another go would fail the same way.
+fn software_set(var: impl Fn(&str) -> Option<String>) -> bool {
+    SOFTWARE.iter().all(|(k, v)| var(k).as_deref() == Some(*v))
+}
+
+/// The primary GPU did not start (`err`): true once, having turned software drawing on, so the caller tries again.
+fn software(err: &Error) -> bool {
+    if software_set(|k| std::env::var(k).ok()) {
+        return false;
+    }
+    tracing::warn!("the GPU did not start ({err}): trying again with software rendering");
+    for (k, v) in SOFTWARE {
+        // SAFETY: other threads (fonts, D-Bus, weather) already run. Rust's own reads take set_var's lock, and glibc
+        // (2.41+) never frees an environment array a concurrent getenv may still be reading. This runs once, at
+        // start, on a path that would otherwise exit; apps started later inherit it, which suits them too.
+        unsafe { std::env::set_var(k, v) };
+    }
+    true
+}
+
+/// The software-rendering notification's id, below the X11 one's.
+const SOFTWARE_NOTICE: u32 = 0xFFF7_0000;
+
+/// "Graphics acceleration isn't available".
+fn software_notice() -> crate::services::notifications::Notification {
+    let icon = "dialog-warning";
+    crate::services::notifications::Notification {
+        id: SOFTWARE_NOTICE,
+        app: "Noobsbot Desktop".into(),
+        icon_name: icon.into(),
+        icon: crate::services::notifications::load_icon(icon).map(std::sync::Arc::new),
+        summary: "Graphics acceleration isn't available".into(),
+        body: "The desktop is using software rendering, so it may feel slower.".into(),
+        urgency: 1,
+        expire: -1,
+        time: chrono::Local::now().timestamp(),
+        ..Default::default()
+    }
+}
+
 /// How long connectors must stay unchanged before hotplug re-plans the displays: a dock lights its monitors one
 /// after the other, and each would otherwise move the windows (and pick a remembered layout) on its own.
 const SETTLE: Duration = Duration::from_millis(500);
@@ -284,13 +329,21 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
             tracing::warn!("{}: {err}", path.display());
         }
     }
-    // ponytail: no pixman fallback; on a GPU without 3D (QEMU without virgl) Mesa's EGL picks its software driver
-    // (kms_swrast/llvmpipe) by itself, which runs the shell's shaders. A pixman renderer would need every shader redone.
+    // ponytail: no pixman fallback. Without a driver for the GPU (simpledrm, QEMU without virgl) Mesa picks its
+    // software one (kms_swrast/llvmpipe) by itself; a driver that fails is retried on it here (`software`). Both run
+    // every shader. Pixman would be for a system without Mesa, and needs every shell element redrawn without GLES.
     let wallpaper = super::winit::wallpaper(event_loop, state)?;
-    let renderer = state.device.as_mut().and_then(Device::renderer).ok_or("the primary GPU did not start (EGL)")?;
-    let formats = renderer.dmabuf_formats();
-    state.backend = Some(Views::new(renderer, wallpaper)?);
+    let gpu = state.udev().ok_or("no session")?;
+    let (views, formats, soft) = match gpu.start(&wallpaper) {
+        Err(err) if software(&err) => gpu.soften().and_then(|()| gpu.start(&wallpaper)),
+        started => started,
+    }?;
+    state.backend = Some(views);
     super::dmabuf_global(state, formats, Some(primary));
+    if soft {
+        tracing::info!("using software rendering");
+        state.notify(software_notice());
+    }
 
     event_loop.handle().insert_source(udev, |event, _, state| {
         match event {
@@ -322,6 +375,25 @@ impl Udev {
     pub fn renderer(&mut self) -> Option<&mut GlesRenderer> {
         let primary = self.primary;
         self.gpus.devices_mut().ok()?.find(|d| *d.node() == primary).map(ApiDevice::renderer_mut)
+    }
+
+    /// The shell's caches on the primary GPU's renderer (with a copy of `wallpaper`, so a failed try can be made
+    /// again), the dmabuf formats it imports, and whether it draws in software.
+    fn start(&mut self, wallpaper: &render::Wallpaper) -> Result<(Views, FormatSet, bool), Error> {
+        let renderer = self.renderer().ok_or("the primary GPU did not start (EGL)")?;
+        // Mesa's own fallback (no driver for this GPU) says so only through its EGL device.
+        let soft = software_set(|k| std::env::var(k).ok()) || EGLDevice::device_for_display(renderer.egl_context().display()).is_ok_and(|d| d.is_software());
+        Ok((Views::new(renderer, wallpaper.reupload())?, renderer.dmabuf_formats(), soft))
+    }
+
+    /// Every GPU on new GBM devices and EGL displays, which pick up Mesa's software driver once `software` set it.
+    fn soften(&mut self) -> Result<(), Error> {
+        self.gpus = GpuManager::new(Api::default())?;
+        for card in self.cards.values_mut() {
+            card.gbm = GbmDevice::new(card.drm.device_fd().clone())?;
+            self.gpus.as_mut().add_node(card.render, card.gbm.clone())?;
+        }
+        Ok(())
     }
 
     /// The displays mirroring `source` draw a frame (each on its own frame clock).
@@ -383,9 +455,17 @@ impl State {
         let fd = udev.session.open(path, OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK)?;
         let fd = DrmDeviceFd::new(DeviceFd::from(fd));
         let (drm, notifier) = DrmDevice::new(fd.clone(), true)?;
-        let gbm = GbmDevice::new(fd)?;
         let render = node.node_with_type(NodeType::Render).and_then(Result::ok).unwrap_or(node);
-        udev.gpus.as_mut().add_node(render, gbm.clone())?;
+        let start = |gpus: &mut GpuManager<Api>| -> Result<GbmDevice<DrmDeviceFd>, Error> {
+            let gbm = GbmDevice::new(fd.clone())?;
+            gpus.as_mut().add_node(render, gbm.clone())?;
+            Ok(gbm)
+        };
+        // Only the primary GPU's failure turns software drawing on: another GPU's must not slow every display.
+        let gbm = match start(&mut udev.gpus) {
+            Err(err) if render == udev.primary && software(&err) => start(&mut udev.gpus)?,
+            gbm => gbm?,
+        };
         let token = handle
             .insert_source(notifier, move |event, meta, state| match event {
                 DrmEvent::VBlank(crtc) => state.vblank(node, crtc, meta.as_ref()),
@@ -1334,6 +1414,18 @@ mod tests {
         assert_eq!(multi_fail(MultiError::Render(lost)), Fail::Lost);
         assert_eq!(multi_fail(MultiError::RenderApiError(gbm::Error::Egl(egl::Error::CreationFailed(EGLError::ContextLost)))), Fail::Lost);
         assert_eq!(multi_fail(MultiError::RenderApiError(gbm::Error::Egl(egl::Error::CreationFailed(EGLError::BadAlloc)))), Fail::Render);
+    }
+
+    #[test]
+    fn software_is_tried_once() {
+        fn env<'a>(set: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+            move |k| set.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+        }
+        assert!(!software_set(env(&[])), "the GPU's own driver failed: software is worth a go");
+        assert!(!software_set(env(&[("LIBGL_ALWAYS_SOFTWARE", "1")])), "EGL forced, GBM not: still worth one with both");
+        let vendor = [("GBM_BACKEND", "nvidia-drm"), ("GBM_ALWAYS_SOFTWARE", "1"), ("LIBGL_ALWAYS_SOFTWARE", "1")];
+        assert!(!software_set(env(&vendor)), "a vendor's GBM ignores GBM_ALWAYS_SOFTWARE");
+        assert!(software_set(env(&SOFTWARE)), "software already failed: no second go");
     }
 
     #[test]
