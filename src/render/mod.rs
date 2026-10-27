@@ -250,14 +250,6 @@ impl Shaders {
         self.glass_element(grow(rect, width), color, radius + f64::from(width), [0.0; 4], width as f32 * scale as f32, [0.0; 4], scale)
     }
 
-    /// An opaque square rect shading from grey `top` to grey `bottom` (0–1, `bottom` < 1). The glass shader's sheen
-    /// paints white at strength `s` fading downwards; a negative `s` darkens instead: over `bottom` it gives
-    /// `bottom + s (bottom - 1)` at the top edge, which is `top` for the `s` below.
-    pub fn gradient(&self, rect: Rect, top: f32, bottom: f32, scale: f64) -> PixelShaderElement {
-        let sheen = (top - bottom) / (1.0 - bottom);
-        self.glass_element(rect, [bottom, bottom, bottom, 1.0], 0.0, [sheen, 0.0, 0.0, 0.0], 0.0, [0.0; 4], scale)
-    }
-
     /// A traffic light (D2): a flat circle, edged 0.5 px darker only on a focused window.
     pub fn light(&self, rect: Rect, fill: [f32; 4], edge: bool, scale: f64) -> PixelShaderElement {
         let radius = f64::from(rect.size.w) / 2.0;

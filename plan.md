@@ -1018,9 +1018,10 @@ Goal: the owner's current dock (Plank, Transparent-Tight theme), rebuilt nativel
 - **Built:** `src/shell/dock.rs`, `src/shell/dock_fx.rs` and `src/render/dock.rs`: zoom, every hide mode, launch and
   urgent bounces, the urgent glow, running dots, drag to reorder, remove and pin, file drops, badges and progress
   (`com.canonical.Unity.LauncherEntry`), the Plank import (`src/shell/plank.rs`), a dock per display (E8.3), the
-  focused app's highlight fading in and out over 300 ms (ActiveTime). Not yet: the `whitesur-dark` and `glass` presets
-  (the bar's look is constants in `src/render/dock.rs`, no preset layer); the small shadow behind each icon (the
-  shadow shader draws rounded rects, not an icon's shape).
+  focused app's highlight fading in and out over 300 ms (ActiveTime), the `whitesur-dark` and `glass` presets
+  (`[dock] style`, Settings ▸ Dock ▸ Style; `Look` in `src/render/dock.rs`: tint, opacity, radius, light edge and the
+  highlight's colour). Not yet: blur behind the `glass` bar (the renderer has no blur pass, D3 glass is tint only); the
+  small shadow behind each icon (the shadow shader draws rounded rects, not an icon's shape).
 
 **M3 done when:** all of the above; mockup review passed.
 
@@ -1704,9 +1705,14 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   and a deliberately broken 1.3.1 is rolled back automatically.
 - **Built:** release-plz and the release workflows (`release-plz.toml`, `.github/workflows/`), signed tarballs,
   `src/services/update.rs` (with `curl`, not `ureq`), `src/bin/update-helper.rs`, the watchdog and rollback in the
-  session wrapper (its "was rolled back" notification has Report, which opens a new issue), the Settings page above.
-  Not yet: installing at the next login without a click (Restart to Update and Update Now install it; it needs the
-  helper's polkit action to allow the active session without a password, an owner's call).
+  session wrapper (its "was rolled back" notification has Report, which opens a new issue), the Settings page above,
+  and installing at the next login without a click (opt-in, `[update] install_at_login`, Settings ▸ General ▸ Software
+  Update ▸ "Install updates automatically at login"): while a verified download waits, the compositor leaves
+  `install-at-login` in its state dir; the session wrapper then runs `noobsbot-desktop-update --verified` before the
+  compositor starts, through a second polkit action (`org.noobsbot.desktop.update.verified`, `allow_active` = `yes`,
+  picked by that first argument). That mode takes no other argument: it finds the caller's own download, checks its
+  signature and refuses anything not newer, as the password path does; the new version then starts with "Updated to
+  x.y.z", under the same rollback. Existing installs need `install.sh --update` once for the new action and wrapper.
 
 **M6 hardware covered:** GPU (real), monitors, HDMI/USB-C displays, sleep/lid/power button, webcam (via portal),
 phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.

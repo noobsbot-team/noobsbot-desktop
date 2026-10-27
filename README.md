@@ -340,7 +340,7 @@ and shows a notification with the line.
 | `[spaces]` | each display with its own Spaces, or one set for all |
 | `[clock]` | time zone, 24-hour clock, weekday, date, seconds, first day of the week (or the locale's), week numbers |
 | `[menu_bar]` | hide the menu bar until the pointer reaches the top edge; show the current Space as a number or dots |
-| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions, `cycle_across_apps`; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To); `displays`: a dock on every display, the main one or the pointer's; `outputs`: a display's own pinned apps (Options ▸ Separate Items on This Display) |
+| `[dock]` | pinned apps, icon size, magnification, auto-hide, click, middle-click and scroll actions, `cycle_across_apps`; `assign`: an app's windows on every Space or its new ones on one Space (Options ▸ Assign To); `displays`: a dock on every display, the main one or the pointer's; `outputs`: a display's own pinned apps (Options ▸ Separate Items on This Display); `style`: the bar's look, `default`, `whitesur-dark` or `glass` |
 | `[idle]` | when to dim, turn the screen off and sleep (each on battery and on AC), turn the keyboard backlight off, locking |
 | `[battery]` | the percentage beside the menu bar's battery symbol, slightly dim the display on battery |
 | `[sound]` | the alert sound (from the system's sound theme) and its volume, user interface sound effects on or off, the sound at login |
@@ -350,7 +350,7 @@ and shows a notification with the line.
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
 | `[widgets]` | order of other apps' widgets in Notification Center, which go on the desktop instead, and which are hidden; the World Clock's time zones (`clocks`) |
 | `[calendar]` | which `.ics` files to show |
-| `[update]` | stable or beta updates |
+| `[update]` | stable or beta updates; `install_at_login`: install a verified download at the next login without the password (off by default) |
 | `[desktop]` | desktop icons on or off, mounted drives among them (`show_drives`) |
 | `[network]` | proxy for the apps the desktop starts: none, manual (HTTP, HTTPS, SOCKS, bypass list) or automatic (PAC URL); also written to the GTK proxy settings |
 | `[housekeeping]` | when old Trash items and recent-files entries are cleared |
@@ -381,6 +381,8 @@ Once a day the desktop checks GitHub for a newer release (it sends nothing but t
 3. If the new version fails to start three times in a row, the next login rolls back to the previous version
    automatically and tells you.
 
+With `install_at_login = true` in `[update]` (Settings ▸ General ▸ Software Update), a verified download installs by
+itself at the next login, before the desktop starts, without the password, and a notification says "Updated to …".
 Set `channel = "beta"` in `[update]` to also get pre-releases. Installs made with `--from-source` or by hand only
 get the notification. From a terminal in the desktop, `noobsbot-desktop --update` does the same check, download and
 install; you can also always update with `./install.sh --update`.

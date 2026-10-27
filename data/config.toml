@@ -286,6 +286,9 @@ displays = "all"
 # A display's own pinned list, by connector name, in place of items (the dock menu's Options ▸ Separate Items on
 # This Display). A display that isn't connected keeps its list. E.g. outputs = { "HDMI-A-1" = ["kitty", "dolphin"] }
 outputs = {}
+# The bar's look: "default" (Plank's Transparent-Tight: an opaque grey gradient, square), "whitesur-dark"
+# (near-black, mostly opaque, a faint light edge) or "glass" (lighter, see-through, rounded ends).
+style = "default"
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.
@@ -364,6 +367,9 @@ files = ["~/.local/share/noobsbot-desktop/calendars/*.ics"]
 # "stable", or "beta" to also get pre-releases (1.4.0-beta.2). Updates download in the background, are checked
 # against the release signature, and install with "Restart to Update" (asks for the admin password).
 channel = "stable"
+# Install a downloaded, verified update at the next login without asking for the admin password (the helper checks
+# the release signature itself, and this can only install a newer signed release). Off: "Restart to Update" asks.
+install_at_login = false
 
 [desktop]
 # The files in your Desktop folder (XDG_DESKTOP_DIR, usually ~/Desktop) as icons on the wallpaper. Drag them to

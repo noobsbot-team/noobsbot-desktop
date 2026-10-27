@@ -417,6 +417,7 @@ pub const SETTINGS: &[Setting] = &[
     s(Page::Dock, "Dock", "dock.icon_size", "Size", "Icons shrink when they don't fit the screen", Kind::Slider { min: 32.0, max: 128.0, step: 2.0 }),
     s(Page::Dock, "Dock", "dock.zoom", "Magnification", "Icons grow under the pointer", Kind::Toggle),
     s(Page::Dock, "Dock", "dock.zoom_percent", "Magnified size", "", Kind::Slider { min: 100.0, max: 300.0, step: 5.0 }),
+    s(Page::Dock, "Dock", "dock.style", "Style", "", Kind::Choice(&[("default", "Default"), ("whitesur-dark", "Dark"), ("glass", "Glass")])),
     s(
         Page::Dock,
         "Dock",
@@ -757,6 +758,14 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::General, "Software Update", "check_updates", "Check for updates daily", "Sends nothing but the version; installs at next login", Kind::Toggle),
     s(Page::General, "Software Update", "update.channel", "Updates", "Beta also offers pre-releases", Kind::Choice(&[("stable", "Stable"), ("beta", "Beta")])),
+    s(
+        Page::General,
+        "Software Update",
+        "update.install_at_login",
+        "Install updates automatically at login",
+        "Signed updates only, without asking for the password",
+        Kind::Toggle,
+    ),
     s(Page::General, "Session", "windows.reopen_at_login", "Reopen windows when logging back in", "Also the Log Out alert's checkbox", Kind::Toggle),
 ];
 

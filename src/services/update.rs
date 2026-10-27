@@ -6,7 +6,9 @@
 //! installed) is downloaded in the background to `~/.cache/noobsbot-desktop/updates/<v>/` and verified (minisign
 //! signature of `SHA256SUMS`, then the tarball's SHA-256); a bad download is deleted. The notification then offers
 //! "Restart to Update", which runs the privileged helper through pkexec and logs out, so the next login starts the
-//! new version. Anything else (an AUR package, a hand-built binary, no key yet) only notifies.
+//! new version. With `[update] install_at_login`, the session wrapper instead installs it at the next login, before the
+//! compositor starts, through the helper's passwordless `--verified` mode. Anything else (an AUR package, a hand-built
+//! binary, no key yet) only notifies.
 //!
 //! noobsbot-terminal's releases are checked too, for its own row in Settings and the update count; its own installer
 //! or package updates it, so it is only shown (with its release page), never downloaded.
@@ -465,6 +467,9 @@ impl crate::state::State {
         if write().is_none() {
             tracing::debug!("update: couldn't write {}", path.display());
         }
+        // `[update] install_at_login`: while this is there, the session wrapper installs the download at the next login.
+        let marker = path.with_file_name("install-at-login");
+        let _ = if self.config.update.install_at_login && self.update_ready() { fs::write(&marker, "") } else { fs::remove_file(&marker) };
     }
 
     /// A verified download is waiting for "Restart to Update" (logo menu, notification).

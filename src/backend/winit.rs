@@ -469,7 +469,7 @@ impl State {
             let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
             bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &dock_frame.tips, dark, scale));
             bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
-            let mut elements = dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, scale);
+            let mut elements = dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, self.config.dock.style, scale);
             // In front of the bar (the last element), behind badges and dots.
             let back = elements.pop();
             bar.extend(elements.into_iter().chain(thumbs).chain(back));

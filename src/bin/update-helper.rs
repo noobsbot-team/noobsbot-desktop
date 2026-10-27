@@ -9,12 +9,21 @@
 //! `noobsbot-desktop-update --revert <v>` (Settings' "Revert to <v>") points the links back at the installed, older
 //! `versions/<v>` instead; nothing is downloaded or unpacked.
 //!
+//! `noobsbot-desktop-update --verified` (`[update] install_at_login`, run by the session wrapper at login) goes through
+//! the passwordless polkit action `org.noobsbot.desktop.update.verified`, which pkexec picks by that first argument.
+//! It takes no other argument (no revert, no path): it installs the pkexec caller's own download, found here, exactly
+//! as above, so that action can only install a newer release whose signature this helper checked.
+//!
 //! Testing: `NOOBSBOT_UPDATE_ROOT=<dir>` puts every system path under `<dir>`; it is ignored when running as root.
 
 use std::{
+    ffi::{CStr, OsStr, OsString},
     fs::{self, File},
     io::{Read, Write},
-    os::unix::fs::{DirBuilderExt, PermissionsExt, symlink},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt, symlink},
+    },
     path::{Path, PathBuf},
     process::{Command, ExitCode},
 };
@@ -26,11 +35,11 @@ mod verify;
 
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let result = match &args[..] {
-        [flag, version] if flag == "--revert" => revert(version.to_str().unwrap_or_default()),
-        [dir] => install(Path::new(dir)),
-        _ => Err("usage: noobsbot-desktop-update <download dir> | --revert <version>".into()),
-    };
+    let result = mode(&args).and_then(|mode| match mode {
+        Mode::Install(dir) => install(&dir),
+        Mode::Revert(version) => revert(&version),
+        Mode::Verified => verified(),
+    });
     match result {
         Ok(version) => {
             println!("Noobsbot Desktop {version} starts at the next login.");
@@ -41,6 +50,46 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+#[derive(Debug, PartialEq)]
+enum Mode {
+    Install(PathBuf),
+    Revert(String),
+    Verified,
+}
+
+/// The arguments. `--verified` (the passwordless action's) only alone; an unknown `--flag` is no download dir.
+fn mode(args: &[OsString]) -> Result<Mode, String> {
+    match args {
+        [flag] if flag == "--verified" => Ok(Mode::Verified),
+        [flag, version] if flag == "--revert" => Ok(Mode::Revert(version.to_string_lossy().into())),
+        [dir] if !dir.as_bytes().starts_with(b"--") => Ok(Mode::Install(dir.into())),
+        _ => Err("usage: noobsbot-desktop-update <download dir> | --revert <version> | --verified".into()),
+    }
+}
+
+/// `--verified`: the newest download in the pkexec caller's `~/.cache/noobsbot-desktop/updates/<v>/`, where the updater
+/// keeps it. The path comes from the caller's uid (pkexec's `PKEXEC_UID`), never from an argument.
+// ponytail: `~/.cache` only; a download under another XDG_CACHE_HOME isn't found, and waits for Restart to Update.
+fn verified() -> Result<Version, String> {
+    let uid: libc::uid_t = std::env::var("PKEXEC_UID").ok().and_then(|u| u.parse().ok()).ok_or("--verified runs through pkexec")?;
+    // SAFETY: getpwuid returns null or an entry valid until the next call; this helper is single-threaded.
+    let home = unsafe {
+        let user = libc::getpwuid(uid);
+        if user.is_null() {
+            return Err(format!("no user {uid}"));
+        }
+        PathBuf::from(OsStr::from_bytes(CStr::from_ptr((*user).pw_dir).to_bytes()))
+    };
+    let updates = home.join(".cache/noobsbot-desktop/updates");
+    let (_, dir) = fs::read_dir(&updates)
+        .map_err(|e| format!("{}: {e}", updates.display()))?
+        .flatten()
+        .filter_map(|e| Some((Version::parse(e.file_name().to_str()?).ok()?, e.path())))
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .ok_or("no download")?;
+    install(&dir)
 }
 
 /// `/`, or `NOOBSBOT_UPDATE_ROOT` when testing as a user.
@@ -128,8 +177,9 @@ fn installed(bin: &Path, versions: &Path) -> Result<Version, String> {
 fn unpack(dir: &Path, signed: &verify::Signed, stage: &Path, versions: &Path) -> Result<PathBuf, String> {
     let copy = stage.join("release.tar.zst");
     let mut out = File::create_new(&copy).map_err(|e| format!("{}: {e}", copy.display()))?;
-    let tarball = File::open(dir.join(&signed.tarball)).map_err(|e| format!("{}: {e}", signed.tarball))?;
-    let sha256 = verify::sha256(tarball, |chunk| out.write_all(chunk)).map_err(|e| format!("{}: {e}", signed.tarball))?;
+    let tarball = open(&dir.join(&signed.tarball)).map_err(|e| format!("{}: {e}", signed.tarball))?;
+    // A release is tens of MB: a huge file (or a device) put in its place fills no disk before its hash fails.
+    let sha256 = verify::sha256(tarball.take(1 << 30), |chunk| out.write_all(chunk)).map_err(|e| format!("{}: {e}", signed.tarball))?;
     if sha256 != signed.sha256 {
         return Err(format!("{} doesn't match its signed SHA-256", signed.tarball));
     }
@@ -168,6 +218,30 @@ fn relink(to: &Path, link: &Path) -> Result<(), String> {
 /// A small file (the sums or the signature), at most 64 KiB.
 fn small(path: &Path) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
-    File::open(path).and_then(|f| f.take(64 * 1024).read_to_end(&mut bytes)).map_err(|e| format!("{}: {e}", path.display()))?;
+    open(path).and_then(|f| f.take(64 * 1024).read_to_end(&mut bytes)).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(bytes)
+}
+
+/// A file of the user's download, opened without waiting on a FIFO put there (its reads then fail at once).
+fn open(path: &Path) -> std::io::Result<File> {
+    fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mode_of(args: &[&str]) -> Result<Mode, String> {
+        mode(&args.iter().map(OsString::from).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn verified_takes_nothing_else() {
+        assert_eq!(mode_of(&["--verified"]), Ok(Mode::Verified));
+        for args in [&["--verified", "/tmp/x"][..], &["--verified", "--revert", "1.0.0"], &["--verified", "--verified"], &["--verified="], &["--other"], &[]] {
+            assert!(mode_of(args).is_err(), "{args:?}");
+        }
+        assert_eq!(mode_of(&["--revert", "1.2.0"]), Ok(Mode::Revert("1.2.0".into())));
+        assert_eq!(mode_of(&["/home/u/.cache/noobsbot-desktop/updates/1.3.0"]), Ok(Mode::Install("/home/u/.cache/noobsbot-desktop/updates/1.3.0".into())));
+    }
 }
