@@ -218,6 +218,8 @@ pub struct State {
     pub keep_awake: bool,
     /// The Control Center module showing its list.
     pub expanded: Option<crate::shell::control::Module>,
+    /// A Control Center module opening (`true`) or closing in place.
+    pub expanding: Option<(crate::shell::control::Module, bool, crate::anim::Anim)>,
     /// How far that list is scrolled, in logical px.
     pub control_scroll: f64,
     /// The Control Center slider being dragged.
@@ -573,6 +575,7 @@ impl State {
             sleep_blockers: Vec::new(),
             keep_awake: false,
             expanded: None,
+            expanding: None,
             control_scroll: 0.0,
             shell_drag: None,
             osd_timer: None,

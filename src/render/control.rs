@@ -213,11 +213,13 @@ impl ControlCenter {
             }
         }
         if let Some((_, rows)) = &layout.list {
-            if status.rows.is_empty() {
+            if status.rows.is_empty()
+                && let Some(first) = rows.first()
+            {
                 let empty = if status.expanded == Some(Module::Wifi) { "No Networks" } else { "No Devices" };
                 put(
                     text.label(empty, Style { color: secondary, ..body }, 200, scale),
-                    row_rect(rows[0].loc.x + 6, rows[0].loc.y, rows[0].loc.x + rows[0].size.w, rows[0].size.h),
+                    row_rect(first.loc.x + 6, first.loc.y, first.loc.x + first.size.w, first.size.h),
                     true,
                 );
             }
@@ -310,10 +312,28 @@ impl ControlCenter {
             }
             if let Some(profile) = &status.profile {
                 let words = format!("Power: {}", profile_name(profile));
-                let right = card.loc.x + card.size.w - 12;
+                // The ▾ that opens the profiles.
+                put(
+                    symbols.get(Symbol::CaretDown, Weight::Regular, 12, scale, secondary),
+                    Rectangle::new((card.loc.x + card.size.w - 24, card.loc.y + ts(14) + (ts(16) - 12) / 2).into(), (12, 12).into()),
+                    false,
+                );
+                let right = card.loc.x + card.size.w - 30;
                 let piece = text.label(&words, Style { color: secondary, ..body }, (right - x) as u32, scale);
                 let w = (f64::from(piece.width) / scale).round() as i32;
                 put(piece, row(right - w, card.loc.y + ts(14), right, ts(16)), false);
+            }
+        }
+
+        for (row, name) in layout.profiles.iter().zip(&status.profiles) {
+            let right = row.loc.x + row.size.w - 30;
+            put(text.label(profile_name(name), body, (right - row.loc.x - 6) as u32, scale), row_rect(row.loc.x + 6, row.loc.y, right, row.size.h), true);
+            if status.profile.as_ref() == Some(name) {
+                put(
+                    symbols.get(Symbol::Check, Weight::Regular, 14, scale, label),
+                    Rectangle::new((row.loc.x + row.size.w - 22, row.loc.y + (row.size.h - 14) / 2).into(), (14, 14).into()),
+                    false,
+                );
             }
         }
 

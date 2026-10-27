@@ -747,7 +747,7 @@ impl State {
         {
             return;
         }
-        if shell && (self.notify_scroll(pos, step[0], step[1]) || self.dock_scroll(self.to_dock(pos), page_wheel)) {
+        if shell && (self.notify_scroll(pos, step[0], step[1], source == AxisSource::Finger, lifted, time) || self.dock_scroll(self.to_dock(pos), page_wheel)) {
             return;
         }
         let mut frame = AxisFrame::new(time).source(source);
