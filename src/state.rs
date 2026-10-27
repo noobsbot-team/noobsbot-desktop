@@ -341,10 +341,9 @@ impl State {
         let socket = ListeningSocketSource::new_auto()?;
         let socket_name = socket.socket_name().to_os_string();
         let handle = event_loop.handle();
-        handle.insert_source(socket, |stream, _, state| {
-            if let Err(err) = state.display_handle.insert_client(stream, Arc::new(ClientState::default())) {
-                tracing::warn!("rejected client: {err}");
-            }
+        handle.insert_source(socket, |stream, _, state| match state.display_handle.insert_client(stream, Arc::new(ClientState::default())) {
+            Ok(client) => crate::perms::record_program(&state.display_handle, &client),
+            Err(err) => tracing::warn!("rejected client: {err}"),
         })?;
         // `noobsbot-desktop --trusted <command>` connects here (E6.11, perms.rs).
         let trusted = ListeningSocketSource::with_name(&crate::perms::trusted_socket(&socket_name).to_string_lossy())?;
@@ -1118,6 +1117,8 @@ pub struct ClientState {
     pub security_context: Option<SecurityContext>,
     /// Connected through the trusted socket (perms.rs): may record the screen without asking.
     pub trusted: bool,
+    /// Its program and name, read as it connected (perms.rs).
+    pub program: std::sync::OnceLock<(std::path::PathBuf, String)>,
 }
 
 impl ClientData for ClientState {
