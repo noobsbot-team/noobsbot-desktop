@@ -315,6 +315,8 @@ Space and Mission Control swipes follow your fingers and finish with a spring: p
 with a quick flick, they go on; otherwise they spring back. With Reduce motion they act when you let go.
 Set `swipe_fingers = 4` in `[touchpad]` to use four fingers for Space and Mission Control swipes and leave
 three-finger swipes to apps.
+`three_finger_drag = true` (Trackpad ▸ Three-finger drag) drags windows and selections with three fingers, no
+click; Space and Mission Control swipes then take four fingers.
 
 ## Settings
 Open **System Settings** from Launchpad or Spotlight (search "Settings"), or edit `~/.config/noobsbot-desktop/config.toml`. The file is
@@ -327,7 +329,7 @@ doesn't understand is skipped and reported in the journal.
 | `[night_light]` | warmer colours on a schedule (set hours, or sunset to sunrise), colour temperature |
 | `[accessibility]` | Zoom style (whole screen or a lens) and whether it follows the text cursor and keyboard focus, colour filters (invert, greyscale), increase contrast, sticky / slow / bounce / mouse keys, the alert bell, shake to find the pointer, dwell click, hold for secondary click, on-screen keyboard always shown, the Orca screen reader |
 | `[keyboard]` | layouts, variants, xkb options, key repeat, a layout remembered per window, the input-method engine (fcitx5 or ibus) |
-| `[touchpad]` | on or off, tap to click, natural scrolling, secondary click (two fingers, corner or off), scroll method (two fingers, edge or none), three or four-finger swipes, gesture sensitivity, each gesture on or off |
+| `[touchpad]` | on or off, tap to click, natural scrolling, secondary click (two fingers, corner or off), scroll method (two fingers, edge or none), three or four-finger swipes, three-finger drag, gesture sensitivity, each gesture on or off |
 | `[mouse]` | tracking speed, acceleration, primary button, natural scrolling, middle-click emulation, double-click speed and middle-click paste (also given to GTK apps) |
 | `[hot_corners]` | an action for each screen corner (off by default) |
 | `[display]` | which GPU draws the desktop, scale for every screen |

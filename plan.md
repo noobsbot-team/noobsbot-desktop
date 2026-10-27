@@ -1310,8 +1310,10 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
 - **Done when:** every gesture in the table works on a real touchpad, is interruptible, and has no false triggers
   while typing (palm rejection) or scrolling.
 - **Built:** `src/gestures.rs` (the recogniser, with velocity and flicks, fed by `src/input.rs`): every row but
-  3-finger drag and the reserved hold; Space and Mission Control swipes follow the fingers. Not yet: 3-finger drag;
-  App Exposé, Launchpad and Show Desktop act on release instead of following the fingers.
+  the reserved hold; Space and Mission Control swipes follow the fingers. 3-finger drag is libinput's own
+  (`touchpad.three_finger_drag`, set in `src/backend/udev.rs`); while it's on the system swipes take 4 fingers
+  (`Touchpad::effective_swipe_fingers`), untested on a real pad. Not yet: App Exposé, Launchpad and Show Desktop act
+  on release instead of following the fingers.
 
 ### E5.4 Hot corners (optional, off by default)
 - **Design:** each screen corner can trigger: Mission Control · App Exposé · Desktop · Launchpad · Notification Center ·
