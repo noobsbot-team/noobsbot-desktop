@@ -729,6 +729,15 @@ pub const SETTINGS: &[Setting] = &[
         Kind::List(None),
     ),
     s(Page::Privacy, "Screen Recording", "privacy.screen_recording_denied", "Denied", "", Kind::List(None)),
+    s(
+        Page::Privacy,
+        "Keyboard & Mouse Control",
+        "privacy.input_control",
+        "Allowed to type and click",
+        "Programs ask the first time; Remove asks again",
+        Kind::List(None),
+    ),
+    s(Page::Privacy, "Keyboard & Mouse Control", "privacy.input_control_denied", "Denied", "", Kind::List(None)),
     s(Page::General, "", "terminal", "Terminal", "Opened by Super+Return", Kind::Text("noobsbot")),
     s(
         Page::General,
