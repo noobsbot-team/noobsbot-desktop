@@ -1417,6 +1417,18 @@ mod tests {
     }
 
     #[test]
+    fn software_is_tried_once() {
+        fn env<'a>(set: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+            move |k| set.iter().find(|(n, _)| *n == k).map(|(_, v)| v.to_string())
+        }
+        assert!(!software_set(env(&[])), "the GPU's own driver failed: software is worth a go");
+        assert!(!software_set(env(&[("LIBGL_ALWAYS_SOFTWARE", "1")])), "EGL forced, GBM not: still worth one with both");
+        let vendor = [("GBM_BACKEND", "nvidia-drm"), ("GBM_ALWAYS_SOFTWARE", "1"), ("LIBGL_ALWAYS_SOFTWARE", "1")];
+        assert!(!software_set(env(&vendor)), "a vendor's GBM ignores GBM_ALWAYS_SOFTWARE");
+        assert!(software_set(env(&SOFTWARE)), "software already failed: no second go");
+    }
+
+    #[test]
     fn hotplug_settles_before_the_displays_are_planned() {
         let (mut settle, t0) = (Settle::default(), Instant::now());
         // The dock's first monitor starts the timer; its second, 300 ms later, doesn't start another.
