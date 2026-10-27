@@ -1012,6 +1012,11 @@ Goal: the owner's current dock (Plank, Transparent-Tight theme), rebuilt nativel
   Rebuilding it inside Noobsbot Desktop keeps the same look and behaviour while being native Wayland, faster and lighter.
 - **Done when:** compared side by side with Plank (same icon size, zoom, theme, hide mode and timings), the dock is
   indistinguishable in look and behaviour, and every function in the table works, on each monitor.
+- **Built:** `src/shell/dock.rs`, `src/shell/dock_fx.rs` and `src/render/dock.rs`: zoom, every hide mode, launch and
+  urgent bounces, the urgent glow, running dots, drag to reorder, remove and pin, file drops, badges and progress
+  (`com.canonical.Unity.LauncherEntry`), the Plank import (`src/shell/plank.rs`), a dock per display (E8.3). Not yet:
+  the `whitesur-dark` and `glass` presets; the focused app's highlight fading in over 300 ms; the small shadow behind
+  each icon.
 
 **M3 done when:** all of the above; mockup review passed.
 
@@ -1046,6 +1051,9 @@ Goal: everything that informs you and helps you find things.
 - **Why built in:** every Linux app already sends notifications through this standard, so they all work
   unchanged. Built in (not mako/dunst) for RAM and an identical look (C5).
 - **Done when:** `notify-send "Title" "Body"` shows a correct banner; actions call back the app; DND silences everything.
+- **Done:** `src/services/notifications.rs` (actions, urgency, replaces, the progress hint, history) and the banners
+  in `src/shell/notify.rs` (three, then "+N more"; 5 s; alert style; quiet under Do Not Disturb or a fullscreen app;
+  the swipe above).
 
 ### E4.2 Notification Center (the notification panel)
 - **What it is:** a panel on the right side with all notifications plus widgets.
@@ -1086,16 +1094,18 @@ Goal: everything that informs you and helps you find things.
   - **Widgets** (in `card` material, radius 12):
     | Widget | Content | Data from |
     |---|---|---|
-    | Calendar | month grid (E2.5); later "Up Next" events | `chrono`; later `.ics` / CalDAV |
+    | Calendar | month grid (E2.5); ~~later~~ "Up Next" events (done: the card above the month) | `chrono`; `.ics` (`src/ical.rs`, `src/events.rs`); CalDAV not yet |
     | Batteries | laptop + Bluetooth devices (headphones, mouse) | UPower |
     | World Clock (optional) | 1–4 cities, analogue mini faces | `chrono-tz` |
-    | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open) | `/proc`, `/sys` |
-    | Weather (optional, later) | needs an online weather API, so off by default | later decision |
+    | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open). Built as a widget app: CPU, memory and disk every 5 s; not yet network ↑/↓ or refreshing only while open | `/proc`, `/sys` (`src/bin/widget-system.rs`) |
+    | Weather (done, off by default) | Open-Meteo forecast for the place in `[weather]` (no key, no account) | `src/services/weather.rs` (E7.2) |
   - "Edit Widgets…" (under the widgets) opens Settings ▸ Notifications, which shows, hides and reorders other apps' widgets (`[widgets]`) for Notification Center and the desktop.
 - **Built with:** our widgets; the notification store from E4.1; UPower; chrono.
 - **Why:** this is the design's notification panel (R1, R13); a single place for missed notifications.
 - **Done when:** notifications arrive in history, group by app, expand/collapse, clear and act; widgets show live data;
   open/close animates at 120 Hz.
+- **Done:** `src/shell/notify.rs` `center` (history of 100, groups, Clear All, the Do Not Disturb row, ⚙ and Edit
+  Widgets…), opened by the clock and Super+N; Up Next and Weather as in the table.
 
 ### E4.3 Spotlight (search & launcher)
 - **What it is:** Super+Space opens a search box to launch apps and calculate.
@@ -1125,6 +1135,9 @@ Goal: everything that informs you and helps you find things.
   Fuzzy matching finds "Helium" from "hlm". Files come from `plocate`'s existing database, not an index of our own
   (Open-4).
 - **Done when:** any installed app is found within 1 frame of typing and launches on Enter.
+- **Done:** `src/shell/spotlight.rs` (a top hit, apps, settings, the calculator, files from recent files and `plocate`
+  off the UI thread) and `src/render/spotlight.rs`; its own matcher and evaluator rather than `nucleo-matcher` /
+  `evalexpr`.
 
 ### E4.4 Launchpad (app grid)
 - **What it is:** a full-screen grid of all apps: Launchpad.
@@ -1147,6 +1160,8 @@ Goal: everything that informs you and helps you find things.
 - **Built with:** the shared app index + icons (M3); our widgets.
 - **Why:** the design calls for it (R1), and it's cheap because the app index and icons already exist.
 - **Done when:** all apps show, paging and search work, and opening/closing is smooth.
+- **Done:** `src/shell/launchpad.rs` (pages and dots, search, folders, `launchpad.json`, drag to the dock),
+  `src/render/launchpad.rs`, the 4-finger pinch.
 
 ### E4.5 App switcher
 - **What it is:** Super+Tab to switch apps.
@@ -1156,6 +1171,8 @@ Goal: everything that informs you and helps you find things.
   Appears only after a 150 ms hold (a quick tap switches instantly).
 - **Built with:** our widgets + the window list the compositor already has (C5 benefit).
 - **Done when:** order is most-recently-used; it switches across Spaces (jumps to the app's Space).
+- **Done:** `src/shell/switcher.rs` (most recently used, Shift back, Q quits, H hides, pointer pick), across Spaces
+  through `reveal`.
 
 ### E4.6 USB drives & devices
 - **What it is:** plug in a USB drive or SD card and it just works.
@@ -1168,6 +1185,8 @@ Goal: everything that informs you and helps you find things.
   drives: Dolphin asks for the passphrase.
 - **Why:** udisks2 is the standard, and Dolphin already integrates with it.
 - **Done when:** plug → notification → open in Dolphin → eject → "safe to remove".
+- **Done:** `src/services/disks.rs` (UDisks2: auto-mount; Eject unmounts and powers off) and `src/shell/disks.rs` (the
+  "connected" and "can be removed" notifications).
 
 ### E4.7 Force Quit window & "not responding" detection
 - **What it is:** a Force Quit Applications window, plus a warning when an app freezes.
@@ -1195,6 +1214,9 @@ Goal: everything that informs you and helps you find things.
 - **Why built in:** the compositor is the only part that knows reliably which window belongs to which process,
   and it keeps working even when the system is busy.
 - **Done when:** a deliberately frozen test app is flagged within 5 s and can be force-quit from both the window and the alert.
+- **Done:** `src/shell/force_quit.rs` (`xdg_wm_base` pings, 5 s, SIGTERM then SIGKILL), "(Not Responding)" in the
+  title, the Wait / Force Quit alert, Super+Alt+Esc and the logo menu. Pings go out with input to the app, not on a
+  timer.
 
 **M4 hardware covered:** USB storage, SD cards.
 **M4 done when:** all elements pass; mockup review passed.
