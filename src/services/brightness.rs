@@ -2,12 +2,17 @@
 //! External monitors follow the same value over DDC/CI, through `ddcutil` when it is installed.
 
 use std::{
+    io,
+    os::fd::AsRawFd,
     process::Command,
     sync::{OnceLock, mpsc},
     time::{Duration, Instant},
 };
 
-use smithay::reexports::calloop::channel::Sender;
+use smithay::reexports::{
+    calloop::channel::Sender,
+    udev::{EventType, MonitorBuilder},
+};
 use zbus::Connection;
 
 use super::Update;
@@ -18,9 +23,8 @@ trait Session {
     fn set_brightness(&self, subsystem: &str, name: &str, brightness: u32) -> zbus::Result<()>;
 }
 
-/// Sends the current brightness in percent; `None` without a backlight (desktop monitors).
-// ponytail: read at start and after our own changes; firmware-handled brightness keys aren't seen until then.
-// Listen to the backlight's udev change events if a machine needs it.
+/// Sends the current brightness in percent; `None` without a backlight (desktop monitors). At start, after our own
+/// changes, and on the backlight's udev events (`watch`).
 pub fn send_current(updates: &Sender<Update>) {
     let percent = display_info::brightness();
     tracing::debug!(?percent, "brightness");
@@ -32,9 +36,41 @@ pub fn start(updates: &Sender<Update>) {
     send_current(updates);
     let (tx, rx) = mpsc::channel();
     let _ = DDC.set(tx);
-    let updates = updates.clone();
-    if let Err(err) = std::thread::Builder::new().name("ddc".into()).spawn(move || ddc(&updates, &rx)) {
+    let ddc_updates = updates.clone();
+    if let Err(err) = std::thread::Builder::new().name("ddc".into()).spawn(move || ddc(&ddc_updates, &rx)) {
         tracing::warn!("monitor brightness off: {err}");
+    }
+    if display_info::backlight().is_some() {
+        let updates = updates.clone();
+        let watch = move || {
+            if let Err(err) = watch(&updates) {
+                tracing::warn!("brightness changed elsewhere not followed: {err}");
+            }
+        };
+        if let Err(err) = std::thread::Builder::new().name("backlight".into()).spawn(watch) {
+            tracing::warn!("brightness changed elsewhere not followed: {err}");
+        }
+    }
+}
+
+/// Follows brightness changed outside the shell (firmware keys, `brightnessctl`): the slider moves, no OSD.
+// ponytail: only drivers that send a uevent on change are seen (sysfs writes and most hotkeys do).
+fn watch(updates: &Sender<Update>) -> io::Result<()> {
+    let socket = MonitorBuilder::new()?.match_subsystem("backlight")?.listen()?;
+    let mut fd = libc::pollfd { fd: socket.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+    loop {
+        // SAFETY: one valid pollfd, which outlives the call.
+        if unsafe { libc::poll(&mut fd, 1, -1) } < 0 {
+            let err = io::Error::last_os_error();
+            if err.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(err);
+        }
+        // Drained in full: a burst of changes is one reading.
+        if socket.iter().filter(|event| event.event_type() == EventType::Change).count() > 0 {
+            send_current(updates);
+        }
     }
 }
 
