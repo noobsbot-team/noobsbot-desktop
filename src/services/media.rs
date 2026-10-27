@@ -20,7 +20,8 @@ pub struct Media {
     /// Artists joined with `, `; may be empty (a web video).
     pub artist: String,
     pub playing: bool,
-    /// `mpris:artUrl` when it is a local file (the player's own cache); empty otherwise, since nothing is downloaded.
+    /// `mpris:artUrl`'s path, percent-decoded, when it is a local file (the player's own cache); empty otherwise, since
+    /// nothing is downloaded.
     pub art: String,
 }
 
@@ -57,28 +58,35 @@ pub async fn watch(bus: &Connection, updates: &Sender<Update>) {
         let changes = MessageStream::for_match_rule(changes, bus, Some(16)).await?;
         zbus::Result::Ok(owners.map(drop).or(changes.map(drop)))
     };
+    // The last player seen playing, which wins among paused ones.
+    let last = std::sync::Mutex::new(String::new());
     match streams.await {
-        Ok(events) => super::relay(bus, events, "media", updates, Update::Media, read).await,
+        Ok(events) => super::relay(bus, events, "media", updates, Update::Media, |bus| read(bus, &last)).await,
         Err(err) => tracing::warn!("Now Playing off: {err}"),
     }
 }
 
-/// The playing player, else a paused one; `None` when nothing is playing or paused.
-// ponytail: with several paused players the first by name wins, not the last one used; remember the last player to
-// switch to Playing if that shows up in use.
-async fn read(bus: &Connection) -> Option<Media> {
+/// The player to show (`pick`); `last` is the last one seen playing, updated here.
+async fn read(bus: &Connection, last: &std::sync::Mutex<String>) -> Option<Media> {
     let mut names = fdo::DBusProxy::new(bus).await.ok()?.list_names().await.ok()?;
     names.sort();
-    let mut paused = None;
+    let mut players = Vec::new();
     // playerctld mirrors another player; showing it would show that one twice.
     for name in names.iter().filter(|n| n.strip_prefix(NAMESPACE).is_some_and(|app| app.starts_with('.') && app != ".playerctld")) {
-        let Some(media) = player(bus, name).await else { continue };
-        if media.playing {
-            return Some(media);
-        }
-        paused.get_or_insert(media);
+        players.extend(player(bus, name).await);
     }
-    paused
+    let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+    let media = pick(players, &last)?;
+    if media.playing {
+        last.clone_from(&media.player);
+    }
+    Some(media)
+}
+
+/// The first playing player, else the paused one that played last, else the first paused one; `None` for none.
+fn pick(mut players: Vec<Media>, last: &str) -> Option<Media> {
+    let at = players.iter().position(|m| m.playing).or_else(|| players.iter().position(|m| m.player == last));
+    (!players.is_empty()).then(|| players.swap_remove(at.unwrap_or(0)))
 }
 
 async fn player(bus: &Connection, name: &str) -> Option<Media> {
@@ -95,9 +103,8 @@ fn from_raw(player: &str, status: &str, metadata: &HashMap<String, OwnedValue>) 
     };
     let title = metadata.get("xesam:title").and_then(|v| v.downcast_ref::<&str>().ok()).unwrap_or_default().to_owned();
     let artists = metadata.get("xesam:artist").and_then(|v| Vec::<String>::try_from(v.try_clone().ok()?).ok());
-    let art = metadata.get("mpris:artUrl").and_then(|v| v.downcast_ref::<&str>().ok()).and_then(|u| u.strip_prefix("file://")).unwrap_or_default();
-    // ponytail: `%XX` escapes are left as they are; decode them if a player's cache path ever has a space.
-    Some(Media { player: player.to_owned(), title, artist: artists.unwrap_or_default().join(", "), playing, art: art.to_owned() })
+    let art = metadata.get("mpris:artUrl").and_then(|v| v.downcast_ref::<&str>().ok()).and_then(crate::apps::file_path).unwrap_or_default();
+    Some(Media { player: player.to_owned(), title, artist: artists.unwrap_or_default().join(", "), playing, art })
 }
 
 pub async fn control(bus: &Connection, player: &str, action: Action) {
@@ -133,10 +140,22 @@ mod tests {
         metadata.insert("mpris:artUrl".to_owned(), OwnedValue::from(Str::from("file:///tmp/art.png")));
         let media = from_raw("org.mpris.MediaPlayer2.mpv", "Playing", &metadata).unwrap();
         assert_eq!((media.title.as_str(), media.artist.as_str(), media.playing, media.art.as_str()), ("Opal", "A, B", true, "/tmp/art.png"));
+        metadata.insert("mpris:artUrl".to_owned(), OwnedValue::from(Str::from("file:///tmp/My%20Art.png")));
+        assert_eq!(from_raw("org.mpris.MediaPlayer2.mpv", "Playing", &metadata).unwrap().art, "/tmp/My Art.png", "escapes decoded");
         metadata.insert("mpris:artUrl".to_owned(), OwnedValue::from(Str::from("https://i.scdn.co/image/x")));
         assert_eq!(from_raw("org.mpris.MediaPlayer2.mpv", "Playing", &metadata).unwrap().art, "", "a remote picture is not fetched");
         let media = from_raw("org.mpris.MediaPlayer2.helium", "Paused", &HashMap::new()).unwrap();
         assert_eq!((media.title.as_str(), media.artist.as_str(), media.playing), ("", "", false));
         assert_eq!(from_raw("org.mpris.MediaPlayer2.mpv", "Stopped", &metadata), None);
+    }
+
+    #[test]
+    fn last_played_wins_among_paused() {
+        let m = |player: &str, playing| Media { player: player.into(), title: String::new(), artist: String::new(), playing, art: String::new() };
+        let player = |players, last| pick(players, last).map(|m| m.player);
+        assert_eq!(player(vec![m("a", false), m("b", true)], "a").as_deref(), Some("b"), "playing beats paused");
+        assert_eq!(player(vec![m("a", false), m("b", false)], "b").as_deref(), Some("b"), "the last one used");
+        assert_eq!(player(vec![m("a", false), m("b", false)], "gone").as_deref(), Some("a"), "else the first by name");
+        assert_eq!(pick(Vec::new(), "a"), None);
     }
 }

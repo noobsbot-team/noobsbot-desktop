@@ -107,8 +107,8 @@ pub fn sessions(dir: &Path) -> Vec<Session> {
     list
 }
 
-/// `Name` and `Exec` of a session's `[Desktop Entry]`; `None` when it is hidden or has no command.
-/// ponytail: Exec is split at spaces and its %-codes dropped; quoted arguments would need the spec's unquoting.
+/// `Name` and `Exec` of a session's `[Desktop Entry]`; `None` when it is hidden or has no command. `Exec` is unquoted
+/// and its field codes dropped as the launcher does it for apps.
 fn session(desktop: &str, id: String) -> Option<Session> {
     let (mut name, mut exec) = (None, None);
     let mut entry = false;
@@ -124,8 +124,9 @@ fn session(desktop: &str, id: String) -> Option<Session> {
             }
         }
     }
-    let cmd: Vec<String> = exec?.split_whitespace().filter(|a| !a.starts_with('%')).map(String::from).collect();
-    (!cmd.is_empty()).then(|| Session { name: name.unwrap_or_else(|| id.clone()), cmd, id })
+    let name = name.unwrap_or_else(|| id.clone());
+    let cmd = crate::apps::App { name: name.clone(), exec: crate::apps::unescape(&exec?), ..Default::default() }.command("");
+    (!cmd.is_empty()).then_some(Session { name, cmd, id })
 }
 
 /// The user row and the session choice, over the lock screen's layout: one user sits exactly where the lock
@@ -451,6 +452,8 @@ mod tests {
         .unwrap();
         assert_eq!(s.name, "Other (Wayland)");
         assert_eq!(s.cmd, ["/usr/lib/other-dbus-run-session-if-needed", "start-other"]);
+        let quoted = session("[Desktop Entry]\nName=Q\nExec=\"/opt/my session/run\" --name \"a \\\\\"b\\\\\"\" 100%% %f\n", "q".into()).unwrap();
+        assert_eq!(quoted.cmd, ["/opt/my session/run", "--name", "a \"b\"", "100%"]);
         assert!(session("[Desktop Entry]\nName=Gone\nExec=x\nHidden=true", "g".into()).is_none());
         assert!(session("[Desktop Entry]\nName=No command", "n".into()).is_none());
         let ours = sessions(Path::new("data/system/usr/share/wayland-sessions"));
