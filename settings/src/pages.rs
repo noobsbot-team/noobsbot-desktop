@@ -595,7 +595,7 @@ pub const SETTINGS: &[Setting] = &[
         "Gestures",
         "touchpad.swipe_fingers",
         "Swipe with",
-        "Four leaves three-finger swipes to apps",
+        "Four leaves three-finger swipes to apps (always four with three-finger drag)",
         Kind::Steps(&[(3, "Three fingers"), (4, "Four fingers")]),
     ),
     s(
