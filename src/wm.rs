@@ -46,13 +46,16 @@ pub fn stick(start: i32, len: i32, edges: &[i32]) -> i32 {
     start + best.unwrap_or(0)
 }
 
-/// Where a moved window lands: magnetic to the screen and other windows' edges, never lost off screen.
-/// ponytail: other windows' edges count even where the windows don't overlap on the other axis.
+/// Where a moved window lands: magnetic to the screen and other windows' edges, never lost off screen. Another
+/// window's side counts only beside it: their spans on the other axis overlap, or will once that axis sticks.
 pub fn move_to(rect: Rect, area: Rect, others: &[Rect], magnetic: bool) -> Point<i32, Logical> {
     let (mut x, mut y) = (rect.loc.x, rect.loc.y);
     if magnetic {
-        let xs: Vec<i32> = [area.loc.x, area.loc.x + area.size.w].into_iter().chain(others.iter().flat_map(|o| [o.loc.x, o.loc.x + o.size.w])).collect();
-        let ys: Vec<i32> = [area.loc.y, area.loc.y + area.size.h].into_iter().chain(others.iter().flat_map(|o| [o.loc.y, o.loc.y + o.size.h])).collect();
+        let near = |a: i32, a_len: i32, b: i32, b_len: i32| a <= b + b_len + SNAP_DISTANCE && b <= a + a_len + SNAP_DISTANCE;
+        let beside = others.iter().filter(|o| near(rect.loc.y, rect.size.h, o.loc.y, o.size.h));
+        let above = others.iter().filter(|o| near(rect.loc.x, rect.size.w, o.loc.x, o.size.w));
+        let xs: Vec<i32> = [area.loc.x, area.loc.x + area.size.w].into_iter().chain(beside.flat_map(|o| [o.loc.x, o.loc.x + o.size.w])).collect();
+        let ys: Vec<i32> = [area.loc.y, area.loc.y + area.size.h].into_iter().chain(above.flat_map(|o| [o.loc.y, o.loc.y + o.size.h])).collect();
         x = stick(x, rect.size.w, &xs);
         y = stick(y, rect.size.h, &ys);
     }
@@ -409,7 +412,10 @@ mod tests {
         let area = rect(0, 0, 1000, 800);
         assert_eq!(move_to(rect(6, 300, 200, 100), area, &[], true), (0, 300).into());
         assert_eq!(move_to(rect(6, 300, 200, 100), area, &[], false), (6, 300).into(), "Ctrl: no sticking");
-        assert_eq!(move_to(rect(500, 300, 200, 100), area, &[rect(704, 0, 100, 100)], true), (504, 300).into(), "sticks to a neighbour");
+        assert_eq!(move_to(rect(500, 300, 200, 100), area, &[rect(704, 250, 100, 100)], true), (504, 300).into(), "sticks to a neighbour");
+        assert_eq!(move_to(rect(500, 300, 200, 100), area, &[rect(704, 0, 100, 100)], true), (500, 300).into(), "not beside it: free");
+        assert_eq!(move_to(rect(500, 300, 200, 100), area, &[rect(704, 195, 100, 100)], true), (504, 295).into(), "corners 5 px apart: both stick");
+        assert_eq!(move_to(rect(500, 300, 200, 100), area, &[rect(100, 404, 200, 100)], true), (500, 300).into(), "below but off to the side: free");
         assert_eq!(move_to(rect(-500, -50, 200, 100), area, &[], true), (-160, 0).into(), "40 px stay on screen, top never above");
         assert_eq!(move_to(rect(2000, 2000, 200, 100), area, &[], true), (960, 760).into());
     }
