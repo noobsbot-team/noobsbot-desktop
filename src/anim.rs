@@ -362,25 +362,15 @@ impl State {
         }
     }
 
-    /// Where `window` minimises to, relative to its display: its tile's thumbnail (the next tile while it is still
-    /// shown), else its app's dock icon, on that display's dock; or the bottom centre without a shown dock there.
-    // ponytail: un-minimising grows out of the last tile's place, not the one it had; the tile is gone by then.
+    /// Where `window` minimises to, relative to its display: its app's icon on that display's dock; or the bottom
+    /// centre without a shown dock there.
     fn dock_target(&self, window: &Window) -> Rectangle<f64, Logical> {
         let output = self.window_output(window).or_else(|| self.space.outputs().next().cloned());
         let docked = output.clone().filter(|o| self.dock_outputs().contains(o) && self.dock_shown_on(o));
-        let mut items = self.dock_items_on(output.as_ref());
-        let tile = crate::shell::dock::is_minimised(window) && !self.config.dock.minimise_into_icon;
-        if tile && !items.iter().any(|i| i.is_tile() && i.windows.contains(window)) {
-            items.push(crate::shell::dock::Item { key: "minimised:next".into(), app: None, windows: vec![window.clone()] });
-        }
-        let frame = self.window_frame(window).map(|f| f.size);
+        let items = self.dock_items_on(output.as_ref());
         let icon = docked.and_then(|o| self.dock_layout_on(&o, &items)).and_then(|l| {
-            let i = items.iter().position(|i| i.is_tile() == tile && i.windows.contains(window))?;
-            let icon = l.icons.get(i).copied()?;
-            Some(match frame.filter(|_| tile) {
-                Some(size) => crate::shell::dock::tile_rects(icon, size).0,
-                None => icon,
-            })
+            let i = items.iter().position(|i| i.windows.contains(window))?;
+            l.icons.get(i).copied()
         });
         icon.unwrap_or_else(|| {
             let size = output.and_then(|o| self.space.output_geometry(&o)).map_or_else(Default::default, |g| g.size);
@@ -444,7 +434,7 @@ impl State {
         self.animate(&anim);
     }
 
-    /// Minimise: it shrinks and slides into its dock tile or icon; its last frame stays on as the tile's thumbnail.
+    /// Minimise: it shrinks and slides into its app's dock icon.
     /// Genie: it narrows into it instead, picking up where a restore that is still playing got to.
     /// The quake terminal slides up out of the top edge instead.
     pub fn window_minimising(&mut self, window: &Window) {
@@ -460,11 +450,6 @@ impl State {
         let genie = self.genie_on().then_some(GenieRun { target: to, from: q, to: 1.0 });
         if let Some(ghost) = self.backend.as_mut().and_then(|b| b.ghosts.iter_mut().find(|g| g.window == *window)) {
             ghost.genie = genie;
-        }
-        let Some(backend) = self.backend.as_mut().filter(|_| crate::shell::dock::is_minimised(window)) else { return };
-        backend.tiles.retain(|g| g.window != *window);
-        if let Some(ghost) = backend.ghosts.iter().find(|g| g.window == *window) {
-            backend.tiles.push(ghost.still());
         }
     }
 

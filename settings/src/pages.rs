@@ -444,7 +444,6 @@ pub const SETTINGS: &[Setting] = &[
     ),
     s(Page::Dock, "Dock", "dock.hide_delay", "Wait before hiding", "", Kind::Slider { min: 0.0, max: 2000.0, step: 50.0 }),
     s(Page::Dock, "Dock", "dock.unhide_delay", "Wait before showing", "When the pointer calls it up", Kind::Slider { min: 0.0, max: 2000.0, step: 50.0 }),
-    s(Page::Dock, "Dock", "dock.minimise_into_icon", "Minimise windows into application icon", "", Kind::Toggle),
     s(Page::Dock, "Dock", "dock.minimise_effect", "Minimise windows using", "", Kind::Choice(&[("scale", "Scale Effect"), ("genie", "Genie Effect")])),
     s(Page::Dock, "Dock", "dock.show_trash", "Show Trash in Dock", "", Kind::Toggle),
     s(
@@ -474,7 +473,7 @@ pub const SETTINGS: &[Setting] = &[
         Kind::Toggle,
     ),
     s(Page::Dock, "Dock", "dock.tooltips", "Show app names", "Over the icon under the pointer", Kind::Toggle),
-    s(Page::Dock, "Dock", "dock.pinned_only", "Show only kept apps", "Running apps not kept in the Dock stay out", Kind::Toggle),
+    s(Page::Dock, "Dock", "dock.pinned_only", "Show only kept apps", "Running apps not kept in the Dock stay out, unless minimised", Kind::Toggle),
     s(
         Page::Dock,
         "Dock",

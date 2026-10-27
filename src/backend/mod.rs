@@ -62,8 +62,6 @@ pub struct Views {
     pub missions: std::collections::HashMap<String, MissionView>,
     /// Closing and minimising windows still animating (E5.5).
     pub ghosts: Vec<render::motion::Ghost>,
-    /// Minimised windows' last frames, drawn on their dock tiles.
-    pub tiles: Vec<render::motion::Ghost>,
     pub entrances: render::motion::Entrances,
     pub lock: LockView,
     pub screenshot: ScreenshotView,
@@ -101,7 +99,6 @@ impl Views {
             mission: MissionView::default(),
             missions: Default::default(),
             ghosts: Vec::new(),
-            tiles: Vec::new(),
             entrances: Default::default(),
             lock: LockView::default(),
             screenshot: ScreenshotView::default(),

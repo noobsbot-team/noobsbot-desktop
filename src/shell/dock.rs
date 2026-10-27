@@ -311,11 +311,6 @@ pub struct Item {
 }
 
 impl Item {
-    /// A minimised window's tile, after the separator.
-    pub fn is_tile(&self) -> bool {
-        self.key.starts_with(TILE)
-    }
-
     pub fn icon(&self) -> &str {
         match (&self.app, Builtin::of(&self.key)) {
             (Some(app), _) => &app.icon,
@@ -361,10 +356,7 @@ pub fn watch_print_queue(mut changed: impl FnMut() -> bool + Send + 'static) {
     }
 }
 
-/// Item keys of minimised-window tiles start with this.
-const TILE: &str = "minimised:";
-
-/// On a window minimised (not hidden with its app): it gets a tile.
+/// On a window minimised (not hidden with its app): its app's icon stays in the dock while it is.
 struct Minimised(std::cell::Cell<bool>);
 
 pub fn set_minimised(window: &Window, on: bool) {
@@ -373,17 +365,6 @@ pub fn set_minimised(window: &Window, on: bool) {
 
 pub fn is_minimised(window: &Window) -> bool {
     window.user_data().get::<Minimised>().is_some_and(|m| m.0.get())
-}
-
-/// A tile's thumbnail (a `frame`-shaped window fitted into the `tile` square) and its app badge in the corner.
-pub fn tile_rects(tile: Rectangle<f64, Logical>, frame: Size<f64, Logical>) -> (Rectangle<f64, Logical>, Rectangle<f64, Logical>) {
-    let inner = tile.size.w * 0.9;
-    let k = (inner / frame.w.max(1.0)).min(inner / frame.h.max(1.0));
-    let (w, h) = ((frame.w * k).round(), (frame.h * k).round());
-    let thumb = Rectangle::new((tile.loc.x + ((tile.size.w - w) / 2.0).round(), tile.loc.y + ((tile.size.h - h) / 2.0).round()).into(), (w, h).into());
-    let b = (tile.size.w * 0.4).round();
-    let badge = Rectangle::new((tile.loc.x + tile.size.w - b, tile.loc.y + tile.size.h - b).into(), (b, b).into());
-    (thumb, badge)
 }
 
 /// The order windows first showed up in the dock, so running apps keep their place when focus restacks windows.
@@ -481,8 +462,9 @@ impl State {
     }
 
     /// `output`'s dock's items: pinned items that are installed, in the order of its list (`dock_list`), then running
-    /// apps in the order they started. With `[dock] current_workspace_only`, only the current Space's apps and
-    /// windows: with a dock on every display, that display's.
+    /// apps in the order they started (with `[dock] pinned_only`, only those with a minimised window, to come back
+    /// by). With `[dock] current_workspace_only`, only the current Space's apps and windows: with a dock on every
+    /// display, that display's.
     pub fn dock_items_on(&self, output: Option<&Output>) -> Vec<Item> {
         let dock = &self.config.dock;
         let mut items: Vec<Item> = Vec::new();
@@ -504,13 +486,17 @@ impl State {
         let drawn = |w: &Window| w.geometry().size.w > 1 || w.geometry().size.h > 1;
         windows.retain(|w| drawn(w) && !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w, output)));
         windows.sort_by_key(seen);
+        let pinned = items.len();
         for window in windows {
             let Some((key, app)) = self.dock_key(&window) else { continue };
             match items.iter_mut().find(|i| i.key == key) {
                 Some(item) => item.windows.push(window),
-                None if !dock.pinned_only => items.push(Item { key, app, windows: vec![window] }),
-                None => {}
+                None => items.push(Item { key, app, windows: vec![window] }),
             }
+        }
+        if dock.pinned_only {
+            let running = items.split_off(pinned);
+            items.extend(running.into_iter().filter(|i| i.windows.iter().any(is_minimised)));
         }
         // Topmost shown window first within each app.
         let stack: Vec<&Window> = self.space.elements().rev().collect();
@@ -519,15 +505,6 @@ impl State {
         }
         if PRINTING.load(Ordering::Relaxed) {
             items.push(Item { key: PRINTING_KEY.to_owned(), app: None, windows: Vec::new() });
-        }
-        // Minimised windows' tiles at the right end, in the order they were minimised.
-        if !dock.minimise_into_icon {
-            for (window, _) in &self.hidden {
-                if is_minimised(window) && !self.is_quake(window) && (!dock.current_workspace_only || self.on_current_space(window, output)) {
-                    let app = self.dock_key(window).and_then(|(_, app)| app);
-                    items.push(Item { key: format!("{TILE}{}", seen(window)), app, windows: vec![window.clone()] });
-                }
-            }
         }
         if dock.show_trash {
             items.push(Item { key: TRASH_KEY.to_owned(), app: None, windows: Vec::new() });
@@ -589,7 +566,7 @@ impl State {
         let eased = if self.dock_pointer.is_some() { 1.0 } else { side.zoom.value(now) * (1.0 - side.hide.value(now)) };
         let zoom = if dock.zoom { f64::from(dock.zoom_percent) / 100.0 } else { 1.0 };
         let pointer = self.dock_pointer.or(side.zoom_at);
-        let tiles = items.iter().filter(|i| i.is_tile() || i.key == TRASH_KEY).count();
+        let tiles = items.iter().filter(|i| i.key == TRASH_KEY).count();
         Some(layout(items.len(), tiles, size, i32::from(dock.icon_size), zoom, eased, pointer))
     }
 
@@ -748,7 +725,7 @@ impl State {
             self.dock_fx.clicked(item.key.clone());
             return self.dock_builtin(builtin, &item.key);
         }
-        if (new && !item.is_tile()) || item.windows.is_empty() {
+        if new || item.windows.is_empty() {
             self.launch(item.app.as_ref());
             return;
         }
@@ -857,7 +834,7 @@ impl State {
         };
         let items = self.dock_items();
         let Some(item) = self.dock_layout(&items).and_then(|l| hit(&l, location)).and_then(|i| items.into_iter().nth(i)) else { return true };
-        if item.windows.is_empty() || item.is_tile() {
+        if item.windows.is_empty() {
             return true;
         }
         self.dock_fx.clicked(item.key.clone());
@@ -886,7 +863,7 @@ impl State {
         if !self.config.dock.cycle_across_apps {
             return self.dock_cycle(windows, forward);
         }
-        let mut groups: Vec<Vec<Window>> = self.dock_items().into_iter().filter(|i| !i.is_tile() && !i.windows.is_empty()).map(|i| i.windows).collect();
+        let mut groups: Vec<Vec<Window>> = self.dock_items().into_iter().filter(|i| !i.windows.is_empty()).map(|i| i.windows).collect();
         groups.iter_mut().for_each(|g| g.sort_by_key(seen));
         let Some(here) = groups.iter().position(|g| windows.first().is_some_and(|w| g.contains(w))) else {
             return self.dock_cycle(windows, forward);
@@ -1102,7 +1079,7 @@ pub struct Options {
     pub separate: Option<bool>,
     /// Open at Login, ticked while on; `None` without a desktop file, which also hides Show in Files.
     pub login: Option<bool>,
-    /// Assign To with `ASSIGN[n]` ticked; `None` hides it (a builtin, a minimised window's tile).
+    /// Assign To with `ASSIGN[n]` ticked; `None` hides it (a builtin).
     pub assign: Option<usize>,
     /// Move to Display: every display by name, and whether the app's windows can go there (not the one its front
     /// window is on). Shown with more than one display.
@@ -1389,17 +1366,16 @@ impl State {
             .collect();
         let focused = self.focused_window();
         let active = item.windows.iter().position(|w| Some(w) == focused.as_ref());
-        let pinnable = !self.config.dock.lock_items && !item.is_tile() && (item.app.is_some() || Builtin::of(&item.key).is_some());
+        let pinnable = !self.config.dock.lock_items && (item.app.is_some() || Builtin::of(&item.key).is_some());
         let pinned = pinnable.then(|| self.dock_pinned().iter().any(|(_, id)| *id == item.key));
         let actions: Vec<String> = item.app.as_ref().map(|a| crate::apps::actions(&a.id).into_iter().map(|(n, _)| n).collect()).unwrap_or_default();
         let name_of = |uri: &String| crate::apps::file_path(uri).and_then(|p| Some(std::path::Path::new(&p).file_name()?.to_string_lossy().into_owned()));
         let recent: Vec<String> = self.dock_ui.recent.iter().map(|u| name_of(u).unwrap_or_else(|| u.clone())).collect();
-        let assign =
-            (!item.is_tile() && Builtin::of(&item.key).is_none()).then(|| match self.config.dock.assign.get(&item.key).and_then(|v| Assign::parse(v)) {
-                Some(Assign::All) => 0,
-                Some(Assign::Space { .. }) => 1,
-                None => 2,
-            });
+        let assign = Builtin::of(&item.key).is_none().then(|| match self.config.dock.assign.get(&item.key).and_then(|v| Assign::parse(v)) {
+            Some(Assign::All) => 0,
+            Some(Assign::Space { .. }) => 1,
+            None => 2,
+        });
         let outputs: Vec<_> = self.space.outputs().collect();
         let own = self.dock_output().is_some_and(|o| self.config.dock.outputs.contains_key(&o.name()));
         let separate = (!self.config.dock.lock_items && (own || outputs.len() > 1)).then_some(own);
@@ -1572,12 +1548,7 @@ impl State {
     fn dock_drag_motion(&mut self, to: Point<f64, Logical>) {
         let Some(drag) = self.dock_ui.drag.as_ref().filter(|_| !self.dock_ui.held_for_peek()) else { return };
         let (start, key) = (drag.start, drag.key.clone());
-        if self.config.dock.lock_items
-            || key.starts_with(TILE)
-            || key == TRASH_KEY
-            || key == PRINTING_KEY
-            || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START)
-        {
+        if self.config.dock.lock_items || key == TRASH_KEY || key == PRINTING_KEY || (!drag.moved && (to.x - start.x).hypot(to.y - start.y) < DRAG_START) {
             return;
         }
         let Some(layout) = self.dock_layout(&self.dock_items()) else { return };
@@ -1813,17 +1784,6 @@ mod tests {
         let p = (l.icons[4].loc.x + 42.0, 1150.0).into();
         let z = layout(5, 2, SCREEN.into(), 84, 1.5, 1.0, Some(p));
         assert_eq!((z.icons[4].size.w, hit(&z, p)), (126.0, Some(4)));
-    }
-
-    #[test]
-    fn tile_thumbnail_fits_with_a_corner_badge() {
-        let tile = Rectangle::new((100.0, 1000.0).into(), (84.0, 84.0).into());
-        let (thumb, badge) = tile_rects(tile, (1600.0, 1000.0).into());
-        // 90% wide, its shape kept, centred.
-        assert_eq!(thumb, Rectangle::new((104.0, 1019.0).into(), (76.0, 47.0).into()));
-        assert_eq!(badge, Rectangle::new((150.0, 1050.0).into(), (34.0, 34.0).into()));
-        let (tall, _) = tile_rects(tile, (500.0, 1000.0).into());
-        assert_eq!(tall.size, (38.0, 76.0).into());
     }
 
     #[test]

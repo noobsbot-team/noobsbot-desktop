@@ -672,7 +672,7 @@ impl State {
         frame
     }
 
-    /// Minimises `windows`: into tiles at the dock's right end, or (`[dock] minimise_into_icon`) their app's icon.
+    /// Minimises `windows` into their app's dock icon.
     pub fn minimise(&mut self, windows: Vec<Window>) {
         windows.iter().for_each(|w| super::dock::set_minimised(w, true));
         self.hide_windows(windows);
