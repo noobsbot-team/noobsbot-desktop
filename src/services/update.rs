@@ -210,7 +210,13 @@ pub fn cli(channel: Channel) -> i32 {
 /// the server's counter.
 pub const NOTICE_ID: u32 = 0xFFFB_0000;
 
-/// "Noobsbot Desktop 1.3 is available".
+/// "1.3", "1.0 beta 2", "1.0 RC 1": MAJOR.MINOR and any pre-release, as the notice (and Settings' About) names a version.
+fn short(v: &Version) -> String {
+    let pre = v.pre.replace('.', " ").replacen("rc", "RC", 1);
+    format!("{}.{} {pre}", v.major, v.minor).trim_end().to_owned()
+}
+
+/// "Noobsbot Desktop 1.3 is available", "Noobsbot Desktop 1.0 beta 2 is available".
 pub fn notice(release: &Release) -> super::notifications::Notification {
     let icon = "system-software-update";
     let v = &release.version;
@@ -228,7 +234,7 @@ pub fn notice(release: &Release) -> super::notifications::Notification {
         app: "Software Update".into(),
         icon_name: icon.into(),
         icon: super::notifications::load_icon(icon).map(std::sync::Arc::new),
-        summary: format!("Noobsbot Desktop {}.{} is available", v.major, v.minor),
+        summary: format!("Noobsbot Desktop {} is available", short(v)),
         body,
         actions,
         urgency: 1,
@@ -633,6 +639,9 @@ mod tests {
         assert_eq!(n.actions.len(), 2);
         let ready = notice(&Release { download: Download::Ready(PathBuf::new()), ..release });
         assert_eq!(ready.actions.last().unwrap(), &("install".to_string(), "Restart to Update".to_string()));
+        let beta = newer(r#"{"tag_name":"v1.0.0-beta.2"}"#, REPO, &v("1.0.0-beta.1"), Channel::Beta).unwrap();
+        assert_eq!(notice(&beta).summary, "Noobsbot Desktop 1.0 beta 2 is available");
+        assert_eq!(short(&v("1.0.0-rc.1")), "1.0 RC 1");
     }
 
     #[test]
