@@ -27,6 +27,8 @@ RELEASE_TAG=${NOOBSBOT_DESKTOP_RELEASE:-}
 # xwayland-satellite v0.8.3, which scripts/build-xwayland-satellite.sh patches, and the WhiteSur themes (Debian has
 # no packages of them), by commit (the icons by tag).
 XWS_REV=b83eab900644e4c7c77982ce3d44cb490f0c5e1d
+# paru (the AUR helper on Arch) by its AUR repo's commit: that PKGBUILD is built and installed with --noconfirm.
+PARU_REV=329be2113c590046cb29858c23d9b96a8d7bd586
 WHITESUR_ICONS=2026-09-10
 WHITESUR_CURSORS=e190baf618ed95ee217d2fd45589bd309b37672b
 WHITESUR_GTK=d5782652d412137e26fb8ff55b55a5572e4c6995
@@ -526,8 +528,13 @@ iface lo inet loopback"
 install_aur() {
     if ! has paru; then
         say "Building the AUR helper (paru)"
-        if [[ -d $CACHE/paru/.git ]]; then run git -C "$CACHE/paru" pull --ff-only
-        else run git clone --depth 1 https://aur.archlinux.org/paru.git "$CACHE/paru"; fi
+        # A whole clone (the repo is tiny), made again when the cached one (shallow, from older runs) lacks the commit.
+        if ! [[ -d $CACHE/paru/.git ]] || ! git -C "$CACHE/paru" cat-file -e "$PARU_REV^{commit}" 2>/dev/null; then
+            run rm -rf "$CACHE/paru"
+            run git clone -q https://aur.archlinux.org/paru.git "$CACHE/paru"
+        fi
+        run git -C "$CACHE/paru" checkout -q --detach "$PARU_REV" ||
+            die "paru's AUR repo has no commit $PARU_REV; install paru yourself, then run ./install.sh again."
         run bash -c 'cd "$1" && makepkg -si --needed --noconfirm' _ "$CACHE/paru"
     fi
     local aur=(whitesur-icon-theme whitesur-cursor-theme-git whitesur-gtk-theme-git kvantum-theme-whitesur-git)
@@ -653,11 +660,16 @@ install_desktop_release() {
     for f in "$name" SHA256SUMS SHA256SUMS.minisig; do
         run curl -fL --proto '=https' -o "$dir/$f" "https://github.com/$DESKTOP_REPO/releases/download/$tag/$f"
     done
-    # The signature covers SHA256SUMS, and SHA256SUMS the tarball: nothing unsigned ever reaches sudo.
-    run minisign -Vqm "$dir/SHA256SUMS" -P "$MINISIGN_PUBKEY" ||
-        { run rm -rf "$dir"; die "the release signature is wrong; nothing was installed."; }
-    run bash -c 'cd "$1" && grep -E "^[0-9a-f]{64}  $2\$" SHA256SUMS | sha256sum -c --strict --quiet' _ "$dir" "$name" ||
-        { run rm -rf "$dir"; die "the download doesn't match its signed checksum; nothing was installed."; }
+    # Root checks and unpacks its own copy, in a dir only root can write: the download in the user's cache could be
+    # swapped between a check and root's read of it. The signature covers SHA256SUMS, and SHA256SUMS the tarball:
+    # nothing unsigned is ever unpacked as root.
+    local stage=/tmp/tmp.XXXXXXXXXX
+    if ((DRY)); then show sudo mktemp -d; else stage=$(as_root mktemp -d); fi
+    as_root cp -- "$dir/$name" "$dir/SHA256SUMS" "$dir/SHA256SUMS.minisig" "$stage/"
+    as_root minisign -Vqm "$stage/SHA256SUMS" -P "$MINISIGN_PUBKEY" ||
+        { as_root rm -rf "$stage"; run rm -rf "$dir"; die "the release signature is wrong; nothing was installed."; }
+    as_root bash -c 'cd "$1" && grep -E "^[0-9a-f]{64}  $2\$" SHA256SUMS | sha256sum -c --strict --quiet' _ "$stage" "$name" ||
+        { as_root rm -rf "$stage"; run rm -rf "$dir"; die "the download doesn't match its signed checksum; nothing was installed."; }
     # Checked before it is installed: a prebuilt this system can't run is built from source instead.
     if ((!DRY)); then
         rm -rf "$dir/check"
@@ -665,6 +677,7 @@ install_desktop_release() {
         tar --zstd -xf "$dir/$name" -C "$dir/check" --strip-components=1
         if ! usable "$dir/check"; then
             rm -rf "$dir/check"
+            as_root rm -rf "$stage"
             warn "building Noobsbot Desktop $ver from source instead."
             FALLBACK_TAG=$tag
             return
@@ -673,7 +686,8 @@ install_desktop_release() {
     fi
     as_root mkdir -p "$LIB/versions/$ver"
     # --no-same-owner: root's tar would otherwise keep the archive's (the CI user's) uid on the installed files.
-    as_root tar --zstd --no-same-owner --no-same-permissions -xf "$dir/$name" -C "$LIB/versions/$ver" --strip-components=1
+    as_root tar --zstd --no-same-owner --no-same-permissions -xf "$stage/$name" -C "$LIB/versions/$ver" --strip-components=1
+    as_root rm -rf "$stage"
     use_version "$ver"
     install_xwayland_satellite "$ver"
 }

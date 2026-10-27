@@ -1,8 +1,8 @@
 //! `noobsbot-desktop-watchdog <compositor> [args...]` (E6.4, E6.13): the session wrapper runs the compositor through
 //! this. The compositor gets a pipe's write end in `NOOBSBOT_HEARTBEAT_FD` and writes a byte a second from its event
-//! loop; once it has beaten and the startup grace is over, 10 s of silence means a frozen loop (perhaps while
-//! locked), so it logs where it is stuck (SIGUSR1), is stopped (SIGTERM, then SIGKILL after 2 s) and the wrapper
-//! sees a crash. Exits with the
+//! loop; once the startup grace is over, 10 s of silence (or no first beat by then) means a frozen loop (perhaps
+//! while locked), so it logs where it is stuck (SIGUSR1), is stopped (SIGTERM, then SIGKILL after 2 s) and the
+//! wrapper sees a crash, before its boot-ok minute, so a broken update rolls back. Exits with the
 //! compositor's status (128 + signal when killed), like a shell would.
 //!
 //! Timing is `Instant`, which is `CLOCK_MONOTONIC` on Linux: it stops during suspend, so a sleep never counts as silence.
@@ -21,9 +21,10 @@ use std::{
 const GRACE: Duration = Duration::from_secs(30);
 const SILENCE: Duration = Duration::from_secs(10);
 
-/// Frozen: it has beaten at least once, the startup grace is over, and the last beat is `SILENCE` old.
+/// Frozen: the startup grace is over and the last beat is `SILENCE` old, or there was none `SILENCE` after the grace
+/// (a loop that hangs before its first beat).
 fn frozen(since_start: Duration, since_beat: Option<Duration>) -> bool {
-    since_beat.is_some_and(|beat| since_start >= GRACE && beat >= SILENCE)
+    since_start >= GRACE && since_beat.unwrap_or(since_start - GRACE) >= SILENCE
 }
 
 fn main() -> ExitCode {
@@ -74,7 +75,7 @@ fn supervise(command: &mut Command) -> io::Result<ExitStatus> {
         if frozen(start.elapsed(), beat.map(|b: Instant| b.elapsed())) {
             eprintln!("noobsbot-desktop-watchdog: no heartbeat for {}s, stopping the compositor", SILENCE.as_secs());
             // Its loop thread (the main one, whose id is the pid) logs where it is stuck first.
-            // SAFETY: tgkill only signals our own child's main thread, which handles SIGUSR1 once it has beaten.
+            // SAFETY: tgkill only signals our own child's main thread, which handles SIGUSR1 from its first loop setup.
             unsafe { libc::syscall(libc::SYS_tgkill, child.id(), child.id(), libc::SIGUSR1) };
             sleep(Duration::from_secs(1));
             return stop(&mut child);
@@ -102,9 +103,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn frozen_only_after_a_beat_and_the_grace() {
+    fn frozen_only_after_the_grace() {
         let s = Duration::from_secs;
-        assert!(!frozen(s(120), None), "never beat (an older compositor): never fired");
+        assert!(!frozen(s(39), None), "no first beat yet, inside grace + silence");
+        assert!(frozen(s(40), None), "hung before its first beat");
         assert!(!frozen(s(20), Some(s(15))), "inside the startup grace");
         assert!(!frozen(s(60), Some(s(9))), "beat recently");
         assert!(frozen(s(60), Some(s(10))));
