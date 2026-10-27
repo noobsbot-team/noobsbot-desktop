@@ -30,7 +30,8 @@ const BUTTON_H: i32 = 28;
 const BUTTON_GAP: i32 = 8;
 const RADIUS: f64 = 12.0;
 const FIELD_H: i32 = 22;
-const TITLE_LINES: u8 = 2;
+/// Room for the longest questions ("…shut down your computer now?", Empty Trash's) at the default text size.
+const TITLE_LINES: u8 = 3;
 const BODY_LINE: i32 = 16;
 /// The checkbox, and the gap between it and its label.
 const CHECK: i32 = 14;
@@ -135,7 +136,7 @@ impl AlertSheet {
         let button_w = if alert.cancellable() { (inner - BUTTON_GAP) / 2 } else { inner };
         // Shaken sideways after a wrong password (polkit).
         let field_rect = Rectangle::new((x + PAD + alert.shake().unwrap_or(0), body_rect.loc.y + body_h + 12).into(), (inner, field_line).into());
-        let check_row = Rectangle::new((x + PAD, body_rect.loc.y + body_h + field_h + 12).into(), (inner, check_h - 12).into());
+        let check_row = Rectangle::new((x + PAD, body_rect.loc.y + body_h + field_h + 12).into(), (inner, (check_h - 12).max(0)).into());
         let check = Rectangle::new((check_row.loc.x, check_row.loc.y + (check_row.size.h - CHECK) / 2).into(), (CHECK, CHECK).into());
         let check_text = Rectangle::new(
             (check.loc.x + CHECK + CHECK_GAP, check_row.loc.y + (check_row.size.h - logical(check_label.height)) / 2).into(),

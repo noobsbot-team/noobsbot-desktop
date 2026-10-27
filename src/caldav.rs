@@ -93,8 +93,10 @@ fn calendars(url: &str, login: &str) -> Result<Vec<String>, String> {
     let mut home = None;
     for _ in 0..4 {
         let Some(at) = next.pop() else { break };
-        match propfind(&at, "0", "<d:resourcetype/><d:current-user-principal/><c:calendar-home-set/>") {
-            Ok((xml, _)) if is_calendar(&xml) => return Ok(vec![at]),
+        let props = "<d:resourcetype/><d:current-user-principal/><c:calendar-home-set/><c:supported-calendar-component-set/>";
+        match propfind(&at, "0", props) {
+            Ok((xml, _)) if holds_events(&xml) => return Ok(vec![at]),
+            Ok((xml, _)) if is_calendar(&xml) => return Err(format!("{at} holds no events (a tasks list?)")),
             Ok((xml, base)) => match (href_in(&xml, "calendar-home-set", &base), href_in(&xml, "current-user-principal", &base)) {
                 (Some(found), _) => {
                     home = Some(found);
@@ -181,16 +183,18 @@ fn href_in(xml: &str, name: &str, base: &str) -> Option<String> {
     elements(xml, name).iter().find_map(|e| elements(e, "href").first().map(|href| resolve(base, &unescape(href.trim()))))
 }
 
+/// A reply's (or one `<response>`'s) resource is a calendar that can hold events (not a tasks-only list). No component
+/// set (or not found): every kind.
+fn holds_events(xml: &str) -> bool {
+    let kinds = elements(xml, "supported-calendar-component-set");
+    is_calendar(xml) && kinds.iter().all(|k| k.trim().is_empty() || k.contains("VEVENT"))
+}
+
 /// The calendars that can hold events in a Depth 1 listing of a calendar home at `base` (tasks-only lists, inboxes,
 /// subscriptions and the home itself aren't).
 fn event_calendars(xml: &str, base: &str) -> Vec<String> {
-    let holds_events = |response: &&str| {
-        // No component set (or not found): every kind.
-        let kinds = elements(response, "supported-calendar-component-set");
-        is_calendar(response) && kinds.iter().all(|k| k.trim().is_empty() || k.contains("VEVENT"))
-    };
     let own_href = |response: &str| elements(response, "href").first().map(|href| resolve(base, &unescape(href.trim())));
-    elements(xml, "response").into_iter().filter(holds_events).filter_map(own_href).collect()
+    elements(xml, "response").into_iter().filter(|r| holds_events(r)).filter_map(own_href).collect()
 }
 
 /// An `<href>` from a reply to `base`: as it is when it's a whole URL, else a path on `base`'s server.
@@ -361,7 +365,13 @@ END:VCALENDAR]]></C:calendar-data>
 <D:propstat><D:prop><D:resourcetype><D:collection/><C:calendar/></D:resourcetype>
 <D:current-user-principal><D:href>/dav/principals/user/me@example.com/</D:href></D:current-user-principal></D:prop>
 <D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response></D:multistatus>"#;
-        assert!(is_calendar(own));
+        assert!(is_calendar(own) && holds_events(own));
+        // A tasks list's own URL: a calendar, but without events.
+        let tasks = own.replace(
+            "</D:resourcetype>",
+            r#"</D:resourcetype><C:supported-calendar-component-set><C:comp name="VTODO"/></C:supported-calendar-component-set>"#,
+        );
+        assert!(is_calendar(&tasks) && !holds_events(&tasks));
         // A principal whose home is on another host.
         let principal = r#"<D:multistatus xmlns:D="DAV:"><D:response><D:href>/123/principal/</D:href><D:propstat><D:prop>
 <C:calendar-home-set xmlns:C="urn:ietf:params:xml:ns:caldav"><D:href>https://p42-caldav.example.net:443/123/calendars/</D:href></C:calendar-home-set>
