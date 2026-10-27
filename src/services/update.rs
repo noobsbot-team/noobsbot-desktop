@@ -7,6 +7,9 @@
 //! signature of `SHA256SUMS`, then the tarball's SHA-256); a bad download is deleted. The notification then offers
 //! "Restart to Update", which runs the privileged helper through pkexec and logs out, so the next login starts the
 //! new version. Anything else (an AUR package, a hand-built binary, no key yet) only notifies.
+//!
+//! noobsbot-terminal's releases are checked too, for its own row in Settings and the update count; its own installer
+//! or package updates it, so it is only shown (with its release page), never downloaded.
 
 use std::{
     fs,
@@ -23,7 +26,7 @@ use semver::Version;
 use super::verify;
 
 pub const REPO: &str = "https://github.com/noobsbot-team/noobsbot-desktop";
-const API: &str = "https://api.github.com/repos/noobsbot-team/noobsbot-desktop";
+const TERMINAL: &str = "https://github.com/noobsbot-team/noobsbot-terminal";
 const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// The privileged helper, at the path the polkit action `org.noobsbot.desktop.update` names.
 pub const HELPER: &str = "/usr/lib/noobsbot-desktop/noobsbot-desktop-update";
@@ -76,9 +79,10 @@ pub enum Ask {
     Now(Channel),
 }
 
-/// A finished check: the newer release, if any, and whether Check Now asked for it.
+/// A finished check: the newer release, if any, noobsbot-terminal's row, and whether Check Now asked for it.
 pub struct Checked {
     pub release: Option<Release>,
+    pub terminal: Option<Terminal>,
     pub asked: bool,
 }
 
@@ -102,12 +106,13 @@ pub fn spawn(found: Sender<Checked>) -> mpsc::Sender<Ask> {
                 Err(mpsc::RecvTimeoutError::Timeout) => (every, false),
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             };
-            let Some(mut release) = channel.and_then(latest) else { continue };
+            let Some(channel) = channel else { continue };
+            let Some(mut release) = latest(REPO, &running(), channel) else { continue };
             if let Some(release) = &mut release {
                 release.download = download(release);
                 tracing::info!("Noobsbot Desktop {} is available ({:?}): {}", release.version, release.download, release.url);
             }
-            if found.send(Checked { release, asked }).is_err() {
+            if found.send(Checked { release, terminal: terminal(channel), asked }).is_err() {
                 return;
             }
         }
@@ -118,21 +123,53 @@ pub fn spawn(found: Sender<Checked>) -> mpsc::Sender<Ask> {
     tx
 }
 
-/// The newest release on `channel` if it is newer than this build: `Some(None)` when up to date, `None` offline.
-fn latest(channel: Channel) -> Option<Option<Release>> {
-    let running = Version::parse(env!("CARGO_PKG_VERSION")).expect("Cargo.toml has a SemVer version");
+/// This build's version.
+fn running() -> Version {
+    Version::parse(env!("CARGO_PKG_VERSION")).expect("Cargo.toml has a SemVer version")
+}
+
+/// The newest release of `repo` (its web URL) on `channel` if it is newer than `running`: `Some(None)` when up to
+/// date, `None` offline.
+fn latest(repo: &str, running: &Version, channel: Channel) -> Option<Option<Release>> {
+    let api = repo.replace("https://github.com/", "https://api.github.com/repos/");
     let url = match channel {
-        Channel::Stable => format!("{API}/releases/latest"),
-        Channel::Beta => format!("{API}/releases?per_page=20"),
+        Channel::Stable => format!("{api}/releases/latest"),
+        Channel::Beta => format!("{api}/releases?per_page=20"),
     };
-    fetch(&url).map(|json| newer(&json, REPO, &running, channel))
+    fetch(&url).map(|json| newer(&json, repo, running, channel))
+}
+
+/// noobsbot-terminal's Software Update row: the installed version and a newer release on the same channel.
+#[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Terminal {
+    pub installed: String,
+    pub available: Option<String>,
+    pub url: Option<String>,
+    pub size: Option<u64>,
+    pub published: Option<String>,
+}
+
+/// noobsbot-terminal's row: `None` when it isn't installed (or GitHub can't be reached).
+fn terminal(channel: Channel) -> Option<Terminal> {
+    // `noobsbot 0.5.4`.
+    let out = Command::new("noobsbot").arg("--version").output().ok()?;
+    let installed = Version::parse(String::from_utf8_lossy(&out.stdout).split_whitespace().last()?.trim_start_matches('v')).ok()?;
+    let newer = latest(TERMINAL, &installed, channel)?;
+    Some(Terminal {
+        installed: installed.to_string(),
+        available: newer.as_ref().map(|r| r.version.to_string()),
+        url: newer.as_ref().map(|r| r.url.clone()),
+        size: newer.as_ref().and_then(|r| r.size),
+        published: newer.and_then(|r| r.published),
+    })
 }
 
 /// `noobsbot-desktop --update`: the same check, download and helper as "Restart to Update", from a terminal.
 /// pkexec asks for the admin password; the new version starts at the next login.
 pub fn cli(channel: Channel) -> i32 {
     println!("Checking for updates…");
-    let Some(release) = latest(channel).flatten() else {
+    let Some(release) = latest(REPO, &running(), channel).flatten() else {
         println!("Noobsbot Desktop {} is up to date (or GitHub can't be reached).", env!("CARGO_PKG_VERSION"));
         return 0;
     };
@@ -308,10 +345,15 @@ pub struct Status {
     pub available: Option<String>,
     /// Its release page (notes).
     pub url: Option<String>,
+    /// Its download's size in bytes and release date (RFC 3339).
+    pub size: Option<u64>,
+    pub published: Option<String>,
     /// Downloaded and verified: Update Now installs it.
     pub ready: bool,
     /// The version "Revert to" goes back to (`revert_to`).
     pub revert: Option<String>,
+    /// noobsbot-terminal's row, when it is installed.
+    pub terminal: Option<Terminal>,
 }
 
 /// How long after an update Settings offers to revert it.
@@ -343,6 +385,9 @@ impl crate::state::State {
         if on.is_some() || self.update_channel.is_some() {
             self.ask_update(Ask::Every(on));
         }
+        if on.is_none() {
+            self.update_terminal = None;
+        }
         if on.is_none() && self.update.take().is_some() {
             self.close_notification(NOTICE_ID, super::notifications::Reason::Dismissed);
         }
@@ -362,7 +407,10 @@ impl crate::state::State {
         if self.update_channel.is_none() {
             let (found_tx, found_rx) = smithay::reexports::calloop::channel::channel();
             let inserted = self.loop_handle.insert_source(found_rx, |event, _, state| {
-                let smithay::reexports::calloop::channel::Event::Msg(Checked { release, asked }) = event else { return };
+                let smithay::reexports::calloop::channel::Event::Msg(Checked { release, terminal, asked }) = event else { return };
+                if asked || state.config.check_updates {
+                    state.update_terminal = terminal;
+                }
                 // A check already running when the setting went off still reports.
                 if let Some(release) = release
                     && (asked || state.config.check_updates)
@@ -383,10 +431,15 @@ impl crate::state::State {
         }
     }
 
-    /// A red "1" on System Settings in the dock while an update is pending, and the status file for Settings
+    /// Pending updates: the desktop's and noobsbot-terminal's (the dock's and the logo menu's count).
+    pub fn update_count(&self) -> usize {
+        usize::from(self.update.is_some()) + usize::from(self.update_terminal.as_ref().is_some_and(|t| t.available.is_some()))
+    }
+
+    /// A red count on System Settings in the dock while an update is pending, and the status file for Settings
     /// (`checked`: a check just finished; `None` keeps the last time).
     pub fn update_changed(&mut self, checked: Option<i64>) {
-        let count = self.update.is_some().then_some(1);
+        let count = Some(self.update_count() as i64).filter(|&n| n > 0);
         self.dock_fx.entry("noobsbot-desktop-settings".into(), super::launcher::Entry { count, ..Default::default() });
         if self.nested {
             return;
@@ -398,8 +451,11 @@ impl crate::state::State {
             checked,
             available: self.update.as_ref().map(|r| r.version.to_string()),
             url: self.update.as_ref().map(|r| r.url.clone()),
+            size: self.update.as_ref().and_then(|r| r.size),
+            published: self.update.as_ref().and_then(|r| r.published.clone()),
             ready: self.update_ready(),
             revert: revert_here().map(|v| v.to_string()),
+            terminal: self.update_terminal.clone(),
         };
         let write = || {
             fs::create_dir_all(path.parent()?).ok()?;
@@ -535,7 +591,9 @@ mod tests {
 
     #[test]
     fn status_reads_back_and_tolerates_missing_keys() {
-        let status = Status { checked: 5, available: Some("1.3.0".into()), url: None, ready: true, revert: Some("1.2.4".into()) };
+        let terminal = Terminal { installed: "0.5.4".into(), available: Some("0.6.0".into()), ..Default::default() };
+        let status =
+            Status { checked: 5, available: Some("1.3.0".into()), ready: true, revert: Some("1.2.4".into()), terminal: Some(terminal), ..Default::default() };
         assert_eq!(serde_json::from_str::<Status>(&serde_json::to_string(&status).unwrap()).unwrap(), status);
         assert_eq!(serde_json::from_str::<Status>(r#"{"checked": 7}"#).unwrap(), Status { checked: 7, ..Default::default() });
     }
