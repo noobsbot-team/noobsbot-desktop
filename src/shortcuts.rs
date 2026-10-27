@@ -706,7 +706,7 @@ impl State {
 
     /// The quake action (E2.8). On Wayland noobsbot can't hide its own window (winit has no unmap), so the desktop does
     /// it: a focused quake window hides, one behind others comes forward, a hidden one comes back; none starts it.
-    /// ponytail: shows and hides at once; the `smooth` slide down comes with the animation module.
+    /// Hiding and coming back slide it up and down (`window_minimising`, `window_restored`).
     fn toggle_quake(&mut self) {
         let serial = SERIAL_COUNTER.next_serial();
         let shown = self.space.elements().find(|w| self.is_quake(w)).cloned();
