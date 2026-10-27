@@ -1,0 +1,9 @@
+// Software Update's install at login (plan.md E6.13, `[update] install_at_login`): the helper's --verified mode runs
+// without the password only for an admin (group wheel or sudo) in their own active, local session. Anyone else gets
+// the action's auth_admin_keep, which the session wrapper's agentless pkexec can't answer, so nothing installs.
+polkit.addRule(function (action, subject) {
+    if (action.id == "org.noobsbot.desktop.update.verified" && subject.local && subject.active &&
+        (subject.isInGroup("wheel") || subject.isInGroup("sudo"))) {
+        return polkit.Result.YES;
+    }
+});
