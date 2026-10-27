@@ -1031,12 +1031,22 @@ pub enum Bell {
 #[serde(default)]
 pub struct Calendar {
     pub files: Vec<String>,
+    /// CalDAV calendars (`caldav.rs`); each password is in the keyring, never here.
+    pub caldav: Vec<CalDav>,
 }
 
 impl Default for Calendar {
     fn default() -> Self {
-        Self { files: vec!["~/.local/share/noobsbot-desktop/calendars/*.ics".into()] }
+        Self { files: vec!["~/.local/share/noobsbot-desktop/calendars/*.ics".into()], caldav: Vec::new() }
     }
+}
+
+/// One CalDAV calendar: its collection URL and the login's user name.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct CalDav {
+    pub url: String,
+    pub user: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
@@ -1856,6 +1866,13 @@ mod tests {
         assert!(!c.bindings.contains_key("Super+B"));
         assert_eq!(c.bindings["Super+K"], "exec kate");
         assert_eq!(c.bindings["Super+Q"], "quit");
+    }
+
+    #[test]
+    fn caldav_accounts_parse() {
+        let c = parse("[calendar]\ncaldav = [{ url = \"https://dav.example.com/calendars/me/personal/\", user = \"me\" }]\n").unwrap();
+        assert_eq!(c.calendar.caldav, [CalDav { url: "https://dav.example.com/calendars/me/personal/".into(), user: "me".into() }]);
+        assert_eq!(c.calendar.files, Calendar::default().files, "files keep their default");
     }
 
     #[test]
