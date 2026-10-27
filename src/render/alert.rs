@@ -30,7 +30,8 @@ const BUTTON_H: i32 = 28;
 const BUTTON_GAP: i32 = 8;
 const RADIUS: f64 = 12.0;
 const FIELD_H: i32 = 22;
-const TITLE_LINES: u8 = 2;
+/// Room for the longest questions ("…shut down your computer now?", Empty Trash's) at the default text size.
+const TITLE_LINES: u8 = 3;
 const BODY_LINE: i32 = 16;
 /// The checkbox, and the gap between it and its label.
 const CHECK: i32 = 14;
