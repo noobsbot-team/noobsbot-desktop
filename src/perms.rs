@@ -3,8 +3,8 @@
 //! | Protocol | Offered to |
 //! |---|---|
 //! | `wlr-screencopy` (screenshots, recording, screen sharing) | trusted clients; any other unsandboxed app once the user allows it in the "would like to record this computer's screen" alert (remembered in `[privacy]`); never sandboxed apps |
-//! | `wlr-layer-shell`, `keyboard-shortcuts-inhibit`, `security-context`, `ext-foreign-toplevel-list`, `wlr-output-management`, `ext-workspace` | unsandboxed clients (third-party bars, launchers, VMs) |
-//! | `virtual-keyboard`, `virtual-pointer` (external on-screen keyboards, remote input) | trusted-socket clients |
+//! | `virtual-keyboard`, `virtual-pointer` (external on-screen keyboards, wtype, remote desktops) | unsandboxed clients; trusted ones type and click at once, any other only once the user allows it in the "control this computer's keyboard and mouse" alert (remembered in `[privacy]`), its events going nowhere until then. Never while locked (the login screen too) |
+//! | `wlr-layer-shell`, `keyboard-shortcuts-inhibit`, `security-context`, `ext-foreign-toplevel-list`, `wlr-output-management`, `ext-workspace` | unsandboxed clients (third-party bars, launchers, `wlr-randr`, VMs): they already run as the user, and sandboxed apps never see them |
 //! | `ext-image-copy-capture` | not implemented, so nobody |
 //!
 //! Trusted: clients of the `<WAYLAND_DISPLAY>-trusted` socket (what `noobsbot-desktop --trusted <command>` connects
@@ -23,6 +23,7 @@ use smithay::reexports::wayland_server::{Client, DisplayHandle, backend::ClientI
 
 use crate::{
     config,
+    protocols::unsandboxed,
     shell::alert::Kind,
     state::{ClientState, State},
 };
@@ -68,24 +69,44 @@ fn program(dh: &DisplayHandle, client: &Client) -> Option<(PathBuf, String)> {
     Some((exe, name))
 }
 
-/// Connected through the trusted socket. ponytail: `TRUSTED` paths aren't checked here (a global filter has no
-/// DisplayHandle); start an external keyboard with `noobsbot-desktop --trusted`.
+/// Connected through the trusted socket.
 pub fn trusted(client: &Client) -> bool {
     client.get_data::<ClientState>().is_some_and(|d| d.trusted)
 }
 
-/// `Some(true)`: allowed, `Some(false)`: denied, `None`: ask. `program`: the client's path, if known.
-pub fn verdict(trusted_client: bool, program: Option<&str>, privacy: &config::Privacy) -> Option<bool> {
+/// `Some(true)`: allowed, `Some(false)`: denied, `None`: ask. `program`: the client's path, if known; `allowed` and
+/// `denied`: the `[privacy]` lists of what it wants to do.
+pub fn verdict(sandboxed: bool, trusted_client: bool, program: Option<&str>, allowed: &[String], denied: &[String]) -> Option<bool> {
+    if sandboxed {
+        return Some(false);
+    }
     if trusted_client || program.is_some_and(|p| TRUSTED.contains(&p)) {
         return Some(true);
     }
     let program = program?;
-    if privacy.screen_recording_denied.iter().any(|p| p == program) {
+    if denied.iter().any(|p| p == program) {
         Some(false)
-    } else if privacy.screen_recording.iter().any(|p| p == program) {
+    } else if allowed.iter().any(|p| p == program) {
         Some(true)
     } else {
         None
+    }
+}
+
+/// Files `exe` under `[privacy] <key>` (allowed) or `<key>_denied`, out of the other, and saves both to config.toml.
+fn remember(key: &str, exe: &str, allow: bool, allowed: &mut Vec<String>, denied: &mut Vec<String>) {
+    let (add, remove) = if allow { (&mut *allowed, &mut *denied) } else { (&mut *denied, &mut *allowed) };
+    remove.retain(|p| p != exe);
+    if !add.iter().any(|p| p == exe) {
+        add.push(exe.to_owned());
+    }
+    let path = config::path();
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = config::set_array(&text, "privacy", key, allowed);
+    let text = config::set_array(&text, "privacy", &format!("{key}_denied"), denied);
+    if let Err(err) = config::save_atomic(&path, &text) {
+        tracing::warn!("{}: {err}", path.display());
     }
 }
 
@@ -95,9 +116,39 @@ impl State {
         if let Some(answer) = self.capture.verdicts.get(&client.id()) {
             return Some(*answer);
         }
-        let trusted = client.get_data::<ClientState>().is_some_and(|d| d.trusted);
         let exe = program(&self.display_handle, client).map(|(exe, _)| exe.to_string_lossy().into_owned());
-        verdict(trusted, exe.as_deref(), &self.config.privacy)
+        let privacy = &self.config.privacy;
+        verdict(!unsandboxed(client), trusted(client), exe.as_deref(), &privacy.screen_recording, &privacy.screen_recording_denied)
+    }
+
+    /// Whether `client`'s virtual keyboard or pointer may act now: never while locked (the login screen too), else
+    /// once the user allowed it. Asks while nobody has answered; its events go nowhere meanwhile.
+    pub fn may_control(&mut self, client: &Client) -> bool {
+        let id = client.id();
+        if !self.protocols.control.contains_key(&id) {
+            let (exe, app) = program(&self.display_handle, client).map_or((String::new(), "An app".into()), |(e, n)| (e.to_string_lossy().into_owned(), n));
+            let privacy = &self.config.privacy;
+            let known = (!exe.is_empty()).then_some(exe.as_str());
+            match verdict(!unsandboxed(client), trusted(client), known, &privacy.input_control, &privacy.input_control_denied) {
+                Some(answer) => {
+                    self.protocols.control.insert(id.clone(), answer);
+                }
+                None if self.alert.is_none() => self.open_ask(Kind::ControlInput { app, exe, client: id.clone() }),
+                None => {}
+            }
+        }
+        !self.locked() && self.protocols.control.get(&id) == Some(&true)
+    }
+
+    /// The user's answer about `client`'s virtual input: remembered for this connection and, by path, in `[privacy]`.
+    pub fn control_answer(&mut self, client: ClientId, exe: String, allow: bool) {
+        let dh = &self.display_handle;
+        self.protocols.control.retain(|id, _| dh.backend_handle().get_client_data(id.clone()).is_ok());
+        self.protocols.control.insert(client, allow);
+        if !exe.is_empty() {
+            let privacy = &mut self.config.privacy;
+            remember("input_control", &exe, allow, &mut privacy.input_control, &mut privacy.input_control_denied);
+        }
     }
 
     /// Asks about the first client waiting for frames that hasn't been answered, once no other alert is up.
@@ -120,23 +171,7 @@ impl State {
         }
         if !exe.is_empty() {
             let privacy = &mut self.config.privacy;
-            let (add, remove) = if allow {
-                (&mut privacy.screen_recording, &mut privacy.screen_recording_denied)
-            } else {
-                (&mut privacy.screen_recording_denied, &mut privacy.screen_recording)
-            };
-            remove.retain(|p| *p != exe);
-            if !add.contains(&exe) {
-                add.push(exe);
-            }
-            let path = config::path();
-            let path = std::fs::canonicalize(&path).unwrap_or(path);
-            let text = std::fs::read_to_string(&path).unwrap_or_default();
-            let text = config::set_array(&text, "privacy", "screen_recording", &self.config.privacy.screen_recording);
-            let text = config::set_array(&text, "privacy", "screen_recording_denied", &self.config.privacy.screen_recording_denied);
-            if let Err(err) = config::save_atomic(&path, &text) {
-                tracing::warn!("{}: {err}", path.display());
-            }
+            remember("screen_recording", &exe, allow, &mut privacy.screen_recording, &mut privacy.screen_recording_denied);
         }
         self.schedule_redraw();
     }
@@ -148,22 +183,45 @@ mod tests {
 
     #[test]
     fn who_may_record() {
-        let privacy = config::Privacy { screen_recording: vec!["/usr/bin/grim".into()], screen_recording_denied: vec!["/usr/bin/evil".into()] };
-        assert_eq!(verdict(true, Some("/usr/bin/evil"), &privacy), Some(true), "the trusted socket wins");
-        assert_eq!(verdict(false, Some("/usr/lib/xdg-desktop-portal-wlr"), &privacy), Some(true));
-        assert_eq!(verdict(false, Some("/usr/libexec/xdg-desktop-portal-wlr"), &privacy), Some(true), "Debian's path");
-        assert_eq!(verdict(false, Some("/usr/bin/grim"), &privacy), Some(true));
-        assert_eq!(verdict(false, Some("/usr/bin/evil"), &privacy), Some(false));
-        assert_eq!(verdict(false, Some("/usr/bin/wf-recorder"), &privacy), None, "an outside recorder asks");
-        assert_eq!(verdict(false, None, &privacy), None);
+        let (allowed, denied) = (["/usr/bin/grim".to_owned()], ["/usr/bin/evil".to_owned()]);
+        let verdict = |trusted, program| verdict(false, trusted, program, &allowed, &denied);
+        assert_eq!(verdict(true, Some("/usr/bin/evil")), Some(true), "the trusted socket wins");
+        assert_eq!(verdict(false, Some("/usr/lib/xdg-desktop-portal-wlr")), Some(true));
+        assert_eq!(verdict(false, Some("/usr/libexec/xdg-desktop-portal-wlr")), Some(true), "Debian's path");
+        assert_eq!(verdict(false, Some("/usr/bin/grim")), Some(true));
+        assert_eq!(verdict(false, Some("/usr/bin/evil")), Some(false));
+        assert_eq!(verdict(false, Some("/usr/bin/wf-recorder")), None, "an outside recorder asks");
+        assert_eq!(verdict(false, None), None);
         assert_eq!(trusted_socket(OsStr::new("wayland-1")), "wayland-1-trusted");
+    }
+
+    #[test]
+    fn who_may_control_input() {
+        let privacy = config::Privacy {
+            input_control: vec!["/usr/bin/wtype".into()],
+            input_control_denied: vec!["/usr/bin/evil".into()],
+            screen_recording: vec!["/usr/bin/grim".into()],
+            ..Default::default()
+        };
+        let verdict = |sandboxed, trusted, program| verdict(sandboxed, trusted, program, &privacy.input_control, &privacy.input_control_denied);
+        assert_eq!(verdict(false, true, Some("/usr/bin/evil")), Some(true), "trusted: the socket wins");
+        assert_eq!(verdict(false, false, Some("/usr/bin/wtype")), Some(true), "allowed");
+        assert_eq!(verdict(false, false, Some("/usr/bin/evil")), Some(false), "denied");
+        assert_eq!(verdict(false, false, Some("/usr/bin/ydotool")), None, "unknown: asks");
+        assert_eq!(verdict(false, false, None), None, "no path: asks");
+        assert_eq!(verdict(true, false, Some("/usr/bin/wtype")), Some(false), "sandboxed: never, even if listed");
+        assert_eq!(verdict(true, true, None), Some(false));
+        assert_eq!(verdict(false, false, Some("/usr/bin/grim")), None, "recording's answer isn't input's");
     }
 
     #[test]
     fn answers_are_written_to_privacy() {
         let text = config::set_array(config::DEFAULT_TOML, "privacy", "screen_recording", &["/usr/bin/grim".into()]);
+        let text = config::set_array(&text, "privacy", "input_control_denied", &["/usr/bin/ydotool".into()]);
         let parsed = config::parse(&text).unwrap();
         assert_eq!(parsed.privacy.screen_recording, ["/usr/bin/grim"]);
         assert!(parsed.privacy.screen_recording_denied.is_empty());
+        assert_eq!(parsed.privacy.input_control_denied, ["/usr/bin/ydotool"]);
+        assert!(parsed.privacy.input_control.is_empty());
     }
 }
