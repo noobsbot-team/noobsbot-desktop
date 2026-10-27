@@ -94,6 +94,7 @@ pub struct Udev {
     inputs: Vec<InputDevice>,
     /// When the GPU was last rebuilt (`gpu_verdict`).
     resets: Vec<Instant>,
+    settle: Settle,
 }
 
 /// One GPU and the displays wired to it.
@@ -203,6 +204,40 @@ fn multi_fail(err: MultiError<Api, Api>) -> Fail {
     }
 }
 
+/// How long connectors must stay unchanged before hotplug re-plans the displays: a dock lights its monitors one
+/// after the other, and each would otherwise move the windows (and pick a remembered layout) on its own.
+const SETTLE: Duration = Duration::from_millis(500);
+
+/// Connector hotplug waiting for `SETTLE`.
+#[derive(Default)]
+struct Settle {
+    /// The cards (`dev_t`) whose connectors changed.
+    cards: Vec<libc::dev_t>,
+    /// The last change; `None`: no timer runs.
+    last: Option<Instant>,
+}
+
+impl Settle {
+    /// A card's connectors changed: true when no timer runs yet, so one must start.
+    fn changed(&mut self, card: libc::dev_t, now: Instant) -> bool {
+        if !self.cards.contains(&card) {
+            self.cards.push(card);
+        }
+        self.last.replace(now).is_none()
+    }
+
+    /// The timer is due: `Err(at)` waits on until `at` (a change came meanwhile), `Ok` hands over the cards to scan.
+    fn due(&mut self, now: Instant) -> Result<Vec<libc::dev_t>, Instant> {
+        match self.last.map(|t| t + SETTLE) {
+            Some(at) if at > now => Err(at),
+            _ => {
+                self.last = None;
+                Ok(std::mem::take(&mut self.cards))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
     Idle,
@@ -242,6 +277,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         cursors: HashMap::new(),
         inputs: Vec::new(),
         resets: Vec::new(),
+        settle: Settle::default(),
     })));
     for (dev, path) in udev.device_list() {
         if let Err(err) = state.card_added(dev, path) {
@@ -259,14 +295,13 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     event_loop.handle().insert_source(udev, |event, _, state| {
         match event {
             UdevEvent::Added { device_id, path } => match state.card_added(device_id, &path) {
-                Ok(node) => state.scan_connectors(node),
+                Ok(node) => {
+                    state.scan_connectors(node);
+                    state.apply_displays();
+                }
                 Err(err) => tracing::warn!("{}: {err}", path.display()),
             },
-            UdevEvent::Changed { device_id } => {
-                if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                    state.scan_connectors(node);
-                }
-            }
+            UdevEvent::Changed { device_id } => state.connectors_changed(device_id),
             UdevEvent::Removed { device_id } => {
                 if let Ok(node) = DrmNode::from_dev_id(device_id) {
                     state.card_removed(node);
@@ -275,6 +310,7 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
         }
         crate::services::brightness::redetect();
     })?;
+    // Applied by `main` right after.
     for node in state.cards() {
         state.scan_connectors(node);
     }
@@ -339,7 +375,7 @@ impl State {
         self.udev().map(|u| u.cards.keys().copied().collect()).unwrap_or_default()
     }
 
-    /// Opens a GPU through the session and adds it to the renderers; its displays light in `scan_connectors`.
+    /// Opens a GPU through the session and adds it to the renderers; its displays are read in `scan_connectors`.
     fn card_added(&mut self, dev: libc::dev_t, path: &Path) -> Result<DrmNode, Error> {
         let node = DrmNode::from_dev_id(dev)?;
         let handle = self.loop_handle.clone();
@@ -384,8 +420,39 @@ impl State {
         self.apply_displays();
     }
 
+    /// A card's connectors changed (udev): scanned and applied once none has changed for `SETTLE`. Until then an
+    /// unplugged display stays lit: its frames go nowhere, or fail as `Fail::Display` and are skipped.
+    fn connectors_changed(&mut self, card: libc::dev_t) {
+        let Some(udev) = self.udev() else { return };
+        if !udev.settle.changed(card, Instant::now()) {
+            return;
+        }
+        let timer = Timer::from_duration(SETTLE);
+        if let Err(err) = self.loop_handle.insert_source(timer, |_, _, state| {
+            let Some(udev) = state.udev() else { return TimeoutAction::Drop };
+            match udev.settle.due(Instant::now()) {
+                Err(at) => TimeoutAction::ToInstant(at),
+                Ok(cards) => {
+                    state.settled(cards);
+                    TimeoutAction::Drop
+                }
+            }
+        }) {
+            tracing::warn!("display settle timer: {err}");
+            let cards = self.udev().map(|u| std::mem::take(&mut u.settle).cards).unwrap_or_default();
+            self.settled(cards);
+        }
+    }
+
+    /// Hotplug settled: the changed cards are scanned and every display planned once.
+    fn settled(&mut self, cards: Vec<libc::dev_t>) {
+        for node in cards.into_iter().filter_map(|c| DrmNode::from_dev_id(c).ok()) {
+            self.scan_connectors(node);
+        }
+        self.apply_displays();
+    }
+
     /// Reads which displays are connected and drops unplugged ones (E6.2 hotplug); `apply_displays` lights the new.
-    // ponytail: no 500 ms settle for docks.
     fn scan_connectors(&mut self, node: DrmNode) {
         let Some(Device::Udev(udev)) = self.device.as_mut() else { return };
         let Some(card) = udev.cards.get_mut(&node) else { return };
@@ -401,7 +468,6 @@ impl State {
             self.display_handle.remove_global::<State>(screen.global);
         }
         card.connected = connected.into_iter().map(|info| (info.clone(), describe(&card.drm, &info))).collect();
-        self.apply_displays();
     }
 
     /// The real-screen half of `apply_displays`: plans every connected display, darkens the ones turned off, lights
@@ -805,6 +871,7 @@ impl State {
                 for node in self.cards() {
                     self.scan_connectors(node);
                 }
+                self.apply_displays();
             }
         }
     }
@@ -1251,6 +1318,21 @@ mod tests {
         assert_eq!(multi_fail(MultiError::Render(lost)), Fail::Lost);
         assert_eq!(multi_fail(MultiError::RenderApiError(gbm::Error::Egl(egl::Error::CreationFailed(EGLError::ContextLost)))), Fail::Lost);
         assert_eq!(multi_fail(MultiError::RenderApiError(gbm::Error::Egl(egl::Error::CreationFailed(EGLError::BadAlloc)))), Fail::Render);
+    }
+
+    #[test]
+    fn hotplug_settles_before_the_displays_are_planned() {
+        let (mut settle, t0) = (Settle::default(), Instant::now());
+        // The dock's first monitor starts the timer; its second, 300 ms later, doesn't start another.
+        assert!(settle.changed(1, t0));
+        assert!(!settle.changed(1, t0 + Duration::from_millis(300)));
+        assert!(!settle.changed(2, t0 + Duration::from_millis(400)));
+        // Due at 500 ms, but the last change was at 400 ms: wait on until 900 ms.
+        assert_eq!(settle.due(t0 + SETTLE), Err(t0 + Duration::from_millis(900)));
+        assert_eq!(settle.due(t0 + Duration::from_millis(900)), Ok(vec![1, 2]));
+        // Settled: the next change starts a timer again, with only its own card.
+        assert!(settle.changed(2, t0 + Duration::from_secs(5)));
+        assert_eq!(settle.due(t0 + Duration::from_secs(6)), Ok(vec![2]));
     }
 
     #[test]
