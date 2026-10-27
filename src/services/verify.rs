@@ -1,6 +1,7 @@
 //! Release verification (E6.13), shared by the updater and the privileged helper (`src/bin/update-helper.rs`):
 //! `SHA256SUMS.minisig` must be a minisign signature of `SHA256SUMS` by the release key, and the tarball must have the
 //! SHA-256 that the signed `SHA256SUMS` lists for it. Nothing unsigned ever reaches the helper's root install.
+//! Also which releases install at login, without the password (`unattended`).
 
 use std::io::Read;
 
@@ -10,6 +11,15 @@ use sha2::{Digest, Sha256};
 
 /// Where install.sh writes the release public key (`minisign.pub`, or just its base64 line).
 pub const PUBKEY: &str = "/usr/share/noobsbot-desktop/minisign.pub";
+
+/// The versions Settings' "Revert to" went back from, one per line: the helper's `--revert` adds them (root-owned, 0644).
+pub const REVERTED: &str = "/var/lib/noobsbot-desktop/reverted";
+
+/// Whether install at login (the helper's `--verified`) may install `version`: no pre-release, and none listed in
+/// `reverted` (`REVERTED`'s text). Restart to Update, with the password, installs those too.
+pub fn unattended(version: &Version, reverted: &str) -> bool {
+    version.pre.is_empty() && !reverted.lines().any(|line| Version::parse(line.trim()).is_ok_and(|v| v == *version))
+}
 
 /// A release that `SHA256SUMS` lists, signed by the release key.
 #[derive(Debug, Clone, PartialEq)]
@@ -106,6 +116,16 @@ mod tests {
         // Decodes (so the error is the key id, not the key), and never accepts the test signature.
         let shipped = include_str!("../../data/system/usr/share/noobsbot-desktop/minisign.pub");
         assert!(signed(shipped, SUMS, SIG, ARCH).unwrap_err().starts_with("bad signature"));
+    }
+
+    #[test]
+    fn unattended_is_never_a_pre_release_or_reverted() {
+        let v = |s| Version::parse(s).unwrap();
+        let reverted = "1.3.0\n1.2.1\n";
+        assert!(!unattended(&v("1.3.0"), reverted));
+        assert!(!unattended(&v("1.4.0-beta.2"), ""));
+        assert!(unattended(&v("1.3.1"), reverted), "a newer stable one");
+        assert!(unattended(&v("1.3.0"), ""));
     }
 
     #[test]
