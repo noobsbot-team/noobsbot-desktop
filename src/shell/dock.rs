@@ -506,7 +506,10 @@ impl State {
         let dragging = output.is_none_or(|o| self.dock_output().as_ref() == Some(o));
         let output = output.filter(|_| dock.displays == DockDisplays::All);
         let mut windows: Vec<Window> = self.space.elements().rev().chain(self.hidden.iter().map(|(w, _)| w)).cloned().collect();
-        windows.retain(|w| !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w, output)));
+        // A window no bigger than 1×1 isn't shown: not drawn yet, or wl-copy's and wl-paste's, mapped for a moment
+        // to get the keyboard focus they need to copy or paste (we have no data-control protocol).
+        let drawn = |w: &Window| w.geometry().size.w > 1 || w.geometry().size.h > 1;
+        windows.retain(|w| drawn(w) && !self.is_quake(w) && (!dock.current_workspace_only || self.on_current_space(w, output)));
         windows.sort_by_key(seen);
         for window in windows {
             let Some((key, app)) = self.dock_key(&window) else { continue };
