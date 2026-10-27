@@ -110,7 +110,9 @@ pub fn spawn(found: Sender<Checked>) -> mpsc::Sender<Ask> {
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             };
             let Some(channel) = channel else { continue };
-            let Some(mut release) = latest(REPO, &running(), channel) else { continue };
+            let Some(release) = latest(REPO, &running(), channel) else { continue };
+            let rolled_back = fs::read_to_string(status_path().with_file_name("rolled-back")).unwrap_or_default();
+            let mut release = release.filter(|r| !rolled_back_from(&r.version, &rolled_back));
             if let Some(release) = &mut release {
                 release.download = download(release);
                 tracing::info!("Noobsbot Desktop {} is available ({:?}): {}", release.version, release.download, release.url);
@@ -124,6 +126,12 @@ pub fn spawn(found: Sender<Checked>) -> mpsc::Sender<Ask> {
         tracing::warn!("update check off: {err}");
     }
     tx
+}
+
+/// Whether `version` is the one the session wrapper rolled back from (`rolled-back`'s text): it is still the installed
+/// one, so the helper would refuse it as not newer. A later release is offered again.
+fn rolled_back_from(version: &Version, rolled_back: &str) -> bool {
+    Version::parse(rolled_back.trim()).is_ok_and(|v| v == *version)
 }
 
 /// This build's version.
@@ -498,13 +506,17 @@ impl crate::state::State {
         // Taken while the helper runs, so a second click doesn't ask twice.
         let Download::Ready(dir) = std::mem::replace(&mut release.download, Download::None) else { return };
         let back = dir.clone();
-        self.run_helper(vec![dir.into_os_string()], move |state, ok| {
-            if ok {
+        self.run_helper(vec![dir.into_os_string()], move |state, result| {
+            let Err(err) = result else {
                 state.update = None;
-                state.close_notification(NOTICE_ID, super::notifications::Reason::Dismissed);
-            } else if let Some(release) = state.update.as_mut() {
-                // Cancelled or refused (the helper logs why): offered again.
-                release.download = Download::Ready(back.clone());
+                return state.close_notification(NOTICE_ID, super::notifications::Reason::Dismissed);
+            };
+            // Cancelled or refused: offered again, with why it was refused.
+            let Some(release) = state.update.as_mut() else { return };
+            release.download = Download::Ready(back.clone());
+            if !err.is_empty() {
+                let refused = super::notifications::Notification { body: format!("Couldn't install it: {err}"), ..notice(release) };
+                state.notify(refused);
             }
         });
     }
@@ -515,13 +527,14 @@ impl crate::state::State {
         self.run_helper(vec!["--revert".into(), version.to_string().into()], |_, _| {});
     }
 
-    /// Runs the helper with `args` through pkexec on a thread; then `done(ok)`, and on success the log-out alert so the
-    /// next login starts the version it linked.
-    fn run_helper(&mut self, args: Vec<std::ffi::OsString>, mut done: impl FnMut(&mut Self, bool) + 'static) {
-        let (tx, finished) = smithay::reexports::calloop::channel::channel();
+    /// Runs the helper with `args` through pkexec on a thread; then `done` with its error (`helper_error`), and on
+    /// success the log-out alert so the next login starts the version it linked.
+    fn run_helper(&mut self, args: Vec<std::ffi::OsString>, mut done: impl FnMut(&mut Self, Result<(), String>) + 'static) {
+        let (tx, finished) = smithay::reexports::calloop::channel::channel::<Result<(), String>>();
         let inserted = self.loop_handle.insert_source(finished, move |event, _, state| {
-            let smithay::reexports::calloop::channel::Event::Msg(ok) = event else { return };
-            done(state, ok);
+            let smithay::reexports::calloop::channel::Event::Msg(result) = event else { return };
+            let ok = result.is_ok();
+            done(state, result);
             if ok {
                 state.open_alert(crate::shell::alert::Power::LogOut);
             }
@@ -532,10 +545,29 @@ impl crate::state::State {
             return tracing::warn!("update: {err}");
         }
         std::thread::spawn(move || {
-            let status = Command::new("pkexec").arg(HELPER).args(&args).status();
-            tracing::info!("update: {HELPER}: {status:?}");
-            let _ = tx.send(status.is_ok_and(|s| s.success()));
+            let result = match Command::new("pkexec").arg(HELPER).args(&args).output() {
+                Ok(out) => {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    tracing::info!("update: {HELPER}: {} {}", out.status, stderr.trim());
+                    out.status.success().then_some(()).ok_or_else(|| helper_error(out.status.code(), &stderr))
+                }
+                Err(err) => Err(format!("pkexec: {err}")),
+            };
+            let _ = tx.send(result);
         });
+    }
+}
+
+/// Why the helper run through pkexec failed: the helper's own message, or pkexec's refusal; empty when the password
+/// dialog was dismissed (126), which isn't an error to show.
+fn helper_error(code: Option<i32>, stderr: &str) -> String {
+    if let Some(line) = stderr.lines().rev().find_map(|l| l.strip_prefix("noobsbot-desktop-update: ")) {
+        return line.to_owned();
+    }
+    match code {
+        Some(126) => String::new(),
+        Some(127) => "not authorized.".into(),
+        _ => "the update helper failed.".into(),
     }
 }
 
@@ -633,6 +665,21 @@ mod tests {
             Status { checked: 5, available: Some("1.3.0".into()), ready: true, revert: Some("1.2.4".into()), terminal: Some(terminal), ..Default::default() };
         assert_eq!(serde_json::from_str::<Status>(&serde_json::to_string(&status).unwrap()).unwrap(), status);
         assert_eq!(serde_json::from_str::<Status>(r#"{"checked": 7}"#).unwrap(), Status { checked: 7, ..Default::default() });
+    }
+
+    #[test]
+    fn the_rolled_back_version_is_not_offered() {
+        assert!(rolled_back_from(&v("1.3.0"), "1.3.0\n"));
+        assert!(!rolled_back_from(&v("1.3.1"), "1.3.0\n"), "a later fix is offered");
+        assert!(!rolled_back_from(&v("1.3.0"), ""));
+    }
+
+    #[test]
+    fn helper_error_says_why() {
+        let refused = "noobsbot-desktop-update: 1.3.0 is not newer than the installed 1.3.0; nothing was changed.\n";
+        assert_eq!(helper_error(Some(1), refused), "1.3.0 is not newer than the installed 1.3.0; nothing was changed.");
+        assert_eq!(helper_error(Some(126), ""), "", "dismissed: nothing to show");
+        assert_eq!(helper_error(Some(127), "Error executing command as another user: Not authorized\n\nThis incident has been reported.\n"), "not authorized.");
     }
 
     #[test]
