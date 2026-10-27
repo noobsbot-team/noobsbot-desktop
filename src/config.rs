@@ -1056,7 +1056,7 @@ impl Default for Calendar {
     }
 }
 
-/// One CalDAV calendar: its collection URL and the login's user name.
+/// One CalDAV account: its server's address (its calendars are found) or one calendar's URL, and the login's user.
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct CalDav {
