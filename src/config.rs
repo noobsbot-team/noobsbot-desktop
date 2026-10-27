@@ -216,6 +216,19 @@ pub enum ColourFilter {
 pub struct MenuBar {
     /// Slides away until the pointer touches the top edge or a menu opens; zoomed windows get the full height.
     pub auto_hide: bool,
+    /// The current Space in the bar, by the status items; a click opens Mission Control (E5.1).
+    pub space_indicator: SpaceIndicator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SpaceIndicator {
+    #[default]
+    Off,
+    /// Its number, or a fullscreen app's name.
+    Number,
+    /// A dot per Space on this display, the current one filled.
+    Dots,
 }
 
 /// The menu-bar clock (E2.4) and the system time zone (E2.6).
