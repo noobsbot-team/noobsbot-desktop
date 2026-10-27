@@ -1210,7 +1210,11 @@ fn slider_row<'a>(t: Tokens, key: &'a str, range: std::ops::RangeInclusive<f64>,
 fn settings_of<'a>(app: &'a App, filter: impl Fn(&Setting) -> bool) -> Vec<(&'static str, Vec<Element<'a, Message>>)> {
     let mut groups: Vec<(&'static str, Vec<Element<'a, Message>>)> = Vec::new();
     for setting in SETTINGS.iter().filter(|s| filter(s)) {
-        let mut rows = vec![line(app.tokens, setting.label, setting.help, control(app, setting))];
+        let mut row = line(app.tokens, setting.label, setting.help, control(app, setting));
+        if setting.page == Page::Trackpad {
+            row = crate::preview::room(app, setting.key, row);
+        }
+        let mut rows = vec![row];
         if let Kind::List(add) = setting.kind {
             rows.extend(list_rows(app, setting.key, add));
         }
