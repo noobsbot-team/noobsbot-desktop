@@ -1530,6 +1530,14 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | **Themes and config** | each version ships its `themes/`; the generator (E2.9) regenerates on first start of a new version; `config.toml` is migrated by `version` (C11), never rewritten destructively |
   | **noobsbot-terminal** | same updater, second repo (`noobsbot-team/noobsbot-terminal` releases), shown as a second row in Software Update |
   | **Installed from AUR instead** (Open-3) | the updater detects it (`pacman -Qo /usr/bin/noobsbot-desktop`) and only *notifies*, pointing to the package manager, so it never fights pacman |
+
+  Done (Settings ▸ General ▸ Software Update): the version row with its status ("1.3.0 is available" / "Up to date"),
+  **More Info…** (opens the release page; the notes aren't parsed), **Update Now** (the notice's "Restart to Update"
+  path), **Last checked** + **Check Now** (`org.noobsbot.Desktop.Update.Check`; the shell writes
+  `$XDG_STATE_HOME/noobsbot-desktop/update.json`), **Revert to x.y.z** for 30 days after an update while the older
+  `versions/<v>` exists (`noobsbot-desktop-update --revert <v>`, then the log-out alert), and the red "1" on System
+  Settings in the dock while an update is pending. Not yet: the noobsbot-terminal row (the checker doesn't know that
+  repo), size and release date on the version row.
 - **Built with:** `release-plz` + GitHub Actions (CI); `ureq` (small blocking HTTP client, run on a worker thread so the
   compositor loop never blocks), `semver`, `minisign-verify`, `zstd`/`tar` crates; `polkit` action + a 100-line
   privileged helper (`src/bin/update-helper.rs` → binary `noobsbot-desktop-update`); the session wrapper is a shell
