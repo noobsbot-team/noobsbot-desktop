@@ -8,13 +8,15 @@
 //! for the session wrapper's rollback.
 //!
 //! `noobsbot-desktop-update --revert <v>` (Settings' "Revert to <v>") points the links back at the installed, older
-//! `versions/<v>` instead; nothing is downloaded or unpacked.
+//! `versions/<v>` instead; nothing is downloaded or unpacked. It first adds the version it leaves to
+//! `/var/lib/noobsbot-desktop/reverted`, which `--verified` never installs.
 //!
 //! `noobsbot-desktop-update --verified` (`[update] install_at_login`, run by the session wrapper at login) goes through
-//! the passwordless polkit action `org.noobsbot.desktop.update.verified`, which pkexec picks by that first argument.
+//! polkit action `org.noobsbot.desktop.update.verified`, which pkexec picks by that first argument and whose rules file
+//! lets only an admin's active local session through without the password.
 //! It takes no other argument (no revert, no path): it installs the pkexec caller's own download, found here (its dirs
 //! not symlinks, its files the caller's own), exactly as above, so that action can only install a newer
-//! release whose signature this helper checked.
+//! release whose signature this helper checked, and never a pre-release or a version reverted from.
 //!
 //! Testing: `NOOBSBOT_UPDATE_ROOT=<dir>` puts every system path under `<dir>`; it is ignored when running as root.
 
@@ -41,8 +43,8 @@ mod verify;
 fn main() -> ExitCode {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
     let result = mode(&args).and_then(|mode| match mode {
-        Mode::Install(dir) => opendir(&dir).map_err(|e| format!("{}: {e}", dir.display())).and_then(|dir| install(&dir, None)),
-        Mode::Revert(version) => revert(&version),
+        Mode::Install(dir) => opendir(&dir).map_err(|e| format!("{}: {e}", dir.display())).and_then(|dir| install(&root(), &dir, None)),
+        Mode::Revert(version) => revert(&root(), &version),
         Mode::Verified => verified(),
     });
     match result {
@@ -86,7 +88,7 @@ fn verified() -> Result<Version, String> {
         }
         PathBuf::from(OsStr::from_bytes(CStr::from_ptr((*user).pw_dir).to_bytes()))
     };
-    install(&newest(&home)?, Some(uid))
+    install(&root(), &newest(&home)?, Some(uid))
 }
 
 /// The newest `<home>/.cache/noobsbot-desktop/updates/<v>/`, where the updater keeps its download. Each dir is opened
@@ -118,8 +120,7 @@ fn root() -> PathBuf {
 }
 
 /// Points the links at the installed `versions/<version>`, which must be older than the current one.
-fn revert(version: &str) -> Result<Version, String> {
-    let root = root();
+fn revert(root: &Path, version: &str) -> Result<Version, String> {
     let at = |path: &str| root.join(path.trim_start_matches('/'));
     // Parsed, so it can't be a path.
     let version = Version::parse(version).map_err(|e| format!("{version}: {e}"))?;
@@ -132,6 +133,8 @@ fn revert(version: &str) -> Result<Version, String> {
     if !target.join("noobsbot-desktop").is_file() {
         return Err(format!("{version} is not installed"));
     }
+    // Recorded first: install at login never brings `current` back by itself, even after a crash below.
+    record(&at(verify::REVERTED), &current)?;
     for name in ["noobsbot-desktop", "noobsbot-desktop-settings"] {
         if target.join(name).exists() {
             relink(&target.join(name), &at(&format!("/usr/bin/{name}")))?;
@@ -141,8 +144,7 @@ fn revert(version: &str) -> Result<Version, String> {
 }
 
 /// Installs the download in `dir`; `caller` is `--verified`'s pkexec caller, who must own its files.
-fn install(dir: &File, caller: Option<libc::uid_t>) -> Result<Version, String> {
-    let root = root();
+fn install(root: &Path, dir: &File, caller: Option<libc::uid_t>) -> Result<Version, String> {
     let at = |path: &str| root.join(path.trim_start_matches('/'));
 
     let key = fs::read_to_string(at(verify::PUBKEY)).map_err(|e| format!("{}: {e}", verify::PUBKEY))?;
@@ -156,6 +158,15 @@ fn install(dir: &File, caller: Option<libc::uid_t>) -> Result<Version, String> {
     let current = installed(&bin, &versions)?;
     if signed.version <= current {
         return Err(format!("{} is not newer than the installed {current}", signed.version));
+    }
+    if caller.is_some() {
+        let reverted = match fs::read_to_string(at(verify::REVERTED)) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            read => read.map_err(|e| format!("{}: {e}", verify::REVERTED))?,
+        };
+        if !verify::unattended(&signed.version, &reverted) {
+            return Err(format!("{} is a pre-release or was reverted: only Restart to Update installs it", signed.version));
+        }
     }
 
     // Root-only staging, emptied first: a leftover from an interrupted run is never reused.
@@ -223,6 +234,19 @@ fn unpack(dir: &File, caller: Option<libc::uid_t>, signed: &verify::Signed, stag
     }
     fs::rename(&tree, &target).map_err(|e| format!("{}: {e}", target.display()))?;
     Ok(target)
+}
+
+/// Adds `version` to the reverted list at `path`, root-owned and readable by the session whatever the umask.
+fn record(path: &Path, version: &Version) -> Result<(), String> {
+    let dir = path.parent().ok_or("no dir")?;
+    fs::create_dir_all(dir)
+        .and_then(|_| fs::set_permissions(dir, fs::Permissions::from_mode(0o755)))
+        .and_then(|_| fs::OpenOptions::new().append(true).create(true).open(path))
+        .and_then(|mut file| {
+            file.set_permissions(fs::Permissions::from_mode(0o644))?;
+            writeln!(file, "{version}")
+        })
+        .map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Points `link` at `to` atomically.
@@ -333,5 +357,46 @@ mod tests {
         symlink(home.join("cache"), home.join(".cache")).unwrap();
         assert!(newest(&home).unwrap_err().starts_with(".cache: "));
         fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn verified_never_reinstalls_a_reverted_version() {
+        // The testdata is a signed 1.3.0 for x86_64.
+        if std::env::consts::ARCH != "x86_64" {
+            return;
+        }
+        let root = scratch("root");
+        let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/services/testdata");
+        let versions = root.join("usr/lib/noobsbot-desktop/versions");
+        for v in ["1.2.0", "1.3.0"] {
+            fs::create_dir_all(versions.join(v)).unwrap();
+            fs::write(versions.join(v).join("noobsbot-desktop"), "").unwrap();
+        }
+        fs::create_dir_all(root.join("usr/bin")).unwrap();
+        symlink(versions.join("1.3.0/noobsbot-desktop"), root.join("usr/bin/noobsbot-desktop")).unwrap();
+        fs::create_dir_all(root.join("usr/share/noobsbot-desktop")).unwrap();
+        fs::copy(data.join("minisign.pub"), root.join("usr/share/noobsbot-desktop/minisign.pub")).unwrap();
+        let download = root.join("download");
+        fs::create_dir_all(&download).unwrap();
+        for f in ["SHA256SUMS", "SHA256SUMS.minisig"] {
+            fs::copy(data.join(f), download.join(f)).unwrap();
+        }
+        fs::write(download.join("noobsbot-desktop-1.3.0-x86_64.tar.zst"), "pretend tarball\n").unwrap();
+        let dir = opendir(&download).unwrap();
+        // SAFETY: getuid has no preconditions.
+        let me = Some(unsafe { libc::getuid() });
+
+        // "Revert to 1.2.0" lists 1.3.0, world-readable.
+        assert_eq!(revert(&root, "1.2.0"), Ok(Version::new(1, 2, 0)));
+        let reverted = root.join("var/lib/noobsbot-desktop/reverted");
+        assert_eq!(fs::read_to_string(&reverted).unwrap(), "1.3.0\n");
+        assert_eq!(fs::metadata(&reverted).unwrap().permissions().mode() & 0o777, 0o644);
+        // The 1.3.0 download is newer again: --verified refuses it; the password path gets as far as unpacking it
+        // (no real tarball), and so does --verified once nothing is listed.
+        assert!(install(&root, &dir, me).unwrap_err().contains("was reverted"));
+        assert!(install(&root, &dir, None).unwrap_err().starts_with("tar"));
+        fs::remove_file(&reverted).unwrap();
+        assert!(install(&root, &dir, me).unwrap_err().starts_with("tar"));
+        fs::remove_dir_all(&root).unwrap();
     }
 }

@@ -6,7 +6,8 @@
      `[update] install_at_login` runs the helper in its verified mode at login, which pkexec matches to the second action by its
      first argument. That action asks for the admin password too; only ../rules.d/50-noobsbot-desktop-update.rules lets an admin's
      active local session through without it. In that mode the helper takes no other argument and installs only the caller's own
-     download, after the same checks, so it can't revert, downgrade or install anything unsigned. -->
+     download, after the same checks and never a pre-release or a version "Revert to" went back from, so it can't revert, downgrade
+     or install anything unsigned. -->
 <policyconfig>
   <vendor>Noobsbot Desktop</vendor>
   <vendor_url>https://github.com/noobsbot-team/noobsbot-desktop</vendor_url>
