@@ -415,7 +415,7 @@ proxy_pac = ""
 # Actions: terminal, quit, close, minimise, zoom, fullscreen, hide, hide-others, show-all, lock, sleep, display-off, restart, shut-down, log-out, cycle, quake (show/hide `noobsbot --quake`), "exec <command>", "default-app <MIME type or category>", "volume up|down|up-fine|down-fine", mute, mic-mute,
 # "brightness up|down", "keyboard-backlight up|down|toggle", "touchpad toggle|on|off", "media play-pause|next|previous|stop|forward|rewind", eject, "space left|right|1…9", "move-to-space left|right|1…16",
 # move-to-new-space, "move-to-display next|previous", "tile left|right|top|bottom|top-left|top-right|bottom-left|bottom-right",
-# fill, center, keep-on-top, cycle-app-windows, "screen-zoom [in|out]",
+# fill, center, keep-on-top, "nudge left|right|up|down", "resize left|right|up|down", cycle-app-windows, "screen-zoom [in|out]",
 # mission-control, app-expose, show-desktop, screenshot (the whole screen), screenshot-region, screenshot-window (the focused one), screen-record, screenshot-toolbar, emoji,
 # app-drawer, "dock-app 1…9", "dock-app-new 1…9", on-screen-keyboard, keyboard-viewer, "input-source [previous|1…9]" (next, previous or the
 # n-th keyboard layout; 1…9 have no default key, as Super+Ctrl+1…9 are Spaces).
@@ -485,6 +485,16 @@ proxy_pac = ""
 "Super+Ctrl+Right" = "tile right"
 "Super+Ctrl+Up" = "tile top"
 "Super+Ctrl+Down" = "tile bottom"
+# Move the window 16 px; with Shift, its right or bottom edge (right and down grow it). Only with [windows]
+# keyboard_nudge; off, these keys go to the app.
+"Super+Alt+Left" = "nudge left"
+"Super+Alt+Right" = "nudge right"
+"Super+Alt+Up" = "nudge up"
+"Super+Alt+Down" = "nudge down"
+"Super+Alt+Shift+Left" = "resize left"
+"Super+Alt+Shift+Right" = "resize right"
+"Super+Alt+Shift+Up" = "resize up"
+"Super+Alt+Shift+Down" = "resize down"
 # The focused app's next window.
 "Super+grave" = "cycle-app-windows"
 "Super+Up" = "mission-control"
