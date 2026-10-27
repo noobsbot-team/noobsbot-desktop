@@ -387,11 +387,20 @@ impl Udev {
     }
 
     /// Every GPU on new GBM devices and EGL displays, which pick up Mesa's software driver once `software` set it.
+    /// Lit displays (a GPU reset) allocate their buffers there too, in the modifiers the new renderer draws into.
     fn soften(&mut self) -> Result<(), Error> {
         self.gpus = GpuManager::new(Api::default())?;
         for card in self.cards.values_mut() {
             card.gbm = GbmDevice::new(card.drm.device_fd().clone())?;
             self.gpus.as_mut().add_node(card.render, card.gbm.clone())?;
+            for screen in card.screens.values_mut() {
+                let formats = self.gpus.single_renderer(&card.render)?.as_mut().egl_context().dmabuf_render_formats().clone();
+                let code = screen.compositor.format();
+                let allocator = GbmAllocator::new(card.gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
+                // ponytail: the cursor plane and direct scanout keep the old GBM device (DrmCompositor cannot swap
+                // them); remake the compositors (a new DrmSurface each) if a driver ever minds.
+                screen.compositor.set_format(allocator, code, formats.iter().filter(|f| f.code == code).map(|f| f.modifier)).map_err(|e| format!("{e}"))?;
+            }
         }
         Ok(())
     }
