@@ -244,7 +244,8 @@ The desktop starts with the menu bar at the top and the dock at the bottom. Pres
   the keys you hold light up.
 - **Quake terminal:** F12 drops a terminal down from the top of the screen.
 - **Desktop icons:** files in `~/Desktop` appear on the wallpaper. Drag to arrange, double-click to open,
-  right-click for Open, Rename, Move to Trash and New Folder. Mounted drives show at the top right, with Eject.
+  right-click for Open, Rename, Move to Trash and New Folder. An executable app launcher (`.desktop` file) shows
+  its app's name and icon and starts the app. Mounted drives show at the top right, with Eject.
 - **Calendar events:** put `.ics` files in `~/.local/share/noobsbot-desktop/calendars/`, or add a CalDAV account
   (server address, user and app password) in System Settings ▸ Date & Time. They show in Up Next, as dots in the
   calendar, and as reminders.
