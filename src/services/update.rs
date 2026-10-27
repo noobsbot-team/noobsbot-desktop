@@ -23,7 +23,7 @@ use semver::Version;
 
 use super::verify;
 
-const REPO: &str = "https://github.com/noobsbot-team/noobsbot-desktop";
+pub const REPO: &str = "https://github.com/noobsbot-team/noobsbot-desktop";
 const API: &str = "https://api.github.com/repos/noobsbot-team/noobsbot-desktop";
 const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// The privileged helper, at the path the polkit action `org.noobsbot.desktop.update` names.

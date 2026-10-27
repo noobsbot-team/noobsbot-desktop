@@ -614,8 +614,8 @@ glass windows with traffic lights.
 - **Done when:** changing accent colour, glass opacity or a shortcut applies without restart; a deliberately broken
   config starts the desktop with defaults and a notification.
 - **Built:** `src/config.rs` (commented defaults in `data/config.toml`, unknown keys warned, the last good config kept
-  when the file breaks, atomic saves, live reload after a 300 ms debounce). Not yet: a notification with the line
-  number for a broken file (it is only logged).
+  when the file breaks and a notification with its line and Open File, once per new error, atomic saves, live reload
+  after a 300 ms debounce).
 
 ### E1.9 Window rules
 - **What it is:** per-app rules in `config.toml`, so the desktop remembers how an app's windows behave.
@@ -684,8 +684,8 @@ glass windows with traffic lights.
   fully usable; suspend/resume 20 times in a row on Intel and NVIDIA without a restart; the 24 h soak test holds RSS flat.
 - **Built:** `scripts/fuzz-client.py`, 2 s D-Bus timeouts, GPU reset recovery (`src/backend/udev.rs`), the panic hook,
   notification rate limits, a capped clipboard, LRU text and icon caches, xwayland-satellite restarted
-  (`src/xwayland.rs`). Not yet: the icon disk cache (icons are rasterised into memory only); a notification when a
-  helper stops being restarted (it is only logged).
+  (`src/xwayland.rs`, with a notification when it is given up). Not yet: the icon disk cache (icons are rasterised
+  into memory only).
 
 **M1 hardware covered:** GPU (nested), keyboard, touchpad, mouse.
 **M1 done when:** all elements pass; idle CPU **0%**; RAM **< 60 MB**; mockup review passed.
@@ -1097,7 +1097,7 @@ Goal: everything that informs you and helps you find things.
     | Calendar | month grid (E2.5); ~~later~~ "Up Next" events (done: the card above the month) | `chrono`; `.ics` (`src/ical.rs`, `src/events.rs`); CalDAV not yet |
     | Batteries | laptop + Bluetooth devices (headphones, mouse) | UPower |
     | World Clock (optional) | Built: after Weather, a row per city in `[widgets] clocks` (off while empty): its time in the clock's 12/24 h format, then the day and offset from here ("Tomorrow, +5:45"); redrawn on the menu-bar clock's minute tick | the system zoneinfo, read as `.ics` TZIDs are (no `chrono-tz`) |
-    | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open). Built as a widget app: CPU, memory and disk every 5 s; not yet network ↑/↓ or refreshing only while open | `/proc`, `/sys` (`src/bin/widget-system.rs`) |
+    | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open). Built as a widget app: CPU, memory, disk and network ↑/↓ every 5 s; not yet refreshing only while open (the widget protocol doesn't say when a widget is shown) | `/proc`, `/sys` (`src/bin/widget-system.rs`) |
     | Weather (done, off by default) | Open-Meteo forecast for the place in `[weather]` (no key, no account) | `src/services/weather.rs` (E7.2) |
   - "Edit Widgets…" (under the widgets) opens Settings ▸ Notifications, which shows, hides and reorders other apps' widgets (`[widgets]`) for Notification Center and the desktop.
 - **Built with:** our widgets; the notification store from E4.1; UPower; chrono.
@@ -1445,8 +1445,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   the 20% / 10% notifications (no double action). Hibernate: not in v1 (needs swap sizing at install time; L10).
 - **Done when:** each step happens on time; it locks on wake; videos (idle-inhibit) keep it awake.
 - **Built:** `src/idle.rs` (dim, off, lock and sleep from `[idle]`, low-battery warnings, ext-idle-notify), logind
-  inhibitors and `PrepareForSleep` (`src/services/login.rs`), UPower. Not yet: the power button's Sleep · Restart ·
-  Shut Down alert (it asks "Shut Down?" with a countdown).
+  inhibitors and `PrepareForSleep` (`src/services/login.rs`), UPower, the power button's Sleep · Restart · Shut Down
+  alert (`power-button` in `[bindings]`; Shut Down is the default and the countdown's).
 
 ### E6.6 Login screen
 - **What it is:** where you log in after boot.
@@ -1544,7 +1544,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Limit:** XWayland apps are scaled as bitmaps on HiDPI screens (slightly soft text); native Wayland apps are sharp (L14).
 - **Done when:** an X11-only app (e.g. `xeyes`) opens with our title bar; xwayland-satellite is restarted automatically if it dies (E1.11).
 - **Done:** `src/xwayland.rs` (xwayland-satellite on a free display, restarted when it dies, given up after 5 quick
-  deaths).
+  deaths with a notification).
 
 ### E6.10 Installer (`install.sh`)
 - **What it is:** one script that turns a fresh Arch install into Noobsbot Desktop.
@@ -1613,8 +1613,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 - **Why:** fcitx5 is the best-maintained Wayland IME; these two protocols are what Qt 6, GTK 4 and Chromium speak.
 - **Done when:** Nepali can be typed in Kate, Helium and noobsbot-terminal with the candidate popup next to the cursor.
 - **Built:** `src/ime.rs` (text-input-v3 and input-method-v2, the popup next to the cursor, layouts and fcitx5 methods
-  in the keyboard menu), `src/services/fcitx.rs`, `src/ibus.rs`, `XMODIFIERS` in the session wrapper. Not yet:
-  Super+Ctrl+Space cycling input methods (it cycles layouts); `install.sh` offering the fcitx5 set (it prints a hint).
+  in the keyboard menu), `src/services/fcitx.rs`, `src/ibus.rs`, `XMODIFIERS` in the session wrapper,
+  Super+Ctrl+Space cycling the engine's methods while it lists several (else the layouts), `install.sh --advanced`
+  offering the fcitx5 set.
 
 ### E6.13 Versioning, releases & Software Update (auto-updating)
 - **What it is:** how a version number is born, how a release is built, and how every installed desktop learns about
@@ -1693,8 +1694,9 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   and a deliberately broken 1.3.1 is rolled back automatically.
 - **Built:** release-plz and the release workflows (`release-plz.toml`, `.github/workflows/`), signed tarballs,
   `src/services/update.rs` (with `curl`, not `ureq`), `src/bin/update-helper.rs`, the watchdog and rollback in the
-  session wrapper, the Settings page above. Not yet: the Report button on "was rolled back"; installing at the next
-  login without a click (Restart to Update and Update Now install it).
+  session wrapper (its "was rolled back" notification has Report, which opens a new issue), the Settings page above.
+  Not yet: installing at the next login without a click (Restart to Update and Update Now install it; it needs the
+  helper's polkit action to allow the active session without a password, an owner's call).
 
 **M6 hardware covered:** GPU (real), monitors, HDMI/USB-C displays, sleep/lid/power button, webcam (via portal),
 phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.

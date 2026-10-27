@@ -1,4 +1,5 @@
-//! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s.
+//! Alerts (D8). Power (E2.2): Restart / Shut Down / Log Out ask first and go ahead by themselves after 60 s; the power
+//! button (E6.5) asks Shut Down with Sleep and Restart beside it.
 //! Pairing (E2.3): a Bluetooth device asks to pair, through our BlueZ agent. A frozen app asks
 //! Wait / Force Quit (E4.7).
 //! Drawn by render/alert.rs, which keeps the button rects of the last frame.
@@ -38,6 +39,8 @@ pub enum Power {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
     Power(Power),
+    /// The power button (E6.5): Shut Down's alert with Sleep and Restart buttons too.
+    PowerButton,
     Pair(Pairing),
     /// A frozen app's window was closed (E4.7): Wait / Force Quit.
     NotResponding {
@@ -100,7 +103,7 @@ impl Alert {
     pub fn title(&self) -> String {
         match &self.kind {
             Kind::Power(Power::Restart) => "Are you sure you want to restart your computer now?".into(),
-            Kind::Power(Power::ShutDown) => "Are you sure you want to shut down your computer now?".into(),
+            Kind::Power(Power::ShutDown) | Kind::PowerButton => "Are you sure you want to shut down your computer now?".into(),
             Kind::Power(Power::LogOut) => "Are you sure you want to quit all applications and log out now?".into(),
             Kind::Pair(p) if p.answer => format!("Pair with “{}”?", p.device),
             Kind::Pair(p) => format!("Pair with “{}”", p.device),
@@ -118,7 +121,7 @@ impl Alert {
         let n = self.seconds_left(now).unwrap_or(0);
         match &self.kind {
             Kind::Power(Power::Restart) => format!("If you do nothing, the computer will restart automatically in {n} seconds."),
-            Kind::Power(Power::ShutDown) => format!("If you do nothing, the computer will shut down automatically in {n} seconds."),
+            Kind::Power(Power::ShutDown) | Kind::PowerButton => format!("If you do nothing, the computer will shut down automatically in {n} seconds."),
             Kind::Power(Power::LogOut) => format!("If you do nothing, you will be logged out automatically in {n} seconds."),
             Kind::Pair(Pairing { device, code: Some(code), answer: true }) => format!("Make sure “{device}” shows the code {code}."),
             Kind::Pair(Pairing { device, code: None, .. }) => format!("“{device}” wants to pair with this computer."),
@@ -153,7 +156,7 @@ impl Alert {
     pub fn confirm(&self) -> &'static str {
         match &self.kind {
             Kind::Power(Power::Restart) => "Restart",
-            Kind::Power(Power::ShutDown) => "Shut Down",
+            Kind::Power(Power::ShutDown) | Kind::PowerButton => "Shut Down",
             Kind::Power(Power::LogOut) => "Log Out",
             Kind::Pair(p) if p.answer => "Pair",
             Kind::Pair(_) => "OK",
@@ -163,6 +166,14 @@ impl Alert {
             Kind::ScreenRecording { .. } | Kind::Thunderbolt(_) => "Allow",
             Kind::EmptyTrash => "Empty Trash",
             Kind::Polkit { .. } => "OK",
+        }
+    }
+
+    /// Buttons left of Cancel and the default one, in order.
+    pub fn extra(&self) -> &'static [(&'static str, Button)] {
+        match &self.kind {
+            Kind::PowerButton => &[("Sleep", Button::Sleep), ("Restart", Button::Restart)],
+            _ => &[],
         }
     }
 
@@ -196,6 +207,9 @@ pub enum Button {
     Confirm,
     /// A power alert's "Reopen windows when logging back in" row: toggles it.
     Reopen,
+    /// The power button's alert: sleep, or restart without asking again.
+    Sleep,
+    Restart,
 }
 
 impl State {
@@ -211,7 +225,7 @@ impl State {
         }
         self.close_alert();
         self.popup = None;
-        let power = matches!(kind, Kind::Power(_));
+        let power = matches!(kind, Kind::Power(_) | Kind::PowerButton);
         self.alert = Some(Alert { kind, deadline: power.then(|| Instant::now() + COUNTDOWN) });
         self.schedule_redraw();
         if !power {
@@ -384,10 +398,15 @@ impl State {
                 }
                 return;
             }
-            Kind::Power(_) if button == Button::Cancel => return,
+            Kind::Power(_) | Kind::PowerButton if button == Button::Cancel => return,
+            Kind::PowerButton if button == Button::Sleep => return self.sleep(),
             Kind::Power(power) => {
                 self.session_save(self.config.windows.reopen_at_login);
                 power
+            }
+            Kind::PowerButton => {
+                self.session_save(self.config.windows.reopen_at_login);
+                if button == Button::Restart { Power::Restart } else { Power::ShutDown }
             }
             Kind::NotResponding { .. } if button == Button::Cancel => return,
             Kind::NotResponding { pid, client, .. } => return self.kill(pid, client),
@@ -467,6 +486,9 @@ mod tests {
         assert_eq!(alert.seconds_left(now + COUNTDOWN), Some(0));
         assert!(alert.body(now).ends_with("in 60 seconds."));
         assert_eq!(Alert::power(Power::LogOut, now).confirm(), "Log Out");
+        let button = Alert { kind: Kind::PowerButton, deadline: None };
+        assert_eq!((button.confirm(), button.cancel(), button.extra().len()), ("Shut Down", "Cancel", 2));
+        assert!(Alert::power(Power::ShutDown, now).extra().is_empty());
     }
 
     #[test]

@@ -2,7 +2,8 @@
 # Noobsbot Desktop login session (plan.md E6.7), started by greetd/tuigreet and the wayland-sessions entry.
 # Starts the installed version, or the last good one when an update keeps crashing (E6.13 rollback).
 # The compositor runs under its version's noobsbot-desktop-watchdog (E6.4), which stops it if its event loop freezes;
-# that ends like a crash, so it counts towards the rollback and returns to the login screen.
+# that ends like a crash, so it counts towards the rollback and returns to the login screen. The rollback's
+# notification has a Report button, which the compositor answers with the issue page.
 
 # Dolphin and Kate read the app menu named by XDG_MENU_PREFIX: Arch's archlinux-xdg-menu, or on Debian the one install.sh writes.
 menu=noobsbot-
@@ -65,7 +66,7 @@ ${watchdog:+"$watchdog"} "$run" -- sh -c 'dbus-update-activation-environment --s
     [ -z "$NOOBSBOT_ROLLED_BACK" ] || gdbus call --session --dest org.freedesktop.Notifications \
         --object-path /org/freedesktop/Notifications --method org.freedesktop.Notifications.Notify Noobsbot\ Desktop 0 "" \
         "Update $NOOBSBOT_ROLLED_BACK was rolled back" "It kept quitting at start, so the previous version is running." \
-        "[]" "{}" 10000 >/dev/null'
+        "[\"report\", \"Report\"]" "{}" 10000 >/dev/null'
 status=$?
 [ -z "$marker" ] || kill "$marker" 2>/dev/null
 # A crash before the boot-ok marker counts towards a rollback; only the installed version is counted.

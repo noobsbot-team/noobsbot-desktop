@@ -156,6 +156,13 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     config::watch(&config_path, move |config| tx.send(config).is_ok());
     event_loop.handle().insert_source(rx, |event, _, state| {
         if let channel::Event::Msg(config) = event {
+            let config = match config {
+                Ok(config) => {
+                    state.close_notification(config::BROKEN_NOTICE, services::notifications::Reason::Dismissed);
+                    config
+                }
+                Err(err) => return state.notify(config::broken_notice(&err)),
+            };
             // Our own saves (dock pins, icon size, appearance mode) come back through the watcher already applied.
             if config == state.config {
                 return;
@@ -577,7 +584,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     if state.greeter().is_some() {
         command.clear();
     } else {
-        state.x_display = xwayland::spawn(&state.socket_name, backend::cursor::size(state.config.appearance.pointer_size));
+        state.x_display = xwayland::spawn(&state.socket_name, backend::cursor::size(state.config.appearance.pointer_size), &state.loop_handle);
         // fcitx5 starts from its XDG autostart entry; ibus has none. Started before the session target, so it binds
         // input-method-v2 ahead of an fcitx5 that is installed too.
         if state.config.keyboard.engine() == "ibus" {
