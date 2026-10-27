@@ -364,8 +364,11 @@ impl crate::state::State {
         }
     }
 
-    /// Writes the status file for Settings (`checked`: a check just finished; `None` keeps the last time).
+    /// A red "1" on System Settings in the dock while an update is pending, and the status file for Settings
+    /// (`checked`: a check just finished; `None` keeps the last time).
     pub fn update_changed(&mut self, checked: Option<i64>) {
+        let count = self.update.is_some().then_some(1);
+        self.dock_fx.entry("noobsbot-desktop-settings".into(), super::launcher::Entry { count, ..Default::default() });
         if self.nested {
             return;
         }
