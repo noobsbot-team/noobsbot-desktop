@@ -281,7 +281,7 @@ impl State {
             Some(Popup::Notifications { year, month }) => {
                 let week_start = self.config.clock.week_start.into();
                 let (dots, up_next) = calendar.clone().unwrap_or_default();
-                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots };
+                let shown = render::calendar::Month { year, month, week_start, today: chrono::Local::now().date_naive(), dots, slide: None };
                 if let Some(center) = &center {
                     let view = View::Center {
                         center,
