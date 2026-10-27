@@ -24,8 +24,8 @@ MINISIGN_PUBKEY="RWQgk/P2Bfb6JYQ3p8/ObaP2nG0S1gYPhE/KIJa7jYnCArCLukiRPTyR"
 # release, or the newest pre-release while there is none). The defaults are this project's own.
 MINISIGN_PUBKEY=${NOOBSBOT_MINISIGN_PUBKEY:-$MINISIGN_PUBKEY}
 RELEASE_TAG=${NOOBSBOT_DESKTOP_RELEASE:-}
-# Debian has no packages for these: xwayland-satellite v0.8.3 (when the release has no build of it) and the WhiteSur
-# themes, by commit (the icons by tag).
+# xwayland-satellite v0.8.3, which scripts/build-xwayland-satellite.sh patches, and the WhiteSur themes (Debian has
+# no packages of them), by commit (the icons by tag).
 XWS_REV=b83eab900644e4c7c77982ce3d44cb490f0c5e1d
 WHITESUR_ICONS=2026-09-10
 WHITESUR_CURSORS=e190baf618ed95ee217d2fd45589bd309b37672b
@@ -639,7 +639,7 @@ install_desktop_release() {
     local tag=$REL_TAG ver=$REL_VER name dir
     if [[ -x $LIB/versions/$ver/noobsbot-desktop && $(readlink /usr/bin/noobsbot-desktop) == "$LIB/versions/$ver/noobsbot-desktop" ]]; then
         say "Noobsbot Desktop $ver is already installed"
-        install_xwayland_satellite "$LIB/versions/$ver"
+        install_xwayland_satellite "$ver"
         return
     fi
     name=noobsbot-desktop-$ver-$(uname -m).tar.zst dir=$CACHE/updates/$ver
@@ -675,7 +675,7 @@ install_desktop_release() {
     # --no-same-owner: root's tar would otherwise keep the archive's (the CI user's) uid on the installed files.
     as_root tar --zstd --no-same-owner --no-same-permissions -xf "$dir/$name" -C "$LIB/versions/$ver" --strip-components=1
     use_version "$ver"
-    install_xwayland_satellite "$LIB/versions/$ver"
+    install_xwayland_satellite "$ver"
 }
 
 # install_desktop_source <tag>
@@ -703,22 +703,21 @@ install_desktop_source() {
         as_root install -Dm755 "$src/target/release/noobsbot-desktop-widget-system" "$LIB/versions/$ver/noobsbot-desktop-widget-system"
     fi
     use_version "$ver"
-    install_xwayland_satellite "$src/target/release"
+    install_xwayland_satellite "$ver"
 }
 
-# install_xwayland_satellite <dir>: X11 apps (E6.9). Arch has a package; on Debian the release carries one built on
-# Debian 13, and without it (a build from source) it is built here.
+# install_xwayland_satellite <ver>: X11 apps (E6.9). The desktop starts the xwayland-satellite in its version's
+# directory, our patched build: a release carries it, and a build from source makes it here. Debian has no package of
+# it, so there it also goes to /usr/local/bin (for versions from before it shipped beside the desktop).
 install_xwayland_satellite() {
-    debian || return 0
-    if [[ -x $1/xwayland-satellite ]]; then
-        install_file 755 "$1/xwayland-satellite" /usr/local/bin/xwayland-satellite root
-    elif ! has xwayland-satellite; then
+    local dir=$LIB/versions/$1
+    if [[ ! -x $dir/xwayland-satellite ]]; then
         ensure_build_tools
         say "Building xwayland-satellite (for X11 apps)"
-        run cargo install --locked --git https://github.com/Supreeeme/xwayland-satellite --rev "$XWS_REV" \
-            --root "$CACHE/xwayland-satellite"
-        as_root install -Dm755 "$CACHE/xwayland-satellite/bin/xwayland-satellite" /usr/local/bin/xwayland-satellite
+        run sh "$REPO_DIR/scripts/build-xwayland-satellite.sh" "$CACHE/xwayland-satellite-src"
+        as_root install -Dm755 "$CACHE/xwayland-satellite-src/target/release/xwayland-satellite" "$dir/xwayland-satellite"
     fi
+    ! debian || install_file 755 "$dir/xwayland-satellite" /usr/local/bin/xwayland-satellite root
 }
 
 # noobsbot-terminal's own installer, from the pinned tag: on Arch it makes the noobsbot-bin (or, from source,
