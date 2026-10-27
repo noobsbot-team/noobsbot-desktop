@@ -288,16 +288,22 @@ pub fn sheet_loc(parent: Rect, bar: i32, size: Size<i32, Logical>) -> Point<i32,
     (parent.loc.x + (parent.size.w - size.w) / 2, parent.loc.y + bar).into()
 }
 
-/// The stacking order (bottom to top) with every sheet directly above its parent; `parent` gives a sheet's parent.
+/// The stacking order (bottom to top) with every sheet directly above its parent; `parent` gives a sheet's parent,
+/// asked once per window. Without any sheet (the usual case) the order is returned as it is.
+// ponytail: O(n²) window compares while a sheet is open; index by parent if a client ever opens thousands.
 pub fn sheets_above<T: Clone + PartialEq>(order: &[T], parent: impl Fn(&T) -> Option<T>) -> Vec<T> {
+    let parents: Vec<Option<T>> = order.iter().map(parent).collect();
+    if parents.iter().all(Option::is_none) {
+        return order.to_vec();
+    }
     let mut out = Vec::with_capacity(order.len());
-    for root in order.iter().filter(|w| parent(w).is_none_or(|p| !order.contains(&p))) {
+    for (root, _) in order.iter().zip(&parents).filter(|(_, p)| p.as_ref().is_none_or(|p| !order.contains(p))) {
         let mut stack = vec![root.clone()];
         while let Some(w) = stack.pop() {
             if out.contains(&w) {
                 continue;
             }
-            stack.extend(order.iter().rev().filter(|s| parent(s).as_ref() == Some(&w)).cloned());
+            stack.extend(order.iter().zip(&parents).rev().filter(|(_, p)| p.as_ref() == Some(&w)).map(|(s, _)| s.clone()));
             out.push(w);
         }
     }
@@ -526,6 +532,14 @@ mod tests {
             _ => None,
         };
         assert_eq!(sheets_above(&[1, 2, 3, 4, 5, 6], parent), vec![2, 3, 1, 4, 5, 6]);
+        // Each window's parent is asked once, and with no sheet the order stays.
+        let asked = std::cell::Cell::new(0);
+        let none = |_: &i32| {
+            asked.set(asked.get() + 1);
+            None
+        };
+        assert_eq!(sheets_above(&[3, 1, 2], none), vec![3, 1, 2]);
+        assert_eq!(asked.get(), 3);
     }
 
     #[test]
