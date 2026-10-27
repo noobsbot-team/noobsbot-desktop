@@ -166,7 +166,7 @@ enum Gpu {
     Retry,
     /// Remake the EGL contexts, the shell's textures and the scanout buffers.
     Rebuild,
-    /// Exit non-zero: the session wrapper restarts or rolls back.
+    /// Draw in software from now on (`soften_gpu`), or exit if that was tried already.
     GiveUp,
 }
 
@@ -214,16 +214,17 @@ fn software_set(var: impl Fn(&str) -> Option<String>) -> bool {
     SOFTWARE.iter().all(|(k, v)| var(k).as_deref() == Some(*v))
 }
 
-/// The primary GPU did not start (`err`): true once, having turned software drawing on, so the caller tries again.
+/// The primary GPU did not start, or won't come back after a reset (`err`): true once, having turned software drawing
+/// on, so the caller tries again.
 fn software(err: &Error) -> bool {
     if software_set(|k| std::env::var(k).ok()) {
         return false;
     }
-    tracing::warn!("the GPU did not start ({err}): trying again with software rendering");
+    tracing::warn!("the GPU failed ({err}): trying again with software rendering");
     for (k, v) in SOFTWARE {
         // SAFETY: other threads (fonts, D-Bus, weather) already run. Rust's own reads take set_var's lock, and glibc
-        // (2.41+) never frees an environment array a concurrent getenv may still be reading. This runs once, at
-        // start, on a path that would otherwise exit; apps started later inherit it, which suits them too.
+        // (2.41+) never frees an environment array a concurrent getenv may still be reading. This runs once, on a
+        // path that would otherwise exit; apps started later inherit it, which suits them too.
         unsafe { std::env::set_var(k, v) };
     }
     true
@@ -490,11 +491,8 @@ impl State {
         // The primary GPU went away and came back: the shell's textures belong to its old context.
         if render == udev.primary && self.backend.is_some() {
             let mut device = self.device.take();
-            if let Some(Device::Udev(udev)) = &mut device
-                && let Err(err) = self.rebuild_gpu(udev)
-            {
-                tracing::error!("the GPU did not come back: {err}");
-                std::process::exit(1);
+            if let Some(Device::Udev(udev)) = &mut device {
+                self.restart_gpu(udev);
             }
             self.device = device;
         }
@@ -814,16 +812,35 @@ impl State {
                 tracing::warn!("GPU reset (or {failures} failed frames on every display): starting the renderer again");
                 udev.resets.retain(|t| now.duration_since(*t) < RESET_WINDOW);
                 udev.resets.push(now);
-                if let Err(err) = self.rebuild_gpu(udev) {
-                    tracing::error!("the GPU did not come back: {err}");
-                    std::process::exit(1);
-                }
+                self.restart_gpu(udev);
             }
-            Gpu::GiveUp => {
-                tracing::error!("the GPU keeps resetting ({MAX_RESETS} times in {RESET_WINDOW:?}): exiting");
-                std::process::exit(1);
-            }
+            Gpu::GiveUp => self.soften_gpu(udev, &format!("it keeps resetting, {MAX_RESETS} times in {RESET_WINDOW:?}").into()),
         }
+    }
+
+    /// The renderer started again (`rebuild_gpu`), else on Mesa's software driver (`soften_gpu`).
+    fn restart_gpu(&mut self, udev: &mut Udev) {
+        if let Err(err) = self.rebuild_gpu(udev) {
+            self.soften_gpu(udev, &format!("it did not come back: {err}").into());
+        }
+    }
+
+    /// The GPU won't come back (`err`): once, every GPU starts again on Mesa's software driver (`software`), the
+    /// session and its windows kept. Exits when software drawing was tried already or fails too: the session wrapper
+    /// restarts or rolls back.
+    // ponytail: the dmabuf global keeps the GPU's formats; a running app's GPU buffers llvmpipe cannot import stay
+    // blank until it restarts (apps started later draw in software too). Remake the global if that bites.
+    fn soften_gpu(&mut self, udev: &mut Udev, err: &Error) {
+        if !software(err) {
+            tracing::error!("the GPU failed ({err}): exiting");
+            std::process::exit(1);
+        }
+        if let Err(err) = udev.soften().and_then(|()| self.rebuild_gpu(udev)) {
+            tracing::error!("software rendering did not start either ({err}): exiting");
+            std::process::exit(1);
+        }
+        tracing::info!("using software rendering");
+        self.notify(software_notice());
     }
 
     /// Remakes every EGL context on the same GPUs, the shell's textures and shaders (`Views`), the cursors, the
