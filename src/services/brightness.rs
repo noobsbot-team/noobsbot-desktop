@@ -1,9 +1,11 @@
 //! Display brightness (E2.3, E2.7): read from `/sys/class/backlight`, set through logind so no root is needed.
-//! External monitors follow the same value over DDC/CI, through `ddcutil` when it is installed.
+//! External monitors follow the same value over DDC/CI, through `ddcutil` when it is installed; Settings › Displays
+//! sets each display on its own.
 
 use std::{
-    io,
+    fs, io,
     os::fd::AsRawFd,
+    path::Path,
     process::Command,
     sync::{OnceLock, mpsc},
     time::{Duration, Instant},
@@ -26,7 +28,7 @@ trait Session {
 /// Sends the current brightness in percent; `None` without a backlight (desktop monitors). At start, after our own
 /// changes, and on the backlight's udev events (`watch`).
 pub fn send_current(updates: &Sender<Update>) {
-    let percent = display_info::brightness();
+    let percent = panel();
     tracing::debug!(?percent, "brightness");
     let _ = updates.send(Update::Brightness(percent));
 }
@@ -40,7 +42,7 @@ pub fn start(updates: &Sender<Update>) {
     if let Err(err) = std::thread::Builder::new().name("ddc".into()).spawn(move || ddc(&ddc_updates, &rx)) {
         tracing::warn!("monitor brightness off: {err}");
     }
-    if display_info::backlight().is_some() {
+    if backlight().is_some() {
         let updates = updates.clone();
         let watch = move || {
             if let Err(err) = watch(&updates) {
@@ -86,9 +88,23 @@ pub async fn set(bus: Option<&Connection>, percent: u8, updates: &Sender<Update>
     if let Some(ddc) = DDC.get() {
         let _ = ddc.send(Ddc::Set(percent));
     }
+    set_backlight(bus, percent, updates).await;
+}
+
+/// One display, by connector: the built-in panel's backlight, or a DDC/CI monitor.
+pub async fn set_output(bus: Option<&Connection>, connector: String, percent: u8, updates: &Sender<Update>) {
+    if display_info::built_in(&connector) {
+        set_backlight(bus, percent, updates).await;
+    } else if let Some(ddc) = DDC.get() {
+        let _ = ddc.send(Ddc::SetOne(connector, percent));
+    }
+}
+
+/// The built-in panel, through logind; no bus: skipped.
+async fn set_backlight(bus: Option<&Connection>, percent: u8, updates: &Sender<Update>) {
     let Some(bus) = bus else { return };
-    let Some(name) = display_info::backlight() else { return };
-    let Some(max) = display_info::backlight_number(&name, "max_brightness") else { return };
+    let Some(name) = backlight() else { return };
+    let Some(max) = backlight_number(&name, "max_brightness") else { return };
     let result = match SessionProxy::new(bus).await {
         Ok(session) => session.set_brightness("backlight", &name, to_raw(percent, max)).await,
         Err(err) => Err(err),
@@ -100,8 +116,24 @@ pub async fn set(bus: Option<&Connection>, percent: u8, updates: &Sender<Update>
 }
 
 enum Ddc {
+    /// Every monitor.
     Set(u8),
+    /// One monitor, by connector.
+    SetOne(String, u8),
     Detect,
+}
+
+/// A DDC/CI monitor.
+struct Monitor {
+    bus: u32,
+    /// The brightness's maximum (VCP 10).
+    top: u32,
+    /// `DP-1`; empty when ddcutil can't tell.
+    connector: String,
+    /// Percent, as last set or read; `None` when unknown.
+    percent: Option<u8>,
+    /// Percent to set next: the latest of a drag.
+    want: Option<u8>,
 }
 
 /// The monitors' brightness thread.
@@ -110,14 +142,13 @@ static DDC: OnceLock<mpsc::Sender<Ddc>> = OnceLock::new();
 /// A dock brings up several displays one after another, and `ddcutil detect` takes seconds: detect once they settle.
 const SETTLE: Duration = Duration::from_secs(2);
 
-/// Finds the DDC/CI monitors, again after hotplug, then sets them to each new value (not echoed: the shell already
-/// shows it). Without a backlight the first monitor's reading is the slider's.
-// ponytail: all monitors share the one slider; give Settings › Displays a slider each if one value is not enough.
+/// Finds the DDC/CI monitors, again after hotplug, then sets them, all or one, to each new value. Without a backlight
+/// the first monitor's reading is the slider's.
 fn ddc(updates: &Sender<Update>, rx: &mpsc::Receiver<Ddc>) {
-    let mut tops = Vec::new();
-    // The last value set, else (no backlight) the first monitor's reading. At login monitors keep their own.
+    let mut monitors = Vec::new();
+    // The last value set to all, else (no backlight) the first monitor's reading. At login monitors keep their own.
     let mut current = None;
-    detect(&mut tops, &mut current, updates);
+    detect(&mut monitors, &mut current, updates);
     let mut due: Option<Instant> = None;
     loop {
         let msg = match due {
@@ -125,8 +156,8 @@ fn ddc(updates: &Sender<Update>, rx: &mpsc::Receiver<Ddc>) {
                 Ok(msg) => msg,
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     due = None;
-                    current = display_info::brightness().or(current);
-                    detect(&mut tops, &mut current, updates);
+                    current = panel().or(current);
+                    detect(&mut monitors, &mut current, updates);
                     continue;
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
@@ -136,55 +167,78 @@ fn ddc(updates: &Sender<Update>, rx: &mpsc::Receiver<Ddc>) {
                 Err(_) => return,
             },
         };
-        match msg {
-            Ddc::Detect => due = Some(Instant::now() + SETTLE),
-            Ddc::Set(mut percent) => {
-                // ponytail: a call takes 50–200 ms, so a slider drag is coalesced to its latest value; a stuck monitor
-                // still holds up the others (one thread each if that matters).
-                let mut detect_too = false;
-                for msg in rx.try_iter() {
-                    match msg {
-                        Ddc::Set(p) => percent = p,
-                        Ddc::Detect => detect_too = true,
-                    }
-                }
-                if detect_too {
-                    due = Some(Instant::now() + SETTLE);
-                }
-                current = Some(percent);
-                for &(bus, top) in &tops {
-                    set_vcp(bus, top, percent);
-                }
+        // ponytail: a call takes 50–200 ms, so a slider drag is coalesced to its latest value per monitor; a stuck
+        // monitor still holds up the others (one thread each if that matters).
+        if queue(&mut monitors, &mut current, std::iter::once(msg).chain(rx.try_iter())) {
+            due = Some(Instant::now() + SETTLE);
+        }
+        for m in &mut monitors {
+            if let Some(percent) = m.want.take() {
+                set_vcp(m.bus, m.top, percent);
+                m.percent = Some(percent);
             }
         }
+        send_levels(&monitors, updates);
     }
 }
 
-/// Replaces `tops` (bus, maximum) with the monitors `ddcutil detect` finds; a new one is set to `current`, or, without
-/// a backlight, gives the slider its reading.
-fn detect(tops: &mut Vec<(u32, u32)>, current: &mut Option<u8>, updates: &Sender<Update>) {
-    let buses = ddcutil(&["detect", "--brief"]).map(|out| parse_detect(&out)).unwrap_or_default();
-    tracing::debug!(?buses, "ddc monitors");
+/// Takes queued messages, oldest first: each monitor's `want` becomes the latest value meant for it. Whether one
+/// asked to detect again.
+fn queue(monitors: &mut [Monitor], current: &mut Option<u8>, msgs: impl Iterator<Item = Ddc>) -> bool {
+    let mut detect = false;
+    for msg in msgs {
+        match msg {
+            Ddc::Set(percent) => {
+                *current = Some(percent);
+                monitors.iter_mut().for_each(|m| m.want = Some(percent));
+            }
+            Ddc::SetOne(connector, percent) => monitors.iter_mut().filter(|m| m.connector == connector).for_each(|m| m.want = Some(percent)),
+            Ddc::Detect => detect = true,
+        }
+    }
+    detect
+}
+
+/// Each monitor's brightness by connector, for Settings › Displays (through `displays.json`).
+fn send_levels(monitors: &[Monitor], updates: &Sender<Update>) {
+    let levels = monitors.iter().filter(|m| !m.connector.is_empty()).filter_map(|m| Some((m.connector.clone(), m.percent?))).collect();
+    let _ = updates.send(Update::Monitors(levels));
+}
+
+/// Replaces `monitors` with the ones `ddcutil detect` finds. A new one is set to a value set before (keeping its own
+/// at login), or, without a backlight, gives the slider its reading.
+fn detect(monitors: &mut Vec<Monitor>, current: &mut Option<u8>, updates: &Sender<Update>) {
+    let found = ddcutil(&["detect", "--brief"]).map(|out| parse_detect(&out)).unwrap_or_default();
+    tracing::debug!(?found, "ddc monitors");
     let read = |bus: u32| ddcutil(&["-b", &bus.to_string(), "getvcp", "10", "--brief"]).and_then(|out| parse_vcp(&out));
-    let old = std::mem::take(tops);
-    for bus in buses {
-        if let Some(&known) = old.iter().find(|(b, _)| *b == bus) {
-            tops.push(known);
+    let set_to = *current;
+    let mut old = std::mem::take(monitors);
+    for (bus, connector) in found {
+        if let Some(known) = old.iter().position(|m| m.bus == bus) {
+            monitors.push(old.swap_remove(known));
             continue;
         }
         let reading = read(bus);
-        match (*current, reading) {
-            (Some(percent), _) => set_vcp(bus, reading.map_or(100, |(_, top)| top), percent),
-            (None, Some((now, top))) if display_info::backlight().is_none() => {
-                let percent = display_info::to_percent(now, top);
-                *current = Some(percent);
-                let _ = updates.send(Update::Brightness(Some(percent)));
-            }
-            (None, _) => {}
-        }
         // A monitor that didn't answer gets the usual maximum.
-        tops.push((bus, reading.map_or(100, |(_, top)| top)));
+        let top = reading.map_or(100, |(_, top)| top);
+        let percent = match (set_to, reading) {
+            (Some(percent), _) => {
+                set_vcp(bus, top, percent);
+                Some(percent)
+            }
+            (None, Some((now, top))) => {
+                let percent = to_percent(now, top);
+                if current.is_none() && backlight().is_none() {
+                    *current = Some(percent);
+                    let _ = updates.send(Update::Brightness(Some(percent)));
+                }
+                Some(percent)
+            }
+            (None, None) => None,
+        };
+        monitors.push(Monitor { bus, top, connector, percent, want: None });
     }
+    send_levels(monitors, updates);
 }
 
 fn set_vcp(bus: u32, top: u32, percent: u8) {
@@ -206,18 +260,28 @@ fn ddcutil(args: &[&str]) -> Option<String> {
     }
 }
 
-/// The I2C bus numbers of the working displays in `ddcutil detect --brief` (not "Invalid display" or "Phantom").
-fn parse_detect(out: &str) -> Vec<u32> {
-    let mut buses = Vec::new();
+/// The working displays in `ddcutil detect --brief` (not "Invalid display" or "Phantom"): I2C bus number and connector
+/// (`DP-1`; empty when ddcutil can't tell).
+fn parse_detect(out: &str) -> Vec<(u32, String)> {
+    let mut found = Vec::new();
     let mut valid = false;
     for line in out.lines() {
         if !line.starts_with(' ') && !line.is_empty() {
             valid = line.starts_with("Display ");
-        } else if valid && let Some(bus) = line.trim().strip_prefix("I2C bus:") {
-            buses.extend(bus.trim().strip_prefix("/dev/i2c-").and_then(|n| n.parse::<u32>().ok()));
+            if valid {
+                found.push((None, String::new()));
+            }
+        } else if let (true, Some(last)) = (valid, found.last_mut()) {
+            let (key, value) = line.split_once(':').unwrap_or_default();
+            match key.trim() {
+                "I2C bus" => last.0 = value.trim().strip_prefix("/dev/i2c-").and_then(|n| n.parse::<u32>().ok()),
+                // `card1-DP-1`: the compositor's name has no card.
+                "DRM connector" => last.1 = value.trim().split_once('-').map_or("", |(_, name)| name).to_owned(),
+                _ => {}
+            }
         }
     }
-    buses
+    found.into_iter().filter_map(|(bus, connector)| Some((bus?, connector))).collect()
 }
 
 /// Current and maximum from `getvcp 10 --brief` (`VCP 10 C 50 100`).
@@ -230,6 +294,35 @@ fn parse_vcp(out: &str) -> Option<(u32, u32)> {
     (max > 0).then_some((now, max))
 }
 
+const BACKLIGHT: &str = "/sys/class/backlight";
+
+/// The built-in panel's backlight: firmware interfaces first, then platform, then raw (the order logind uses).
+fn backlight() -> Option<String> {
+    let rank = |name: &str| match fs::read_to_string(Path::new(BACKLIGHT).join(name).join("type")).ok()?.trim() {
+        "firmware" => Some(0),
+        "platform" => Some(1),
+        "raw" => Some(2),
+        _ => None,
+    };
+    let names = fs::read_dir(BACKLIGHT).ok()?.filter_map(|e| e.ok()?.file_name().into_string().ok());
+    names.filter_map(|name| Some((rank(&name)?, name))).min().map(|(_, name)| name)
+}
+
+/// A number from the backlight's sysfs `file` (`brightness`, `max_brightness`).
+fn backlight_number(name: &str, file: &str) -> Option<u32> {
+    fs::read_to_string(Path::new(BACKLIGHT).join(name).join(file)).ok()?.trim().parse().ok()
+}
+
+/// The built-in panel's brightness in percent; `None` without a backlight (desktop monitors).
+pub fn panel() -> Option<u8> {
+    let name = backlight()?;
+    Some(to_percent(backlight_number(&name, "brightness")?, backlight_number(&name, "max_brightness")?))
+}
+
+fn to_percent(raw: u32, max: u32) -> u8 {
+    if max == 0 { 0 } else { (u64::from(raw.min(max)) * 100).div_ceil(u64::from(max)) as u8 }
+}
+
 /// Never 0: a backlight at 0 is a black screen with no way to see the slider.
 fn to_raw(percent: u8, max: u32) -> u32 {
     ((u64::from(percent.min(100)) * u64::from(max)) / 100).max(1) as u32
@@ -238,19 +331,30 @@ fn to_raw(percent: u8, max: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::display_info::to_percent;
 
     #[test]
     fn ddcutil_output() {
         let detect = "Invalid display\n   I2C bus:          /dev/i2c-11\n   DRM connector:    card1-eDP-1\n\n\
-                      Display 1\n   I2C bus:          /dev/i2c-4\n   DRM connector:    card1-DP-1\n   Monitor:          DEL:DELL U2415:X\n\n\
+                      Display 1\n   I2C bus:          /dev/i2c-4\n   DRM connector:    card1-DP-1\n   drm_connector_id: 508\n   Monitor:          DEL:DELL U2415:X\n\n\
                       Phantom display\n   I2C bus:          /dev/i2c-6\n\n\
                       Display 2\n   I2C bus:          /dev/i2c-5\n";
-        assert_eq!(parse_detect(detect), [4, 5]);
-        assert_eq!(parse_detect("No displays found.\n"), [] as [u32; 0]);
+        assert_eq!(parse_detect(detect), [(4, "DP-1".to_owned()), (5, String::new())]);
+        assert!(parse_detect("No displays found.\n").is_empty());
         assert_eq!(parse_vcp("VCP 10 C 50 100\n"), Some((50, 100)));
         assert_eq!(parse_vcp("VCP 10 ERR\n"), None);
         assert_eq!(parse_vcp("VCP 10 C 5 0"), None);
+    }
+
+    #[test]
+    fn a_drag_sets_each_monitor_to_its_latest_value() {
+        let monitor = |connector: &str| Monitor { bus: 0, top: 100, connector: connector.into(), percent: None, want: None };
+        let mut monitors = [monitor("DP-1"), monitor("DP-2")];
+        let mut current = None;
+        let msgs = [Ddc::SetOne("DP-1".into(), 70), Ddc::Set(40), Ddc::SetOne("DP-2".into(), 10), Ddc::SetOne("DP-2".into(), 20)];
+        assert!(!queue(&mut monitors, &mut current, msgs.into_iter()));
+        assert_eq!((monitors[0].want, monitors[1].want, current), (Some(40), Some(20), Some(40)));
+        assert!(queue(&mut monitors, &mut current, [Ddc::Detect, Ddc::SetOne("HDMI-A-1".into(), 5)].into_iter()));
+        assert_eq!((monitors[0].want, monitors[1].want, current), (Some(40), Some(20), Some(40)), "no other monitor");
     }
 
     #[test]
