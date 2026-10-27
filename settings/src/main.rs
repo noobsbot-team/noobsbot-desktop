@@ -15,6 +15,7 @@ mod network;
 #[path = "../../src/pactl.rs"]
 mod pactl;
 mod pages;
+mod preview;
 mod printers;
 mod shortcuts;
 mod style;
