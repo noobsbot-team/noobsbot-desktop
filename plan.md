@@ -1097,7 +1097,7 @@ Goal: everything that informs you and helps you find things.
     | Calendar | month grid (E2.5); ~~later~~ "Up Next" events (done: the card above the month) | `chrono`; `.ics` (`src/ical.rs`, `src/events.rs`); CalDAV not yet |
     | Batteries | laptop + Bluetooth devices (headphones, mouse) | UPower |
     | World Clock (optional) | Built: after Weather, a row per city in `[widgets] clocks` (off while empty): its time in the clock's 12/24 h format, then the day and offset from here ("Tomorrow, +5:45"); redrawn on the menu-bar clock's minute tick | the system zoneinfo, read as `.ics` TZIDs are (no `chrono-tz`) |
-    | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open). Built as a widget app: CPU, memory and disk every 5 s; not yet network ↑/↓ or refreshing only while open | `/proc`, `/sys` (`src/bin/widget-system.rs`) |
+    | System (optional) | CPU %, memory used, disk free, network ↑/↓ (refreshes every 2 s only while the panel is open). Built as a widget app: CPU, memory, disk and network ↑/↓ every 5 s; not yet refreshing only while open (the widget protocol doesn't say when a widget is shown) | `/proc`, `/sys` (`src/bin/widget-system.rs`) |
     | Weather (done, off by default) | Open-Meteo forecast for the place in `[weather]` (no key, no account) | `src/services/weather.rs` (E7.2) |
   - "Edit Widgets…" (under the widgets) opens Settings ▸ Notifications, which shows, hides and reorders other apps' widgets (`[widgets]`) for Notification Center and the desktop.
 - **Built with:** our widgets; the notification store from E4.1; UPower; chrono.
