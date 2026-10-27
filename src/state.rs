@@ -293,6 +293,8 @@ pub struct State {
     pub corners: crate::gestures::Corners,
     /// The lock screen (E6.4), while locked.
     pub lock: Option<crate::shell::lock::Lock>,
+    /// Bumped by each fingerprint verify start or stop: only the current verify's updates count.
+    pub fingerprint_tag: u64,
     /// Thunderbolt devices waiting for boltd's authorization, and whether the alert has asked about each (E8.8).
     pub thunderbolt: Vec<(crate::services::bolt::Accessory, bool)>,
     /// Idle timers, idle-notify, idle-inhibit and session-lock globals (E6.5).
@@ -446,7 +448,7 @@ impl State {
                         state.idle_activity();
                         state.fingerprint(true);
                     }
-                    crate::services::Update::Fingerprint(finger) => state.fingerprint_changed(finger),
+                    crate::services::Update::Fingerprint(tag, finger) => state.fingerprint_changed(tag, finger),
                     crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                     crate::services::Update::Widgets(widgets) => state.widgets = widgets,
@@ -631,6 +633,7 @@ impl State {
             gesture: None,
             corners: Default::default(),
             lock: None,
+            fingerprint_tag: 0,
             thunderbolt: Vec::new(),
             idle: crate::idle::Idle::new(&dh, handle.clone()),
             night_light: Default::default(),

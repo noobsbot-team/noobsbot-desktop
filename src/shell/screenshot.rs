@@ -932,13 +932,21 @@ impl State {
         tracing::info!("recording the screen to {}", path.display());
         let (frames, queue) = mpsc::sync_channel(2);
         let (since, tx) = (Instant::now(), self.screenshot_channel());
+        let pid = ffmpeg.id() as libc::pid_t;
         let thread = std::thread::Builder::new().name("recording".into()).spawn(move || {
             let result = encode(ffmpeg, queue, region).map(|()| path);
             if let Some(tx) = tx {
                 let _ = tx.send(Msg::RecordingEnded(since, result));
             }
         });
-        thread.map_err(|e| format!("recording thread: {e}"))?;
+        thread.map_err(|e| {
+            // SAFETY: our own child, which went unwaited with the closure: ended and reaped, not left a zombie.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+                libc::waitpid(pid, std::ptr::null_mut(), 0);
+            }
+            format!("recording thread: {e}")
+        })?;
         // The first frame is read even if nothing changes.
         let pace = Pace { next: None, dirty: true };
         self.screenshots.recording = Some(Recorder { output, since, frames, pace, retry: false });
