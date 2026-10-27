@@ -702,6 +702,58 @@ mod tests {
         assert_eq!(starts(&all, "2020-01-01 00:00", "2040-01-01 00:00").len(), 3);
     }
 
+    /// Every occurrence's start and summary in `events`, in order.
+    fn occurrences(events: &[Event]) -> Vec<(i64, &str)> {
+        let mut out: Vec<(i64, &str)> = events.iter().flat_map(|e| e.between(0, i64::MAX / 2)).map(|o| (o.start, o.event.summary.as_str())).collect();
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn exdates_skip_occurrences() {
+        // Weekly from Tuesday 6 October; the 13th is skipped but still counts towards COUNT.
+        let e = one("DTSTART:20261006T170000Z\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEXDATE:20261013T170000Z");
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-01-01 00:00"), [utc("2026-10-06 17:00"), utc("2026-10-20 17:00")]);
+        // A comma list and a second EXDATE.
+        let e = one("DTSTART:20261006T170000Z\r\nRRULE:FREQ=WEEKLY;COUNT=5\r\nEXDATE:20261013T170000Z,20261020T170000Z\r\nEXDATE:20261103T170000Z");
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-01-01 00:00"), [utc("2026-10-06 17:00"), utc("2026-10-27 17:00")]);
+    }
+
+    #[test]
+    fn all_day_exdate() {
+        let e = one("DTSTART;VALUE=DATE:20261019\r\nRRULE:FREQ=DAILY;COUNT=3\r\nEXDATE;VALUE=DATE:20261020");
+        let midnight = |d| Zone::Local.timestamp(date(2026, 10, d));
+        let s: Vec<i64> = e.between(0, i64::MAX / 2).iter().map(|o| o.start).collect();
+        assert_eq!(s, [midnight(19), midnight(21)]);
+    }
+
+    #[test]
+    fn exdate_with_tzid() {
+        if !Path::new("/usr/share/zoneinfo/America/New_York").exists() {
+            return;
+        }
+        // 9:00 New York each Friday: the 6 November one (14:00 UTC, after the change) is skipped, given in its own
+        // zone; a floating EXDATE is in the event's zone too.
+        let e = one(
+            "DTSTART;TZID=America/New_York:20261030T090000\r\nRRULE:FREQ=WEEKLY;COUNT=4\r\nEXDATE;TZID=America/New_York:20261106T090000\r\nEXDATE:20261120T090000",
+        );
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-01-01 00:00"), [utc("2026-10-30 13:00"), utc("2026-11-13 14:00")]);
+    }
+
+    #[test]
+    fn overrides_move_and_cancel_occurrences() {
+        let master = "BEGIN:VEVENT\nUID:sync@x\nSUMMARY:Sync\nDTSTART:20261006T170000Z\nDTEND:20261006T173000Z\nRRULE:FREQ=WEEKLY;COUNT=3\nEND:VEVENT\n";
+        // Before its event in the file: the 13th moves to Wednesday morning, renamed.
+        let moved = "BEGIN:VEVENT\nUID:sync@x\nRECURRENCE-ID:20261013T170000Z\nSUMMARY:Sync (moved)\nDTSTART:20261014T090000Z\nEND:VEVENT\n";
+        let events = parse(&format!("{moved}{master}"));
+        assert_eq!(occurrences(&events), [(utc("2026-10-06 17:00"), "Sync"), (utc("2026-10-14 09:00"), "Sync (moved)"), (utc("2026-10-20 17:00"), "Sync")]);
+        // A cancelled one only removes it; another UID's override doesn't touch it.
+        let cancelled = "BEGIN:VEVENT\nUID:sync@x\nRECURRENCE-ID:20261020T170000Z\nSTATUS:CANCELLED\nDTSTART:20261020T170000Z\nEND:VEVENT\n";
+        let other = "BEGIN:VEVENT\nUID:other@x\nRECURRENCE-ID:20261006T170000Z\nSUMMARY:Other\nDTSTART:20261007T170000Z\nEND:VEVENT\n";
+        let events = parse(&format!("{master}{cancelled}{other}"));
+        assert_eq!(occurrences(&events), [(utc("2026-10-06 17:00"), "Sync"), (utc("2026-10-07 17:00"), "Other"), (utc("2026-10-13 17:00"), "Sync")]);
+    }
+
     fn date(y: i32, m: u32, d: u32) -> NaiveDateTime {
         NaiveDate::from_ymd_opt(y, m, d).unwrap().and_time(NaiveTime::MIN)
     }
