@@ -44,8 +44,8 @@ const MIN_APP: i32 = 50;
 /// Body a step up (13 / 16 → 16 / 20) for the taller bar; its labels are this, or this at 600.
 const BODY: Style = Style { size: 16, line_height: 20, ..ui::BODY };
 /// The Space dots' size and the step from one to the next.
-const DOT: i32 = 6;
-const DOT_STEP: i32 = 10;
+const DOT: i32 = 8;
+const DOT_STEP: i32 = 13;
 
 /// The Space dots' x offsets for `count` Spaces, and their whole width.
 pub fn dots(count: usize) -> (Vec<i32>, i32) {
@@ -494,7 +494,7 @@ mod tests {
         assert_eq!(dots(1), (vec![0], DOT));
         assert_eq!(dots(3), (vec![0, DOT_STEP, 2 * DOT_STEP], 2 * DOT_STEP + DOT));
         // Grown with the text size, still evenly spaced.
-        crate::text::with_scale(1.5, || assert_eq!(dots(2), (vec![0, 15], 15 + 9)));
+        crate::text::with_scale(1.5, || assert_eq!(dots(2), (vec![0, 20], 20 + 12)));
     }
 
     #[test]
