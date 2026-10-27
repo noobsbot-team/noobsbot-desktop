@@ -16,7 +16,7 @@
 use std::{
     ffi::{OsStr, OsString},
     os::unix::process::CommandExt,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use smithay::reexports::wayland_server::{Client, DisplayHandle, backend::ClientId};
@@ -102,8 +102,31 @@ pub fn verdict(sandboxed: bool, trusted_client: bool, program: Option<&str>, all
     }
 }
 
-/// Files `exe` under `[privacy] <key>` (allowed) or `<key>_denied`, out of the other, and saves both to config.toml.
+/// Whether an answer about `exe` may be kept by its path. Not for an interpreter or shell (it would hold for every
+/// script it runs) nor for a program anything the user runs could replace (under `home` or a temp folder): those
+/// ask again on their next connection.
+// ponytail: interpreters by name; one not listed is remembered like any program.
+pub fn rememberable(exe: &str, home: &Path) -> bool {
+    const SHELLS: &[&str] = &["sh", "bash", "dash", "zsh", "fish", "ksh", "mksh", "tcsh", "csh", "nu", "busybox", "deno", "bun", "gjs"];
+    const RUNTIMES: &[&str] = &["python", "pypy", "perl", "ruby", "node", "php", "lua", "java", "tclsh", "wish", "guile", "wine"];
+    let path = Path::new(exe);
+    let name = path.file_name().and_then(OsStr::to_str).unwrap_or_default();
+    let interpreter = SHELLS.contains(&name) || RUNTIMES.iter().any(|r| name.starts_with(r));
+    let writable = ["/tmp", "/var/tmp", "/dev/shm", "/run/user"].iter().any(|d| path.starts_with(d)) || (home.parent().is_some() && path.starts_with(home));
+    !interpreter && !writable
+}
+
+/// `$HOME`, for `rememberable`.
+pub fn home() -> PathBuf {
+    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+}
+
+/// Files `exe` under `[privacy] <key>` (allowed) or `<key>_denied`, out of the other, and saves both to config.toml;
+/// nothing when it isn't `rememberable`.
 fn remember(key: &str, exe: &str, allow: bool, allowed: &mut Vec<String>, denied: &mut Vec<String>) {
+    if !rememberable(exe, &home()) {
+        return;
+    }
     let (add, remove) = if allow { (&mut *allowed, &mut *denied) } else { (&mut *denied, &mut *allowed) };
     remove.retain(|p| p != exe);
     if !add.iter().any(|p| p == exe) {
@@ -222,6 +245,21 @@ mod tests {
         assert_eq!(verdict(true, false, Some("/usr/bin/wtype")), Some(false), "sandboxed: never, even if listed");
         assert_eq!(verdict(true, true, None), Some(false));
         assert_eq!(verdict(false, false, Some("/usr/bin/grim")), None, "recording's answer isn't input's");
+    }
+
+    #[test]
+    fn interpreters_and_user_files_are_not_remembered() {
+        let home = Path::new("/home/me");
+        assert!(rememberable("/usr/bin/wf-recorder", home));
+        assert!(rememberable("/opt/obs/bin/obs", home));
+        for exe in ["/usr/bin/python3", "/usr/bin/python3.12", "/usr/bin/bash", "/bin/sh", "/usr/bin/node", "/usr/bin/perl", "/usr/bin/ruby"] {
+            assert!(!rememberable(exe, home), "{exe}");
+        }
+        for exe in ["/home/me/bin/grab", "/tmp/x", "/var/tmp/x", "/dev/shm/x", "/run/user/1000/x"] {
+            assert!(!rememberable(exe, home), "{exe}");
+        }
+        assert!(rememberable("/home/mew/x", home), "a path, not a prefix");
+        assert!(rememberable("/usr/bin/grim", Path::new("")), "no HOME: only the rest applies");
     }
 
     #[test]
