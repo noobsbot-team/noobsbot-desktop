@@ -5,6 +5,10 @@
 
 use std::{
     collections::HashMap,
+    os::{
+        fd::{AsFd, OwnedFd},
+        unix::fs::FileExt,
+    },
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -32,7 +36,7 @@ use smithay::{
             protocol::{wl_output::WlOutput, wl_surface::WlSurface},
         },
     },
-    utils::{Clock, IsAlive, Logical, Monotonic, Point, SERIAL_COUNTER},
+    utils::{Clock, IsAlive, Logical, Monotonic, Point, SERIAL_COUNTER, SealedFile},
     wayland::{
         compositor::{RegionAttributes, with_states},
         cursor_shape::CursorShapeManagerState,
@@ -460,7 +464,7 @@ delegate_keyboard_shortcuts_inhibit!(State);
 delegate_security_context!(State);
 
 // smithay's `delegate_virtual_keyboard_manager!`, but making a keyboard asks (perms.rs), and its keys and modifiers
-// pass only while allowed; the keymap is its own.
+// pass only while allowed; its keymap passes once copied (`own_keymap`), unless the user said no.
 smithay::reexports::wayland_server::delegate_global_dispatch!(State: [ZwpVirtualKeyboardManagerV1: VirtualKeyboardManagerGlobalData] => VirtualKeyboardManagerState);
 
 impl Dispatch<ZwpVirtualKeyboardManagerV1, ()> for State {
@@ -488,10 +492,50 @@ impl Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData<State>> for State {
         dh: &DisplayHandle,
         init: &mut DataInit<'_, Self>,
     ) {
-        if matches!(request, zwp_virtual_keyboard_v1::Request::Keymap { .. }) || state.may_control(client) {
-            <VirtualKeyboardManagerState as Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData<State>, State>>::request(
-                state, client, resource, request, data, dh, init,
-            );
-        }
+        use zwp_virtual_keyboard_v1::Request;
+        let request = match request {
+            Request::Keymap { .. } if state.protocols.control.get(&client.id()) == Some(&false) => return,
+            Request::Keymap { format, fd, size } => {
+                let Some(fd) = own_keymap(fd, size) else { return tracing::debug!(size, "virtual keyboard: keymap refused") };
+                Request::Keymap { format, fd, size }
+            }
+            request if state.may_control(client) => request,
+            _ => return,
+        };
+        <VirtualKeyboardManagerState as Dispatch<ZwpVirtualKeyboardV1, VirtualKeyboardUserData<State>, State>>::request(
+            state, client, resource, request, data, dh, init,
+        );
+    }
+}
+
+/// The largest virtual keyboard keymap taken; a full one is about 60 KiB.
+const MAX_KEYMAP: u32 = 1 << 20;
+
+/// A virtual keyboard's keymap copied into a sealed file of ours: `None` if empty, over `MAX_KEYMAP` or shorter than
+/// `size`. xkb maps the file at the client's `size` and parses it on our thread, so a short (or later shrunk) file
+/// would crash the session with SIGBUS, and a huge one freeze it.
+fn own_keymap(fd: OwnedFd, size: u32) -> Option<OwnedFd> {
+    if size == 0 || size > MAX_KEYMAP {
+        return None;
+    }
+    let mut data = vec![0; size as usize];
+    std::fs::File::from(fd).read_exact_at(&mut data, 0).ok()?;
+    SealedFile::with_data(c"virtual-keymap", &data).ok()?.as_fd().try_clone_to_owned().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keymaps_are_copied_only_whole_and_small() {
+        let file = |data: &[u8]| SealedFile::with_data(c"test", data).unwrap().as_fd().try_clone_to_owned().unwrap();
+        let mut copy = [0; 4];
+        std::fs::File::from(own_keymap(file(b"xkb\0"), 4).unwrap()).read_exact_at(&mut copy, 0).unwrap();
+        assert_eq!(&copy, b"xkb\0");
+        assert!(own_keymap(file(b"xkb\0"), 5).is_none(), "the file is shorter than its size: SIGBUS");
+        assert!(own_keymap(file(b""), 0).is_none());
+        assert!(own_keymap(file(&vec![b'a'; MAX_KEYMAP as usize + 1]), MAX_KEYMAP + 1).is_none(), "too big to parse");
+        assert!(own_keymap(file(&vec![b'a'; MAX_KEYMAP as usize]), MAX_KEYMAP).is_some());
     }
 }
