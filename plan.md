@@ -686,8 +686,8 @@ glass windows with traffic lights.
   fully usable; suspend/resume 20 times in a row on Intel and NVIDIA without a restart; the 24 h soak test holds RSS flat.
 - **Built:** `scripts/fuzz-client.py`, 2 s D-Bus timeouts, GPU reset recovery (`src/backend/udev.rs`), the panic hook,
   notification rate limits, a capped clipboard, LRU text and icon caches, xwayland-satellite restarted
-  (`src/xwayland.rs`, with a notification when it is given up). Not yet: the icon disk cache (icons are rasterised
-  into memory only).
+  (`src/xwayland.rs`, with a notification when it is given up), the icon disk cache (each size's RGBA under
+  `$XDG_CACHE_HOME/noobsbot-desktop/icons/`, keyed by path, mtime and size, pruned after 30 unused days).
 
 **M1 hardware covered:** GPU (nested), keyboard, touchpad, mouse.
 **M1 done when:** all elements pass; idle CPU **0%**; RAM **< 60 MB**; mockup review passed.
@@ -706,7 +706,7 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
 - **Done when:** a "component gallery" test screen shows every D8 component in light and dark, matching the mockup.
 - **Built:** `src/text.rs` (cosmic-text, tabular digits, an LRU of rendered labels instead of a glyph atlas),
   `src/render/ui.rs` and the gallery (`src/render/components.rs`, `--show gallery`), `src/symbols.rs`, the app index
-  and icon threads (`src/apps.rs`). Not yet: the icon disk cache (E1.11).
+  and icon threads (`src/apps.rs`) with the icon disk cache (E1.11).
 
 ### E2.2 Menu bar
 - **What it is:** the bar across the top of every screen.
