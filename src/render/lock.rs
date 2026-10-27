@@ -16,7 +16,7 @@ use super::{
     ui::{Align, BODY, CALLOUT, CONTROL_RADIUS, HEADLINE, State, Ui},
 };
 use crate::{
-    services::{media::Media, power::Battery},
+    services::{fingerprint::Verify, media::Media, power::Battery},
     shell::lock::{self, ART, AVATAR, Button, Lock},
     symbols::{Symbol, Symbols, Weight},
     text::{Rendered, Style, Text, ts},
@@ -41,14 +41,14 @@ pub struct Content<'a> {
     pub media: Option<&'a Media>,
 }
 
-/// Date, time, missed count, hover, wrong, battery, (keyboard, message, layout pill, Now Playing, listed notifications),
+/// Date, time, missed count, hover, (wrong, fingerprint), battery, (keyboard, message, layout pill, Now Playing, listed notifications),
 /// size, dark, opacity, scale, greeter (user, session, error).
 type PageKey = (
     String,
     String,
     usize,
     Option<Button>,
-    bool,
+    (bool, Verify),
     Option<(u8, bool)>,
     (String, String, Option<String>, Option<Media>, Vec<lock::Listed>),
     Size<i32, Logical>,
@@ -65,6 +65,8 @@ type Drawn<K> = (K, Vec<PixelShaderElement>, Vec<(Arc<Rendered>, Rect)>);
 
 const WHITE: [u8; 4] = [255; 4];
 const WHITE85: [u8; 4] = [255, 255, 255, 217];
+/// D2 red (dark): the text here is always over the darkened wallpaper.
+const RED: [u8; 4] = [0xFF, 0x45, 0x3A, 0xFF];
 const DISPLAY: Style = Style { size: 96, line_height: 100, weight: 300, color: WHITE, tabular: true };
 const TITLE2: Style = Style { color: WHITE85, ..super::ui::TITLE2 };
 
@@ -142,7 +144,7 @@ impl LockView {
             time,
             lock.missed,
             lock.hover,
-            lock.wrong.is_some(),
+            (lock.wrong.is_some(), lock.finger),
             battery,
             (content.keyboard.to_owned(), content.message.to_owned(), content.layout.clone(), media.cloned(), lock.listed.clone()),
             size,
@@ -195,9 +197,8 @@ impl LockView {
                 let color = if i == picked { WHITE } else { WHITE85 };
                 ui.text(name, Style { color, ..HEADLINE }, name_rect, Align::Centre);
             }
-            let error = lock.greeter.as_ref().and_then(|g| g.error.as_deref());
-            if let Some(hint) = error.or(lock.wrong.map(|_| "Incorrect password")) {
-                ui.text(hint, Style { color: WHITE85, ..CALLOUT }, layout.hint, Align::Centre);
+            if let Some((words, color)) = hint(lock) {
+                ui.text(words, Style { color, ..CALLOUT }, layout.hint, Align::Centre);
             }
             if let Some(session) = lock.greeter.as_ref().and_then(|g| g.session()) {
                 let r = row.session;
@@ -267,6 +268,18 @@ impl LockView {
         out.extend(page_glass.iter().rev().cloned().map(SceneElement::Shader));
         out
     }
+}
+
+/// The line under the field: greetd's error or "Incorrect password", else the fingerprint's (red when it didn't
+/// match).
+fn hint(lock: &Lock) -> Option<(&str, [u8; 4])> {
+    let error = lock.greeter.as_ref().and_then(|g| g.error.as_deref());
+    let finger = match lock.finger {
+        Verify::Waiting => Some(("Touch the fingerprint sensor", WHITE85)),
+        Verify::NoMatch => Some(("Not recognised, try again", RED)),
+        Verify::Off | Verify::Match => None,
+    };
+    error.or(lock.wrong.map(|_| "Incorrect password")).map(|h| (h, WHITE85)).or(finger)
 }
 
 /// A listed notification's card: its app, then its title, then its body when previews allow it.
@@ -386,6 +399,18 @@ mod tests {
         assert_eq!(at(0, 0), [0, 0, 0, 0], "corners are clear");
         assert_eq!(at(8, 8), [255, 0, 0, 255], "the middle is opaque");
         assert!(at(8, 0)[3] > 0 && at(8, 0)[3] < 255, "the edge is soft");
+    }
+
+    #[test]
+    fn hint_line() {
+        let mut lock = Lock::new();
+        assert_eq!(hint(&lock), None);
+        lock.finger = Verify::Waiting;
+        assert_eq!(hint(&lock), Some(("Touch the fingerprint sensor", WHITE85)));
+        lock.finger = Verify::NoMatch;
+        assert_eq!(hint(&lock), Some(("Not recognised, try again", RED)));
+        lock.wrong = Some(std::time::Instant::now());
+        assert_eq!(hint(&lock), Some(("Incorrect password", WHITE85)), "the password's hint wins");
     }
 
     #[test]

@@ -40,6 +40,8 @@ pub struct Users {
     pub others: Vec<Account>,
     /// The camera "Take Photo…" uses; `None` without one or without `ffmpeg`.
     pub camera: Option<PathBuf>,
+    /// How many fingers fprintd has for the user; `None` without fprintd or a reader.
+    pub fingers: Option<usize>,
 }
 
 pub async fn read() -> Users {
@@ -61,7 +63,8 @@ pub async fn read() -> Users {
         Some(path) => account(&bus, &path).await,
         None => None,
     };
-    Users { me, others, camera: camera() }
+    let fingers = fingers(&login).await.map(|f| f.len());
+    Users { me, others, camera: camera(), fingers }
 }
 
 /// The full name field, as a text key.
@@ -347,6 +350,129 @@ fn crypt(password: &str) -> Result<String, String> {
     if out.status.success() && hash.starts_with("$6$") { Ok(hash) } else { Err(failed(&"no hash")) }
 }
 
+const FPRINT: &str = "net.reactivated.Fprint";
+const FPRINT_DEVICE: &str = "net.reactivated.Fprint.Device";
+/// fprintd's names for the fingers, in the order Add Fingerprint… takes them.
+const FINGERS: [&str; 10] = [
+    "right-index-finger",
+    "left-index-finger",
+    "right-thumb",
+    "left-thumb",
+    "right-middle-finger",
+    "left-middle-finger",
+    "right-ring-finger",
+    "left-ring-finger",
+    "right-little-finger",
+    "left-little-finger",
+];
+
+/// fprintd's default reader, on a connection whose calls wait `timeout` s (fprintd may be started by the first; polkit
+/// may ask for the password); `None` without fprintd or a reader.
+async fn reader(timeout: u64) -> Option<zbus::Proxy<'static>> {
+    let bus = crate::system::system(timeout).await.ok()?;
+    let manager = "net.reactivated.Fprint.Manager";
+    let reply = bus.call_method(Some(FPRINT), "/net/reactivated/Fprint/Manager", Some(manager), "GetDefaultDevice", &()).await.ok()?;
+    let path: OwnedObjectPath = reply.body().deserialize().ok()?;
+    zbus::Proxy::new(&bus, FPRINT, path, FPRINT_DEVICE).await.ok()
+}
+
+/// `login`'s enrolled fingers, by fprintd's names; `None` without a reader.
+async fn fingers(login: &str) -> Option<Vec<String>> {
+    let device = reader(25).await?;
+    // None enrolled is an error (NoEnrolledPrints).
+    Some(device.call("ListEnrolledFingers", &(login,)).await.unwrap_or_default())
+}
+
+/// Users ▸ Fingerprints ▸ Delete All; then the accounts again and what went wrong. Interactive: polkit asks for the
+/// password through the desktop's agent.
+pub async fn delete_fingers() -> (Users, Option<String>) {
+    let login = std::env::var("USER").unwrap_or_default();
+    let error = async {
+        let device = reader(120).await.ok_or("there's no fingerprint reader")?;
+        device.call_method("Claim", &(login.as_str(),)).await.map_err(reason)?;
+        let deleted = device.call_method("DeleteEnrolledFingers2", &()).await.map_err(reason);
+        let _ = device.call_method("Release", &()).await;
+        deleted.map(drop)
+    };
+    let error = error.await.err().map(|err: String| format!("Couldn't delete the fingerprints: {err}"));
+    (read().await, error)
+}
+
+/// Add Fingerprint…'s sheet.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Enrolling {
+    /// Touches that counted.
+    pub touches: u32,
+    /// How many it takes (fprintd's `num-enroll-stages`); 0 while unknown.
+    pub stages: u32,
+    /// A touch that didn't count, or why it failed.
+    pub note: Option<String>,
+    /// fprintd is done: the finger was added, unless there is a note.
+    pub done: bool,
+}
+
+/// One `EnrollStatus` on the sheet.
+pub fn enroll_step(e: &mut Enrolling, result: &str, done: bool) {
+    e.done = done;
+    e.note = match result {
+        "enroll-stage-passed" => {
+            e.touches += 1;
+            None
+        }
+        "enroll-completed" => {
+            e.touches = e.touches.max(e.stages);
+            None
+        }
+        "enroll-retry-scan" | "enroll-swipe-too-short" => Some("That touch didn't take: touch again"),
+        "enroll-finger-not-centered" => Some("Centre your finger on the sensor"),
+        "enroll-remove-and-retry" => Some("Lift your finger, then touch again"),
+        "enroll-duplicate" => Some("That finger is already enrolled"),
+        "enroll-data-full" => Some("The sensor has no room for another finger"),
+        "enroll-disconnected" => Some("The sensor was disconnected"),
+        // "enroll-failed", "enroll-unknown-error".
+        _ => Some("Couldn't add the fingerprint"),
+    }
+    .map(String::from);
+}
+
+/// Add Fingerprint…: enrolls the first finger fprintd doesn't have yet, a sheet state after each touch. Dropping the
+/// stream (the sheet closed) drops its connection, and fprintd stops and releases the reader by itself.
+pub fn enroll() -> impl iced::futures::Stream<Item = Enrolling> {
+    iced::stream::channel(4, async |mut tx: iced::futures::channel::mpsc::Sender<Enrolling>| {
+        use iced::futures::{SinkExt, StreamExt};
+        let mut state = Enrolling::default();
+        let enrolled = async {
+            let login = std::env::var("USER").unwrap_or_default();
+            let device = reader(120).await.ok_or("there's no fingerprint reader")?;
+            let have: Vec<String> = device.call("ListEnrolledFingers", &(login.as_str(),)).await.unwrap_or_default();
+            let finger = FINGERS.into_iter().find(|f| !have.iter().any(|h| h == f)).ok_or("all ten fingers are enrolled")?;
+            device.call_method("Claim", &(login.as_str(),)).await.map_err(reason)?;
+            let stages = crate::system::property(device.connection(), FPRINT, device.path().as_str(), FPRINT_DEVICE, "num-enroll-stages").await;
+            state.stages = stages.ok().and_then(|v| i32::try_from(v).ok()).map_or(0, |n| n.max(0) as u32);
+            let mut statuses = device.receive_signal("EnrollStatus").await.map_err(reason)?;
+            device.call_method("EnrollStart", &(finger,)).await.map_err(reason)?;
+            let _ = tx.send(state.clone()).await;
+            while let Some(message) = statuses.next().await {
+                let (result, done): (String, bool) = message.body().deserialize().map_err(|err| err.to_string())?;
+                enroll_step(&mut state, &result, done);
+                let _ = tx.send(state.clone()).await;
+                if done {
+                    break;
+                }
+            }
+            let _ = device.call_method("EnrollStop", &()).await;
+            let _ = device.call_method("Release", &()).await;
+            Ok::<(), String>(())
+        };
+        if let Err(err) = enrolled.await {
+            state.note = Some(format!("Couldn't add the fingerprint: {err}"));
+            state.done = true;
+            let _ = tx.send(state).await;
+        }
+        std::future::pending::<()>().await;
+    })
+}
+
 async fn text(bus: &Connection, path: &str, name: &str) -> String {
     crate::system::property(bus, ACCOUNTS, path, USER, name).await.ok().and_then(|v| String::try_from(v).ok()).unwrap_or_default()
 }
@@ -374,6 +500,23 @@ fn picture(file: &Path) -> Option<Handle> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enroll_counts_touches() {
+        let mut e = Enrolling { stages: 3, ..Default::default() };
+        enroll_step(&mut e, "enroll-stage-passed", false);
+        enroll_step(&mut e, "enroll-finger-not-centered", false);
+        assert_eq!((e.touches, e.note.as_deref(), e.done), (1, Some("Centre your finger on the sensor"), false));
+        enroll_step(&mut e, "enroll-stage-passed", false);
+        assert_eq!(e.note, None, "a good touch clears the note");
+        enroll_step(&mut e, "enroll-completed", true);
+        assert_eq!((e.touches, e.note, e.done), (3, None, true), "added");
+        let mut e = Enrolling::default();
+        enroll_step(&mut e, "enroll-duplicate", true);
+        assert!(e.done && e.note.as_deref() == Some("That finger is already enrolled"), "failed");
+        enroll_step(&mut e, "enroll-failed", true);
+        assert_eq!(e.note.as_deref(), Some("Couldn't add the fingerprint"));
+    }
 
     #[test]
     fn camera_picked() {

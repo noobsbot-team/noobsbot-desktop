@@ -23,7 +23,7 @@ use smithay::{
 
 use crate::{
     config::Previews,
-    services::notifications::Notification,
+    services::{Command, fingerprint::Verify, notifications::Notification},
     shell::alert::Power,
     state::State,
     text::ts,
@@ -80,6 +80,8 @@ pub struct Lock {
     pub surfaces: Vec<(LockSurface, Output)>,
     /// Greeter mode (E7.2): users, sessions, greetd's last error.
     pub greeter: Option<crate::shell::greeter::Greeter>,
+    /// fprintd's verify, shown under the field.
+    pub finger: Verify,
 }
 
 /// A notification on the lock screen: its app, title, and body (empty unless previews are Always).
@@ -316,6 +318,8 @@ impl State {
         let layout = self.config.keyboard.resolved().layout;
         let keyboard = layout.split(',').next().unwrap_or_default().to_uppercase();
         self.lock = Some(Lock { keyboard, ..Lock::new() });
+        // A turn later: a locker client or the login screen takes the lock first, and needs no fingerprint.
+        self.loop_handle.insert_idle(|state| state.fingerprint(true));
         let serial = SERIAL_COUNTER.next_serial();
         // Grabs go too: a popup's, or an input method's, which would otherwise see the password typed.
         if let Some(keyboard) = self.seat.get_keyboard() {
@@ -340,6 +344,7 @@ impl State {
         if let Some(token) = lock.checking {
             self.loop_handle.remove(token);
         }
+        self.fingerprint(false);
         tracing::info!("screen unlocked");
         let top = self.top_window();
         self.focus_window(top, SERIAL_COUNTER.next_serial());
@@ -412,6 +417,33 @@ impl State {
             }
         }
         self.schedule_redraw();
+    }
+
+    /// Starts (`on`) or stops fprintd's verify. Only on our own lock screen: not on the login screen, nor under a locker
+    /// client, which checks its own way. ponytail: a client that dies and leaves ours up gets none until the next lock.
+    pub fn fingerprint(&mut self, on: bool) {
+        let mut user = None;
+        if let Some(lock) = self.lock.as_mut().filter(|l| !l.client && l.greeter.is_none()) {
+            lock.finger = Verify::Off;
+            user = on.then(|| crate::pam::user().0).filter(|u| !u.is_empty());
+        }
+        self.services.send(Command::Fingerprint(user));
+    }
+
+    /// fprintd's verify said something: a touch wakes the screen, and a match unlocks as the right password does.
+    pub fn fingerprint_changed(&mut self, finger: Verify) {
+        let Some(lock) = self.lock.as_mut().filter(|l| !l.client && l.greeter.is_none()) else { return };
+        lock.finger = finger;
+        if finger == Verify::Match {
+            // Anything typed is wiped, as after a password check.
+            wipe(&mut lock.field);
+            tracing::info!("lock screen: fingerprint matched");
+            self.unlock_screen();
+        }
+        // Only a touch: the first "touch the sensor" comes as the screen locks, maybe from idle, and mustn't wake it.
+        if matches!(finger, Verify::Match | Verify::NoMatch) {
+            self.idle_activity();
+        }
     }
 
     pub(super) fn lock_checked(&mut self, ok: bool) {
@@ -492,6 +524,8 @@ impl State {
         if let Some(lock) = self.lock.as_mut() {
             lock.sleep_pending = true;
         }
+        // After `lock_screen`'s start, if it queued one; started again on `Resumed`.
+        self.loop_handle.insert_idle(|state| state.fingerprint(false));
         self.schedule_redraw();
     }
 

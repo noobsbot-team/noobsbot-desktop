@@ -435,7 +435,11 @@ impl State {
                     crate::services::Update::DiskFailed { name, error } => state.disk_failed(name, error),
                     crate::services::Update::Launcher { app, entry } => state.dock_fx.entry(app, entry),
                     crate::services::Update::PrepareForSleep => state.prepare_for_sleep(),
-                    crate::services::Update::Resumed => state.idle_activity(),
+                    crate::services::Update::Resumed => {
+                        state.idle_activity();
+                        state.fingerprint(true);
+                    }
+                    crate::services::Update::Fingerprint(finger) => state.fingerprint_changed(finger),
                     crate::services::Update::Inhibitors(list) => state.sleep_blockers = list,
                     crate::services::Update::Fcitx(methods) => state.layouts.methods = methods,
                     crate::services::Update::Widgets(widgets) => state.widgets = widgets,
