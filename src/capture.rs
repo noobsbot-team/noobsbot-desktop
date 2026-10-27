@@ -1,7 +1,7 @@
-//! Reading the screen back (E6.8): our own screenshots, and `wlr-screencopy-unstable-v1` for other programs (grim,
-//! wf-recorder, xdg-desktop-portal-wlr's screen sharing) into their shm buffers. When someone waits, the frame just
-//! drawn is drawn once more into an offscreen buffer and read (both backends, see `render`), so capturing costs
-//! nothing while nobody asks. Who may capture is perms.rs's call.
+//! Reading the screen back (E6.8): our own screenshots and recordings, and `wlr-screencopy-unstable-v1` for other
+//! programs (grim, wf-recorder, xdg-desktop-portal-wlr's screen sharing) into their shm buffers. When someone waits,
+//! the frame just drawn is drawn once more into an offscreen buffer and read (both backends, see `render`), so
+//! capturing costs nothing while nobody asks. Who may capture is perms.rs's call.
 // ponytail: shm copies only (a 1080p frame is 8 MB through the CPU); dmabuf frames for zero-copy recording and
 // `ext-image-copy-capture` later. The cursor is never drawn in (nested it's the host's; grim -c is not honoured).
 
@@ -210,24 +210,28 @@ fn copy_into(buffer: &WlBuffer, pixels: &Pixels, region: Rectangle<i32, Physical
 }
 
 impl State {
-    /// After drawing `output`'s frame: hands the pixels read back (see `frame_wanted`) to a screenshot and the copies.
+    /// After drawing `output`'s frame: hands the pixels read back (see `frame_wanted`) to a screenshot, the copies
+    /// and the recording.
     pub fn after_frame(&mut self, output: &Output, pixels: Option<Pixels>, damaged: bool) {
-        let Some(pixels) = pixels else { return };
-        // A screenshot is of one display (its rect is relative to it, see shell/screenshot.rs).
-        if let Some((_, rect)) = self.screenshots.pending.take_if(|(o, _)| o == output) {
-            let scale = output.current_scale().fractional_scale();
-            let region = rect.to_f64().to_physical(scale).to_i32_round();
-            let (rgba, size) = pixels.shown().crop(region);
-            self.screenshot_taken(rgba, (size.w as u32, size.h as u32), scale);
+        if let Some(pixels) = &pixels {
+            // A screenshot is of one display (its rect is relative to it, see shell/screenshot.rs).
+            if let Some((_, rect)) = self.screenshots.pending.take_if(|(o, _)| o == output) {
+                let scale = output.current_scale().fractional_scale();
+                let region = rect.to_f64().to_physical(scale).to_i32_round();
+                let (rgba, size) = pixels.shown().crop(region);
+                self.screenshot_taken(rgba, (size.w as u32, size.h as u32), scale);
+            }
+            let verdicts = self.capture.verdicts.clone();
+            let now = Duration::from(self.protocols.clock.now());
+            self.capture.deliver(output, pixels, damaged, now, |c| verdicts.get(c) == Some(&true));
         }
-        let verdicts = self.capture.verdicts.clone();
-        let now = Duration::from(self.protocols.clock.now());
-        self.capture.deliver(output, &pixels, damaged, now, |c| verdicts.get(c) == Some(&true));
+        self.record_frame(output, damaged, pixels);
     }
 
     /// Whether `output`'s frame just drawn (`damaged`: it changed) must be read back.
     pub fn frame_wanted(&self, output: &Output, damaged: bool) -> bool {
         self.screenshots.pending.as_ref().is_some_and(|(o, _)| o == output)
+            || self.record_wants(output, damaged)
             || self.capture.wants(output, damaged, |c| self.capture.verdicts.get(c) == Some(&true))
     }
 }
