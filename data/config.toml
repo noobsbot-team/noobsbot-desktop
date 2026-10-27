@@ -134,6 +134,8 @@ gesture_show_desktop = true
 # Tap, then drag with the finger down; drag_lock keeps the drag going through a short lift.
 tap_to_drag = true
 drag_lock = false
+# Drag windows and selections with three fingers, no click. Space and Mission Control swipes then take four fingers.
+three_finger_drag = false
 disable_while_typing = true
 # Turn the trackpad off while a mouse is plugged in.
 ignore_with_mouse = false
