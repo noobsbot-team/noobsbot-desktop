@@ -407,7 +407,7 @@ impl State {
         let mut reader = false;
         let action = keyboard.input::<Option<Action>, _>(self, code, key_state, serial, time, |state, mods, key| {
             let code = key.raw_code();
-            // The screen reader sees keys first; its grabs reach nothing else (E8.6).
+            // The screen reader sees keys first; its grabs reach nothing else (E8.6). Never the lock screen's.
             let sym = key.modified_sym();
             let s = &mods.serialized;
             let a11y = crate::services::a11y::Key {
@@ -417,7 +417,7 @@ impl State {
                 unichar: sym.key_char().map_or(0, u32::from),
                 keycode: code.raw() as u16,
             };
-            if state.services.keys.key(a11y) {
+            if state.services.keys.key(a11y, state.locked()) {
                 reader = true;
                 return FilterResult::Intercept(None);
             }
