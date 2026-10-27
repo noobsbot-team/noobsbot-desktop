@@ -6,6 +6,9 @@
 //! only then is it unpacked to `/usr/lib/noobsbot-desktop/versions/<v>` and `/usr/bin/noobsbot-desktop` switched to it.
 //! The previous versions stay for the session wrapper's rollback.
 //!
+//! `noobsbot-desktop-update --revert <v>` (Settings' "Revert to <v>") points the links back at the installed, older
+//! `versions/<v>` instead; nothing is downloaded or unpacked.
+//!
 //! Testing: `NOOBSBOT_UPDATE_ROOT=<dir>` puts every system path under `<dir>`; it is ignored when running as root.
 
 use std::{
@@ -22,9 +25,15 @@ use semver::Version;
 mod verify;
 
 fn main() -> ExitCode {
-    match install() {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    let result = match &args[..] {
+        [flag, version] if flag == "--revert" => revert(version.to_str().unwrap_or_default()),
+        [dir] => install(Path::new(dir)),
+        _ => Err("usage: noobsbot-desktop-update <download dir> | --revert <version>".into()),
+    };
+    match result {
         Ok(version) => {
-            println!("Noobsbot Desktop {version} is installed; it starts at the next login.");
+            println!("Noobsbot Desktop {version} starts at the next login.");
             ExitCode::SUCCESS
         }
         Err(err) => {
@@ -34,15 +43,40 @@ fn main() -> ExitCode {
     }
 }
 
-fn install() -> Result<Version, String> {
-    let args: Vec<_> = std::env::args_os().skip(1).collect();
-    let [dir] = &args[..] else { return Err("usage: noobsbot-desktop-update <download dir>".into()) };
-    let dir = Path::new(dir);
+/// `/`, or `NOOBSBOT_UPDATE_ROOT` when testing as a user.
+fn root() -> PathBuf {
     // SAFETY: geteuid has no preconditions.
-    let root = match std::env::var_os("NOOBSBOT_UPDATE_ROOT") {
+    match std::env::var_os("NOOBSBOT_UPDATE_ROOT") {
         Some(fake) if unsafe { libc::geteuid() } != 0 => PathBuf::from(fake),
         _ => PathBuf::from("/"),
-    };
+    }
+}
+
+/// Points the links at the installed `versions/<version>`, which must be older than the current one.
+fn revert(version: &str) -> Result<Version, String> {
+    let root = root();
+    let at = |path: &str| root.join(path.trim_start_matches('/'));
+    // Parsed, so it can't be a path.
+    let version = Version::parse(version).map_err(|e| format!("{version}: {e}"))?;
+    let versions = at("/usr/lib/noobsbot-desktop/versions");
+    let current = installed(&at("/usr/bin/noobsbot-desktop"), &versions)?;
+    if version >= current {
+        return Err(format!("{version} is not older than the installed {current}"));
+    }
+    let target = versions.join(version.to_string());
+    if !target.join("noobsbot-desktop").is_file() {
+        return Err(format!("{version} is not installed"));
+    }
+    for name in ["noobsbot-desktop", "noobsbot-desktop-settings"] {
+        if target.join(name).exists() {
+            relink(&target.join(name), &at(&format!("/usr/bin/{name}")))?;
+        }
+    }
+    Ok(version)
+}
+
+fn install(dir: &Path) -> Result<Version, String> {
+    let root = root();
     let at = |path: &str| root.join(path.trim_start_matches('/'));
 
     let key = fs::read_to_string(at(verify::PUBKEY)).map_err(|e| format!("{}: {e}", verify::PUBKEY))?;
