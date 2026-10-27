@@ -849,6 +849,25 @@ secure_boot_on() {
 }
 
 # Warns only; changes nothing (E6.6).
+# Wayland needs NVIDIA's kernel modesetting: with it off, the driver offers no display device the desktop can drive.
+nvidia_check() {
+    local off live set=0
+    off=$(grep -lsE '^\s*options\s+nvidia[-_a-z]*drm\b.*\bmodeset=0' /etc/modprobe.d/*.conf /usr/lib/modprobe.d/*.conf | tr '\n' ' ' || true)
+    grep -qE '(^|\s)nvidia[-_a-z]*drm\.modeset=0(\s|$)' /proc/cmdline 2>/dev/null && off+="the kernel command line"
+    if [[ -n $off ]]; then
+        warn "NVIDIA's kernel modesetting is turned off (modeset=0 in ${off% }): Noobsbot Desktop can't drive the display that way. Remove it and reboot."
+        return
+    fi
+    live=$(cat /sys/module/nvidia*drm/parameters/modeset 2>/dev/null | head -1 || true)
+    [[ $live == N ]] || return 0
+    # Off only for this boot is fine when the next one turns it on: our modprobe file, the user's, or a 560+ driver.
+    grep -qsE 'modeset=1' /etc/modprobe.d/*.conf /usr/lib/modprobe.d/*.conf /proc/cmdline && set=1
+    live=$(modinfo -F version nvidia 2>/dev/null || true)
+    live=${live%%.*}
+    [[ $live =~ ^[0-9]+$ ]] && ((live >= 560)) && set=1
+    ((set)) || warn "NVIDIA's driver runs without kernel modesetting, so Noobsbot Desktop can't drive the display. Add 'options nvidia-drm modeset=1' to /etc/modprobe.d/nvidia.conf (or nvidia-drm.modeset=1 to the kernel command line) and reboot."
+}
+
 security_check() {
     say "Security check"
     local ok=1 root
@@ -909,6 +928,7 @@ main() {
     ((UPDATE)) && return
     real && enable_services
     user_settings
+    real && nvidia_check
     security_check
     [[ -z $NET_MOVE || -n $NET_KEEP ]] || ((!NM_TAKEOVER)) || say "The network moves to NetworkManager at the reboot."
     # Not installed by default: --advanced offers fcitx5; either engine is the user's pick.
