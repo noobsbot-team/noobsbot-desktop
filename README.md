@@ -390,8 +390,17 @@ Set `channel = "beta"` in `[update]` to also get pre-releases. Installs made wit
 get the notification. From a terminal in the desktop, `noobsbot-desktop --update` does the same check, download and
 install; you can also always update with `./install.sh --update`.
 
-Versions follow [semantic versioning](https://semver.org); every release's changes are in
-[`CHANGELOG.md`](CHANGELOG.md).
+Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) strictly, as `MAJOR.MINOR.PATCH`:
+- **Public API** (what the version number promises to keep working): the keys and values of
+  `~/.config/noobsbot-desktop/config.toml`, the `org.noobsbot.Desktop.*` D-Bus interfaces, the command-line options of
+  `noobsbot-desktop` and `noobsbot-desktop-settings`, and the [widget protocol](#widgets-from-your-own-apps). The look,
+  the animations and the code inside are not part of it.
+- **MAJOR** goes up when a release breaks the public API, **MINOR** when it adds features that keep it working, and
+  **PATCH** when it only fixes bugs. A pre-release is marked `-beta.N` (`1.4.0-beta.2`); only the Beta channel gets it.
+- **0.y.z is initial development**, where the versions are now: anything may change between releases, and a breaking
+  change raises MINOR. 1.0.0 is the release that declares the public API stable.
+- A released version is never changed: any fix is a new version. Every release's changes are in
+  [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Privacy and security
 - **No telemetry.** The only network requests are the daily update check, the weather (only if you turn it on, for
