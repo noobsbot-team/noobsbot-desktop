@@ -781,7 +781,8 @@ impl State {
         if self.recent_menu.is_some() {
             return;
         }
-        // ponytail: five of each, files that no longer exist skipped; the recent-files age setting comes later.
+        // ponytail: five of each, files that no longer exist skipped; entries past `[housekeeping] recent_days` go
+        // in the daily cleanup, not here.
         let (names, uris) = dock::recent_items(&std::fs::read_to_string(dock::recent_path()).unwrap_or_default());
         let mut apps: Vec<(String, String)> = Vec::new();
         for app in names.iter().filter_map(|n| self.apps.find(n)).filter(|a| !a.no_display) {

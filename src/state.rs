@@ -910,8 +910,9 @@ impl State {
         self.set_visible_loc(window, rect.loc);
     }
 
-    /// Zoom (fill the work area) or fullscreen (fill the output), remembering where the window was.
-    /// ponytail: one output and no menu bar or dock yet, so both fill the same area; refitting on output resize comes with udev (M6).
+    /// Zoom or fullscreen: fill the work area of the window's display, remembering where the window was.
+    /// ponytail: fullscreen fills the work area as zoom does (below the menu bar unless it auto-hides, above a dock
+    /// that never hides), not the whole display; `refit_filled` refits both when displays change.
     pub fn fill(&mut self, surface: &ToplevelSurface, state: xdg_toplevel::State) {
         let Some(window) = self.window_for(surface.wl_surface()).cloned() else { return };
         // The display the window is on, so zoom fills that one.

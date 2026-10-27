@@ -635,9 +635,10 @@ impl State {
         ]
     }
 
-    // ponytail: banners, the OSD, Force Quit, the emoji picker and the desktop icons are on the first output only,
-    // since their caches and hit tests are for one output; every display gets its own menu bar, dock and bar popups,
-    // and the alert, Spotlight, Launchpad, the app drawer and the screenshot overlay and thumbnail where they show.
+    // ponytail: banners, the OSD, Force Quit, the emoji picker and the desktop icons and widgets are on the main
+    // display (the first output) only, since their caches and hit tests are for one output; every display gets its own
+    // menu bar, dock, bar popups, Mission Control and Space slide, and the alert, Spotlight, Launchpad, the app drawer,
+    // the switcher and the screenshot overlay and thumbnail where they show.
     fn scene_elements(&mut self, renderer: &mut GlesRenderer, output: &Output) -> Option<(Vec<SceneElement>, bool)> {
         let switcher_elements = self.switcher_elements(renderer, output);
         if self.space.outputs().next() != Some(output) {
@@ -1022,8 +1023,8 @@ impl State {
         // the udev backend stamps DRM page-flip events.
         let mut feedback = self.frame_callbacks(output);
         if shown {
-            // ponytail: nested, the swap returning stands in for the vblank and only CPU render time is measured; DRM
-            // page-flip events and GPU timestamps give the real ones (M6).
+            // ponytail: nested, the swap returning stands in for the vblank; render time is CPU time here and on udev
+            // (no GPU timestamps), which stamps DRM page flips.
             clock.presented(Instant::now(), render_time);
             tracing::trace!(?render_time, "frame");
             let refresh = Refresh::fixed(Duration::from_nanos(1_000_000_000_000 / REFRESH_MHZ as u64));
