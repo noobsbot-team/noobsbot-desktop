@@ -148,6 +148,7 @@ At the start, the script asks how to install:
 | Another login manager is enabled (GDM, SDDM, …) | keep it (pick Noobsbot Desktop in its session menu) | switch to greetd |
 | Login screen | text (tuigreet) | graphical (`--greeter`) |
 | Browser | Helium | Firefox (ESR on Debian), Chromium, none |
+| Typing Nepali, Hindi, Chinese… | none | fcitx5 with `fcitx5-m17n` and its settings app |
 | NVIDIA driver | Arch: `nvidia-open`; Debian: nouveau | Arch: nouveau; Debian: NVIDIA 550 |
 | Prebuilt or source | signed prebuilt | build from source (`--from-source`) |
 | Network set up by the Debian installer (DHCP) | move it to NetworkManager at the next boot, so the menu bar can manage it; Wi-Fi is kept | leave `/etc/network/interfaces` |
