@@ -3,6 +3,7 @@
 //! | Protocol | Offered to |
 //! |---|---|
 //! | `wlr-screencopy` (screenshots, recording, screen sharing) | trusted clients; any other unsandboxed app once the user allows it in the "would like to record this computer's screen" alert (remembered in `[privacy]`); never sandboxed apps |
+//! | `ext-data-control` (clipboard managers, Shared Clipboard: watch and set the clipboard and primary selection from the background) | clients of the trusted socket only (`--trusted`): the clipboard often holds passwords |
 //! | `virtual-keyboard`, `virtual-pointer` (external on-screen keyboards, wtype, remote desktops) | unsandboxed clients; trusted ones type and click at once, any other only once the user allows it in the "control this computer's keyboard and mouse" alert (remembered in `[privacy]`), its events going nowhere until then. Never while locked (the login screen too) |
 //! | `wlr-layer-shell`, `keyboard-shortcuts-inhibit`, `security-context`, `ext-foreign-toplevel-list`, `wlr-output-management`, `ext-workspace`, `ext-idle-notify` | unsandboxed clients (third-party bars, launchers, `wlr-randr`, VMs, swayidle): they already run as the user, and sandboxed apps never see them. `ext-idle-notify` hears no input while locked |
 //! | `ext-image-copy-capture` | not implemented, so nobody |

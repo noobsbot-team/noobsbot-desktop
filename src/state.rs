@@ -4,8 +4,8 @@ use std::{ffi::OsString, os::fd::OwnedFd, sync::Arc, time::Instant};
 
 use smithay::{
     backend::{allocator::dmabuf::Dmabuf, renderer::ImportDma},
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output, delegate_primary_selection, delegate_seat, delegate_shm, delegate_viewporter,
-    delegate_xdg_activation, delegate_xdg_dialog, delegate_xdg_foreign, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_ext_data_control, delegate_output, delegate_primary_selection, delegate_seat,
+    delegate_shm, delegate_viewporter, delegate_xdg_activation, delegate_xdg_dialog, delegate_xdg_foreign, delegate_xdg_shell,
     desktop::{
         PopupKeyboardGrab, PopupKind, PopupManager, PopupPointerGrab, PopupUngrabStrategy, Space, Window, find_popup_root_surface, get_popup_toplevel_coords,
         layer_map_for_output,
@@ -34,6 +34,7 @@ use smithay::{
         selection::{
             SelectionHandler, SelectionSource, SelectionTarget,
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler, set_data_device_focus},
+            ext_data_control::{DataControlHandler, DataControlState},
             primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus},
         },
         shell::xdg::{
@@ -169,6 +170,7 @@ pub struct State {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub primary_selection_state: PrimarySelectionState,
+    pub data_control_state: DataControlState,
     pub activation_state: XdgActivationState,
     pub foreign_state: XdgForeignState,
     pub _viewporter_state: ViewporterState,
@@ -533,6 +535,7 @@ impl State {
             state.schedule_redraw();
             TimeoutAction::ToDuration(tick(state))
         })?;
+        let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
 
         Ok(Self {
             start_time: Instant::now(),
@@ -582,7 +585,10 @@ impl State {
             _output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(&dh),
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(&dh),
-            primary_selection_state: PrimarySelectionState::new::<Self>(&dh),
+            // Clipboard managers and Shared Clipboard watch and set the clipboard (and the primary selection) from
+            // the background, without the keyboard focus: trusted clients only (E6.11, perms.rs).
+            data_control_state: DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), crate::perms::trusted),
+            primary_selection_state,
             activation_state: XdgActivationState::new::<Self>(&dh),
             foreign_state: XdgForeignState::new::<Self>(&dh),
             _viewporter_state: ViewporterState::new::<Self>(&dh),
@@ -1558,6 +1564,12 @@ impl PrimarySelectionHandler for State {
     }
 }
 
+impl DataControlHandler for State {
+    fn data_control_state(&self) -> &DataControlState {
+        &self.data_control_state
+    }
+}
+
 impl ShmHandler for State {
     fn shm_state(&self) -> &ShmState {
         &self.shm_state
@@ -1631,6 +1643,7 @@ delegate_output!(State);
 delegate_seat!(State);
 delegate_data_device!(State);
 delegate_primary_selection!(State);
+delegate_ext_data_control!(State);
 delegate_xdg_activation!(State);
 delegate_xdg_foreign!(State);
 delegate_xdg_dialog!(State);
