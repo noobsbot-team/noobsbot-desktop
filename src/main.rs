@@ -584,7 +584,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     if state.greeter().is_some() {
         command.clear();
     } else {
-        state.x_display = xwayland::spawn(&state.socket_name, backend::cursor::size(state.config.appearance.pointer_size));
+        state.x_display = xwayland::spawn(&state.socket_name, backend::cursor::size(state.config.appearance.pointer_size), &state.loop_handle);
         // fcitx5 starts from its XDG autostart entry; ibus has none. Started before the session target, so it binds
         // input-method-v2 ahead of an fcitx5 that is installed too.
         if state.config.keyboard.engine() == "ibus" {
