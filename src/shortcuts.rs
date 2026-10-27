@@ -656,7 +656,8 @@ impl State {
                 let (symbol, text) = match (was, self.screenshots.recording.is_some()) {
                     (_, true) => (Symbol::Record, "Recording"),
                     (true, false) => (Symbol::Stop, "Recording Stopped"),
-                    (false, false) => (Symbol::Record, "Recording needs wf-recorder"),
+                    (false, false) if self.can_record() => (Symbol::Record, "Recording Failed"),
+                    (false, false) => (Symbol::Record, "Recording needs ffmpeg"),
                 };
                 self.show_osd(Osd { symbol, level: None, text: Some(text.into()) });
             }

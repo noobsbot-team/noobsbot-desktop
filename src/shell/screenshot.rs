@@ -5,10 +5,12 @@
 //! bottom right for 5 s (click opens it, drag drops it into an app). Drawn by render/screenshot.rs.
 
 use std::{
+    ffi::OsString,
     io::Write,
     os::fd::OwnedFd,
     path::{Path, PathBuf},
-    sync::Arc,
+    process::{Child, Stdio},
+    sync::{Arc, mpsc},
     time::{Duration, Instant},
 };
 
@@ -24,11 +26,12 @@ use smithay::{
         },
         wayland_server::protocol::wl_data_device_manager::DndAction,
     },
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
+    utils::{Logical, Physical, Point, Rectangle, SERIAL_COUNTER, Size, Transform},
     wayland::selection::data_device::{SourceMetadata, start_dnd},
 };
 
 use crate::{
+    capture::Pixels,
     input::BTN_LEFT,
     shell::{Anchor, Row, menu_layout},
     state::State,
@@ -88,7 +91,20 @@ pub struct Thumb {
 
 enum Msg {
     Saved(Saved),
-    RecordingEnded,
+    /// The recording that started then is finished: its file, or why it failed.
+    RecordingEnded(Instant, Result<PathBuf, String>),
+}
+
+/// A screen recording: `output`'s frames read back (capture.rs) go to the recording thread (`encode`), which pipes
+/// them through ffmpeg into an mp4.
+pub struct Recorder {
+    pub output: smithay::output::Output,
+    pub since: Instant,
+    /// The thread's queue; a frame that finds it full (ffmpeg lags) is dropped.
+    frames: mpsc::SyncSender<Pixels>,
+    pace: Pace,
+    /// A redraw is set for when the waiting change is due.
+    retry: bool,
 }
 
 #[derive(Default)]
@@ -113,8 +129,7 @@ pub struct Screenshots {
     pub delay: u8,
     /// Options ▸ Show Floating Thumbnail, unticked.
     pub no_thumbnail: bool,
-    /// The running `wf-recorder` and when it started.
-    pub recording: Option<(u32, Instant)>,
+    pub recording: Option<Recorder>,
     last_mode: Mode,
     tx: Option<channel::Sender<Msg>>,
 }
@@ -312,13 +327,82 @@ pub fn clicked_elsewhere(screens: &[Rect], shown: usize, at: Point<f64, Logical>
     screens.iter().position(|s| s.to_f64().contains(at)).filter(|i| *i != shown)
 }
 
-/// wf-recorder's arguments: the file, and `-o` the display picked in the open toolbar (`picked`), else the pointer's.
-fn record_args(path: &Path, picked: Option<String>, pointer: Option<String>) -> Vec<std::ffi::OsString> {
-    let mut args = vec!["-f".into(), path.into()];
-    if let Some(connector) = picked.or(pointer) {
-        args.extend(["-o".into(), connector.into()]);
+/// Frames a second a recording reads at most.
+const FPS: u32 = 30;
+
+/// `rect` (physical px as seen) inside a `frame`-sized picture, its width and height rounded down to even (x264's
+/// yuv420p needs that); `None` when less than 2×2 is left.
+fn even_crop(rect: Rectangle<i32, Physical>, frame: Size<i32, Physical>) -> Option<Rectangle<i32, Physical>> {
+    let r = rect.intersection(Rectangle::from_size(frame))?;
+    let size = Size::from((r.size.w & !1, r.size.h & !1));
+    (size.w >= 2 && size.h >= 2).then(|| Rectangle::new(r.loc, size))
+}
+
+/// ffmpeg's arguments: raw RGBA frames of `size` on stdin, stamped as they arrive and repeated to a steady `FPS` (a
+/// still screen sends none), into an H.264 mp4 at `path`.
+fn ffmpeg_args(size: Size<i32, Physical>, path: &Path) -> Vec<OsString> {
+    let (size, fps) = (format!("{}x{}", size.w, size.h), FPS.to_string());
+    #[rustfmt::skip]
+    let args = [
+        "-hide_banner", "-loglevel", "error",
+        "-f", "rawvideo", "-pixel_format", "rgba", "-video_size", &size, "-framerate", &fps, "-use_wallclock_as_timestamps", "1", "-i", "-",
+        "-fps_mode", "cfr", "-r", &fps, "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-n",
+    ];
+    args.into_iter().map(OsString::from).chain([path.into()]).collect()
+}
+
+/// When a recording reads a frame: one that changed, at most `FPS` a second; a change that comes sooner is read with
+/// the first frame after.
+#[derive(Debug, Default)]
+struct Pace {
+    /// When the next frame may be read; `None`: now.
+    next: Option<Instant>,
+    /// A change waits for `next`.
+    dirty: bool,
+}
+
+impl Pace {
+    fn due(&self, changed: bool, now: Instant) -> bool {
+        (changed || self.dirty) && self.next.is_none_or(|n| now >= n)
     }
-    args
+
+    /// The frame drawn at `now` (`read`: its pixels are here): `true` to record it.
+    fn frame(&mut self, changed: bool, read: bool, now: Instant) -> bool {
+        let due = self.due(changed, now);
+        if due {
+            self.next = Some(now + Duration::from_secs(1) / FPS);
+        }
+        self.dirty = (self.dirty || changed) && !(due && read);
+        due && read
+    }
+}
+
+/// The recording thread: each frame's `region` into ffmpeg's stdin. Stop closes the queue: the last frame goes once
+/// more (so a still end keeps its length) and ffmpeg finishes the file.
+fn encode(mut ffmpeg: Child, frames: mpsc::Receiver<Pixels>, region: Rectangle<i32, Physical>) -> Result<(), String> {
+    let mut stdin = ffmpeg.stdin.take().ok_or("ffmpeg has no stdin")?;
+    let mut last = Vec::new();
+    let written = loop {
+        let pixels = match frames.recv_timeout(Duration::from_secs(1)) {
+            Ok(pixels) => pixels,
+            Err(mpsc::RecvTimeoutError::Timeout) if matches!(ffmpeg.try_wait(), Ok(None)) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => break Err("ffmpeg quit".to_owned()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => break stdin.write_all(&last).map_err(|e| format!("ffmpeg: {e}")),
+        };
+        let pixels = if pixels.transform == Transform::Normal { pixels } else { pixels.shown() };
+        let (rgba, size) = pixels.crop(region);
+        if size != region.size {
+            break Err("the display changed size".to_owned());
+        }
+        if let Err(err) = stdin.write_all(&rgba) {
+            break Err(format!("ffmpeg: {err}"));
+        }
+        last = rgba;
+    };
+    drop(stdin);
+    let status = ffmpeg.wait().map_err(|e| format!("ffmpeg: {e}"))?;
+    written?;
+    status.success().then_some(()).ok_or_else(|| format!("ffmpeg: {status}"))
 }
 
 /// Whether `program` is on `$PATH`.
@@ -645,7 +729,7 @@ impl State {
             let (tx, rx) = channel::channel();
             let inserted = self.loop_handle.insert_source(rx, |event, _, state| match event {
                 channel::Event::Msg(Msg::Saved(saved)) => state.screenshot_saved(saved),
-                channel::Event::Msg(Msg::RecordingEnded) => state.screenshots.recording = None,
+                channel::Event::Msg(Msg::RecordingEnded(since, result)) => state.recording_ended(since, result),
                 channel::Event::Closed => {}
             });
             match inserted {
@@ -810,56 +894,121 @@ impl State {
         true
     }
 
-    /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts `wf-recorder` on the toolbar's
-    /// display, else the pointer's (into ~/Videos), or stops it.
-    // ponytail: wf-recorder until our own PipeWire recorder (E7.2).
+    /// Record in the toolbar, the screen-record key or the menu bar's stop item: starts recording the toolbar's
+    /// display, else the pointer's, into ~/Videos, or stops it.
     pub fn toggle_recording(&mut self) {
-        if let Some((pid, _)) = self.screenshots.recording.take() {
-            // SIGINT lets it finish the file.
-            unsafe { libc::kill(pid as i32, libc::SIGINT) };
-            return self.close_shot();
-        }
-        if !installed("wf-recorder") {
-            return;
-        }
-        let dir = user_dir("VIDEOS", "Videos");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = file_name(&dir, "Screen Recording", "mp4", &chrono::Local::now());
-        let tx = self.screenshot_channel();
-        let toolbar = self.screenshots.shot.as_ref().is_some_and(|s| s.toolbar);
-        let picked = self.overlay_output(self.screenshots.output.as_ref()).filter(|_| toolbar).map(|o| o.name());
-        let args = record_args(&path, picked, self.pointer_output().map(|o| o.name()));
-        // Through the trusted socket, so it doesn't ask for itself (E6.11).
-        let mut command = std::process::Command::new("wf-recorder");
-        command.args(args).env("WAYLAND_DISPLAY", crate::perms::trusted_socket(&self.socket_name));
-        match command.spawn() {
-            Ok(mut child) => {
-                self.screenshots.recording = Some((child.id(), Instant::now()));
-                // The menu bar's elapsed time ticks each second while it records.
-                let second = Duration::from_secs(1);
-                let ticks = self.loop_handle.insert_source(Timer::from_duration(second), move |_, _, state| {
-                    state.schedule_redraw();
-                    if state.screenshots.recording.is_some() { TimeoutAction::ToDuration(second) } else { TimeoutAction::Drop }
-                });
-                if let Err(err) = ticks {
-                    tracing::warn!("recording timer: {err}");
-                }
-                std::thread::spawn(move || {
-                    let _ = child.wait();
-                    if let Some(tx) = tx {
-                        let _ = tx.send(Msg::RecordingEnded);
-                    }
-                });
-                tracing::info!("recording the screen to {}", path.display());
-            }
-            Err(err) => tracing::warn!("wf-recorder: {err}"),
+        if self.screenshots.recording.is_some() {
+            self.stop_recording();
+        } else if let Err(err) = self.start_recording() {
+            tracing::warn!("recording: {err}");
         }
         self.close_shot();
     }
 
-    /// Record is greyed out without `wf-recorder`.
+    /// Dropping the recorder closes the thread's queue: it hands ffmpeg the last frame and lets it finish the file.
+    fn stop_recording(&mut self) {
+        if self.screenshots.recording.take().is_some() {
+            self.schedule_redraw();
+        }
+    }
+
+    fn start_recording(&mut self) -> Result<(), String> {
+        let toolbar = self.screenshots.shot.as_ref().is_some_and(|s| s.toolbar);
+        let output = if toolbar { self.overlay_output(self.screenshots.output.as_ref()) } else { self.pointer_output() };
+        let output = output.ok_or("no display")?;
+        let frame = output.current_transform().transform_size(output.current_mode().ok_or("no display mode")?.size);
+        let region = even_crop(Rectangle::from_size(frame), frame).ok_or("the display is too small")?;
+        let dir = user_dir("VIDEOS", "Videos");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        let path = file_name(&dir, "Screen Recording", "mp4", &chrono::Local::now());
+        let mut command = std::process::Command::new("ffmpeg");
+        command.args(ffmpeg_args(region.size, &path)).stdin(Stdio::piped()).stdout(Stdio::null());
+        let ffmpeg = command.spawn().map_err(|e| format!("ffmpeg: {e}"))?;
+        tracing::info!("recording the screen to {}", path.display());
+        let (frames, queue) = mpsc::sync_channel(2);
+        let (since, tx) = (Instant::now(), self.screenshot_channel());
+        let thread = std::thread::Builder::new().name("recording".into()).spawn(move || {
+            let result = encode(ffmpeg, queue, region).map(|()| path);
+            if let Some(tx) = tx {
+                let _ = tx.send(Msg::RecordingEnded(since, result));
+            }
+        });
+        thread.map_err(|e| format!("recording thread: {e}"))?;
+        // The first frame is read even if nothing changes.
+        let pace = Pace { next: None, dirty: true };
+        self.screenshots.recording = Some(Recorder { output, since, frames, pace, retry: false });
+        // The menu bar's elapsed time ticks each second; the recorded display unplugged ends it.
+        let second = Duration::from_secs(1);
+        let ticks = self.loop_handle.insert_source(Timer::from_duration(second), move |_, _, state| {
+            let Some(r) = state.screenshots.recording.as_ref().filter(|r| r.since == since) else { return TimeoutAction::Drop };
+            if !state.space.outputs().any(|o| *o == r.output) {
+                tracing::info!("the recorded display is gone: recording stopped");
+                state.stop_recording();
+                return TimeoutAction::Drop;
+            }
+            state.schedule_redraw();
+            TimeoutAction::ToDuration(second)
+        });
+        if let Err(err) = ticks {
+            tracing::warn!("recording timer: {err}");
+        }
+        self.schedule_redraw();
+        Ok(())
+    }
+
+    /// Whether `output`'s frame just drawn (`changed`) is one to record, so it is read back (capture.rs).
+    pub fn record_wants(&self, output: &smithay::output::Output, changed: bool) -> bool {
+        self.screenshots.recording.as_ref().is_some_and(|r| r.output == *output && r.pace.due(changed, Instant::now()))
+    }
+
+    /// After `output`'s frame (`changed`, `pixels` read back if wanted): records it when due. A change that came too
+    /// soon gets a redraw once the next frame is due.
+    // ponytail: a synchronous glReadPixels per recorded frame on the frame thread (capture::render); a PBO or dmabuf
+    // path is the upgrade if it shows in the frame budget.
+    pub fn record_frame(&mut self, output: &smithay::output::Output, changed: bool, pixels: Option<Pixels>) {
+        let now = Instant::now();
+        let Some(r) = self.screenshots.recording.as_mut().filter(|r| r.output == *output) else { return };
+        let recorded = r.pace.frame(changed, pixels.is_some(), now);
+        match pixels.filter(|_| recorded) {
+            // Full: ffmpeg lags, and the frame is dropped. Closed: the thread ended and says why (`RecordingEnded`).
+            Some(pixels) => {
+                let _ = r.frames.try_send(pixels);
+            }
+            None if r.pace.dirty && !r.retry => {
+                r.retry = true;
+                let wait = r.pace.next.map_or(Duration::ZERO, |n| n.saturating_duration_since(now));
+                let timer = self.loop_handle.insert_source(Timer::from_duration(wait), |_, _, state| {
+                    if let Some(r) = state.screenshots.recording.as_mut() {
+                        r.retry = false;
+                    }
+                    state.schedule_redraw();
+                    TimeoutAction::Drop
+                });
+                if let Err(err) = timer {
+                    tracing::warn!("recording timer: {err}");
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// The recording thread is done: the file is finished, or ffmpeg failed, which ends the recording and the OSD says.
+    fn recording_ended(&mut self, since: Instant, result: Result<PathBuf, String>) {
+        if self.screenshots.recording.as_ref().is_some_and(|r| r.since == since) {
+            self.stop_recording();
+        }
+        match result {
+            Ok(path) => tracing::info!("screen recording saved to {}", path.display()),
+            Err(err) => {
+                tracing::warn!("recording: {err}");
+                self.show_osd(crate::shell::Osd { symbol: crate::symbols::Symbol::Stop, level: None, text: Some("Recording Failed".into()) });
+            }
+        }
+    }
+
+    /// Record is greyed out without `ffmpeg`.
     pub fn can_record(&self) -> bool {
-        self.screenshots.recording.is_some() || installed("wf-recorder")
+        self.screenshots.recording.is_some() || installed("ffmpeg")
     }
 }
 
@@ -884,12 +1033,47 @@ mod tests {
     }
 
     #[test]
-    fn records_the_picked_display_else_the_pointers() {
-        let path = Path::new("/v/r.mp4");
-        let args = |picked: Option<&str>, pointer: Option<&str>| record_args(path, picked.map(Into::into), pointer.map(Into::into));
-        assert_eq!(args(Some("HDMI-A-1"), Some("eDP-1")), ["-f", "/v/r.mp4", "-o", "HDMI-A-1"]);
-        assert_eq!(args(None, Some("eDP-1")), ["-f", "/v/r.mp4", "-o", "eDP-1"]);
-        assert_eq!(args(None, None), ["-f", "/v/r.mp4"]);
+    fn recorded_area_is_even_and_on_screen() {
+        let frame = Size::from((1920, 1080));
+        let crop = |x, y, w, h| even_crop(Rectangle::new((x, y).into(), (w, h).into()), frame).map(|r| (r.loc.x, r.loc.y, r.size.w, r.size.h));
+        assert_eq!(crop(0, 0, 1920, 1080), Some((0, 0, 1920, 1080)));
+        assert_eq!(crop(11, 7, 301, 199), Some((11, 7, 300, 198)));
+        // Clipped to the display first, then made even.
+        assert_eq!(crop(1800, 1000, 500, 500), Some((1800, 1000, 120, 80)));
+        assert_eq!(crop(-5, -5, 10, 10), Some((0, 0, 4, 4)));
+        assert_eq!(crop(100, 100, 1, 50), None);
+        assert_eq!(crop(5000, 0, 10, 10), None);
+    }
+
+    #[test]
+    fn ffmpeg_reads_raw_frames_and_writes_mp4() {
+        let args = ffmpeg_args((1280, 720).into(), Path::new("/v/Screen Recording.mp4"));
+        let args: Vec<_> = args.iter().map(|a| a.to_str().unwrap()).collect();
+        assert_eq!(
+            args.join(" "),
+            "-hide_banner -loglevel error -f rawvideo -pixel_format rgba -video_size 1280x720 -framerate 30 \
+             -use_wallclock_as_timestamps 1 -i - -fps_mode cfr -r 30 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
+             -n /v/Screen Recording.mp4"
+        );
+    }
+
+    #[test]
+    fn frames_are_paced() {
+        let t = Instant::now();
+        let ms = |n| t + Duration::from_millis(n);
+        // The first frame is read even if nothing changed.
+        let mut pace = Pace { next: None, dirty: true };
+        assert!(pace.frame(false, true, t));
+        // Unchanged frames are not read.
+        assert!(!pace.due(false, ms(100)));
+        assert!(pace.frame(true, true, ms(100)));
+        // A change 10 ms later waits, and is read with the first frame from 33 ms on.
+        assert!(!pace.frame(true, true, ms(110)) && pace.dirty);
+        assert!(!pace.due(false, ms(120)));
+        assert!(pace.due(false, ms(134)) && pace.frame(false, true, ms(134)) && !pace.dirty);
+        // Due but not read back: it stays waiting, and the next try is a frame later.
+        assert!(!pace.frame(true, false, ms(200)) && pace.dirty);
+        assert!(!pace.due(false, ms(210)) && pace.frame(false, true, ms(234)));
     }
 
     #[test]
