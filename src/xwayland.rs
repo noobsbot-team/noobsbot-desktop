@@ -6,6 +6,7 @@ use std::{
     ffi::OsStr,
     path::Path,
     process::{Child, Command},
+    sync::atomic::{AtomicBool, Ordering},
     time::{Duration, Instant},
 };
 
@@ -17,6 +18,13 @@ use crate::{services::notifications::Notification, state::State};
 const QUICK: Duration = Duration::from_secs(10);
 /// Quick deaths in a row before giving up.
 const TRIES: u32 = 5;
+/// The compositor's loop has ended: its exit breaks xwayland-satellite's connection, which is no crash.
+static QUITTING: AtomicBool = AtomicBool::new(false);
+
+/// The compositor is exiting: xwayland-satellite isn't restarted from here on.
+pub fn quitting() {
+    QUITTING.store(true, Ordering::Relaxed);
+}
 
 /// Starts xwayland-satellite on the first free display, for the compositor on `socket`; its `DISPLAY` (`:1`), or
 /// `None` when it isn't installed. A thread waits on it (no polling) and starts it again when it dies.
@@ -43,12 +51,16 @@ pub fn spawn(socket: &OsStr, cursor_size: u32, handle: &LoopHandle<'static, Stat
     Some(name)
 }
 
-/// Restarts it until it dies `TRIES` times quickly in a row, or can't be started; then returns.
+/// Restarts it until it dies `TRIES` times quickly in a row, or can't be started, or the compositor is exiting; then
+/// returns.
 fn supervise(mut child: Child, start: impl Fn() -> std::io::Result<Child>) {
     let mut quick = 0;
     loop {
         let started = Instant::now();
         let status = child.wait();
+        if QUITTING.load(Ordering::Relaxed) {
+            return;
+        }
         quick = if started.elapsed() < QUICK { quick + 1 } else { 0 };
         if quick >= TRIES {
             return tracing::error!("xwayland-satellite keeps dying ({status:?}); X11 apps are off until the next login");
@@ -100,5 +112,16 @@ mod tests {
         // Nested in an X desktop: :0 is the host's, :1 another nested session's.
         assert_eq!(free_display(|n| n < 2), 2);
         assert_eq!(free_display(|n| n == 0 || n == 2), 1);
+    }
+
+    #[test]
+    fn not_restarted_once_the_compositor_is_exiting() {
+        quitting();
+        let starts = std::cell::Cell::new(0);
+        supervise(Command::new("true").spawn().unwrap(), || {
+            starts.set(starts.get() + 1);
+            Command::new("true").spawn()
+        });
+        assert_eq!(starts.get(), 0);
     }
 }

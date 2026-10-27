@@ -612,6 +612,7 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
         state.sync_workspaces();
         let _ = state.display_handle.flush_clients();
     });
+    xwayland::quitting();
     // Log out, the login screen's session started, the nested window closed, SIGTERM: settings saved just now are kept.
     config::flush();
     ran?;
