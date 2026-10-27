@@ -91,6 +91,8 @@ pub struct DockView {
     peek_dim: Option<((Rect, bool, u64), PixelShaderElement)>,
     /// The line before the minimised windows' tiles.
     separator: Option<(Rect, PixelShaderElement)>,
+    /// The dots and the line are made for dark mode: light on the wallpaper, else dark.
+    dark: bool,
 }
 
 /// The last `u32` is the text scale, so a showing tooltip or badge resizes when it changes.
@@ -276,8 +278,14 @@ impl DockView {
         items: &[Icon],
         layout: &Layout,
         px: u32,
+        dark: bool,
         scale: f64,
     ) -> Vec<SceneElement> {
+        if self.dark != dark {
+            (self.dark, self.separator) = (dark, None);
+            self.marks.clear();
+        }
+        let (dot_rgba, line_rgba) = if dark { ([1.0, 1.0, 1.0, 0.9], [1.0, 1.0, 1.0, 0.35]) } else { ([0.0, 0.0, 0.0, 0.7], [0.0, 0.0, 0.0, 0.25]) };
         // The small shadow under each icon (Plank's IconShadowSize 1): D6 level 1, dark like the dock, in the zoomed
         // bitmap's px. Its σ is blur / 2 at rest; three box passes of radius r give σ ≈ r + ½.
         let d6 = super::Shadow::of(1, true).expect("D6 level 1 casts a shadow");
@@ -343,7 +351,7 @@ impl DockView {
         }
         out.extend(behind);
 
-        // IndicatorSize 5: a small light dot centred under the icon, in the band below it, two (s/16 either side) for
+        // IndicatorSize 5: a small dot centred under the icon, in the band below it, two (s/16 either side) for
         // several windows.
         let dot = (layout.icon / 16.0).round().max(4.0) as i32;
         let floor = f64::from(layout.zone.loc.y + layout.zone.size.h);
@@ -367,7 +375,7 @@ impl DockView {
             .into_iter()
             .map(|rect| {
                 let element = old.iter().find(|(r, _)| *r == rect).map(|(_, e)| e.clone());
-                (rect, element.unwrap_or_else(|| shaders.light(rect, [1.0, 1.0, 1.0, 0.9], false, scale)))
+                (rect, element.unwrap_or_else(|| shaders.light(rect, dot_rgba, false, scale)))
             })
             .collect();
         out.extend(self.marks.iter().map(|(_, e)| SceneElement::Shader(e.clone())));
@@ -377,7 +385,7 @@ impl DockView {
             Rectangle::new(((x - 0.5).round() as i32, top + h / 6).into(), (1, h - h / 3).into())
         });
         if self.separator.as_ref().map(|(r, _)| *r) != line {
-            self.separator = line.map(|rect| (rect, shaders.light(rect, [1.0, 1.0, 1.0, 0.35], false, scale)));
+            self.separator = line.map(|rect| (rect, shaders.light(rect, line_rgba, false, scale)));
         }
         out.extend(self.separator.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
         out

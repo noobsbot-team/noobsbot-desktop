@@ -469,7 +469,7 @@ impl State {
             let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
             bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &dock_frame.tips, dark, scale));
             bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
-            bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, scale));
+            bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, dark, scale));
             bar.extend(thumbs);
             bar.extend(DockView::poofs(shaders, &dock_frame.poofs, layout.icon, scale));
         } else {
