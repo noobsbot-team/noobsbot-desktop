@@ -92,6 +92,12 @@ pub enum Update {
     Record(bool),
     /// Settings' Displays page moved the brightness slider (`org.noobsbot.Desktop.Displays.SetBrightness`), in percent.
     SetBrightness(u8),
+    /// Settings' Software Update ▸ Check Now (`org.noobsbot.Desktop.Update.Check`).
+    CheckNow,
+    /// Settings' Software Update ▸ Update Now (`org.noobsbot.Desktop.Update.Install`).
+    InstallNow,
+    /// Settings' Software Update ▸ Revert to (`org.noobsbot.Desktop.Update.Revert`).
+    RevertVersion,
     /// Settings' Displays ▸ Identify (`org.noobsbot.Desktop.Displays.Identify`).
     Identify,
     /// The keyboard backlight after a key changed it, in percent.
