@@ -1,12 +1,13 @@
 //! Calendar events (E7.2): the `.ics` files `[calendar] files` names, reread on a worker thread whenever one changes;
 //! Notification Center's Up Next and the calendar's event dots; reminders (VALARMs) become our notifications, on one
-//! timer set to the next alarm.
-// ponytail: local files only; CalDAV/Google would sync into the same files (or feed `Calendar::events` directly).
+//! timer set to the next alarm. CalDAV calendars (`caldav.rs`) are fetched by a second worker into cache files that
+//! the first reads like any other, so they show offline too.
+// ponytail: no Google calendars (OAuth); a Google calendar's CalDAV URL with an app password may work.
 
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
-    sync::mpsc,
+    sync::mpsc::{self, RecvTimeoutError},
     time::Duration,
 };
 
@@ -18,6 +19,7 @@ use smithay::reexports::calloop::{
 };
 
 use crate::{
+    config::CalDav,
     ical::{self, Event},
     services::notifications::Notification,
     state::State,
@@ -30,6 +32,8 @@ const AHEAD: i64 = 7 * 86_400;
 pub const UP_NEXT: usize = 3;
 /// Alarms are looked for this far ahead; with none, the timer wakes at the end to look again.
 const HORIZON: i64 = 60 * 86_400;
+/// CalDAV calendars are fetched again this often.
+const CALDAV_EVERY: Duration = Duration::from_secs(15 * 60);
 
 /// One occurrence, as Up Next and reminders show it.
 #[derive(Debug, Clone, PartialEq)]
@@ -59,6 +63,8 @@ pub struct Calendar {
     /// The entries being watched, the folders watched for them, and the watcher (dropping it ends its worker thread).
     watching: Option<(Vec<String>, Vec<PathBuf>, RecommendedWatcher)>,
     loaded: Option<channel::Sender<Vec<Event>>>,
+    /// The CalDAV worker, from the first account on, and the accounts it was last sent.
+    caldav: Option<(Vec<CalDav>, mpsc::Sender<Vec<CalDav>>)>,
     timer: Option<RegistrationToken>,
     /// Alarms up to here (unix seconds) have gone off.
     fired: i64,
@@ -132,6 +138,51 @@ fn concerns(dirs: &[PathBuf], path: &Path) -> bool {
     dirs.iter().any(|d| path.parent() == Some(d.as_path()) || d.starts_with(path))
 }
 
+/// Where an account's last good fetch is kept.
+fn caldav_cache(account: &CalDav) -> PathBuf {
+    let name: String = format!("{}@{}", account.user, account.url).chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    crate::config::xdg_dir("XDG_CACHE_HOME", ".cache").join(format!("noobsbot-desktop/caldav/{name}.ics"))
+}
+
+/// Fetches every account into its cache file (a failed one keeps its last), and drops the files of removed ones.
+fn caldav_sync(accounts: &[CalDav]) {
+    let files: Vec<PathBuf> = accounts.iter().map(caldav_cache).collect();
+    let dir = crate::config::xdg_dir("XDG_CACHE_HOME", ".cache").join("noobsbot-desktop/caldav");
+    for old in std::fs::read_dir(dir).into_iter().flatten().flatten().map(|e| e.path()) {
+        if old.extension().is_some_and(|e| e == "ics") && !files.contains(&old) {
+            let _ = std::fs::remove_file(old);
+        }
+    }
+    let now = Local::now().timestamp();
+    for (account, file) in accounts.iter().zip(&files) {
+        let (url, user) = (account.url.as_str(), account.user.as_str());
+        let password = crate::caldav::secret_tool(&["lookup"], url, user, "").map_err(|err| format!("no password in the keyring: {err}"));
+        let fetched = password.and_then(|p| crate::caldav::fetch(url, user, &p, now));
+        if let Err(err) = fetched.and_then(|ics| crate::config::save_atomic(file, &ics).map_err(|e| e.to_string())) {
+            tracing::warn!("calendar: CalDAV {url}: {err}");
+        }
+    }
+}
+
+/// The CalDAV worker: fetches now, every 15 minutes, and whenever it is sent the accounts (again, to fetch now).
+fn caldav_spawn(accounts: Vec<CalDav>) -> Option<mpsc::Sender<Vec<CalDav>>> {
+    let (tx, rx) = mpsc::channel();
+    let spawned = std::thread::Builder::new().name("caldav".into()).spawn(move || {
+        let mut accounts = accounts;
+        loop {
+            caldav_sync(&accounts);
+            // No accounts: no wakeups until there are.
+            let next = if accounts.is_empty() { rx.recv().map_err(|_| RecvTimeoutError::Disconnected) } else { rx.recv_timeout(CALDAV_EVERY) };
+            match next {
+                Ok(new) => accounts = new,
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return,
+            }
+        }
+    });
+    spawned.inspect_err(|err| tracing::warn!("calendar: no CalDAV: {err}")).ok().map(|_| tx)
+}
+
 /// `--show calendar-events`: a sample calendar around today, written to `dir`; returns its file.
 pub fn sample(dir: &std::path::Path) -> std::io::Result<PathBuf> {
     let today = Local::now().date_naive();
@@ -155,10 +206,21 @@ pub fn sample(dir: &std::path::Path) -> std::io::Result<PathBuf> {
 }
 
 impl State {
-    /// (Re)starts watching `[calendar] files` when it changed, or a folder it names appeared or went: a worker loads
-    /// them now and after every change. A folder that isn't there yet is watched through its nearest parent.
+    /// (Re)starts watching `[calendar] files` and the CalDAV caches when they changed, or a folder they name appeared
+    /// or went: a worker loads them now and after every change. A folder that isn't there yet is watched through its
+    /// nearest parent. Changed CalDAV accounts go to their worker (started with the first).
     pub fn calendar_watch(&mut self) {
-        let entries = self.config.calendar.files.clone();
+        let accounts = &self.config.calendar.caldav;
+        match &mut self.calendar.caldav {
+            Some((sent, tx)) if sent != accounts => {
+                let _ = tx.send(accounts.clone());
+                sent.clone_from(accounts);
+            }
+            None if !accounts.is_empty() => self.calendar.caldav = caldav_spawn(accounts.clone()).map(|tx| (accounts.clone(), tx)),
+            _ => {}
+        }
+        let mut entries = self.config.calendar.files.clone();
+        entries.extend(accounts.iter().map(|a| caldav_cache(a).display().to_string()));
         let dirs: Vec<PathBuf> = entries.iter().map(|e| watch_dir(e)).collect();
         let mut watched: Vec<PathBuf> = dirs.iter().filter_map(|d| nearest(d)).map(Path::to_owned).collect();
         watched.sort();
@@ -217,6 +279,13 @@ impl State {
             return tracing::warn!("calendar: {err}");
         }
         self.calendar.watching = Some((entries, watched, watcher));
+    }
+
+    /// Fetches the CalDAV calendars now (the network is back).
+    pub fn caldav_now(&self) {
+        if let Some((accounts, tx)) = &self.calendar.caldav {
+            let _ = tx.send(accounts.clone());
+        }
     }
 
     fn calendar_loaded(&mut self, events: Vec<Event>) {

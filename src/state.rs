@@ -413,6 +413,11 @@ impl State {
                             (Some(false), _) => state.close_notification(PORTAL_NOTICE, crate::services::notifications::Reason::Closed),
                             _ => {}
                         }
+                        // Back online (after sleep, or a login before the network): CalDAV fetches now.
+                        let online = |n: Option<&crate::services::network::Network>| n.is_some_and(|n| n.link != crate::services::network::Link::None);
+                        if online(network.as_ref()) && !online(state.network.as_ref()) {
+                            state.caldav_now();
+                        }
                         state.network = network;
                     }
                     crate::services::Update::Bluetooth(bluetooth) => state.bluetooth = bluetooth,

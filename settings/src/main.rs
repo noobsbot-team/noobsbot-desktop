@@ -3,6 +3,8 @@
 
 mod arrange;
 mod autostart;
+#[path = "../../src/caldav.rs"]
+mod caldav;
 mod chooser;
 mod config;
 mod defaults;
@@ -111,6 +113,15 @@ fn tick(generation: u32) -> Task<Message> {
 
 fn read_displays() -> Vec<display_info::Display> {
     display_info::path().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
+}
+
+/// CalDAV ▸ Add's check: the typed password fetches the calendar, then goes into the keyring. `(url, user, error)`.
+async fn add_caldav(url: String, user: String, password: String) -> (String, String, Option<String>) {
+    let checked = caldav::fetch(&url, &user, &password, chrono::Local::now().timestamp());
+    let label = format!("CalDAV {user} at {url}");
+    let error = checked.and_then(|_| caldav::secret_tool(&["store", "--label", &label], &url, &user, &password)).err();
+    users::wipe(password);
+    (url, user, error)
 }
 
 /// Inter (D4) in `weight`, or the system sans-serif when it isn't installed.
@@ -339,8 +350,12 @@ pub enum Message {
     Enrolling(users::Enrolling),
     /// Users ▸ Fingerprints ▸ Delete All.
     DeleteFingerprints,
-    /// A list key's new entries.
-    List(&'static str, Vec<String>),
+    /// A list key's entry to remove, by index.
+    Remove(&'static str, usize),
+    /// Date & Time ▸ CalDAV accounts ▸ Add: checks the typed account.
+    AddCalDav,
+    /// The check's answer: the URL, the user and what went wrong.
+    CalDavAdded((String, String, Option<String>)),
     /// The ids `org.noobsbot.Desktop.Widgets` has.
     WidgetIds(Vec<String>),
     /// A widget editor's new `[widgets]`.
@@ -494,7 +509,38 @@ impl App {
                 }
             }
             Message::Number(key, value) => self.save(key, value),
-            Message::List(key, items) => self.save(key, items.into_iter().collect::<toml_edit::Array>()),
+            Message::Remove(key, i) => {
+                let mut items = self.config.get(key).and_then(toml_edit::Value::as_array).cloned().unwrap_or_default();
+                if i < items.len() {
+                    // A CalDAV account's password leaves the keyring with it (a locked keyring may ask first).
+                    if let Some((url, user)) = pages::account(&items.remove(i)) {
+                        std::thread::spawn(move || caldav::secret_tool(&["clear"], &url, &user, ""));
+                    }
+                    self.save(key, items);
+                }
+            }
+            Message::AddCalDav => {
+                if pages::CALDAV.iter().any(|&key| self.texts.get(key).is_none_or(|v| v.trim().is_empty())) {
+                    return Task::none();
+                }
+                let [url, user, password] = pages::CALDAV.map(|key| self.texts.remove(key).unwrap_or_default());
+                return Task::perform(add_caldav(url.trim().to_owned(), user.trim().to_owned(), password), Message::CalDavAdded);
+            }
+            Message::CalDavAdded((url, user, Some(error))) => {
+                // The form again, the password to type again.
+                self.error = Some(error);
+                for (key, value) in pages::CALDAV.into_iter().zip([url, user, String::new()]) {
+                    self.texts.insert(key.into(), value);
+                }
+            }
+            Message::CalDavAdded((url, user, None)) => {
+                let mut items = self.config.get("calendar.caldav").and_then(toml_edit::Value::as_array).cloned().unwrap_or_default();
+                // The same account again only had its password changed.
+                if !items.iter().any(|v| pages::account(v).is_some_and(|(u, n)| u == url && n == user)) {
+                    items.push(toml_edit::InlineTable::from_iter([("url", url), ("user", user)]));
+                    self.save("calendar.caldav", items);
+                }
+            }
             Message::WidgetIds(ids) => self.widget_ids = ids,
             Message::Widgets(places) => self.error = self.config.set_all(places.values()).err().map(|err| format!("Couldn't save widgets: {err}")),
             Message::NotifyApp(app) => self.notify_app = app,
@@ -807,6 +853,11 @@ impl App {
             Message::Vpn(vpn) => return Task::perform(network::change(move |bus| network::vpn_switch(bus, vpn)), Message::Status),
             Message::OpenFile(pages::CLOCK_ADD) => {
                 self.texts.insert(pages::CLOCK_ADD.into(), String::new());
+            }
+            Message::OpenFile(pages::CALDAV_ADD) => {
+                for key in pages::CALDAV {
+                    self.texts.entry(key.into()).or_default();
+                }
             }
             Message::OpenFile(key) => {
                 let (title, directory, filter) = match key {
