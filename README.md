@@ -15,7 +15,8 @@ design: glassy, yet mostly solid.
 Made by the Noobsbot Team. Sister project: [noobsbot-terminal](https://github.com/noobsbot-team/noobsbot-terminal), the
 default terminal.
 
-> **Status: pre-releases of 1.0.0 "Opal"** (alpha, then beta, then release candidates; see [Updates](#updates)).
+> **Status: 1.0.0 "Opal", the first stable release** (betas of the next version come between releases; see
+> [Updates](#updates)).
 > Every planned part is built and tested in a nested window and in a virtual machine (install, real-screen session,
 > lock, login screen, password prompts, updates and rollback). It has not been run on enough real hardware yet (Intel,
 > AMD, NVIDIA, laptops with two GPUs, several monitors), so expect rough edges there. Bug reports are welcome.
@@ -385,30 +386,31 @@ Once a day the desktop checks GitHub for a newer release (it sends nothing but t
 
 With `install_at_login = true` in `[update]` (Settings ▸ General ▸ Software Update), a verified download installs by
 itself at the next login, before the desktop starts, without the password, and a notification says "Updated to …".
-This works only for admins (group `wheel` or `sudo`), and never installs a pre-release or a version you went back from
-with "Revert to": those wait for Restart to Update. So until 1.0.0 is out, every update asks for the password.
-Set `channel = "beta"` in `[update]` to also get pre-releases. Installs made with `--from-source` or by hand only
-get the notification. From a terminal in the desktop, `noobsbot-desktop --update` does the same check, download and
-install; you can also always update with `./install.sh --update`.
+This works only for admins (group `wheel` or `sudo`), and never installs a beta or a version you went back from
+with "Revert to": those wait for Restart to Update. Installs made with `--from-source` or by hand only get the
+notification. From a terminal in the desktop, `noobsbot-desktop --update` does the same check, download and install;
+you can also always update with `./install.sh --update`.
 
-Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) strictly, as `MAJOR.MINOR.PATCH`:
+There are two update channels (Settings ▸ General ▸ Software Update, or `channel` in `[update]`):
+- **Stable** (the default) gets only releases, never a beta. `install.sh` installs only releases too.
+- **Beta** also gets betas: the newest version, betas included. A beta (`1.0.1-beta.1`, `-beta.2`, …) is made right
+  away from each fix that is merged, for testing. Once a day the betas so far become a release (`1.0.1`), which has
+  all their changes; a new feature is a release right away. Betas stay on the Releases page, marked "Pre-release".
+
+Versions follow [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) strictly, as `MAJOR.MINOR.PATCH`.
+CI makes them from the commit types, never by hand; the full rule is in [`VERSIONING.md`](VERSIONING.md).
 - **Public API** (what the version number promises to keep working): the keys and values of
   `~/.config/noobsbot-desktop/config.toml`, the `org.noobsbot.Desktop.*` D-Bus interfaces, the command-line options of
   `noobsbot-desktop` and `noobsbot-desktop-settings`, and the [widget protocol](#widgets-from-your-own-apps). The look,
   the animations and the code inside are not part of it.
 - **MAJOR** goes up when a release breaks the public API, **MINOR** when it adds features that keep it working, and
   **PATCH** when it only fixes bugs. Each MAJOR has a gem codename: 1 is Opal, 2 will be Pearl.
-- **Pre-releases** come before their version, in three numbered stages: **alpha** (`1.0.0-alpha.8`) while features
-  are still landing, **beta** (`1.0.0-beta.1`) once it is feature-complete and in testing, and **rc**, a release
-  candidate (`1.0.0-rc.1`), which only gets fixes. They sort before the release (`1.0.0-rc.1` is older than `1.0.0`).
-  Only the Beta channel gets them, with one exception: until 1.0.0 is out there is no stable release, so Stable (and
-  `install.sh`) takes the newest pre-release too. From 1.0.0 on, Stable gets stable releases only.
-- **1.0.0 is the first stable release**: it declares the public API stable. Every release before it is one of its
-  pre-releases (the early 0.1.0 to 0.6.0 are now `1.0.0-alpha.1` to `1.0.0-alpha.8`), and anything may still change
-  between them. After 1.0.0, features come in 1.x.0, fixes in 1.x.y and a breaking change makes 2.0.0 (Pearl); the
-  next version is tried on the Beta channel first (`1.1.0-beta.1`). An install still on 0.x only looks for stable
-  releases: set `channel = "beta"` once, or update your checkout and run `./install.sh --update`.
-- A released version is never changed: any fix is a new version. Every release's changes are in
+- A beta sorts before its release: `1.0.0 < 1.0.1-beta.1 < 1.0.1-beta.2 < 1.0.1 < 1.1.0`.
+- **1.0.0 is the first stable release**: it declares the public API stable. The `1.0.0-alpha.1` to `1.0.0-beta.1`
+  before it (the early 0.1.0 to 0.6.0 became `1.0.0-alpha.1` to `1.0.0-alpha.8`) were its pre-releases, and an
+  install on one of them updates to 1.0.0 as usual.
+- A released version is never changed: any fix is a new version. Each version's changes are in its
+  [release notes](https://github.com/noobsbot-team/noobsbot-desktop/releases); those before 1.0.0 are in
   [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Privacy and security
@@ -487,9 +489,8 @@ cargo fmt --all --check
 - `scripts/test-install.sh` and `scripts/test-session.sh` test the installer and session wrapper in a scratch
   directory. `scripts/vm/` boots a throwaway Arch VM in QEMU (no root needed) to test the real install, real-screen
   session, login screen, password prompts and updates: `sh scripts/vm/setup.sh`, then `scripts/vm/boot.sh`.
-- Commits follow [Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, …), which
-  [release-plz](https://release-plz.dev) uses to pick the next version and write the changelog. Merging its release
-  pull request tags the version and builds the signed release.
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org) (`feat:`, `fix:`, …): CI makes the next
+  version from their types, tags it and builds the signed release. Pick the type with [`VERSIONING.md`](VERSIONING.md).
 
 ### Widgets from your own apps
 Any process can show a widget in Notification Center or on the desktop over the session bus; nothing is loaded into

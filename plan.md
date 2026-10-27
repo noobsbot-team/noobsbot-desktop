@@ -1648,29 +1648,30 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   |---|---|---|
   | `MAJOR` | a new gem codename (1 = Opal, 2 = Pearl, …); breaking config changes | `2.0.0` |
   | `MINOR` | new features (`feat:` commits) | `1.3.0` |
-  | `PATCH` | fixes only (`fix:` commits) | `1.3.1` |
-  | pre-release: alpha | features still landing, `-alpha.N` (0.1.0 … 0.6.0 were renumbered to these) | `1.0.0-alpha.8` |
-  | pre-release: beta | feature-complete and in testing, `-beta.N` | `1.0.0-beta.1`, `1.1.0-beta.2` |
-  | pre-release: rc | release candidate, fixes only, `-rc.N` | `1.0.0-rc.1` |
-  Pre-releases sort before their release by SemVer precedence (`1.0.0-rc.1` < `1.0.0`, `beta.10` > `beta.2`) and reach
-  only the Beta channel, except that Stable (and `install.sh`) takes the newest pre-release while no stable release
-  exists; 1.0.0 is the first stable one. release-plz reads only `vX.Y.Z` tags, so until 1.0.0 each pre-release's
-  PR (version and changelog section) is opened by hand from a `release-plz-…` branch; release-plz tags it on merge.
+  | `PATCH` | fixes (`fix:` and the other types), released nightly after their betas | `1.3.1` |
+  | beta | each merged fix right away, `-beta.N` | `1.3.1-beta.1` |
+  Betas sort before their release by SemVer precedence (`1.3.1-beta.2` < `1.3.1`, `beta.10` > `beta.2`) and reach only
+  the Beta channel. 1.0.0 is the first stable release; the earlier `1.0.0-alpha.1` … `1.0.0-alpha.8` (0.1.0 … 0.6.0
+  renumbered) and `1.0.0-beta.1` were its pre-releases. The full rule is in `VERSIONING.md` (issue #24).
   The version lives **only** in `Cargo.toml`; `noobsbot-desktop --version` prints `1.3.0 (Opal) · 2026-10-17 · a1b2c3d`
-  and About shows "Noobsbot Desktop 1.3 · Opal" (a pre-release: "1.0 beta 1 · Opal"). The same scheme is adopted by
+  and About shows "Noobsbot Desktop 1.3 · Opal" (a beta: "1.3 beta 1 · Opal"). The same scheme is adopted by
   `noobsbot-terminal`.
 - **Git workflow (version control):** `main` is protected (CI must pass, no force-push); work happens on short
   branches merged by pull request; **Conventional Commits** (`feat:`, `fix:`, `perf:`, `docs:`, `feat!:` for breaking)
   are the input to the automatic version bump. Tags `v1.3.0` are created by the bot, never by hand.
-- **Automatic version bump + changelog:** **release-plz** (a Rust tool) runs in CI on every push to `main`. It reads
-  the commits since the last tag, computes the next version (feat → minor, fix → patch, `!` → major), bumps
-  `Cargo.toml`, writes `CHANGELOG.md` and opens a **"release v1.3.0" pull request**. Merging that PR is the only human
-  step: release-plz then tags `v1.3.0` and creates the GitHub Release with the changelog as release notes.
-- **Release build (CI, `.github/workflows/release.yml`, on tag `v*`):** builds `noobsbot-desktop` for `x86_64`
-  (`aarch64` later) with `lto = "thin"`, `strip = true`; packages
+- **Automatic version bump (`.github/workflows/version.yml`):** runs on every push to `main`, nightly at 00:00 UTC and
+  by hand (`bump`: auto, major, minor or patch). It reads the commit subjects since the last stable tag: `!` → major and
+  `feat` → minor, both a release right away; anything else on a push → a beta tag `1.3.1-beta.N`, released as `1.3.1`
+  by the nightly run. A release sets `Cargo.toml` (`.github/set-version.sh`), commits `chore: release v1.3.1` and tags
+  it; a beta is only a tag. Each gets a draft GitHub Release with notes from the commits and starts `release.yml`.
+  Only the first release, 1.0.0, is a hand-started run with `bump: major`. (Before 1.0.0, release-plz did this through
+  release pull requests and wrote `CHANGELOG.md`.)
+- **Release build (CI, `.github/workflows/release.yml`, on tag `v*` or started by the version workflow):** sets the
+  version from the tag, builds `noobsbot-desktop` for `x86_64` (`aarch64` later) with `lto = "thin"`, `strip = true`; packages
   `noobsbot-desktop-1.3.0-x86_64.tar.zst` (binary, `themes/`, `data/`, session file, PAM/portal/greetd templates) +
   `SHA256SUMS` + a **minisign** signature of it (`SHA256SUMS.minisig`; private key only in a CI secret, the public key is compiled
-  into the updater). Attached to the GitHub Release. `install.sh` installs **this tarball** by default (fast, no Rust
+  into the updater). Attached to the GitHub Release, which it then publishes: a release as "latest", a beta as a
+  pre-release, never "latest". `install.sh` installs **this tarball** by default (fast, no Rust
   toolchain needed on the user's machine) and only builds from source with `--from-source`.
 - **Software Update on the installed desktop (`services/update.rs`):**
   ```
@@ -1679,7 +1680,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   │                                                       │
   │   Noobsbot Desktop 1.3 · Opal        [ Update Now ]  │  Title 3 + default button
   │   1.3.0 — 42 MB · Released 2 days ago                 │  Callout, label-secondary
-  │   ▸ More Info…  (release notes, from CHANGELOG)       │
+  │   ▸ More Info…  (release notes)                       │
   │                                                       │
   │   (◉) Automatically keep this computer up to date     │  toggle
   │       Download in background · Install at next login  │
@@ -1689,7 +1690,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   ```
   | Step | How |
   |---|---|
-  | **Check** | once every 24 h (calloop timer; also "Check Now" and the first launch after boot) `GET https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/latest` (Beta channel: `/releases`, pre-releases allowed; Stable reads `/releases` too while `latest` is a 404, before 1.0.0). Compares SemVer with the running version. No account, no identifier, no telemetry: the request carries nothing but the version header. Off with one toggle. Fails silently when offline |
+  | **Check** | once every 24 h (calloop timer; also "Check Now" and the first launch after boot) `GET https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/latest` (Beta channel: `/releases`, the newest, betas included; Stable reads only `latest`, never a beta). Compares SemVer with the running version. No account, no identifier, no telemetry: the request carries nothing but the version header. Off with one toggle. Fails silently when offline |
   | **Notify** | notification (E4.1): "Noobsbot Desktop 1.3 is available · *Update Tonight* / *Details*"; a red badge "1" on System Settings in the dock |
   | **Download** | in the background to `~/.cache/noobsbot-desktop/updates/`; `SHA256SUMS` + **minisign signature verified** before anything is touched; a bad signature deletes the file and shows an alert |
   | **Install** | a compositor can't replace itself while running, so the verified tarball is staged, and installed by the tiny privileged helper `noobsbot-desktop-update` through **polkit** (admin password in our alert; one polkit action `org.noobsbot.desktop.update`). It unpacks to `/usr/lib/noobsbot-desktop/versions/1.3.0/`, switches the `/usr/bin/noobsbot-desktop` symlink, keeps the previous version. Applied at the **next login** ("Install at next login", default) or now via "Log Out & Update" |
@@ -1706,23 +1707,24 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   Settings in the dock while an update is pending (the count of pending updates), the noobsbot-terminal row (its
   version from `noobsbot --version`; only shown with More Info…, since its own installer or package updates it), and
   the download size and release date under each version row ("12.3 MB · 27 Oct 2026").
-- **Built with:** `release-plz` + GitHub Actions (CI); `ureq` (small blocking HTTP client, run on a worker thread so the
+- **Built with:** GitHub Actions (CI: the version and release workflows); `ureq` (small blocking HTTP client, run on a worker thread so the
   compositor loop never blocks), `semver`, `minisign-verify`, `zstd`/`tar` crates; `polkit` action + a 100-line
   privileged helper (`src/bin/update-helper.rs` → binary `noobsbot-desktop-update`); the session wrapper is a shell
   script (`noobsbot-desktop-session`) that runs the compositor under a tiny Rust binary (`src/bin/watchdog.rs` → `noobsbot-desktop-watchdog`, shipped
   in each version dir) for the heartbeat watchdog (E6.4).
-- **Why this way:** GitHub Releases is free, already where the code lives, and needs no server of ours; release-plz
-  removes human version bumps and keeps the changelog honest; minisign is the smallest proven signing scheme (used for
+- **Why this way:** GitHub Releases is free, already where the code lives, and needs no server of ours; the version
+  workflow removes human version bumps, and the release notes come from the commits; minisign is the smallest proven signing scheme (used for
   Zig and libsodium releases, among others), and it is what stops a hijacked download from becoming a root
   install; staged install + rollback is how mature systems avoid bricking the desktop with an update.
   **Rejected:** `git pull && cargo build` on the user's machine (needs the Rust toolchain, 5-minute builds, no
   signatures); replacing the binary live (the compositor would die); Flatpak (compositors can't be Flatpaks); only
   pacman/AUR (no repo until Open-3, and AUR builds from source anyway); our own update server (cost and upkeep);
   unsigned downloads (a MITM would get root).
-- **Done when:** merging a `feat:` commit produces a release PR with the right version and changelog; merging it
-  produces a tagged, signed GitHub Release; a VM running 1.2.4 shows the notification, installs 1.3.0 at next login,
+- **Done when:** merging a `feat:` commit produces a tagged, signed GitHub Release with the right version, and a
+  `fix:` a beta; a VM running 1.2.4 shows the notification, installs 1.3.0 at next login,
   and a deliberately broken 1.3.1 is rolled back automatically.
-- **Built:** release-plz and the release workflows (`release-plz.toml`, `.github/workflows/`), signed tarballs,
+- **Built:** the version and release workflows (`.github/workflows/version.yml` and `release.yml`,
+  `.github/set-version.sh`; release-plz until 1.0.0), signed tarballs,
   `src/services/update.rs` (with `curl`, not `ureq`), `src/bin/update-helper.rs`, the watchdog and rollback in the
   session wrapper (its "was rolled back" notification has Report, which opens a new issue), the Settings page above,
   and installing at the next login without a click (opt-in, `[update] install_at_login`, Settings ▸ General ▸ Software
@@ -1994,8 +1996,8 @@ volume above 100%; peek at the desktop with blur (D3); lockdown policies; an add
     replace. We don't install Konsole, so those panels are hidden; "Open Terminal Here" opens noobsbot instead.
 - **Quake mode:** F12 (E2.8).
 - **Installed by:** `install.sh`, from its signed GitHub Release (or from source with `--from-source`); updated by
-  Software Update (E6.13). This needs the noobsbot-terminal repo to adopt the same release pipeline (release-plz +
-  signed tarballs) before M6.
+  Software Update (E6.13). This needs the noobsbot-terminal repo to adopt the same release pipeline (the version
+  workflow + signed tarballs) before M6.
 
 ## F2. Browser → **Helium** (default) — https://helium.computer
 - **Why:** owner requirement (R6, changed from Brave on 2026-10-18). Helium (by imput, GPL-3.0) is Chromium-based
@@ -2253,8 +2255,8 @@ custom-desktop-environemt/
   assets/          Phosphor symbols (SVG), noobsbot-desktop logo
   data/            config.toml (commented defaults) · helium-browser-flags.conf · wallpapers/ · system/ (mirrors `/`: greetd config, pam.d/noobsbot-desktop, portals.conf, UPower.conf.d drop-in, wayland-sessions .desktop, session target, polkit action)
   themes/          Noobsbot Glass Kvantum + colour scheme + GTK (GPL-3.0, generated from theme.rs)
-  install.sh  LICENSE (MIT)  CHANGELOG.md (generated)  release-plz.toml
-  .github/workflows/  ci.yml (fmt, clippy, tests) · release-plz.yml (version PR + tag) · release.yml (build, sign, publish)
+  install.sh  LICENSE (MIT)  VERSIONING.md  CHANGELOG.md (up to 1.0.0-beta.1)
+  .github/workflows/  ci.yml (fmt, clippy, tests) · version.yml (version + tag, with set-version.sh) · release.yml (build, sign, publish)
 ```
 
 ## J2. Rust crates and why
@@ -2297,7 +2299,7 @@ Rule: **a crate is added only when its feature is built.**
 | Safety net | Ctrl+Alt+F3 → text console | M6+ |
 | **Spikes** | three pass/fail experiments in the first coding week: (a) the nested compositor runs Helium + Dolphin + the portal file picker with the portals.conf; (b) Dolphin translucent through Kvantum on Wayland (E2.9); (c) a GTK3 dialog takes our title bar through `kde-server-decoration` (E1.3). A failed spike updates the plan before M1 continues | first week |
 | Lints + CI | `cargo clippy -D warnings`, with `unwrap_used` / `expect_used` / `panic` denied in `src/shell` and `src/ui`; GitHub Actions runs fmt, clippy and tests on every push | every commit |
-| Release pipeline | a `feat:` commit on a test branch → release PR → tag → signed tarball; a VM on the previous version updates and a broken build rolls back (E6.13) | M6 |
+| Release pipeline | a `feat:` commit → the version workflow → tag → signed tarball; a VM on the previous version updates and a broken build rolls back (E6.13) | M6 |
 | Latency + resize | 240 fps camera drag test; slow-app resize anchoring; screen-size matrix from D13 (720p … 4K @ 200%, portrait) checked in mockups and real runs | M1, every milestone |
 | Robustness | fuzzing client (garbage / out-of-order requests); `kill -STOP` on NetworkManager and BlueZ while using the desktop; 20 × suspend/resume; unplug all monitors; broken `config.toml`; `heaptrack` + 24 h soak (RSS flat) | M1 (fuzz, config), M6 (rest) |
 | VM | QEMU with `virtio-gpu` + virgl for the GPU path **and** without it for the software fallback (llvmpipe) | M6 |

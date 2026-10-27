@@ -3,8 +3,7 @@
 #   sh scripts/setup-release-signing.sh
 # 1. makes a password-less minisign keypair in $KEYDIR (default ~/noobsbot-release-keys; back the secret key up!),
 # 2. stores the secret key as the GitHub secret MINISIGN_SECRET_KEY (release.yml signs with it),
-# 3. lets GitHub Actions open pull requests, so release-plz can make its release PRs,
-# 4. writes the public key into install.sh and data/ so installs and updates verify against it.
+# 3. writes the public key into install.sh and data/ so installs and updates verify against it.
 # Needs `gh` logged in, and `minisign` (pacman -S minisign) or rsign2 (RSIGN=/path/to/rsign).
 set -eu
 
@@ -30,8 +29,6 @@ else
 fi
 
 gh secret set MINISIGN_SECRET_KEY --repo "$REPO" < "$SECRET"
-gh api -X PUT "repos/$REPO/actions/permissions/workflow" \
-    -f default_workflow_permissions=write -F can_approve_pull_request_reviews=true
 
 # The key itself is the public file's second line (the first is a comment).
 key=$(sed -n 2p "$PUBLIC")
