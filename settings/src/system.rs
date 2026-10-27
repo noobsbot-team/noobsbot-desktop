@@ -243,14 +243,43 @@ async fn kbd_backlight(bus: &Connection, set: Option<u8>) -> Option<u8> {
     Some((call("GetBrightness").await? * 100 / max) as u8)
 }
 
-/// Calls `method` on the desktop's `org.noobsbot.Desktop.Displays`; what went wrong, if anything.
-pub async fn displays_call<B: serde::Serialize + zbus::zvariant::DynamicType>(method: &'static str, body: B) -> Option<String> {
+/// Calls `method` on the desktop's `org.noobsbot.Desktop.<interface>`; what went wrong, if anything.
+pub async fn desktop_call<B: serde::Serialize + zbus::zvariant::DynamicType>(interface: &'static str, method: &'static str, body: B) -> Option<String> {
     let call = async {
         let bus = zbus::connection::Builder::session()?.method_timeout(Duration::from_secs(2)).build().await?;
-        bus.call_method(Some("org.noobsbot.Desktop"), "/org/noobsbot/Desktop", Some("org.noobsbot.Desktop.Displays"), method, &body).await?;
+        let interface = format!("org.noobsbot.Desktop.{interface}");
+        bus.call_method(Some("org.noobsbot.Desktop"), "/org/noobsbot/Desktop", Some(interface.as_str()), method, &body).await?;
         zbus::Result::Ok(())
     };
     call.await.err().map(|err| format!("The desktop didn't answer: {err}"))
+}
+
+/// `$XDG_STATE_HOME/noobsbot-desktop/update.json`, which the desktop's update checker writes.
+pub fn update_path() -> std::path::PathBuf {
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/state"));
+    state.join("noobsbot-desktop/update.json")
+}
+
+/// Software Update's state, as the desktop wrote it (`src/services/update.rs` `Status`).
+#[derive(Debug, Clone, Default, PartialEq, serde::Deserialize)]
+#[serde(default)]
+pub struct UpdateStatus {
+    /// Unix time of the last check; 0 never.
+    pub checked: i64,
+    /// A newer version.
+    pub available: Option<String>,
+    /// Its release page.
+    pub url: Option<String>,
+    /// Downloaded and verified: Update Now installs it.
+    pub ready: bool,
+    /// The previous version, while it can be reverted to.
+    pub revert: Option<String>,
+}
+
+pub fn read_update() -> UpdateStatus {
+    std::fs::read_to_string(update_path()).ok().and_then(|json| serde_json::from_str(&json).ok()).unwrap_or_default()
 }
 
 /// The keyboard backlight in percent, then the new status.

@@ -1,14 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
-<!-- Software Update (plan.md E6.13): "Restart to Update" runs the helper through pkexec. The helper re-verifies the
+<!-- Software Update (plan.md E6.13): "Restart to Update" and Settings' "Revert to" run the helper through pkexec. The helper re-verifies the
      minisign signature with the root-owned key, refuses older or same versions, and only then installs. -->
 <policyconfig>
   <vendor>Noobsbot Desktop</vendor>
   <vendor_url>https://github.com/noobsbot-team/noobsbot-desktop</vendor_url>
   <action id="org.noobsbot.desktop.update">
     <description>Install a Noobsbot Desktop update</description>
-    <message>Software Update wants to install a new version of Noobsbot Desktop.</message>
+    <message>Software Update wants to change the installed version of Noobsbot Desktop.</message>
     <icon_name>system-software-update</icon_name>
     <defaults>
       <allow_any>no</allow_any>
