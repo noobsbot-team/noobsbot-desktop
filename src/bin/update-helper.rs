@@ -22,7 +22,7 @@ use std::{
     io::{Read, Write},
     os::unix::{
         ffi::OsStrExt,
-        fs::{DirBuilderExt, PermissionsExt, symlink},
+        fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt, symlink},
     },
     path::{Path, PathBuf},
     process::{Command, ExitCode},
@@ -177,8 +177,9 @@ fn installed(bin: &Path, versions: &Path) -> Result<Version, String> {
 fn unpack(dir: &Path, signed: &verify::Signed, stage: &Path, versions: &Path) -> Result<PathBuf, String> {
     let copy = stage.join("release.tar.zst");
     let mut out = File::create_new(&copy).map_err(|e| format!("{}: {e}", copy.display()))?;
-    let tarball = File::open(dir.join(&signed.tarball)).map_err(|e| format!("{}: {e}", signed.tarball))?;
-    let sha256 = verify::sha256(tarball, |chunk| out.write_all(chunk)).map_err(|e| format!("{}: {e}", signed.tarball))?;
+    let tarball = open(&dir.join(&signed.tarball)).map_err(|e| format!("{}: {e}", signed.tarball))?;
+    // A release is tens of MB: a huge file (or a device) put in its place fills no disk before its hash fails.
+    let sha256 = verify::sha256(tarball.take(1 << 30), |chunk| out.write_all(chunk)).map_err(|e| format!("{}: {e}", signed.tarball))?;
     if sha256 != signed.sha256 {
         return Err(format!("{} doesn't match its signed SHA-256", signed.tarball));
     }
@@ -217,8 +218,13 @@ fn relink(to: &Path, link: &Path) -> Result<(), String> {
 /// A small file (the sums or the signature), at most 64 KiB.
 fn small(path: &Path) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
-    File::open(path).and_then(|f| f.take(64 * 1024).read_to_end(&mut bytes)).map_err(|e| format!("{}: {e}", path.display()))?;
+    open(path).and_then(|f| f.take(64 * 1024).read_to_end(&mut bytes)).map_err(|e| format!("{}: {e}", path.display()))?;
     Ok(bytes)
+}
+
+/// A file of the user's download, opened without waiting on a FIFO put there (its reads then fail at once).
+fn open(path: &Path) -> std::io::Result<File> {
+    fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(path)
 }
 
 #[cfg(test)]
