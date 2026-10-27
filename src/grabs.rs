@@ -155,18 +155,7 @@ impl PointerGrab<State> for ResizeGrab {
         handle.motion(data, None, event);
         let mods = data.modifiers();
         let Some(resize) = data.resize.as_ref() else { return };
-        let Some(surface) = resize.window.toplevel().map(|t| t.wl_surface().clone()) else { return };
-        let (mut min, mut max) = with_states(&surface, |states| {
-            let mut cached = states.cached_state.get::<SurfaceCachedState>();
-            let current = cached.current();
-            (current.min_size, current.max_size)
-        });
-        // The app's limits are for its content; the frame adds our title bar (0 = no limit stays 0).
-        let bar = crate::decorations::bar_height(&resize.window);
-        min.h += bar;
-        if max.h > 0 {
-            max.h += bar;
-        }
+        let (min, max) = data.size_limits(&resize.window);
         let resize_mods = ResizeMods { symmetric: mods.alt, keep_aspect: mods.shift };
         let (start, edges) = (resize.start, resize.edges);
         let mut size = wm::resize_size(start, edges, event.location - self.start_data.location, resize_mods, min, max);
@@ -218,6 +207,23 @@ pub fn edges_from(edge: xdg_toplevel::ResizeEdge) -> Edges {
 }
 
 impl State {
+    /// The app's min and max frame size (0: no limit).
+    fn size_limits(&self, window: &Window) -> (Size<i32, Logical>, Size<i32, Logical>) {
+        let Some(surface) = window.toplevel().map(|t| t.wl_surface().clone()) else { return Default::default() };
+        let (mut min, mut max) = with_states(&surface, |states| {
+            let mut cached = states.cached_state.get::<SurfaceCachedState>();
+            let current = cached.current();
+            (current.min_size, current.max_size)
+        });
+        // The app's limits are for its content; the frame adds our title bar (0 = no limit stays 0).
+        let bar = crate::decorations::bar_height(window);
+        min.h += bar;
+        if max.h > 0 {
+            max.h += bar;
+        }
+        (min, max)
+    }
+
     /// Starts resizing `window` by `edges` with the pointer (an app's own edge or one of our zones).
     pub fn start_resize(&mut self, window: Window, edges: Edges, start_data: GrabStartData<State>, serial: smithay::utils::Serial) {
         let Some(pointer) = self.seat.get_pointer() else { return };
