@@ -344,7 +344,7 @@ and shows a notification with the line.
 | `[idle]` | when to dim, turn the screen off and sleep (each on battery and on AC), turn the keyboard backlight off, locking |
 | `[battery]` | the percentage beside the menu bar's battery symbol, slightly dim the display on battery |
 | `[sound]` | the alert sound (from the system's sound theme) and its volume, user interface sound effects on or off, the sound at login |
-| `[privacy]` | which programs may record the screen |
+| `[privacy]` | which programs may record the screen, and which may control the keyboard and mouse (`input_control`) |
 | `[notifications]` | Do Not Disturb, on a schedule too (`dnd_scheduled`, `dnd_from`, `dnd_until`), banners over full-screen windows (`full_screen`), previews always, when unlocked or never (`previews`) |
 | `[notification_apps]` | per app: banners, alerts, Notification Center only or off; sound, dock badge, kept in Notification Center, shown on the lock screen (`lock`) |
 | `[weather]` | the weather widget (off by default), city or coordinates, units |
@@ -394,6 +394,9 @@ Versions follow [semantic versioning](https://semver.org); every release's chang
 - **Screen recording asks first:** the first time a program wants to record the screen, an alert asks you, and the
   answer is saved in `[privacy]`. Sandboxed (Flatpak) apps never get screen recording. Screen sharing goes through
   the standard portal.
+- **Typing and clicking for you asks first:** the first time a program creates a virtual keyboard or pointer (`wtype`,
+  remote desktops), an alert asks you; until you allow it, its keys and clicks go nowhere. The answer is saved in
+  `[privacy] input_control`. Sandboxed apps never get it, and it never reaches the lock screen.
 - **Password prompts** (for example `pkexec`, or installing an update) use Noobsbot Desktop's own alert. The
   standard Qt agent is only a fallback.
 - **Lock screen:** if the desktop ever crashes, you return to the login screen; it is never left unlocked.
