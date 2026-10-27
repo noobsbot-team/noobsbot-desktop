@@ -653,11 +653,16 @@ install_desktop_release() {
     for f in "$name" SHA256SUMS SHA256SUMS.minisig; do
         run curl -fL --proto '=https' -o "$dir/$f" "https://github.com/$DESKTOP_REPO/releases/download/$tag/$f"
     done
-    # The signature covers SHA256SUMS, and SHA256SUMS the tarball: nothing unsigned ever reaches sudo.
-    run minisign -Vqm "$dir/SHA256SUMS" -P "$MINISIGN_PUBKEY" ||
-        { run rm -rf "$dir"; die "the release signature is wrong; nothing was installed."; }
-    run bash -c 'cd "$1" && grep -E "^[0-9a-f]{64}  $2\$" SHA256SUMS | sha256sum -c --strict --quiet' _ "$dir" "$name" ||
-        { run rm -rf "$dir"; die "the download doesn't match its signed checksum; nothing was installed."; }
+    # Root checks and unpacks its own copy, in a dir only root can write: the download in the user's cache could be
+    # swapped between a check and root's read of it. The signature covers SHA256SUMS, and SHA256SUMS the tarball:
+    # nothing unsigned is ever unpacked as root.
+    local stage=/tmp/tmp.XXXXXXXXXX
+    if ((DRY)); then show sudo mktemp -d; else stage=$(as_root mktemp -d); fi
+    as_root cp -- "$dir/$name" "$dir/SHA256SUMS" "$dir/SHA256SUMS.minisig" "$stage/"
+    as_root minisign -Vqm "$stage/SHA256SUMS" -P "$MINISIGN_PUBKEY" ||
+        { as_root rm -rf "$stage"; run rm -rf "$dir"; die "the release signature is wrong; nothing was installed."; }
+    as_root bash -c 'cd "$1" && grep -E "^[0-9a-f]{64}  $2\$" SHA256SUMS | sha256sum -c --strict --quiet' _ "$stage" "$name" ||
+        { as_root rm -rf "$stage"; run rm -rf "$dir"; die "the download doesn't match its signed checksum; nothing was installed."; }
     # Checked before it is installed: a prebuilt this system can't run is built from source instead.
     if ((!DRY)); then
         rm -rf "$dir/check"
@@ -665,6 +670,7 @@ install_desktop_release() {
         tar --zstd -xf "$dir/$name" -C "$dir/check" --strip-components=1
         if ! usable "$dir/check"; then
             rm -rf "$dir/check"
+            as_root rm -rf "$stage"
             warn "building Noobsbot Desktop $ver from source instead."
             FALLBACK_TAG=$tag
             return
@@ -673,7 +679,8 @@ install_desktop_release() {
     fi
     as_root mkdir -p "$LIB/versions/$ver"
     # --no-same-owner: root's tar would otherwise keep the archive's (the CI user's) uid on the installed files.
-    as_root tar --zstd --no-same-owner --no-same-permissions -xf "$dir/$name" -C "$LIB/versions/$ver" --strip-components=1
+    as_root tar --zstd --no-same-owner --no-same-permissions -xf "$stage/$name" -C "$LIB/versions/$ver" --strip-components=1
+    as_root rm -rf "$stage"
     use_version "$ver"
     install_xwayland_satellite "$ver"
 }
