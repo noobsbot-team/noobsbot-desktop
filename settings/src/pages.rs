@@ -2613,7 +2613,7 @@ pub fn keep_sheet<'a>(t: Tokens, left: u64) -> Element<'a, Message> {
     iced::widget::opaque(container(sheet).center(Length::Fill).style(t.dim()))
 }
 
-/// The desktop's version: the root package's, which release-plz bumps (this crate's own stays 0.1.0).
+/// The desktop's version: the root package's, which CI's version workflow sets (this crate's own stays 0.1.0).
 pub fn version() -> &'static str {
     let manifest = include_str!("../../Cargo.toml");
     manifest.lines().find_map(|l| l.strip_prefix("version = ")).map_or("", |v| v.trim_matches('"'))
