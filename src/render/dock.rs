@@ -1,6 +1,4 @@
-//! The dock (E3.1) in Plank's Transparent-Tight look: square, borderless, an opaque rgb(41) → rgb(80) gradient bar
-//! behind the lower half of the icons, a small dot under each running app. The same in light and dark (it's a theme).
-//! `[dock] style` swaps the bar for the `whitesur-dark` or `glass` preset (`Look`).
+//! The dock (E3.1): the icons with nothing behind them, a small dot under each running app.
 
 use smithay::{
     backend::renderer::{
@@ -23,7 +21,6 @@ use super::{
 };
 use crate::{
     apps::Icons,
-    config::DockStyle,
     mission::close_button,
     services::launcher::Entry,
     shell::{
@@ -35,37 +32,6 @@ use crate::{
     wm::Rect,
 };
 
-/// A `[dock] style`: the bar's grey gradient, top to bottom (0–1, `bottom` < 1), its opacity, corner radius and a
-/// 1 px light edge inside it (white alpha). No blur: the renderer has no blur pass (D3 glass is tint only).
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Look {
-    top: f32,
-    bottom: f32,
-    opacity: f32,
-    radius: f64,
-    edge: f32,
-}
-
-impl Look {
-    fn of(style: DockStyle) -> Look {
-        match style {
-            // FillStartColor / FillEndColor, alpha 255, square, LineWidth 0.
-            DockStyle::Default => Look { top: 41.0 / 255.0, bottom: 80.0 / 255.0, opacity: 1.0, radius: 0.0, edge: 0.0 },
-            DockStyle::WhitesurDark => Look { top: 30.0 / 255.0, bottom: 30.0 / 255.0, opacity: 0.85, radius: 0.0, edge: 0.10 },
-            // The D5 dock radius for glass.
-            DockStyle::Glass => Look { top: 96.0 / 255.0, bottom: 72.0 / 255.0, opacity: 0.45, radius: 18.0, edge: 0.25 },
-        }
-    }
-
-    /// The bar over `rect`. The glass shader's sheen paints white at strength `s` fading downwards; a negative `s`
-    /// darkens instead: over `bottom` it gives `bottom + s (bottom - 1)` at the top edge (opaque), which is `top` for
-    /// the `s` below.
-    fn bar(&self, shaders: &Shaders, rect: Rect, scale: f64) -> PixelShaderElement {
-        let sheen = (self.top - self.bottom) / (1.0 - self.bottom);
-        let radius = self.radius.min(f64::from(rect.size.h) / 2.0);
-        shaders.glass_element(rect, [self.bottom, self.bottom, self.bottom, self.opacity], radius, [sheen, self.edge, 0.0, 0.0], 0.0, [0.0; 4], scale)
-    }
-}
 /// Drawn when an app's icon isn't in any theme.
 const FALLBACK_ICON: &str = "application-x-executable";
 
@@ -105,8 +71,6 @@ pub struct Icon<'a> {
 /// The dock's pieces, kept between frames so a still dock damages nothing.
 #[derive(Default)]
 pub struct DockView {
-    /// The bar, made at this scale; resized as zoom widens it.
-    bar: Option<(u64, PixelShaderElement)>,
     /// Running dots, by their rect.
     marks: Vec<(Rect, PixelShaderElement)>,
     icons: Vec<Label>,
@@ -127,8 +91,6 @@ pub struct DockView {
     peek_dim: Option<((Rect, bool, u64), PixelShaderElement)>,
     /// The line before the minimised windows' tiles.
     separator: Option<(Rect, PixelShaderElement)>,
-    /// The bar and highlights are made in this style.
-    style: DockStyle,
 }
 
 /// The last `u32` is the text scale, so a showing tooltip or badge resizes when it changes.
@@ -303,8 +265,8 @@ impl DockView {
 }
 
 impl DockView {
-    /// Front to back: icons, their shadows, dots, the bar. Icons are rasterised once at
-    /// `px` (the zoomed size) and scaled down by the GPU when smaller; so are their shadows, blurred to match.
+    /// Front to back: icons, their shadows, dots, the separator. Icons are rasterised once at `px` (the zoomed size)
+    /// and scaled down by the GPU when smaller; so are their shadows, blurred to match.
     #[expect(clippy::too_many_arguments, reason = "the frame's renderer, shaders and caches, like every shell piece")]
     pub fn elements(
         &mut self,
@@ -314,13 +276,8 @@ impl DockView {
         items: &[Icon],
         layout: &Layout,
         px: u32,
-        style: DockStyle,
         scale: f64,
     ) -> Vec<SceneElement> {
-        if self.style != style {
-            (self.style, self.bar) = (style, None);
-        }
-        let look = Look::of(style);
         // The small shadow under each icon (Plank's IconShadowSize 1): D6 level 1, dark like the dock, in the zoomed
         // bitmap's px. Its σ is blur / 2 at rest; three box passes of radius r give σ ≈ r + ½.
         let d6 = super::Shadow::of(1, true).expect("D6 level 1 casts a shadow");
@@ -414,21 +371,15 @@ impl DockView {
             })
             .collect();
         out.extend(self.marks.iter().map(|(_, e)| SceneElement::Shader(e.clone())));
-        // A thin line down the bar, a sixth of it clear at either end.
+        // A thin line as tall as the icons at rest, a sixth of it clear at either end.
         let line = layout.separator.map(|x| {
-            let (top, h) = (layout.bar.loc.y, layout.bar.size.h);
+            let (top, h) = (layout.zone.loc.y, layout.icon as i32);
             Rectangle::new(((x - 0.5).round() as i32, top + h / 6).into(), (1, h - h / 3).into())
         });
         if self.separator.as_ref().map(|(r, _)| *r) != line {
             self.separator = line.map(|rect| (rect, shaders.light(rect, [1.0, 1.0, 1.0, 0.35], false, scale)));
         }
         out.extend(self.separator.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
-
-        match self.bar.as_mut() {
-            Some((s, element)) if *s == scale.to_bits() => element.resize(grow(layout.bar, 1), None),
-            _ => self.bar = Some((scale.to_bits(), look.bar(shaders, layout.bar, scale))),
-        }
-        out.extend(self.bar.as_ref().map(|(_, e)| SceneElement::Shader(e.clone())));
         out
     }
 }
@@ -450,13 +401,6 @@ fn shade(icon: &Rendered, lighten: f32, darken: f32) -> Rendered {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn default_style_is_transparent_tight() {
-        let look = Look::of(DockStyle::default());
-        assert_eq!((look.top, look.bottom, look.opacity, look.radius, look.edge), (41.0 / 255.0, 80.0 / 255.0, 1.0, 0.0, 0.0));
-        assert!([DockStyle::WhitesurDark, DockStyle::Glass].iter().all(|&s| Look::of(s).bottom < 1.0), "the sheen divides by 1 - bottom");
-    }
 
     #[test]
     fn shading_stays_premultiplied() {

@@ -40,8 +40,6 @@ use crate::{
 pub const MIN_ICON: i32 = 32;
 /// Plank's largest icon size (Ctrl+scroll stops there).
 pub const MAX_ICON: i32 = 128;
-/// The bar stands behind the lower half of the icons only; the top half rises above it (our look).
-const BAR_COVER: f64 = 0.5;
 
 /// Plank's theme paddings are tenths of the icon size, truncated to whole px as Plank does. ItemPadding 0.5.
 pub fn item_pad(icon: f64) -> f64 {
@@ -60,8 +58,6 @@ pub struct Layout {
     pub icons: Vec<Rectangle<f64, Logical>>,
     /// Each item's hover column: its icon plus the item padding, centred on it (Plank's hover region).
     pub columns: Vec<(f64, f64)>,
-    /// The background bar.
-    pub bar: Rect,
     /// The unzoomed dock (Plank's static dock region): where the pointer zooms and clicks.
     pub zone: Rect,
     /// The unzoomed icon size after fitting.
@@ -126,11 +122,8 @@ pub fn layout(n: usize, tiles: usize, output: Size<i32, Logical>, icon: i32, zoo
         icons.push(Rectangle::new(((centre - size / 2.0).round(), h - bottom - size).into(), (size, size).into()));
         columns.push((centre - (size + pad) / 2.0, centre + (size + pad) / 2.0));
     }
-    let (start, end) = (columns.first().map_or(left, |c| c.0), columns.last().map_or(left, |c| c.1));
-    let bar_top = (h - bottom - s * BAR_COVER).round() as i32;
-    let bar = Rectangle::new((start.round() as i32, bar_top).into(), ((end - start).round() as i32, output.h - bar_top).into());
     let separator = (gap > 0.0).then(|| (columns[split - 1].1 + columns[split].0) / 2.0);
-    Layout { icons, columns, bar, zone, icon: s, separator }
+    Layout { icons, columns, zone, icon: s, separator }
 }
 
 /// The item whose hover region (its column, from its icon's top to the screen edge) holds `p`; the first wins.
@@ -1776,9 +1769,6 @@ mod tests {
         assert_eq!(l.icons[0], Rectangle::new((610.0, 1100.0).into(), (84.0, 84.0).into()));
         assert_eq!(l.icons[1].loc.x - l.icons[0].loc.x, 88.0);
         assert_eq!(l.columns[0], (608.0, 696.0));
-        // The bar covers the icons' lower half and reaches the screen bottom, end to end.
-        assert_eq!((l.bar.loc.y, l.bar.loc.y + l.bar.size.h), (1142, 1200));
-        assert_eq!((l.bar.loc.x, l.bar.size.w), (608, 704));
     }
 
     #[test]
@@ -1798,7 +1788,6 @@ mod tests {
         assert_eq!(l.icons[7].size.w, 84.0);
         assert_eq!(l.icons[7].loc.x, flat.icons[7].loc.x + 42.0);
         assert_eq!(l.icons[0].loc.x, flat.icons[0].loc.x - 42.0);
-        assert_eq!((l.bar.loc.x, l.bar.size.w), (608 - 42, 704 + 84), "the background follows the end icons");
         assert_eq!(hit(&l, centre), Some(3));
         assert_eq!(hit(&l, (916.0, 1060.0).into()), Some(3), "the zoomed top of the icon counts");
         // Half-way through the easing: 125%.

@@ -436,7 +436,6 @@ impl Layout {
     fn slid(mut self, dy: f64) -> Self {
         let d = dy.round() as i32;
         self.icons.iter_mut().for_each(|r| r.loc.y += dy);
-        self.bar.loc.y += d;
         self.zone.loc.y += d;
         self
     }
@@ -575,7 +574,7 @@ impl State {
                 windows.chain(self.entry_for(item).and_then(|(_, since)| *since)).min()
             })
             .collect();
-        let bottom = f64::from(layout.bar.loc.y + layout.bar.size.h);
+        let bottom = f64::from(layout.zone.loc.y + layout.zone.size.h);
         for (i, item) in items.iter().enumerate() {
             let Some(since) = urgent_since[i] else { continue };
             let age = now - since;
@@ -596,7 +595,7 @@ impl State {
             }
         }
         if hide < 1.0 {
-            let reach = bottom - layout.icons.iter().map(|r| r.loc.y).fold(f64::from(layout.bar.loc.y), f64::min);
+            let reach = bottom - layout.icons.iter().map(|r| r.loc.y).fold(f64::from(layout.zone.loc.y), f64::min);
             let mut layout = layout.slid(hide * reach);
             let step = layout.icon + super::dock::item_pad(layout.icon);
             let fx = &self.dock_fx;
@@ -884,7 +883,6 @@ mod tests {
     fn sliding_moves_the_whole_dock() {
         let l = super::super::dock::layout(3, 0, (1920, 1200).into(), 84, 1.0, 0.0, None);
         let s = l.clone().slid(50.0);
-        assert_eq!(s.bar.loc.y, l.bar.loc.y + 50);
         assert_eq!(s.zone.loc.y, l.zone.loc.y + 50);
         assert_eq!(s.icons[1].loc.y, l.icons[1].loc.y + 50.0);
         assert_eq!(s.columns, l.columns);
