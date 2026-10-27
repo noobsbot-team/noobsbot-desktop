@@ -1,6 +1,7 @@
 //! Desktop icons (E7.2, L12): the files in the Desktop folder on the wallpaper. A grid from the top right
-//! down each column, then leftwards; click selects, double-click opens (xdg-open), drag rearranges (saved), right-click
-//! menu: Open, Rename, Move to Trash (`gio trash`), New Folder. The folder is watched with inotify, so idle costs nothing.
+//! down each column, then leftwards; click selects, double-click opens (xdg-open; a launcher starts its app), drag
+//! rearranges (saved), right-click menu: Open, Rename, Move to Trash (`gio trash`), New Folder. The folder is watched
+//! with inotify, so idle costs nothing.
 //! Mounted drives (E8.8) sit first, at the top right: double-click opens one in the file manager, its menu has Eject.
 
 use std::{
@@ -630,11 +631,19 @@ impl State {
         }
     }
 
-    /// A file with its app; a drive in the file manager (as its "connected" notification does).
+    /// A launcher starts its app as the dock does, another file opens with its app, a drive in the file manager (as its
+    /// "connected" notification does).
     fn desktop_open(&mut self, name: &str) {
-        let command =
-            if is_drive(name) { ["dolphin".into(), name.into()] } else { ["xdg-open".into(), self.desktop.dir.join(name).to_string_lossy().into_owned()] };
-        self.spawn(&command);
+        if is_drive(name) {
+            self.spawn(&["dolphin".into(), name.into()]);
+            return;
+        }
+        let path = self.desktop.dir.join(name);
+        // Checked again here: the file may have changed since the scan.
+        match crate::apps::launcher(&path) {
+            Some(app) => _ = self.launch(Some(&app)),
+            None => _ = self.spawn(&["xdg-open".into(), path.to_string_lossy().into_owned()]),
+        }
     }
 
     /// The right-click menu's rows: an icon's, or the desktop's.
