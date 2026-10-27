@@ -200,6 +200,8 @@ pub struct App {
     update: system::UpdateStatus,
     /// Check Now was pressed and `update.json` hasn't changed since.
     checking: bool,
+    /// CalDAV ▸ Add Account's test fetch is running.
+    caldav_checking: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -425,6 +427,7 @@ impl App {
             devices: None,
             update: system::read_update(),
             checking: false,
+            caldav_checking: false,
         };
         app.retheme();
         if page == Page::General {
@@ -520,20 +523,28 @@ impl App {
                 }
             }
             Message::AddCalDav => {
-                if pages::CALDAV.iter().any(|&key| self.texts.get(key).is_none_or(|v| v.trim().is_empty())) {
+                if self.caldav_checking || pages::CALDAV.iter().any(|&key| self.texts.get(key).is_none_or(|v| v.trim().is_empty())) {
                     return Task::none();
                 }
-                let [url, user, password] = pages::CALDAV.map(|key| self.texts.remove(key).unwrap_or_default());
-                return Task::perform(add_caldav(url.trim().to_owned(), user.trim().to_owned(), password), Message::CalDavAdded);
+                // The form stays, "Checking…", while the fetch runs (up to 30 s); the password goes to it.
+                self.caldav_checking = true;
+                let [url, user] = [pages::CALDAV[0], pages::CALDAV[1]].map(|key| self.texts.get(key).map_or("", |v| v.trim()).to_owned());
+                let password = self.texts.insert(pages::CALDAV[2].into(), String::new()).unwrap_or_default();
+                return Task::perform(add_caldav(url, user, password), Message::CalDavAdded);
             }
             Message::CalDavAdded((url, user, Some(error))) => {
                 // The form again, the password to type again.
+                self.caldav_checking = false;
                 self.error = Some(error);
                 for (key, value) in pages::CALDAV.into_iter().zip([url, user, String::new()]) {
                     self.texts.insert(key.into(), value);
                 }
             }
             Message::CalDavAdded((url, user, None)) => {
+                self.caldav_checking = false;
+                for key in pages::CALDAV {
+                    self.texts.remove(key);
+                }
                 let mut items = self.config.get("calendar.caldav").and_then(toml_edit::Value::as_array).cloned().unwrap_or_default();
                 // The same account again only had its password changed.
                 if !items.iter().any(|v| pages::account(v).is_some_and(|(u, n)| u == url && n == user)) {
