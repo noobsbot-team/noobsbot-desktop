@@ -885,7 +885,9 @@ impl State {
         self.window_reframing(window);
         let saved = window.user_data().get::<Restore>().and_then(|r| r.0.lock().ok()?.take());
         surface.with_pending_state(|s| TILED.iter().for_each(|t| _ = s.states.unset(*t)));
-        surface.with_pending_state(|s| s.size = saved.map(|r| self.content_size(window, r.size)));
+        // Outside the closure: content_size reads the same pending state, and its lock isn't reentrant.
+        let size = saved.map(|r| self.content_size(window, r.size));
+        surface.with_pending_state(|s| s.size = size);
         surface.send_pending_configure();
         let saved = saved?;
         let at = at.to_i32_round::<i32>();
