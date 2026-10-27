@@ -1649,9 +1649,15 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | `MAJOR` | a new gem codename (1 = Opal, 2 = Pearl, …); breaking config changes | `2.0.0` |
   | `MINOR` | new features (`feat:` commits) | `1.3.0` |
   | `PATCH` | fixes only (`fix:` commits) | `1.3.1` |
-  | pre-release | beta builds, `-beta.N`, visible only on the Beta channel | `1.4.0-beta.2` |
+  | pre-release: alpha | features still landing, `-alpha.N` (0.1.0 … 0.6.0 were renumbered to these) | `1.0.0-alpha.8` |
+  | pre-release: beta | feature-complete and in testing, `-beta.N` | `1.0.0-beta.1`, `1.1.0-beta.2` |
+  | pre-release: rc | release candidate, fixes only, `-rc.N` | `1.0.0-rc.1` |
+  Pre-releases sort before their release by SemVer precedence (`1.0.0-rc.1` < `1.0.0`, `beta.10` > `beta.2`) and reach
+  only the Beta channel, except that Stable (and `install.sh`) takes the newest pre-release while no stable release
+  exists; 1.0.0 is the first stable one. release-plz bumps `N`; the next stage is set by hand in the release PR.
   The version lives **only** in `Cargo.toml`; `noobsbot-desktop --version` prints `1.3.0 (Opal) · 2026-10-17 · a1b2c3d`
-  and About shows "Noobsbot Desktop 1.3 · Opal". The same scheme is adopted by `noobsbot-terminal`.
+  and About shows "Noobsbot Desktop 1.3 · Opal" (a pre-release: "1.0 beta 1 · Opal"). The same scheme is adopted by
+  `noobsbot-terminal`.
 - **Git workflow (version control):** `main` is protected (CI must pass, no force-push); work happens on short
   branches merged by pull request; **Conventional Commits** (`feat:`, `fix:`, `perf:`, `docs:`, `feat!:` for breaking)
   are the input to the automatic version bump. Tags `v1.3.0` are created by the bot, never by hand.
@@ -1682,7 +1688,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   ```
   | Step | How |
   |---|---|
-  | **Check** | once every 24 h (calloop timer; also "Check Now" and the first launch after boot) `GET https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/latest` (Beta channel: `/releases`, pre-releases allowed). Compares SemVer with the running version. No account, no identifier, no telemetry: the request carries nothing but the version header. Off with one toggle. Fails silently when offline |
+  | **Check** | once every 24 h (calloop timer; also "Check Now" and the first launch after boot) `GET https://api.github.com/repos/noobsbot-team/noobsbot-desktop/releases/latest` (Beta channel: `/releases`, pre-releases allowed; Stable reads `/releases` too while `latest` is a 404, before 1.0.0). Compares SemVer with the running version. No account, no identifier, no telemetry: the request carries nothing but the version header. Off with one toggle. Fails silently when offline |
   | **Notify** | notification (E4.1): "Noobsbot Desktop 1.3 is available · *Update Tonight* / *Details*"; a red badge "1" on System Settings in the dock |
   | **Download** | in the background to `~/.cache/noobsbot-desktop/updates/`; `SHA256SUMS` + **minisign signature verified** before anything is touched; a bad signature deletes the file and shows an alert |
   | **Install** | a compositor can't replace itself while running, so the verified tarball is staged, and installed by the tiny privileged helper `noobsbot-desktop-update` through **polkit** (admin password in our alert; one polkit action `org.noobsbot.desktop.update`). It unpacks to `/usr/lib/noobsbot-desktop/versions/1.3.0/`, switches the `/usr/bin/noobsbot-desktop` symlink, keeps the previous version. Applied at the **next login** ("Install at next login", default) or now via "Log Out & Update" |

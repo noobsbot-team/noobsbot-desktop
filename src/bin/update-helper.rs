@@ -343,7 +343,8 @@ mod tests {
     fn newest_download_never_through_a_symlink() {
         let home = scratch("home");
         let updates = home.join(".cache/noobsbot-desktop/updates");
-        for v in ["1.2.0", "1.10.0", "junk"] {
+        // SemVer precedence, not string order: 1.10.0 is newer than its rc.1 and beta.10.
+        for v in ["1.2.0", "1.10.0-rc.1", "1.10.0", "1.10.0-beta.10", "junk"] {
             fs::create_dir_all(updates.join(v)).unwrap();
         }
         let ino = |dir: File| dir.metadata().unwrap().ino();

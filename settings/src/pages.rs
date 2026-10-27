@@ -781,7 +781,7 @@ pub const SETTINGS: &[Setting] = &[
         "Software Update",
         "update.install_at_login",
         "Install updates automatically at login",
-        "Admins only, no password; never a beta or a reverted version",
+        "Admins only, no password; never a pre-release or a reverted version",
         Kind::Toggle,
     ),
     s(Page::General, "Session", "windows.reopen_at_login", "Reopen windows when logging back in", "Also the Log Out alert's checkbox", Kind::Toggle),
@@ -1493,7 +1493,7 @@ fn system_part<'a>(app: &'a App, page: Page) -> Vec<Element<'a, Message>> {
             let head = column![
                 svg(svg::Handle::from_memory(include_bytes!("../../assets/logo.svg").as_slice())).width(72).height(72).style(Tokens::tint(t.label())),
                 text("Noobsbot Desktop").size(22).font(font(Weight::Semibold)),
-                text(format!("Opal · Version {version}")).size(12).color(t.secondary()),
+                text(format!("{} · Opal · Version {version}", short_version(version))).size(12).color(t.secondary()),
             ]
             .spacing(6)
             .align_x(Alignment::Center);
@@ -2177,7 +2177,7 @@ fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message
         (None, _) => String::new(),
     };
     let update = u.ready.then(|| button(text("Update Now").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::UpdateCall("Install")).into());
-    let info = u.available.as_ref().map(|_| release_info(u.size, u.published.as_deref())).unwrap_or_default();
+    let info = u.available.as_ref().map(|v| release_info(v, u.size, u.published.as_deref())).unwrap_or_default();
     let mut before = vec![version_row(format!("Noobsbot Desktop {}", version()), status, info, &u.url, update)];
     // Its own installer or package updates it: only shown, with its release page.
     if let Some(term) = &u.terminal {
@@ -2185,7 +2185,7 @@ fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message
             Some(v) => format!("{v} is available; install it with its installer or your package manager"),
             None => "Up to date".to_owned(),
         };
-        let info = term.available.as_ref().map(|_| release_info(term.size, term.published.as_deref())).unwrap_or_default();
+        let info = term.available.as_ref().map(|v| release_info(v, term.size, term.published.as_deref())).unwrap_or_default();
         before.push(version_row(format!("Noobsbot Terminal {}", term.installed), status, info, &term.url, None));
     }
     let check = push(if app.checking { "Checking…" } else { "Check Now" }, (!app.checking).then_some(Message::UpdateCall("Check")));
@@ -2202,11 +2202,13 @@ fn update_rows(app: &App) -> (Vec<Element<'_, Message>>, Vec<Element<'_, Message
     (before, after)
 }
 
-/// "12.3 MB · 27 Oct 2026": a release's download size and date, either left out when unknown.
-fn release_info(size: Option<u64>, published: Option<&str>) -> String {
+/// "Pre-release · 12.3 MB · 27 Oct 2026": whether `version` is a pre-release (Stable offers them while there is no
+/// stable release yet), its download size and date, each left out when not so or unknown.
+fn release_info(version: &str, size: Option<u64>, published: Option<&str>) -> String {
+    let pre = version.contains('-').then(|| "Pre-release".to_owned());
     let size = size.map(|bytes| format!("{:.1} MB", bytes as f64 / 1e6));
     let date = published.and_then(|p| chrono::DateTime::parse_from_rfc3339(p).ok()).map(|d| d.with_timezone(&chrono::Local).format("%-d %b %Y").to_string());
-    size.into_iter().chain(date).collect::<Vec<_>>().join(" · ")
+    pre.into_iter().chain(size).chain(date).collect::<Vec<_>>().join(" · ")
 }
 
 /// "Last checked": Never, Today, 9:41, Yesterday, 9:41, or 12 Oct 2026.
@@ -2578,6 +2580,14 @@ pub fn version() -> &'static str {
     manifest.lines().find_map(|l| l.strip_prefix("version = ")).map_or("", |v| v.trim_matches('"'))
 }
 
+/// "1.3", "1.0 beta 1", "1.0 RC 2": MAJOR.MINOR and any pre-release, as About names the version (the desktop's
+/// update notice too, `update::short`).
+fn short_version(v: &str) -> String {
+    let (core, pre) = v.split_once('-').unwrap_or((v, ""));
+    let minor = core.rsplit_once('.').map_or(core, |(minor, _)| minor);
+    format!("{minor} {}", pre.replace('.', " ").replacen("rc", "RC", 1)).trim_end().to_owned()
+}
+
 fn note<'a>(t: Tokens, words: &'a str) -> Element<'a, Message> {
     container(text(words).size(11).color(t.secondary())).padding([0, 4]).into()
 }
@@ -2599,10 +2609,11 @@ mod tests {
 
     #[test]
     fn release_size_and_date() {
-        assert_eq!(release_info(Some(12_345_678), Some("2026-10-27T12:00:00Z")), "12.3 MB · 27 Oct 2026");
-        assert_eq!(release_info(None, Some("2026-10-27T12:00:00Z")), "27 Oct 2026");
-        assert_eq!(release_info(Some(900_000), Some("garbage")), "0.9 MB");
-        assert_eq!(release_info(None, None), "");
+        assert_eq!(release_info("1.3.0", Some(12_345_678), Some("2026-10-27T12:00:00Z")), "12.3 MB · 27 Oct 2026");
+        assert_eq!(release_info("1.3.0", None, Some("2026-10-27T12:00:00Z")), "27 Oct 2026");
+        assert_eq!(release_info("1.3.0", Some(900_000), Some("garbage")), "0.9 MB");
+        assert_eq!(release_info("1.3.0", None, None), "");
+        assert_eq!(release_info("1.0.0-beta.2", Some(900_000), None), "Pre-release · 0.9 MB");
     }
 
     #[test]
@@ -2704,10 +2715,22 @@ mod tests {
     #[test]
     fn desktop_version() {
         assert!(semver_like(version()), "{}", version());
+        assert!(semver_like("1.0.0-beta.10") && semver_like("1.0.0-rc.1") && semver_like("1.10.0"));
+        assert!(!semver_like("1.0") && !semver_like("1.0.0beta") && !semver_like("1.0.0-"));
     }
 
+    #[test]
+    fn about_names_a_pre_release() {
+        assert_eq!(short_version("1.3.2"), "1.3");
+        assert_eq!(short_version("1.0.0-beta.1"), "1.0 beta 1");
+        assert_eq!(short_version("1.0.0-rc.2"), "1.0 RC 2");
+        assert_eq!(short_version("1.1.0-alpha"), "1.1 alpha");
+    }
+
+    /// `MAJOR.MINOR.PATCH`, then maybe a pre-release (`-beta.1`).
     fn semver_like(v: &str) -> bool {
-        v.split('.').count() == 3 && v.split('.').all(|p| p.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        let (core, pre) = v.split_once('-').map_or((v, None), |(core, pre)| (core, Some(pre)));
+        core.split('.').count() == 3 && core.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())) && pre != Some("")
     }
 
     #[test]
