@@ -1843,6 +1843,8 @@ mod tests {
     fn defaults_round_trip() {
         assert_eq!(parse(DEFAULT_TOML).unwrap(), Config::default());
         assert_eq!(parse("").unwrap(), Config::default());
+        assert!(!Config::default().update.install_at_login, "installing without the password is opt-in");
+        assert_eq!(parse("[dock]\nstyle = \"whitesur-dark\"").unwrap().dock.style, DockStyle::WhitesurDark);
     }
 
     #[test]
