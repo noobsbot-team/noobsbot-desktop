@@ -112,6 +112,8 @@ pub struct DockView {
     /// Running dots and the focused app's highlight, by their rect, kind (dot) and opacity in percent.
     marks: Vec<((Rect, bool, u8), PixelShaderElement)>,
     icons: Vec<Label>,
+    /// The icons' shadows, for those that have one yet.
+    shadows: Vec<Label>,
     /// Badges and progress bars: built for these icons and entries, accent and scale.
     badges: Option<(BadgeKey, Vec<PixelShaderElement>, Vec<Piece>)>,
     badge_labels: Vec<Label>,
@@ -303,8 +305,8 @@ impl DockView {
 }
 
 impl DockView {
-    /// Front to back: icons, dots, the focused app's highlight, the bar. Icons are rasterised once at `px` (the zoomed
-    /// size) and scaled down by the GPU when smaller.
+    /// Front to back: icons, their shadows, dots, the focused app's highlight, the bar. Icons are rasterised once at
+    /// `px` (the zoomed size) and scaled down by the GPU when smaller; so are their shadows, blurred to match.
     #[expect(clippy::too_many_arguments, reason = "the frame's renderer, shaders and caches, like every shell piece")]
     pub fn elements(
         &mut self,
@@ -322,7 +324,19 @@ impl DockView {
             self.marks.clear();
         }
         let look = Look::of(style);
-        let plain: Vec<_> = items.iter().map(|i| icons.get(i.name, px).or_else(|| icons.get(FALLBACK_ICON, px)).unwrap_or_else(|| placeholder(px))).collect();
+        // The small shadow under each icon (Plank's IconShadowSize 1): D6 level 1, dark like the dock, in the zoomed
+        // bitmap's px. Its σ is blur / 2 at rest; three box passes of radius r give σ ≈ r + ½.
+        let d6 = super::Shadow::of(1, true).expect("D6 level 1 casts a shadow");
+        let r = (f64::from(d6.blur) / 2.0 * f64::from(px) / layout.icon - 0.5).round().max(1.0) as u32;
+        let mut shadows = Vec::with_capacity(items.len());
+        let plain: Vec<_> = items
+            .iter()
+            .map(|i| {
+                let found = [i.name, FALLBACK_ICON].into_iter().find_map(|name| Some((name, icons.get(name, px)?)));
+                shadows.push(found.as_ref().and_then(|(name, _)| icons.shadow(name, px, r)));
+                found.map_or_else(|| placeholder(px), |(_, icon)| icon)
+            })
+            .collect();
         // Hovered icons lighten, clicked ones darken (Plank's lighten and darken effects), from cached copies.
         let old = std::mem::take(&mut self.shaded);
         let rendered: Vec<_> = plain
@@ -341,9 +355,11 @@ impl DockView {
             })
             .collect();
         self.icons = keep_buffers(&self.icons, rendered.iter().cloned());
-        let mut buffers = self.icons.iter();
-        let mut out = Vec::new();
-        for (rect, item) in layout.icons.iter().zip(items) {
+        self.shadows = keep_buffers(&self.shadows, shadows.iter().flatten().cloned());
+        let (mut buffers, mut shadow_buffers) = (self.icons.iter(), self.shadows.iter());
+        let (mut out, mut behind) = (Vec::new(), Vec::new());
+        for ((rect, item), shadow) in layout.icons.iter().zip(items).zip(&shadows) {
+            let shadow = shadow.as_ref().and_then(|_| shadow_buffers.next());
             let Some((pixels, Some(buffer))) = buffers.next() else { continue };
             if item.shade.alpha <= 0.0 {
                 continue;
@@ -357,7 +373,21 @@ impl DockView {
                 Ok(element) => out.push(SceneElement::Memory(element)),
                 Err(err) => tracing::warn!("dock icon: {err}"),
             }
+            // `rect` holds the shadow's middle, inside the 3r it blurs out to; it drops by the offset, zoomed with the icon.
+            let Some((s, Some(buffer))) = shadow else { continue };
+            let (pad, (w, h)) = (f64::from(3 * r), (f64::from(s.width), f64::from(s.height)));
+            let (kx, ky) = (rect.size.w / (w - 2.0 * pad), rect.size.h / (h - 2.0 * pad));
+            let drop = f64::from(d6.offset_y) * rect.size.h / layout.icon;
+            let loc = Point::<f64, Logical>::from((rect.loc.x - pad * kx, rect.loc.y - pad * ky + drop)).to_physical(scale);
+            let size = Size::from(((w * kx).round() as i32, (h * ky).round() as i32));
+            let src = Rectangle::from_size((w, h).into());
+            let alpha = Some(d6.opacity * item.shade.alpha);
+            match MemoryRenderBufferRenderElement::from_buffer(renderer, loc, buffer, alpha, Some(src), Some(size), Kind::Unspecified) {
+                Ok(element) => behind.push(SceneElement::Memory(element)),
+                Err(err) => tracing::warn!("dock icon shadow: {err}"),
+            }
         }
+        out.extend(behind);
 
         // IndicatorSize 5: a small light dot centred under the icon, in the band below it, two (s/16 either side) for
         // several windows; the focused app's icon sits on a faint highlight (Plank's active-window glow, fading in and
