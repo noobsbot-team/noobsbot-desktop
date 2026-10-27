@@ -256,21 +256,24 @@ pub fn init(event_loop: &mut EventLoop<State>, state: &mut State) -> Result<(), 
     state.backend = Some(Views::new(renderer, wallpaper)?);
     super::dmabuf_global(state, formats, Some(primary));
 
-    event_loop.handle().insert_source(udev, |event, _, state| match event {
-        UdevEvent::Added { device_id, path } => match state.card_added(device_id, &path) {
-            Ok(node) => state.scan_connectors(node),
-            Err(err) => tracing::warn!("{}: {err}", path.display()),
-        },
-        UdevEvent::Changed { device_id } => {
-            if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                state.scan_connectors(node);
+    event_loop.handle().insert_source(udev, |event, _, state| {
+        match event {
+            UdevEvent::Added { device_id, path } => match state.card_added(device_id, &path) {
+                Ok(node) => state.scan_connectors(node),
+                Err(err) => tracing::warn!("{}: {err}", path.display()),
+            },
+            UdevEvent::Changed { device_id } => {
+                if let Ok(node) = DrmNode::from_dev_id(device_id) {
+                    state.scan_connectors(node);
+                }
+            }
+            UdevEvent::Removed { device_id } => {
+                if let Ok(node) = DrmNode::from_dev_id(device_id) {
+                    state.card_removed(node);
+                }
             }
         }
-        UdevEvent::Removed { device_id } => {
-            if let Ok(node) = DrmNode::from_dev_id(device_id) {
-                state.card_removed(node);
-            }
-        }
+        crate::services::brightness::redetect();
     })?;
     for node in state.cards() {
         state.scan_connectors(node);
