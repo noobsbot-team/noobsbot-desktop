@@ -221,8 +221,10 @@ pub enum Message {
     Join(String),
     /// A saved connection's path: Auto-Join on or off.
     AutoJoin(String, bool),
-    /// Known Networks ▸ Forget: a saved connection's path.
-    ForgetNetwork(String),
+    /// Details ▸ Forget: a saved connection's path opens its alert; `None` closes it.
+    ForgetNetwork(Option<String>),
+    /// The alert's Forget.
+    ForgetNetworkNow,
     /// Known Networks ▸ Details…: a saved connection's path opens its sheet; `None` closes it.
     NetDetails(Option<String>),
     /// Details ▸ Update: the typed IPv4 setup is saved.
@@ -832,6 +834,13 @@ impl App {
             Message::Join(ssid) => return self.join(&ssid, None),
             Message::AutoJoin(path, on) => return Task::perform(network::change(move |bus| network::auto_join(bus, path, on)), Message::Status),
             Message::ForgetNetwork(path) => {
+                match path {
+                    Some(path) => self.texts.insert(network::FORGET.into(), path),
+                    None => self.texts.remove(network::FORGET),
+                };
+            }
+            Message::ForgetNetworkNow => {
+                let Some(path) = self.texts.remove(network::FORGET) else { return Task::none() };
                 self.texts.retain(|k, _| !k.starts_with(network::DETAILS));
                 return Task::perform(network::change(move |bus| network::forget(bus, path)), Message::Status);
             }

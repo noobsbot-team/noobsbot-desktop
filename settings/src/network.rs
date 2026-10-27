@@ -28,6 +28,8 @@ pub const WIREGUARD: &str = "wifi.wireguard";
 pub const DETAILS: &str = "wifi.details.";
 /// `App::texts` key prefix of the "Other…" form's fields (`ssid`, `security`, …); open while its `ssid` is there.
 pub const OTHER: &str = "wifi.other.";
+/// `App::texts` key of the connection whose "Forget …?" alert is open, its path.
+pub const FORGET: &str = "wifi.forget";
 
 type Settings = HashMap<String, HashMap<String, OwnedValue>>;
 /// A connection's settings as sent to NetworkManager (`a{sa{sv}}`).
@@ -708,8 +710,7 @@ pub async fn auto_join(bus: Connection, path: String, on: bool) -> zbus::Result<
     Ok(())
 }
 
-/// Known Networks ▸ Forget.
-// ponytail: no "Forget this network?" confirmation; add one if it's hit by accident.
+/// Known Networks ▸ Forget, once its alert is confirmed.
 pub async fn forget(bus: Connection, path: String) -> zbus::Result<()> {
     bus.call_method(Some(NM), path.as_str(), Some(SAVED), "Delete", &()).await?;
     Ok(())
