@@ -474,7 +474,7 @@ glass windows with traffic lights.
     | Touchpad | click-drag on a zone; pinch does **not** resize windows (it belongs to apps, E1.7) |
     | Keyboard | ~~Super+Ctrl+arrows nudge/resize by 16 px steps (configurable, off by default)~~ Done: Super+Alt+arrows move the window 16 px, Super+Alt+Shift+arrows its right / bottom edge (Super+Ctrl+arrows went to tiling, E8.5); `nudge` / `resize` actions, active only with `[windows] keyboard_nudge` (off by default); a held key repeats; the move keeps the drag limits, the resize the app's min / max |
   - **Stacking order (bottom → top), fixed so no element can ever be hidden by the wrong one:** wallpaper → desktop
-    icons (later) → normal windows (per Space, most recent on top) → `float_above` windows (rules) → a window's
+    icons (E7.2) → normal windows (per Space, most recent on top) → `float_above` windows (rules) → a window's
     modal/transient dialogs always directly above their parent → fullscreen window of the current Space → the quake terminal (E2.8, `layer = "overlay"` rule) → dock
     (hidden under fullscreen) → menu bar → shell popovers (menus, Control Center, Notification Center, Spotlight) →
     app popups with a grab → banners and OSD → alerts (Force Quit, power) → Mission Control / Launchpad overlay →
@@ -1327,7 +1327,7 @@ Goal: multiple workspaces and the full multi-finger gesture experience.
   |---|---|
   | Open | scale 0.92→1 + fade in, `smooth` |
   | Close | scale 1→0.95 + fade out, 150 ms |
-  | Minimise | window shrinks and slides into its dock spot ("scale" effect; a genie effect is optional later) |
+  | Minimise | window shrinks and slides into its dock spot ("scale" effect; the genie is `[dock] minimise_effect = "genie"`, E8.4) |
   | Restore | the reverse |
   | Zoom / un-zoom | frame springs to its new size |
   | Space switch, Mission Control, Show Desktop | follow the gesture, spring to the end |
@@ -1518,7 +1518,7 @@ Goal: install on a fresh Arch system, log in, and use it all day.
 
 ### E6.8 Screenshots & screen recording/sharing
 - **Design:** Super+Shift+3 = whole screen, Super+Shift+4 = drag a region (crosshair, dimmed outside, size label),
-  Super+Shift+5 = toolbar (glass `hud`: Screen · Window · Region · Record later · Options). A thumbnail floats at the
+  Super+Shift+5 = toolbar (glass `hud`: Screen · Window · Region · Record · Options). A thumbnail floats at the
   bottom-right for 5 s (click = open, drag = drop into apps). Saved to `~/Pictures/Screenshots/Screenshot <date>.png`
   and copied to the clipboard. Shutter sound is optional.
 - **Built with:** the compositor already has the pixels → saved with `png`; screen sharing for Helium
