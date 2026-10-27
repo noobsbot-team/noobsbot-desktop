@@ -279,7 +279,7 @@ pub fn shrink(rgba: &[u8], w: u32, h: u32, max_w: u32) -> Thumb {
             let mut sum = [0u32; 4];
             for y in ys.clone() {
                 let row = &rgba[((y * w + xs.start) * 4) as usize..((y * w + xs.end) * 4) as usize];
-                for px in row.chunks_exact(4) {
+                for px in row.as_chunks::<4>().0 {
                     sum.iter_mut().zip(px).for_each(|(s, &v)| *s += u32::from(v));
                 }
             }
