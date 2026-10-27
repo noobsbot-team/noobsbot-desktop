@@ -68,6 +68,12 @@ pub enum Kind {
         exe: String,
         client: ClientId,
     },
+    /// An app made a virtual keyboard or pointer (E6.11): `exe` is its program, remembered in `[privacy]`.
+    ControlInput {
+        app: String,
+        exe: String,
+        client: ClientId,
+    },
     /// A Thunderbolt device waits for boltd's authorization (E8.8): Don't Allow / Allow.
     Thunderbolt(Accessory),
     /// The Trash's Empty Trash (E8.8).
@@ -111,6 +117,7 @@ impl Alert {
             Kind::Wifi { ssid, .. } => format!("Join “{ssid}”?"),
             Kind::Pin { device, .. } => format!("Pair with “{device}”"),
             Kind::ScreenRecording { app, .. } => format!("“{app}” would like to record this computer's screen."),
+            Kind::ControlInput { app, .. } => format!("Allow “{app}” to control this computer's keyboard and mouse?"),
             Kind::Thunderbolt(a) => format!("Allow “{}” to connect?", a.name),
             Kind::Polkit { auth, .. } => auth.message.clone(),
             Kind::EmptyTrash => "Are you sure you want to permanently erase the items in the Trash?".into(),
@@ -134,6 +141,9 @@ impl Alert {
             Kind::Pin { passkey: true, .. } => "Enter the six-digit passkey shown on the device.".into(),
             Kind::NotResponding { .. } => "You can wait to see if it responds, or force it to quit and lose any unsaved changes.".into(),
             Kind::ScreenRecording { .. } => "It will see everything on the screen, including other apps' windows. The answer is kept in config.toml.".into(),
+            Kind::ControlInput { .. } => {
+                "It could type and click in any app as you. Until you allow it, its keys and clicks go nowhere. The answer is kept in config.toml.".into()
+            }
             Kind::Thunderbolt(_) => "Allow only accessories you trust. Once allowed, it connects by itself next time.".into(),
             Kind::EmptyTrash => "You can't undo this action.".into(),
             Kind::Polkit { wrong: Some(_), .. } => "The password is incorrect. Try again.".into(),
@@ -148,7 +158,7 @@ impl Alert {
     pub fn cancel(&self) -> &'static str {
         match &self.kind {
             Kind::NotResponding { .. } => "Wait",
-            Kind::ScreenRecording { .. } | Kind::Thunderbolt(_) => "Don't Allow",
+            Kind::ScreenRecording { .. } | Kind::ControlInput { .. } | Kind::Thunderbolt(_) => "Don't Allow",
             _ => "Cancel",
         }
     }
@@ -163,7 +173,7 @@ impl Alert {
             Kind::NotResponding { .. } => "Force Quit",
             Kind::Wifi { .. } => "Join",
             Kind::Pin { .. } => "Pair",
-            Kind::ScreenRecording { .. } | Kind::Thunderbolt(_) => "Allow",
+            Kind::ScreenRecording { .. } | Kind::ControlInput { .. } | Kind::Thunderbolt(_) => "Allow",
             Kind::EmptyTrash => "Empty Trash",
             Kind::Polkit { .. } => "OK",
         }
@@ -417,6 +427,7 @@ impl State {
                 return self.services.send(Command::WifiJoin { ssid, ap, device, password: Some(field.text) });
             }
             Kind::ScreenRecording { exe, client, .. } => return self.recording_answer(client, exe, button == Button::Confirm),
+            Kind::ControlInput { exe, client, .. } => return self.control_answer(client, exe, button == Button::Confirm),
             Kind::Thunderbolt(accessory) => {
                 if button == Button::Confirm {
                     self.services.send(Command::Thunderbolt(accessory.uid));

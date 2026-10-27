@@ -329,6 +329,12 @@ startup_sound = false
 # apps never see screen recording at all.
 screen_recording = []
 screen_recording_denied = []
+# Programs (by path) allowed to type and click through a virtual keyboard or pointer (wtype, ydotool-style tools,
+# remote desktops), and those denied. The first time one tries, an alert asks you; until you allow it, its keys and
+# clicks go nowhere. Started with `noobsbot-desktop --trusted <command>`, it never asks. Sandboxed apps never get it,
+# and nothing reaches the lock screen or the login screen.
+input_control = []
+input_control_denied = []
 
 [weather]
 # The Weather widget in Notification Center, from Open-Meteo (no account, no key). Off by default: while on, the
