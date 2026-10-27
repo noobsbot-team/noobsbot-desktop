@@ -266,16 +266,25 @@ pub fn file_name(dir: &Path, prefix: &str, ext: &str, now: &chrono::DateTime<chr
     path
 }
 
-/// Every `step`-th pixel of a `w`×`h` RGBA image, so it is at most `max_w` wide.
-// ponytail: nearest-neighbour; a box filter if the thumbnail ever looks too jagged.
+/// A `w`×`h` RGBA image shrunk by a whole `step` so it is at most `max_w` wide, each pixel the average of its
+/// `step`×`step` block (cut short at the right and bottom edges).
 pub fn shrink(rgba: &[u8], w: u32, h: u32, max_w: u32) -> Thumb {
     let step = w.div_ceil(max_w.max(1)).max(1);
     let (tw, th) = (w.div_ceil(step), h.div_ceil(step));
     let mut out = Vec::with_capacity((tw * th * 4) as usize);
-    for y in (0..h).step_by(step as usize) {
-        for x in (0..w).step_by(step as usize) {
-            let i = ((y * w + x) * 4) as usize;
-            out.extend_from_slice(&rgba[i..i + 4]);
+    for ty in 0..th {
+        let ys = ty * step..((ty + 1) * step).min(h);
+        for tx in 0..tw {
+            let xs = tx * step..((tx + 1) * step).min(w);
+            let mut sum = [0u32; 4];
+            for y in ys.clone() {
+                let row = &rgba[((y * w + xs.start) * 4) as usize..((y * w + xs.end) * 4) as usize];
+                for px in row.chunks_exact(4) {
+                    sum.iter_mut().zip(px).for_each(|(s, &v)| *s += u32::from(v));
+                }
+            }
+            let n = ys.len() as u32 * xs.len() as u32;
+            out.extend(sum.map(|s| ((s + n / 2) / n) as u8));
         }
     }
     Thumb { size: (tw, th), rgba: out.into() }
@@ -1177,10 +1186,12 @@ mod tests {
         let rgba: Vec<u8> = (0..10 * 4 * 4).map(|i| i as u8).collect();
         let t = shrink(&rgba, 10, 4, 5);
         assert_eq!(t.size, (5, 2));
-        assert_eq!(&t.rgba[..4], &rgba[..4]);
-        // Second pixel of the first row is source pixel 2.
-        assert_eq!(&t.rgba[4..8], &rgba[8..12]);
-        assert_eq!(shrink(&rgba, 10, 4, 100).size, (10, 4));
+        // Each the average of a 2×2 block: source pixels 0, 1, 10 and 11, then 2, 3, 12 and 13.
+        assert_eq!(&t.rgba[..8], &[22, 23, 24, 25, 30, 31, 32, 33]);
+        assert_eq!(shrink(&rgba, 10, 4, 100).rgba[..], rgba[..]);
+        // The block at the right edge is cut short.
+        let row = [0, 0, 0, 0, 10, 10, 10, 10, 200, 200, 200, 200];
+        assert_eq!(shrink(&row, 3, 1, 2).rgba[..], [5, 5, 5, 5, 200, 200, 200, 200]);
     }
 
     #[test]
