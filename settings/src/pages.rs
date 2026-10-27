@@ -248,7 +248,7 @@ const fn s(page: Page, group: &'static str, key: &'static str, label: &'static s
 pub const CALENDAR_ADD: &str = "calendar.add";
 /// Notifications ▸ World Clock ▸ Add…: the typed city's `texts` key (no chooser).
 pub const CLOCK_ADD: &str = "widgets.clock_add";
-/// Date & Time ▸ CalDAV accounts ▸ Add…: the URL, user and password fields' `texts` keys.
+/// Date & Time ▸ CalDAV accounts ▸ Add…: the server (or calendar URL), user and password fields' `texts` keys.
 pub const CALDAV_ADD: &str = "calendar.caldav_url";
 pub const CALDAV: [&str; 3] = [CALDAV_ADD, "calendar.caldav_user", "calendar.caldav_password"];
 
@@ -669,7 +669,7 @@ pub const SETTINGS: &[Setting] = &[
         "Calendar",
         "calendar.caldav",
         "CalDAV accounts",
-        "A calendar's URL, user and app password; its events are fetched every 15 minutes",
+        "A server address (or one calendar's URL), user and app password; events are fetched every 15 minutes",
         Kind::List(Some(CALDAV_ADD)),
     ),
     s(Page::Spaces, "", "windows.spaces", "Spaces", "Dynamic: + in Mission Control adds more", Kind::Slider { min: 0.0, max: 16.0, step: 1.0 }),
@@ -1290,7 +1290,7 @@ fn list_rows<'a>(app: &'a App, key: &'static str, add: Option<&'static str>) -> 
     }
     let caldav = add == Some(CALDAV_ADD);
     let fields = match add {
-        Some(CALDAV_ADD) => vec![(CALDAV[0], "URL"), (CALDAV[1], "User"), (CALDAV[2], "Password")],
+        Some(CALDAV_ADD) => vec![(CALDAV[0], "Server"), (CALDAV[1], "User"), (CALDAV[2], "Password")],
         Some(CLOCK_ADD) => vec![(CLOCK_ADD, "City")],
         Some(add) => vec![(add, "Path")],
         None => Vec::new(),
@@ -1310,7 +1310,7 @@ fn list_rows<'a>(app: &'a App, key: &'static str, add: Option<&'static str>) -> 
     if caldav && app.texts.contains_key(CALDAV_ADD) {
         let label = if app.caldav_checking { "Checking…" } else { "Add Account" };
         let go = button(text(label).size(12)).padding([3, 10]).style(t.push(true)).on_press_maybe((!app.caldav_checking).then_some(Message::AddCalDav));
-        rows.push(line(t, "", "The calendar is fetched once to check the password", go.into()));
+        rows.push(line(t, "", "Its calendars are found and fetched once to check the password", go.into()));
     }
     rows
 }
