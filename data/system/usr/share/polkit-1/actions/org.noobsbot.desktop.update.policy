@@ -2,7 +2,10 @@
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
 <!-- Software Update (plan.md E6.13): "Restart to Update" and Settings' "Revert to" run the helper through pkexec. The helper re-verifies the
-     minisign signature with the root-owned key, refuses older or same versions, and only then installs. -->
+     minisign signature with the root-owned key, refuses older or same versions, and only then installs.
+     `[update] install_at_login` runs the helper in its verified mode at login, which pkexec matches to the second action by its
+     first argument: no password. In that mode the helper takes no other argument and installs only the caller's own download, after the
+     same checks, so it can't revert, downgrade or install anything unsigned. -->
 <policyconfig>
   <vendor>Noobsbot Desktop</vendor>
   <vendor_url>https://github.com/noobsbot-team/noobsbot-desktop</vendor_url>
@@ -16,5 +19,17 @@
       <allow_active>auth_admin_keep</allow_active>
     </defaults>
     <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/noobsbot-desktop/noobsbot-desktop-update</annotate>
+  </action>
+  <action id="org.noobsbot.desktop.update.verified">
+    <description>Install a downloaded, signed Noobsbot Desktop update at login</description>
+    <message>Software Update wants to install the downloaded update of Noobsbot Desktop.</message>
+    <icon_name>system-software-update</icon_name>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/noobsbot-desktop/noobsbot-desktop-update</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">--verified</annotate>
   </action>
 </policyconfig>
