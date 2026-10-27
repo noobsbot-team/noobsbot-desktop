@@ -2069,6 +2069,12 @@ mod tests {
     }
 
     #[test]
+    fn retired_dock_keys_still_load() {
+        let c = parse("[dock]\nitems = [\"firefox\", \"trash\"]\nshow_trash = false\nminimise_into_icon = false").unwrap();
+        assert_eq!(c.dock.items, ["firefox", "trash"], "the dock skips the old Trash entry itself");
+    }
+
+    #[test]
     fn bad_toml_keeps_previous() {
         let err = parse("version = 1\n[windows]\nsnapping = maybe").unwrap_err().to_string();
         assert!(err.contains("line 3"), "{err}");
