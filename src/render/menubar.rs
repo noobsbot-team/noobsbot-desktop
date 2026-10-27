@@ -40,6 +40,8 @@ const SYMBOL: u16 = 16;
 /// The app's name is ellipsised past this, and dropped when less than `MIN_APP` is free.
 const APP_WIDTH: i32 = 300;
 const MIN_APP: i32 = 40;
+/// Body a step up (13 / 16 → 16 / 20) for the taller bar; its labels are this, or this at 600.
+const BODY: Style = Style { size: 16, line_height: 20, ..ui::BODY };
 /// The Space dots' size and the step from one to the next.
 const DOT: i32 = 6;
 const DOT_STEP: i32 = 10;
@@ -289,7 +291,7 @@ impl MenuBar {
         }
 
         let color = ui::label(dark);
-        let body = Style { color, tabular: true, ..ui::BODY };
+        let body = Style { color, tabular: true, ..BODY };
         let symbol = |symbols: &mut Symbols, s: Symbol| symbols.get(s, Weight::Regular, SYMBOL, scale, color);
         // (piece, gap after it, item); left pieces then right ones, each list in reading order. The right group is
         // laid out first: the app's name takes what is left of the bar, or goes when that is too little.
@@ -300,7 +302,7 @@ impl MenuBar {
             Some(Space::Number(n)) => right.push((text.label(&n.to_string(), Style { weight: 600, ..body }, 100, scale), ts(GAP), BarItem::Space)),
             Some(Space::App(id)) => {
                 let name = self.names.entry(id.clone()).or_insert_with(|| app_name(id));
-                right.push((text.label(name, Style { weight: 600, ..body }, 120, scale), ts(GAP), BarItem::Space));
+                right.push((text.label(name, Style { weight: 600, ..body }, 150, scale), ts(GAP), BarItem::Space));
             }
             Some(Space::Dots { count, .. }) => {
                 let w = (f64::from(dots(*count).1) * scale).round() as u32;
@@ -321,11 +323,11 @@ impl MenuBar {
             }
             right.push((symbol(symbols, item.symbol), if item.badge { ts(1) } else { ts(GAP) }, BarItem::Status(i)));
             if item.badge {
-                right.push((text.label("!", Style { size: 11, weight: 700, ..body }, 100, scale), ts(GAP), BarItem::Status(i)));
+                right.push((text.label("!", Style { size: 14, weight: 700, ..body }, 100, scale), ts(GAP), BarItem::Status(i)));
             }
         }
         right.push((symbol(symbols, Symbol::Sliders), ts(GAP), BarItem::ControlCenter));
-        right.push((text.label(&content.clock, body, 300, scale), 0, BarItem::Clock));
+        right.push((text.label(&content.clock, body, 375, scale), 0, BarItem::Clock));
 
         let logical = |r: &Rendered| (f64::from(r.width) / scale).round() as i32;
         let logo = symbols.get(Symbol::Logo, Weight::Regular, SYMBOL, scale, color);
@@ -342,7 +344,7 @@ impl MenuBar {
         let mut left = vec![(logo, LOGO_GAP, BarItem::Logo)];
         if let Some(app) = content.app.as_ref().filter(|_| room >= ts(MIN_APP)) {
             let name = self.names.entry(app.clone()).or_insert_with(|| app_name(app));
-            left.push((text.label(name, Style { color, ..ui::HEADLINE }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
+            left.push((text.label(name, Style { color, weight: 600, ..BODY }, room.min(ts(APP_WIDTH)) as u32, scale), 0, BarItem::App));
         }
         let mut rects = Vec::new();
         let mut x = EDGE;
@@ -537,8 +539,10 @@ mod tests {
     fn the_bar_grows_with_the_text_size() {
         let area = Rectangle::new((0, 0).into(), (1280, 800).into());
         assert_eq!(height(), 30);
+        // 20 px lines: 5 px clear above and below.
+        assert_eq!(height() - i32::from(BODY.line_height), 10);
         crate::text::with_scale(1.5, || {
-            // A 13 px label shapes into a 24 px line at 1.5: the 45 px bar holds it with room to spare.
+            // A 16 px label shapes into a 30 px line at 1.5: the 45 px bar holds it with room to spare.
             assert_eq!(height(), 45);
             assert_eq!(below(area), Rectangle::new((0, 45).into(), (1280, 755).into()));
             assert!(reveals(true, 40.0), "the whole taller bar keeps it shown");
