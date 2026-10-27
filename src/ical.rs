@@ -132,6 +132,8 @@ struct Rule {
     by_day: Vec<(i32, Weekday)>,
     /// 1 to 12.
     by_month: Vec<u32>,
+    /// 1 to 31, or from the month's end when negative (-1 the last day).
+    by_month_day: Vec<i32>,
 }
 
 /// When an alarm goes off.
@@ -292,21 +294,25 @@ fn period(rule: &Rule, date: NaiveDate, step: u32) -> Option<Vec<NaiveDate>> {
 impl Rule {
     /// Whether the rule picks day `d` of one of its periods; `start` is DTSTART's date, for what the rule leaves out.
     fn matches(&self, d: NaiveDate, start: NaiveDate) -> bool {
-        // Without BYDAY a rule keeps DTSTART's weekday (weekly), day of the month (monthly) or date (yearly). Yearly
-        // rules don't read BYDAY.
-        let plain = self.by_day.is_empty() || self.freq == Freq::Yearly;
+        // Without BYMONTHDAY or BYDAY a rule keeps DTSTART's weekday (weekly), day of the month (monthly) or date
+        // (yearly). Yearly rules don't read BYDAY.
+        let plain = (self.by_day.is_empty() || self.freq == Freq::Yearly) && self.by_month_day.is_empty();
         let month = match self.freq {
             _ if !self.by_month.is_empty() => self.by_month.contains(&d.month()),
             Freq::Yearly if plain => d.month() == start.month(),
             _ => true,
         };
+        let (first, last) = month_of(d);
         let month_day = match self.freq {
+            _ if !self.by_month_day.is_empty() => {
+                let (day, days) = (d.day() as i32, last.day() as i32);
+                self.by_month_day.iter().any(|&n| n == day || n == day - days - 1)
+            }
             Freq::Monthly | Freq::Yearly if plain => d.day() == start.day(),
             _ => true,
         };
         // An ordinal counts in the month: `2MO` is the second Monday, `-1FR` the last Friday. Daily and weekly rules
         // have none.
-        let (first, last) = month_of(d);
         let nth = |n: i32| match n {
             _ if n == 0 || matches!(self.freq, Freq::Daily | Freq::Weekly) => true,
             n if n > 0 => (d - first).num_days() / 7 + 1 == i64::from(n),
@@ -315,8 +321,8 @@ impl Rule {
         let weekday = match self.freq {
             Freq::Yearly => true,
             _ if !self.by_day.is_empty() => self.by_day.iter().any(|&(n, wd)| d.weekday() == wd && nth(n)),
-            Freq::Weekly => d.weekday() == start.weekday(),
-            Freq::Daily | Freq::Monthly => true,
+            Freq::Weekly if plain => d.weekday() == start.weekday(),
+            _ => true,
         };
         month && month_day && weekday
     }
@@ -467,7 +473,7 @@ fn duration(value: &str) -> Option<i64> {
 }
 
 fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<Rule> {
-    let mut rule = Rule { freq: Freq::Daily, interval: 1, count: None, until: None, by_day: Vec::new(), by_month: Vec::new() };
+    let mut rule = Rule { freq: Freq::Daily, interval: 1, count: None, until: None, by_day: Vec::new(), by_month: Vec::new(), by_month_day: Vec::new() };
     let mut freq = None;
     for (key, v) in value.split(';').filter_map(|p| p.split_once('=')) {
         match key.to_ascii_uppercase().as_str() {
@@ -489,6 +495,7 @@ fn rule(value: &str, zone: &Zone, zones: &mut HashMap<String, Zone>) -> Option<R
                 let (t, z) = if date { (t.checked_add_signed(TimeDelta::seconds(86_399))?, zone) } else { (t, if z == Zone::Utc { &z } else { zone }) };
                 rule.until = Some(z.timestamp(t));
             }
+            "BYMONTHDAY" => rule.by_month_day = numbers(v, 31)?,
             "BYMONTH" => rule.by_month = numbers(v, 12)?.into_iter().map(u32::try_from).collect::<Result<_, _>>().ok()?,
             "BYDAY" => {
                 for day in v.split(',') {
@@ -755,6 +762,28 @@ mod tests {
         // No 13th or -1st month: the rule is unusable, the event stays.
         for bad in ["13", "-1", "0", "x"] {
             let e = one(&format!("DTSTART:20261020T090000Z\r\nRRULE:FREQ=YEARLY;BYMONTH={bad}"));
+            assert_eq!(starts(&e, "2026-01-01 00:00", "2030-01-01 00:00").len(), 1, "{bad}");
+        }
+    }
+
+    #[test]
+    fn bymonthday_expands_monthly_and_yearly_rules_and_limits_daily_ones() {
+        // The 15th of each month, from a DTSTART on another day.
+        let e = one("DTSTART:20261001T100000Z\r\nRRULE:FREQ=MONTHLY;BYMONTHDAY=15;COUNT=3");
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-06-01 00:00"), [utc("2026-10-15 10:00"), utc("2026-11-15 10:00"), utc("2026-12-15 10:00")]);
+        // The first and the last day: a negative day counts from the month's end, whatever its length.
+        let e = one("DTSTART:20260101T100000Z\r\nRRULE:FREQ=MONTHLY;BYMONTHDAY=1,-1;COUNT=6");
+        let s = starts(&e, "2026-01-01 00:00", "2027-01-01 00:00");
+        let days = ["2026-01-01", "2026-01-31", "2026-02-01", "2026-02-28", "2026-03-01", "2026-03-31"];
+        assert_eq!(s, days.map(|d| utc(&format!("{d} 10:00"))));
+        // Yearly on February's last day, leap years included.
+        let e = one("DTSTART:20270228T100000Z\r\nRRULE:FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1;COUNT=2");
+        assert_eq!(starts(&e, "2027-01-01 00:00", "2030-01-01 00:00"), [utc("2027-02-28 10:00"), utc("2028-02-29 10:00")]);
+        // A daily rule only keeps those days: the 31st skips short months.
+        let e = one("DTSTART:20261001T080000Z\r\nRRULE:FREQ=DAILY;BYMONTHDAY=31;COUNT=3");
+        assert_eq!(starts(&e, "2026-10-01 00:00", "2027-06-01 00:00"), [utc("2026-10-31 08:00"), utc("2026-12-31 08:00"), utc("2027-01-31 08:00")]);
+        for bad in ["32", "-32", "0"] {
+            let e = one(&format!("DTSTART:20261020T090000Z\r\nRRULE:FREQ=MONTHLY;BYMONTHDAY={bad}"));
             assert_eq!(starts(&e, "2026-01-01 00:00", "2030-01-01 00:00").len(), 1, "{bad}");
         }
     }
