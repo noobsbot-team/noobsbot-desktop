@@ -338,11 +338,16 @@ impl State {
         self.animate(&anim);
     }
 
-    /// A new window was placed: scale 0.92 → 1 and fade in.
+    /// A new window was placed: scale 0.92 → 1 and fade in. The quake terminal slides down from the top edge.
     pub fn window_opened(&mut self, window: &Window) {
         let Some(frame) = self.window_frame(window) else { return };
-        let scale = if self.config.appearance.reduce_motion { 1.0 } else { 0.92 };
-        self.move_from(window, Look::scaled(frame, scale, 0.0), Curve::Spring(SMOOTH));
+        let reduce = self.config.appearance.reduce_motion;
+        let from = match (reduce, self.is_quake(window)) {
+            (true, _) => Look { rect: frame, alpha: 0.0 },
+            (false, true) => Look::at(above(frame)),
+            (false, false) => Look::scaled(frame, 0.92, 0.0),
+        };
+        self.move_from(window, from, Curve::Spring(SMOOTH));
     }
 
     /// About to zoom or un-zoom: the frame springs from here to its new size. Reduce motion: it just jumps.
@@ -386,7 +391,9 @@ impl State {
     }
 
     /// A shown window came back (un-minimised): it grows out of its dock icon, or out of its minimise ghost mid-way.
+    /// The quake terminal (E2.8) slides down from the top edge instead.
     pub fn window_restored(&mut self, window: &Window) {
+        let quake = self.is_quake(window);
         let now = Instant::now();
         let ghost = self.backend.as_mut().and_then(|b| {
             let i = b.ghosts.iter().position(|g| g.window == *window)?;
@@ -397,9 +404,10 @@ impl State {
         let from = match ghost {
             Some((look, _)) => look,
             None if self.config.appearance.reduce_motion => Look { rect: frame, alpha: 0.0 },
+            None if quake => Look::at(above(frame)),
             None => Look { rect: self.dock_target(window), alpha: 0.0 },
         };
-        let genie = self.genie_on().then(|| {
+        let genie = (self.genie_on() && !quake).then(|| {
             let (target, q) = ghost.and_then(|(_, g)| g).unwrap_or_else(|| (self.dock_target(window), 1.0));
             GenieRun { target, from: q, to: 0.0 }
         });
@@ -408,8 +416,8 @@ impl State {
         self.animate(&anim);
     }
 
-    /// `window` is about to go: its last frame goes on as a ghost into `to` (`None`: shrink to 0.95 and fade out).
-    fn leave(&mut self, window: &Window, to: Option<Rectangle<f64, Logical>>, curve: Curve) {
+    /// `window` is about to go: its last frame goes on as a ghost to `to` (`None`: shrink to 0.95 and fade out).
+    fn leave(&mut self, window: &Window, to: Option<Look>, curve: Curve) {
         let from = self.current_look(window);
         let dark = crate::render::is_dark(&self.config.appearance);
         let reduce = self.config.appearance.reduce_motion;
@@ -424,7 +432,7 @@ impl State {
         ghost.from = from.unwrap_or(ghost.from);
         ghost.to = match to {
             _ if reduce => Look { rect: ghost.from.rect, alpha: 0.0 },
-            Some(rect) => Look { rect, alpha: 0.0 },
+            Some(look) => look,
             None => Look::scaled(ghost.frame(), 0.95, 0.0),
         };
         ghost.anim = Anim::new(curve);
@@ -435,11 +443,17 @@ impl State {
 
     /// Minimise: it shrinks and slides into its dock tile or icon; its last frame stays on as the tile's thumbnail.
     /// Genie: it narrows into it instead, picking up where a restore that is still playing got to.
+    /// The quake terminal slides up out of the top edge instead.
     pub fn window_minimising(&mut self, window: &Window) {
+        if self.is_quake(window) {
+            let to = self.window_frame(window).map(above);
+            self.leave(window, to.map(Look::at), Curve::Spring(SMOOTH));
+            return;
+        }
         let to = self.dock_target(window);
         let now = Instant::now();
         let q = motion::current(window, now).and_then(|m| m.genie(now)).map_or(0.0, |(_, q)| q);
-        self.leave(window, Some(to), Curve::Spring(SMOOTH));
+        self.leave(window, Some(Look { rect: to, alpha: 0.0 }), Curve::Spring(SMOOTH));
         let genie = self.genie_on().then_some(GenieRun { target: to, from: q, to: 1.0 });
         if let Some(ghost) = self.backend.as_mut().and_then(|b| b.ghosts.iter_mut().find(|g| g.window == *window)) {
             ghost.genie = genie;
@@ -496,6 +510,11 @@ impl State {
             self.move_from(window, from, Curve::Spring(SMOOTH));
         }
     }
+}
+
+/// `frame` (relative to its display) moved up just past the top edge, its shadow too: where the quake terminal hides.
+fn above(frame: Rectangle<f64, Logical>) -> Rectangle<f64, Logical> {
+    Rectangle::new((frame.loc.x, -frame.size.h - 48.0).into(), frame.size)
 }
 
 /// How much of a window Show Desktop leaves on screen.
@@ -606,6 +625,14 @@ mod tests {
         assert!(wide.1 - wide.0 > narrow.1 - narrow.0 + 100.0, "{wide:?} vs {narrow:?}");
         let run = GenieRun { target, from: 0.3, to: 0.0 };
         assert_eq!((run.at(0.0), run.at(1.0)), (0.3, 0.0));
+    }
+
+    #[test]
+    fn quake_hides_above_the_top_edge() {
+        let frame = Rectangle::new((0.0, 30.0).into(), (1280.0, 320.0).into());
+        let up = above(frame);
+        assert_eq!((up.size, up.loc.x), (frame.size, frame.loc.x));
+        assert!(up.loc.y + up.size.h < 0.0, "fully off the top, shadow and all");
     }
 
     #[test]
