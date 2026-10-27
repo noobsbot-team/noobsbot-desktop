@@ -248,6 +248,16 @@ const fn s(page: Page, group: &'static str, key: &'static str, label: &'static s
 pub const CALENDAR_ADD: &str = "calendar.add";
 /// Notifications ▸ World Clock ▸ Add…: the typed city's `texts` key (no chooser).
 pub const CLOCK_ADD: &str = "widgets.clock_add";
+/// Date & Time ▸ CalDAV accounts ▸ Add…: the URL, user and password fields' `texts` keys.
+pub const CALDAV_ADD: &str = "calendar.caldav_url";
+pub const CALDAV: [&str; 3] = [CALDAV_ADD, "calendar.caldav_user", "calendar.caldav_password"];
+
+/// A `[calendar] caldav` entry's URL and user.
+pub fn account(entry: &toml_edit::Value) -> Option<(String, String)> {
+    let table = entry.as_inline_table()?;
+    let field = |key| table.get(key).and_then(toml_edit::Value::as_str).map(str::to_owned);
+    Some((field("url")?, field("user")?))
+}
 
 /// Every setting in `config.toml` (`data/config.toml`), in page order.
 pub const SETTINGS: &[Setting] = &[
@@ -652,6 +662,14 @@ pub const SETTINGS: &[Setting] = &[
         "Calendars",
         "Events for Up Next and reminders: .ics files, folders or dir/*.ics",
         Kind::List(Some(CALENDAR_ADD)),
+    ),
+    s(
+        Page::DateTime,
+        "Calendar",
+        "calendar.caldav",
+        "CalDAV accounts",
+        "A calendar's URL, user and app password; its events are fetched every 15 minutes",
+        Kind::List(Some(CALDAV_ADD)),
     ),
     s(Page::Spaces, "", "windows.spaces", "Spaces", "Dynamic: + in Mission Control adds more", Kind::Slider { min: 0.0, max: 16.0, step: 1.0 }),
     s(Page::Spaces, "", "spaces.per_display", "Displays have separate Spaces", "Off: every display switches Spaces together", Kind::Toggle),
@@ -1240,31 +1258,49 @@ fn settings_of<'a>(app: &'a App, filter: impl Fn(&Setting) -> bool) -> Vec<(&'st
     groups
 }
 
-/// A `Kind::List`'s entries under its row, each with Remove; then the path field when Add… found no chooser.
+/// A `Kind::List`'s entries under its row, each with Remove; then Add…'s fields: the path when it found no chooser,
+/// the city, or a CalDAV account's.
 fn list_rows<'a>(app: &'a App, key: &'static str, add: Option<&'static str>) -> Vec<Element<'a, Message>> {
     let t = app.tokens;
-    let items = app.config.list(key);
+    let items = app.config.get(key).and_then(toml_edit::Value::as_array).map(|a| a.iter().collect()).unwrap_or(Vec::new());
     let mut rows: Vec<Element<'a, Message>> = items
         .iter()
-        .map(|&item| {
-            let rest = items.iter().filter(|&&i| i != item).map(|&i| i.to_owned()).collect();
-            let remove = button(text("Remove").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::List(key, rest));
-            line(t, item, "", remove.into())
+        .enumerate()
+        .map(|(i, item)| {
+            let name = match (item.as_str(), account(item)) {
+                (Some(path), _) => path.to_owned(),
+                (_, Some((url, user))) => format!("{user} · {url}"),
+                _ => item.to_string(),
+            };
+            let remove = button(text("Remove").size(12)).padding([3, 10]).style(t.push(false)).on_press(Message::Remove(key, i));
+            line(t, name, "", remove.into())
         })
         .collect();
     if items.is_empty() {
         rows.push(container(text("None").size(12).color(t.secondary())).padding([8, 12]).into());
     }
-    if let Some((add, typed)) = add.and_then(|add| Some((add, app.texts.get(add)?))) {
-        let label = if add == CLOCK_ADD { "City" } else { "Path" };
-        let field = text_input(label, typed)
-            .on_input(move |v| Message::Type(add.into(), v))
-            .on_submit(Message::Submit(add.into()))
+    let caldav = add == Some(CALDAV_ADD);
+    let fields = match add {
+        Some(CALDAV_ADD) => vec![(CALDAV[0], "URL"), (CALDAV[1], "User"), (CALDAV[2], "Password")],
+        Some(CLOCK_ADD) => vec![(CLOCK_ADD, "City")],
+        Some(add) => vec![(add, "Path")],
+        None => Vec::new(),
+    };
+    for (field, label) in fields {
+        let Some(typed) = app.texts.get(field) else { continue };
+        let input = text_input(label, typed)
+            .secure(field == CALDAV[2])
+            .on_input(move |v| Message::Type(field.into(), v))
+            .on_submit(if caldav { Message::AddCalDav } else { Message::Submit(field.into()) })
             .size(13)
             .padding([3, 8])
             .width(240)
             .style(t.input(false));
-        rows.push(line(t, label, "", field.into()));
+        rows.push(line(t, label, "", input.into()));
+    }
+    if caldav && app.texts.contains_key(CALDAV_ADD) {
+        let go = button(text("Add Account").size(12)).padding([3, 10]).style(t.push(true)).on_press(Message::AddCalDav);
+        rows.push(line(t, "", "The calendar is fetched once to check the password", go.into()));
     }
     rows
 }
