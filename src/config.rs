@@ -32,7 +32,7 @@ const DEBOUNCE: Duration = Duration::from_millis(300);
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Config {
-    /// File format version; older files are migrated on load (C11).
+    /// File format version; older files are migrated on load (C11, `migrate`).
     pub version: u32,
     /// Opened by Super+Enter and the `terminal` action.
     pub terminal: String,
@@ -633,7 +633,7 @@ pub enum TitleAction {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            version: 1,
+            version: VERSION,
             terminal: "noobsbot".into(),
             check_updates: true,
             appearance: Appearance::default(),
@@ -1419,9 +1419,8 @@ pub fn parse(text: &str) -> Result<Config, toml::de::Error> {
     if let (Ok(user), Ok(known)) = (toml::from_str::<toml::Table>(text), toml::from_str::<toml::Table>(DEFAULT_TOML)) {
         warn_unknown("", &user, &known);
     }
-    if config.version != 1 {
-        // ponytail: only version 1 exists; a migration step per version goes here when 2 appears.
-        tracing::warn!("config version {} is not 1; reading the keys this version understands", config.version);
+    if config.version > VERSION {
+        tracing::warn!("config version {} is newer than {VERSION}; reading the keys this version understands", config.version);
     }
     config.bindings = merge_bindings(default_bindings(), std::mem::take(&mut config.bindings));
     config.appearance.glass_opacity = config.appearance.glass_opacity.clamp(0.0, 1.0);
@@ -1505,9 +1504,44 @@ fn read(path: &Path) -> Result<Config, String> {
     result.inspect_err(|err| tracing::warn!("{}: {err}", path.display()))
 }
 
-/// Startup load: the file, or the defaults if it is missing or broken.
+/// Startup load: the file, or the defaults if it is missing or broken. An older file is migrated (and saved) first.
 pub fn load(path: &Path) -> Config {
+    if let Some(text) = fs::read_to_string(path).ok().and_then(|text| migrate(&text)) {
+        // Through a dotfiles symlink, as `save_edit` does.
+        let file = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        match save_atomic(&file, &text) {
+            Ok(()) => tracing::info!("{}: settings moved to version {VERSION}", file.display()),
+            Err(err) => tracing::warn!("{}: {err}", file.display()),
+        }
+    }
     read(path).unwrap_or_default()
+}
+
+/// The settings file's format version.
+const VERSION: u32 = 2;
+
+/// An older file's text brought up to `VERSION`; `None` when it is current or doesn't parse. Version 2: the display
+/// scale's default went from "picked from the pixel density" (0) to 125%, so a file still on 0 gets 1.25. Choosing 0
+/// again later sticks.
+fn migrate(text: &str) -> Option<String> {
+    let table: toml::Table = toml::from_str(text).ok()?;
+    if table.get("version").and_then(toml::Value::as_integer).unwrap_or(1) >= i64::from(VERSION) {
+        return None;
+    }
+    let scale = table.get("display").and_then(|d| d.get("scale"));
+    let text = match scale {
+        Some(toml::Value::Float(0.0) | toml::Value::Integer(0)) => set_key(text, "display", "scale", "1.25"),
+        _ => text.to_owned(),
+    };
+    // `version` goes above every table; a file without one gets it first.
+    let version = format!("version = {VERSION}\n");
+    let mut lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let tables = lines.iter().position(|l| l.trim_start().starts_with('[')).unwrap_or(lines.len());
+    match lines[..tables].iter().position(|l| l.trim_start().strip_prefix("version").is_some_and(|r| r.trim_start().starts_with('='))) {
+        Some(i) => lines[i] = &version,
+        None => lines.insert(0, &version),
+    }
+    Some(lines.concat())
 }
 
 /// The broken-settings notification's id, below the network portal's.
@@ -1919,6 +1953,18 @@ mod tests {
     fn config_layout_wins() {
         let k = Keyboard { layout: "de".into(), variant: "neo".into(), options: "caps:escape".into(), ..Default::default() }.resolved();
         assert_eq!((k.layout.as_str(), k.variant.as_str(), k.options.as_str()), ("de", "neo", "caps:escape"));
+    }
+
+    #[test]
+    fn old_files_get_the_new_default_scale() {
+        let old = "# mine\nversion = 1\n\n[display]\nscale = 0.0 # auto\n";
+        assert_eq!(migrate(old).unwrap(), "# mine\nversion = 2\n\n[display]\nscale = 1.25 # auto\n");
+        assert_eq!(migrate("[display]\nscale = 0\n").unwrap(), "version = 2\n[display]\nscale = 1.25\n");
+        // A scale the owner picked stays; so does 0 picked again in a version 2 file.
+        assert_eq!(migrate("version = 1\n[display]\nscale = 1.5\n").unwrap(), "version = 2\n[display]\nscale = 1.5\n");
+        assert_eq!(migrate("version = 2\n[display]\nscale = 0.0\n"), None);
+        assert_eq!(migrate(DEFAULT_TOML), None);
+        assert_eq!(migrate("version = "), None);
     }
 
     #[test]

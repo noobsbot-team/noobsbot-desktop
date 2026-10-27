@@ -3,7 +3,7 @@
 # A line the desktop doesn't understand is reported in the journal and skipped:
 #   journalctl --user -t noobsbot-desktop
 
-version = 1
+version = 2
 
 # Terminal opened by Super+Enter and the "terminal" action.
 terminal = "noobsbot"
