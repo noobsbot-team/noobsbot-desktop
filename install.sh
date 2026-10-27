@@ -14,8 +14,8 @@ set -euo pipefail
 REPO_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DESKTOP_REPO=${NOOBSBOT_DESKTOP_REPO:-noobsbot-team/noobsbot-desktop}
 TERMINAL_REPO=noobsbot-team/noobsbot-terminal
-# --from-source builds these tags (override with the environment for testing a newer one).
-DESKTOP_TAG=${NOOBSBOT_DESKTOP_TAG:-v0.1.0}
+# --from-source builds these tags (override with the environment for testing a newer one); v1.0.0-alpha.1 was v0.1.0.
+DESKTOP_TAG=${NOOBSBOT_DESKTOP_TAG:-v1.0.0-alpha.1}
 # v0.5.1, by commit: its installer runs here with curl | bash, and a tag can be moved while a commit can't.
 TERMINAL_TAG=${NOOBSBOT_TERMINAL_TAG:-a018abda96add824a72be95f3450de0998f71229}
 # The release signing key (E6.13); its private half lives only in the release CI secret.
