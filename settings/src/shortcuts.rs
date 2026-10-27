@@ -266,6 +266,7 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
     let all = app.config.bindings();
     let rows = rows(&all, |combo| app.config.default_of(&format!("bindings.{combo}")).map(str::to_owned));
     let clashes = conflicts(&all);
+    let nudge = app.config.bool("windows.keyboard_nudge");
     let mut sidebar = column![].spacing(1).width(190);
     for &name in CATEGORIES {
         if name == "Other" && !rows.iter().any(|r| category(&r.action) == "Other") {
@@ -304,6 +305,8 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
         list = list.push(container(row![keys, typed, pick, add].spacing(6).align_y(Alignment::Center)).padding([4, 8]));
     }
     for r in rows.iter().filter(|r| category(&r.action) == editor.category) {
+        // Nudge and resize keys do nothing while their switch is off.
+        let inert = !nudge && needs_nudge(&r.action);
         let enable: Element<'static, Message> = if r.custom {
             space().width(16).into()
         } else {
@@ -318,6 +321,9 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
                 .style(t.sidebar_row(selected))
                 .on_press(Message::Shortcuts(Msg::Select(r.combo.clone())))
                 .into()
+        } else if inert {
+            let tip = container(text("Turn on Move and resize with the keyboard").size(11)).padding([4, 8]).style(t.sheet());
+            tooltip(text(label(&r.action)).size(13).width(Length::Fill).color(t.tertiary()), tip, tooltip::Position::Top).into()
         } else {
             text(label(&r.action)).size(13).width(Length::Fill).into()
         };
@@ -328,7 +334,7 @@ pub fn view(app: &App, editor: &Editor) -> Element<'static, Message> {
         }
         let recording = editor.recording.as_ref() == Some(&r.combo);
         let shown = if recording { "Type keys…".to_owned() } else { format(&r.combo) };
-        let keys = text(shown).size(13).color(if r.on || recording { t.label() } else { t.tertiary() });
+        let keys = text(shown).size(13).color(if (r.on && !inert) || recording { t.label() } else { t.tertiary() });
         line = line.push(button(keys).padding([2, 8]).style(t.segment(recording)).on_press(Message::Shortcuts(Msg::Record(r.combo.clone()))));
         list = list.push(container(line).padding([4, 8]));
     }
@@ -445,6 +451,11 @@ const PICKABLE: &[&str] = &[
 /// The argument-less actions and `PICKABLE`, for the + picker.
 pub fn known() -> impl Iterator<Item = &'static str> {
     KNOWN.iter().map(|&(name, ..)| name).filter(|n| !["minimize", "cycle", "centre"].contains(n)).chain(PICKABLE.iter().copied())
+}
+
+/// Acts only with `[windows] keyboard_nudge` on.
+fn needs_nudge(action: &str) -> bool {
+    matches!(split(action).0, "nudge" | "resize")
 }
 
 fn split(action: &str) -> (&str, &str) {
@@ -601,6 +612,7 @@ mod tests {
         assert_eq!(label("tile top-right"), "Tile Top Right");
         assert_eq!(label("nudge up"), "Move Window Up");
         assert_eq!(label("resize left"), "Narrow Window");
+        assert!(needs_nudge("resize left") && !needs_nudge("tile left"));
         assert_eq!(label("volume up"), "Volume Up");
         assert_eq!(label("media previous"), "Previous Track");
         assert_eq!(label("frobnicate"), "frobnicate");
