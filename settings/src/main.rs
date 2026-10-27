@@ -80,6 +80,10 @@ fn main() -> iced::Result {
             if app.page == Page::Printers {
                 all.push(iced::Subscription::run_with(std::time::Duration::from_secs(3), arrange::ticks).map(|()| Message::ReadPrinters));
             }
+            // Enrolling while Add Fingerprint…'s sheet is open and fprintd isn't done; closing it stops fprintd.
+            if app.enroll.as_ref().is_some_and(|e| !e.done) {
+                all.push(iced::Subscription::run(users::enroll).map(Message::Enrolling));
+            }
             if app.shortcuts.as_ref().is_some_and(|e| e.recording.is_some()) {
                 all.push(iced::event::listen_with(shortcuts::key_pressed));
             }
@@ -172,6 +176,8 @@ pub struct App {
     shot: Option<users::Shot>,
     /// Bumped by each Take Photo… / Retake, so ticks and photos of an earlier countdown are dropped.
     shot_generation: u32,
+    /// Users ▸ Add Fingerprint…'s sheet, open.
+    enroll: Option<users::Enrolling>,
     /// The Printers page's queues and jobs: `None` until read, `Some(None)` without CUPS.
     printers: Option<Option<printers::Printers>>,
     /// The printer whose options are open.
@@ -326,6 +332,12 @@ pub enum Message {
     DeleteUser(Option<String>),
     /// The alert's choice: `true` deletes the home folder too.
     DeleteUserNow(bool),
+    /// Users ▸ Add Fingerprint…: the sheet opens (and enrolling starts) or closes.
+    Enroll(bool),
+    /// The enrolling's progress.
+    Enrolling(users::Enrolling),
+    /// Users ▸ Fingerprints ▸ Delete All.
+    DeleteFingerprints,
     /// A list key's new entries.
     List(&'static str, Vec<String>),
     /// The ids `org.noobsbot.Desktop.Widgets` has.
@@ -391,6 +403,7 @@ impl App {
             users: None,
             shot: None,
             shot_generation: 0,
+            enroll: None,
             printers: None,
             printer: None,
             devices: None,
@@ -702,6 +715,18 @@ impl App {
                     None => self.texts.remove(users::DELETE),
                 };
             }
+            Message::Enroll(open) => {
+                self.enroll = open.then(users::Enrolling::default);
+                if !open {
+                    return Task::perform(users::read(), Message::Users);
+                }
+            }
+            Message::Enrolling(state) => {
+                if self.enroll.is_some() {
+                    self.enroll = Some(state);
+                }
+            }
+            Message::DeleteFingerprints => return Task::perform(users::delete_fingers(), Message::UsersActed),
             Message::DeleteUserNow(remove_files) => {
                 let path = self.texts.remove(users::DELETE);
                 let others = self.users.as_ref().map_or(&[][..], |u| &u.others[..]);

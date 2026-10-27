@@ -1759,7 +1759,7 @@ phones (MTP), Thunderbolt docks (bolt), CPU microcode, video decoding.
 | Calendar events (done) | "Up Next" widget, event dots, reminders | own `.ics` parser (`ical.rs`, `events.rs`), `[calendar] files` (a folder not there yet is watched through its nearest parent until it appears); CalDAV later |
 | Own polkit agent (done) | password prompts in our alert design instead of the fallback agent's | polkit agent D-Bus API + `polkit-agent-helper-1` (`services/polkit.rs`); the standard Qt agent is the fallback |
 | Weather widget (done, off by default) | forecast in Notification Center | Open-Meteo (no key, no account; city or lat/long, no IP lookup), `services/weather.rs` |
-| Fingerprint unlock | lock screen + sudo | `fprintd` |
+| Fingerprint unlock (done) | lock screen: fprintd's verify beside the password field ("Touch the fingerprint sensor", red "Not recognised, try again", three tries as pam_fprintd); Settings ▸ Users ▸ Fingerprints counts, enrolls (a sheet counting touches) and deletes them; sudo is the system's PAM config (`pam_fprintd`), untouched | `fprintd` over D-Bus (`services/fingerprint.rs`, `settings/src/users.rs`); optional, not installed by `install.sh` |
 | Printers (done) | printing from apps | CUPS, through Settings ▸ Printers (`settings/src/printers.rs`, E8.2; untested with a print job) |
 | Desktop icons (done) | files in `~/Desktop` shown on the wallpaper (L12) | icon grid in `shell/desktop.rs`; open/rename/trash through Dolphin's KIO |
 | Emoji picker (done) | Super+Ctrl+E / Super+. popover, search by name, recent row | Noto Color Emoji + our widgets; inserts via `text-input-v3` |
@@ -2068,7 +2068,7 @@ Linux, it works on Noobsbot Desktop. Our job is the standard **services** above 
 | Battery / power | ACPI | UPower, power-profiles-daemon | menu bar, Control Center, widget | M2 / M4 |
 | Sleep / lid / power button | ACPI | logind | E6.5 | M6 |
 | Printers (optional) | — | CUPS | app print dialogs, Settings ▸ Printers | M8 |
-| Fingerprint (optional) | kernel | fprintd | lock screen | later |
+| Fingerprint (optional) | kernel | fprintd | lock screen, Settings ▸ Users | done (E7.2) |
 | Firmware updates (optional) | — | fwupd | notification | later |
 
 ## G3. Services: what and why
