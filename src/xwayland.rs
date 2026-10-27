@@ -1,6 +1,6 @@
 //! X11 apps (E6.9, C10): xwayland-satellite on a free X display, restarted if it dies (E1.11). It is a normal
 //! Wayland client, so X11 windows get our title bars; programs we start get its `DISPLAY`. Giving up posts a
-//! notification.
+//! notification. Our patched build (vendor/xwayland-satellite) ships beside this binary; else the one on `PATH` runs.
 
 use std::{
     ffi::OsStr,
@@ -31,9 +31,14 @@ pub fn quitting() {
 /// `cursor_size` goes to it as `XCURSOR_SIZE`.
 pub fn spawn(socket: &OsStr, cursor_size: u32, handle: &LoopHandle<'static, State>) -> Option<String> {
     let name = format!(":{}", free_display(|n| Path::new(&format!("/tmp/.X11-unix/X{n}")).exists() || Path::new(&format!("/tmp/.X{n}-lock")).exists()));
+    let program = std::env::current_exe()
+        .map(|exe| exe.with_file_name("xwayland-satellite"))
+        .ok()
+        .filter(|bundled| bundled.is_file())
+        .unwrap_or_else(|| "xwayland-satellite".into());
     let start = {
         let (name, socket) = (name.clone(), socket.to_owned());
-        move || Command::new("xwayland-satellite").arg(&name).env("WAYLAND_DISPLAY", &socket).env("XCURSOR_SIZE", cursor_size.to_string()).spawn()
+        move || Command::new(&program).arg(&name).env("WAYLAND_DISPLAY", &socket).env("XCURSOR_SIZE", cursor_size.to_string()).spawn()
     };
     let child = start().inspect_err(|err| tracing::info!("X11 apps off: xwayland-satellite: {err}")).ok()?;
     let (gave_up, rx) = channel::channel();
