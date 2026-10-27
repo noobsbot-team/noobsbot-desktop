@@ -1654,7 +1654,8 @@ Goal: install on a fresh Arch system, log in, and use it all day.
   | pre-release: rc | release candidate, fixes only, `-rc.N` | `1.0.0-rc.1` |
   Pre-releases sort before their release by SemVer precedence (`1.0.0-rc.1` < `1.0.0`, `beta.10` > `beta.2`) and reach
   only the Beta channel, except that Stable (and `install.sh`) takes the newest pre-release while no stable release
-  exists; 1.0.0 is the first stable one. release-plz bumps `N`; the next stage is set by hand in the release PR.
+  exists; 1.0.0 is the first stable one. release-plz reads only `vX.Y.Z` tags, so until 1.0.0 each pre-release's
+  PR (version and changelog section) is opened by hand from a `release-plz-…` branch; release-plz tags it on merge.
   The version lives **only** in `Cargo.toml`; `noobsbot-desktop --version` prints `1.3.0 (Opal) · 2026-10-17 · a1b2c3d`
   and About shows "Noobsbot Desktop 1.3 · Opal" (a pre-release: "1.0 beta 1 · Opal"). The same scheme is adopted by
   `noobsbot-terminal`.

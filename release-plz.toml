@@ -8,9 +8,11 @@ publish = false
 git_only = true
 git_tag_name = "v{{ version }}"
 git_release_enable = true
-# Pre-releases (README ▸ Updates): while the version is one (`1.0.0-beta.1`), release-plz bumps only its number
-# (beta.1 → beta.2); the next stage (alpha → beta → rc → the release, `1.0.0`) is set by hand in the release PR.
-# A pre-release becomes a GitHub pre-release, seen by the Beta channel, and by Stable only while no stable release exists.
+# Pre-releases (README ▸ Updates): in git-only mode release-plz reads only `vX.Y.Z` tags, so it can't see
+# `v1.0.0-beta.1` and opens no PR while the version is a pre-release. Until 1.0.0 each pre-release's PR (Cargo.toml,
+# Cargo.lock and its CHANGELOG section) is opened by hand from a `release-plz-…` branch; merging it lets release-plz tag
+# and release it as usual. It becomes a GitHub pre-release, seen by the Beta channel, and by Stable only while no stable
+# release exists.
 git_release_type = "auto"
 changelog_update = true
 # While 0.y.z, `feat:` bumps the minor too (not the patch), as it will from 1.0.0 on.
