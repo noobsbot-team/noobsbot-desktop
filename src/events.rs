@@ -298,8 +298,9 @@ impl State {
         self.calendar_watch();
     }
 
-    /// One timer, to the next alarm (or the horizon, to look again).
-    fn calendar_arm(&mut self) {
+    /// One timer, to the next alarm (or the horizon, to look again). The timer is monotonic and stops while the machine
+    /// sleeps, so waking arms it again.
+    pub fn calendar_arm(&mut self) {
         if let Some(token) = self.calendar.timer.take() {
             self.loop_handle.remove(token);
         }
@@ -309,7 +310,6 @@ impl State {
         let fired = self.calendar.fired;
         let at = next_alarm(&self.calendar.events, fired).unwrap_or(fired + HORIZON);
         let wait = Duration::from_secs((at - Local::now().timestamp()).max(0) as u64);
-        // ponytail: a monotonic timer, so a suspend delays it by the time asleep; re-arm on resume if that matters.
         let timer = self.loop_handle.insert_source(Timer::from_duration(wait), |_, _, state| {
             state.calendar.timer = None;
             state.calendar_alarm();

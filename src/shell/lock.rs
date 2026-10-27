@@ -540,6 +540,19 @@ impl State {
         self.schedule_redraw();
     }
 
+    /// A display changed size (mode, scale, rotation): a locker client's surface on it is sized to it again. Our own
+    /// lock screen is laid out from the display's size every frame; until the client draws the new size, the
+    /// wallpaper shows where its old one doesn't reach.
+    pub fn refit_lock(&self) {
+        for (surface, output) in self.lock.iter().flat_map(|l| &l.surfaces).filter(|(s, _)| s.alive()) {
+            if let Some(geo) = self.space.output_geometry(output) {
+                // Sent only when the size differs from the last one sent.
+                surface.with_pending_state(|s| s.size = Some(surface_size(geo.size).into()));
+                surface.send_configure();
+            }
+        }
+    }
+
     /// After a frame was shown: a sleep waiting for the lock frame may go ahead.
     pub fn lock_frame_shown(&mut self) {
         if let Some(lock) = self.lock.as_mut().filter(|l| l.sleep_pending) {
@@ -585,8 +598,7 @@ impl SessionLockHandler for State {
         });
     }
 
-    /// A surface for `output`, sized to that display.
-    // ponytail: sized once; a display that changes size while locked leaves it as it was.
+    /// A surface for `output`, sized to that display (and again when it changes, `refit_lock`).
     fn new_surface(&mut self, surface: LockSurface, output: WlOutput) {
         let Some(output) = Output::from_resource(&output) else { return };
         let Some(size) = self.space.output_geometry(&output).map(|g| g.size) else { return };

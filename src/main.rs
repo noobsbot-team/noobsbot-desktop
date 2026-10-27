@@ -605,12 +605,15 @@ fn run(mut command: Vec<String>, nested: bool, greeter: bool, test_scene: bool, 
     }
 
     // Replies queued while handling events go out once per loop turn.
-    event_loop.run(None, &mut state, |state| {
+    let ran = event_loop.run(None, &mut state, |state| {
         state.access_frame();
         state.sync_toplevel_list();
         state.sync_workspaces();
         let _ = state.display_handle.flush_clients();
-    })?;
+    });
+    // Log out, the login screen's session started, the nested window closed: settings saved just now are kept.
+    config::flush();
+    ran?;
     Ok(())
 }
 

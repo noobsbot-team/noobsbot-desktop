@@ -8,7 +8,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
+use smithay::reexports::calloop::{
+    channel,
+    timer::{TimeoutAction, Timer},
+};
 
 use crate::{
     config::{self, Housekeeping},
@@ -39,16 +42,13 @@ fn space(path: &Path) -> Option<(u64, u64)> {
     (unsafe { libc::statvfs(path.as_ptr(), &mut s) } == 0).then(|| (s.f_bavail * s.f_frsize, s.f_blocks * s.f_frsize))
 }
 
-/// Starts the hourly check, its first a minute after login (once outputs and the menu bar are up).
+/// Starts the hourly check, its first a minute after login (once outputs and the menu bar are up). The disks are
+/// looked at on a thread, so a hung network home never stalls a frame; the answer comes back through a channel.
 pub fn start(state: &State) {
+    let (tx, rx) = channel::channel();
     let mut warned = false;
-    let timer = state.loop_handle.insert_source(Timer::from_duration(Duration::from_secs(60)), move |_, _, state| {
-        let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
-        // ponytail: statvfs on the frame thread; fine for local disks, a hung network home would stall a frame.
-        let full = [("the system disk", Path::new("/")), ("Home", home.as_path())].into_iter().find_map(|(name, p)| {
-            let (free, total) = space(p)?;
-            low(free, total).then_some((name, free))
-        });
+    let answers = state.loop_handle.insert_source(rx, move |event, _, state| {
+        let channel::Event::Msg(full) = event else { return };
         match full {
             Some((name, free)) if !warned => {
                 warned = true;
@@ -57,9 +57,25 @@ pub fn start(state: &State) {
             None => warned = false,
             _ => {}
         }
-        if due(&stamp()) {
-            let settings = state.config.housekeeping.clone();
-            std::thread::spawn(move || clean(&settings));
+    });
+    if let Err(err) = answers {
+        return tracing::warn!("housekeeping: {err}");
+    }
+    let timer = state.loop_handle.insert_source(Timer::from_duration(Duration::from_secs(60)), move |_, _, state| {
+        let (tx, settings) = (tx.clone(), state.config.housekeeping.clone());
+        let spawned = std::thread::Builder::new().name("housekeeping".into()).spawn(move || {
+            let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
+            let full = [("the system disk", Path::new("/")), ("Home", home.as_path())].into_iter().find_map(|(name, p)| {
+                let (free, total) = space(p)?;
+                low(free, total).then_some((name, free))
+            });
+            let _ = tx.send(full);
+            if due(&stamp()) {
+                clean(&settings);
+            }
+        });
+        if let Err(err) = spawned {
+            tracing::warn!("housekeeping: {err}");
         }
         TimeoutAction::ToDuration(HOUR)
     });
@@ -101,7 +117,7 @@ fn due(stamp: &Path) -> bool {
     fs::write(stamp, chrono::Local::now().to_rfc3339()).is_ok()
 }
 
-/// The daily cleanups; runs on its own thread.
+/// The daily cleanups; runs on the housekeeping thread.
 fn clean(settings: &Housekeeping) {
     if settings.empty_trash_days > 0 {
         let cutoff = chrono::Local::now().naive_local() - chrono::Duration::days(settings.empty_trash_days.into());
@@ -113,9 +129,19 @@ fn clean(settings: &Housekeeping) {
     if settings.recent_days > 0 {
         let path = crate::shell::dock::recent_path();
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(settings.recent_days.into())).format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        // ponytail: read, prune, rename; an app writing the file in between loses that one entry.
-        if let Some(pruned) = fs::read_to_string(&path).ok().and_then(|xbel| prune_recent(&xbel, &cutoff)) {
-            let _ = config::save_atomic(&path, &pruned).inspect_err(|err| tracing::warn!("{}: {err}", path.display()));
+        // An app that wrote the file since it was read would lose its entry to the rename: read and prune once more.
+        let modified = || fs::metadata(&path).and_then(|m| m.modified()).ok();
+        for _ in 0..2 {
+            let read = modified();
+            let Some(pruned) = fs::read_to_string(&path).ok().and_then(|xbel| prune_recent(&xbel, &cutoff)) else { break };
+            match config::save_atomic_if(&path, &pruned, || modified() == read) {
+                Ok(false) => {}
+                Ok(true) => break,
+                Err(err) => {
+                    tracing::warn!("{}: {err}", path.display());
+                    break;
+                }
+            }
         }
     }
 }
