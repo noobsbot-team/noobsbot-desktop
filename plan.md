@@ -497,9 +497,11 @@ glass windows with traffic lights.
   at 120 Hz; magnetic edges and both modifiers work (unit tests for the anchor and sticking math).
 - **Built:** `src/wm.rs` (placement, magnetic edges, resize maths, double-click edge grow, tiling), `src/grabs.rs`
   (move and resize grabs, Alt symmetric and Shift aspect resize, one configure outstanding), activation-gated focus
-  (`src/state.rs`), remembered frames (`src/sheets.rs`), the snapping preview (shown on arrival, E8.5). Not yet: the
-  frame drawn at the new size while a slow app catches up (only its last buffer is anchored); Mission Control from a
-  3-finger swipe with a window in hand; a display unplug cancelling a drag or resize (the lock does).
+  (`src/state.rs`), remembered frames (`src/sheets.rs`), the snapping preview (shown on arrival, E8.5); the frame drawn
+  at the asked size while a slow app catches up, its last buffer pinned inside and the bare strip `window-bg` (a title
+  bar's glass already spans the frame) (`grabs::asked`); a 3-finger swipe up mid-drag opens Mission Control with the
+  window still in hand, a drop on a Space moving it there (`carry_held`); a display unplugged or turned off ends a drag
+  or resize as a button release would, never tiling (`end_drag`).
 
 ### E1.3 Title bars & traffic lights
 - **What it is:** the bar on top of every window with close / minimise / zoom buttons.
@@ -862,7 +864,8 @@ Goal: the top of the screen has a global menu bar and status area, and Wi-Fi, Bl
   the desktop owns F12, DevTools still opens with Ctrl+Shift+I; the key is configurable.
 - **Done when:** F12 slides it in and out at once (a fade with reduce motion), on top of fullscreen apps too.
 - **Built:** F12 shows and hides it (`toggle_quake`, starting `noobsbot --quake` when it isn't running), placed by the
-  quake `[[rules]]` entry (`space = "all"`, `layer = "overlay"`). Not yet: square top corners (all four are rounded).
+  quake `[[rules]]` entry (`space = "all"`, `layer = "overlay"`); square top corners for a rule hanging it from the top
+  edge (`Actions::hangs`: its rounded rect stretched a radius above it).
 
 ### E2.9 Universal glass theme for apps (Dolphin, Kate & every other app)
 - **What it is:** apps that aren't drawn by Noobsbot Desktop (Dolphin, Kate, Partition Manager, System Monitor,
