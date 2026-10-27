@@ -302,6 +302,12 @@ pub fn media_hit(card: Rect, location: Point<f64, Logical>) -> Option<crate::ser
     [Action::Previous, Action::PlayPause, Action::Next].into_iter().zip(buttons).find(|(_, r)| r.to_f64().contains(location)).map(|(a, _)| a)
 }
 
+/// Whether fprintd's word on verify `tag` counts: only the `current` verify's, on our own lock screen, and none while
+/// the machine goes to sleep (a finger on a power-button sensor) or while the session is in the background.
+pub fn finger_counts(lock: &Lock, tag: u64, current: u64, active: bool) -> bool {
+    tag == current && active && !lock.sleep_pending && !lock.client && lock.greeter.is_none()
+}
+
 impl State {
     pub fn locked(&self) -> bool {
         self.lock.is_some()
@@ -419,20 +425,23 @@ impl State {
         self.schedule_redraw();
     }
 
-    /// Starts (`on`) or stops fprintd's verify. Only on our own lock screen: not on the login screen, nor under a locker
-    /// client, which checks its own way. ponytail: a client that dies and leaves ours up gets none until the next lock.
+    /// Starts (`on`) or stops fprintd's verify, each call under a new tag (`finger_counts`). Only on our own lock
+    /// screen: not on the login screen, nor under a locker client, which checks its own way.
+    /// ponytail: a client that dies and leaves ours up gets none until the next lock.
     pub fn fingerprint(&mut self, on: bool) {
         let mut user = None;
         if let Some(lock) = self.lock.as_mut().filter(|l| !l.client && l.greeter.is_none()) {
             lock.finger = Verify::Off;
             user = on.then(|| crate::pam::user().0).filter(|u| !u.is_empty());
         }
-        self.services.send(Command::Fingerprint(user));
+        self.fingerprint_tag += 1;
+        self.services.send(Command::Fingerprint(self.fingerprint_tag, user));
     }
 
-    /// fprintd's verify said something: a touch wakes the screen, and a match unlocks as the right password does.
-    pub fn fingerprint_changed(&mut self, finger: Verify) {
-        let Some(lock) = self.lock.as_mut().filter(|l| !l.client && l.greeter.is_none()) else { return };
+    /// fprintd's verify `tag` said something: a touch wakes the screen, and a match unlocks as the right password does.
+    pub fn fingerprint_changed(&mut self, tag: u64, finger: Verify) {
+        let (current, active) = (self.fingerprint_tag, self.session_active());
+        let Some(lock) = self.lock.as_mut().filter(|l| finger_counts(l, tag, current, active)) else { return };
         lock.finger = finger;
         if finger == Verify::Match {
             // Anything typed is wiped, as after a password check.
@@ -642,6 +651,19 @@ mod tests {
             .handle()
             .insert_source(smithay::reexports::calloop::timer::Timer::immediate(), |_, _, _| smithay::reexports::calloop::timer::TimeoutAction::Drop)
             .unwrap()
+    }
+
+    #[test]
+    fn only_the_current_verify_counts_and_never_as_the_machine_sleeps() {
+        let mut lock = Lock::new();
+        assert!(finger_counts(&lock, 4, 4, true), "the current verify");
+        assert!(!finger_counts(&lock, 3, 4, true), "a stopped verify's late match, or the last lock's");
+        assert!(!finger_counts(&lock, 4, 4, false), "the session is in the background");
+        lock.sleep_pending = true;
+        assert!(!finger_counts(&lock, 4, 4, true), "logind is about to sleep");
+        lock.sleep_pending = false;
+        lock.client = true;
+        assert!(!finger_counts(&lock, 4, 4, true), "a locker client checks its own way");
     }
 
     #[test]
