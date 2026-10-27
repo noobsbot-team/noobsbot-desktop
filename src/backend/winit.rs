@@ -463,16 +463,14 @@ impl State {
             if let Some((item, at)) = held.zip(held_at) {
                 let s = layout.icon;
                 layout.icons.push(smithay::utils::Rectangle::new((at.x - s / 2.0, at.y - s / 2.0).into(), (s, s).into()));
-                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0, active: 0.0 };
+                let shade = crate::shell::dock_fx::Shade { alpha: 1.0, lighten: 0.0, darken: 0.0 };
                 icons.push(DockIcon { name: item.icon(), windows: 0, shade });
             }
             let badges: Vec<_> = dock_frame.badges.iter().map(|(i, entry)| (layout.icons[*i].to_i32_round(), *entry)).collect();
             bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &dock_frame.tips, dark, scale));
             bar.extend(dock.badges(renderer, shaders, &mut self.text, &mut self.symbols, &badges, accent, scale));
-            let mut elements = dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, self.config.dock.style, scale);
-            // In front of the bar (the last element), behind badges and dots.
-            let back = elements.pop();
-            bar.extend(elements.into_iter().chain(thumbs).chain(back));
+            bar.extend(dock.elements(renderer, shaders, &mut self.icons, &icons, &layout, px, dark, scale));
+            bar.extend(thumbs);
             bar.extend(DockView::poofs(shaders, &dock_frame.poofs, layout.icon, scale));
         } else {
             bar.extend(dock.tooltip(renderer, shaders, &mut self.text, &mut self.symbols, &[], dark, scale));

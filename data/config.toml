@@ -286,9 +286,6 @@ displays = "all"
 # A display's own pinned list, by connector name, in place of items (the dock menu's Options ▸ Separate Items on
 # This Display). A display that isn't connected keeps its list. E.g. outputs = { "HDMI-A-1" = ["kitty", "dolphin"] }
 outputs = {}
-# The bar's look: "default" (Plank's Transparent-Tight: an opaque grey gradient, square), "whitesur-dark"
-# (near-black, mostly opaque, a faint light edge) or "glass" (lighter, see-through, rounded ends).
-style = "default"
 
 [idle]
 # Seconds without input before the screen dims, turns off, and the computer sleeps; 0 = never.
