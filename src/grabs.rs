@@ -250,6 +250,47 @@ impl State {
         self.flush_resize();
     }
 
+    /// The `nudge` / `resize` shortcuts: `window` moved `x`, `y` keyboard steps on its display's work area, or (`resize`)
+    /// its right and bottom edges, no animation. As with the pointer: a full-screen window stays put, a zoomed or tiled
+    /// one goes back to its own size before it moves, and a zoomed one doesn't resize.
+    pub fn nudge(&mut self, window: &Window, x: i32, y: i32, resize: bool) {
+        // A sheet moves with its parent.
+        let window = if resize { window.clone() } else { self.sheet_parent(window).unwrap_or_else(|| window.clone()) };
+        let Some(toplevel) = window.toplevel().cloned() else { return };
+        let (full, zoomed) =
+            toplevel.with_pending_state(|s| (s.states.contains(xdg_toplevel::State::Fullscreen), s.states.contains(xdg_toplevel::State::Maximized)));
+        let (Some(mut frame), Some(area)) = (self.frame(&window), self.window_area(&window)) else { return };
+        if full || (resize && zoomed) || self.resize.as_ref().is_some_and(|r| !r.released) {
+            return;
+        }
+        if resize {
+            let (min, max) = self.size_limits(&window);
+            match self.resize.as_mut().filter(|r| r.window == window) {
+                // Steps faster than the app draws add up.
+                Some(r) => r.desired = wm::nudge_size(Rect::new(r.start.loc, r.desired), area, x, y, min, max),
+                None => {
+                    let desired = wm::nudge_size(frame, area, x, y, min, max);
+                    if desired == frame.size {
+                        return;
+                    }
+                    let edges = Edges { right: true, bottom: true, ..Default::default() };
+                    self.resize = Some(Resize { window, edges, start: frame, symmetric: false, desired, sent: None, waiting: false, released: true });
+                }
+            }
+            return self.flush_resize();
+        }
+        let at = Point::from((f64::from(frame.loc.x + frame.size.w / 2), f64::from(frame.loc.y + crate::decorations::BAR / 2)));
+        if let Some(rect) = self.unfill(&toplevel, xdg_toplevel::State::Maximized).or_else(|| self.untile(&window, at)) {
+            frame = rect;
+        }
+        let loc = wm::nudge(frame, area, x, y);
+        // A resize step the app hasn't drawn yet lands where the window went.
+        if let Some(r) = self.resize.as_mut().filter(|r| r.window == window) {
+            r.start.loc = loc;
+        }
+        self.set_visible_loc(&window, loc);
+    }
+
     /// Sends the app the size the pointer asks for, unless a configure is still unanswered.
     pub fn flush_resize(&mut self) {
         let Some(resize) = self.resize.as_mut() else { return };
