@@ -6,6 +6,7 @@ mod apps;
 mod arrange;
 mod backend;
 mod bell;
+mod caldav;
 mod calendar;
 mod capture;
 mod clipboard;
