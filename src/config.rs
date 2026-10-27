@@ -1469,7 +1469,7 @@ fn warn_unknown(prefix: &str, user: &toml::Table, known: &toml::Table) {
 
 /// Reads and parses the file: the error (logged), "line 3: …", when it can't be read or parsed; a missing file is the
 /// defaults.
-fn read(path: &Path) -> Result<Config, String> {
+pub fn read(path: &Path) -> Result<Config, String> {
     let result = match fs::read_to_string(path) {
         Ok(text) => parse(&text).map_err(|err| {
             let message = err.message().trim().replace('\n', " ");

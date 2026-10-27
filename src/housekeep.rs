@@ -61,8 +61,8 @@ pub fn start(state: &State) {
     if let Err(err) = answers {
         return tracing::warn!("housekeeping: {err}");
     }
-    let timer = state.loop_handle.insert_source(Timer::from_duration(Duration::from_secs(60)), move |_, _, state| {
-        let (tx, settings) = (tx.clone(), state.config.housekeeping.clone());
+    let timer = state.loop_handle.insert_source(Timer::from_duration(Duration::from_secs(60)), move |_, _, _| {
+        let tx = tx.clone();
         let spawned = std::thread::Builder::new().name("housekeeping".into()).spawn(move || {
             let home = PathBuf::from(std::env::var_os("HOME").unwrap_or_default());
             let full = [("the system disk", Path::new("/")), ("Home", home.as_path())].into_iter().find_map(|(name, p)| {
@@ -71,7 +71,8 @@ pub fn start(state: &State) {
             });
             let _ = tx.send(full);
             if due(&stamp()) {
-                clean(&settings);
+                // The file as it is now: a broken or unreadable one (the desktop on the defaults) clears no Trash.
+                clean(config::read(&config::path()).ok().map(|c| c.housekeeping).as_ref());
             }
         });
         if let Err(err) = spawned {
@@ -117,15 +118,17 @@ fn due(stamp: &Path) -> bool {
     fs::write(stamp, chrono::Local::now().to_rfc3339()).is_ok()
 }
 
-/// The daily cleanups; runs on the housekeeping thread.
-fn clean(settings: &Housekeeping) {
+/// The daily cleanups; runs on the housekeeping thread. Without the user's `settings` (their file can't be read)
+/// only the caches are cleared.
+fn clean(settings: Option<&Housekeeping>) {
+    let cache = config::xdg_dir("XDG_CACHE_HOME", ".cache");
+    remove_unused(&cache.join("thumbnails"), THUMBNAIL_AGE);
+    remove_unused(&cache.join("noobsbot-desktop/icons"), ICON_AGE);
+    let Some(settings) = settings else { return };
     if settings.empty_trash_days > 0 {
         let cutoff = chrono::Local::now().naive_local() - chrono::Duration::days(settings.empty_trash_days.into());
         trash::dirs().iter().for_each(|d| trash::empty_before(d, cutoff));
     }
-    let cache = config::xdg_dir("XDG_CACHE_HOME", ".cache");
-    remove_unused(&cache.join("thumbnails"), THUMBNAIL_AGE);
-    remove_unused(&cache.join("noobsbot-desktop/icons"), ICON_AGE);
     if settings.recent_days > 0 {
         let path = crate::shell::dock::recent_path();
         let cutoff = (chrono::Utc::now() - chrono::Duration::days(settings.recent_days.into())).format("%Y-%m-%dT%H:%M:%SZ").to_string();
