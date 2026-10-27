@@ -406,6 +406,8 @@ pub struct Touchpad {
     /// Tap, then drag with the finger down; `drag_lock` keeps dragging through a short lift.
     pub tap_to_drag: bool,
     pub drag_lock: bool,
+    /// Three fingers drag (libinput's 3-finger drag); the system swipes then take four.
+    pub three_finger_drag: bool,
     pub disable_while_typing: bool,
     /// Off while a mouse is plugged in.
     pub ignore_with_mouse: bool,
@@ -419,6 +421,11 @@ pub struct Touchpad {
 }
 
 impl Touchpad {
+    /// Fingers of the system swipes: four while three-finger drag holds three (libinput makes those swipes drags).
+    pub fn effective_swipe_fingers(&self) -> u8 {
+        if self.three_finger_drag { 4 } else { self.swipe_fingers }
+    }
+
     /// Whether this system gesture is turned on.
     pub fn allows(&self, gesture: crate::gestures::Gesture) -> bool {
         use crate::gestures::Gesture::*;
@@ -1210,6 +1217,7 @@ impl Default for Touchpad {
             scroll_method: ScrollMethod::TwoFingers,
             tap_to_drag: true,
             drag_lock: false,
+            three_finger_drag: false,
             disable_while_typing: true,
             ignore_with_mouse: false,
             gesture_spaces: true,
@@ -1703,6 +1711,17 @@ pub fn watch(path: &Path, mut send: impl FnMut(Config) -> bool + Send + 'static)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn three_finger_drag_moves_swipes_to_four_fingers() {
+        let mut touchpad = Touchpad::default();
+        assert_eq!(touchpad.effective_swipe_fingers(), 3);
+        touchpad.swipe_fingers = 4;
+        assert_eq!(touchpad.effective_swipe_fingers(), 4);
+        touchpad.swipe_fingers = 3;
+        touchpad.three_finger_drag = true;
+        assert_eq!(touchpad.effective_swipe_fingers(), 4);
+    }
 
     #[test]
     fn notification_app_rules() {
