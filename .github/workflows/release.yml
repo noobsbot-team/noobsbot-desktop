@@ -3,8 +3,10 @@
 # tag pushed with any other token starts it too. The version is set from the tag before building, since a beta is only
 # a tag. Publishing makes a release "latest"; a beta stays a pre-release, never "latest".
 #
-# One tarball for Arch and Debian: it is built on Debian 13, the oldest system supported (glibc 2.41; Arch's is
-# newer, and a program built against an older glibc runs on a newer one). Before it is signed, it must start on both.
+# One tarball per CPU (x86_64, aarch64) for Arch and Debian: each is built on Debian 13, the oldest system supported
+# (glibc 2.41; Arch's is newer, and a program built against an older glibc runs on a newer one). Before it is signed,
+# it must start on both; aarch64 only on Debian, since the archlinux image is x86_64 only. One SHA256SUMS lists them
+# all: the updater and install.sh each take their own CPU's line.
 #
 # Repository secrets (scripts/setup-release-signing.sh sets them): MINISIGN_SECRET_KEY = the whole minisign secret key
 # file; MINISIGN_PASSWORD = its password (leave unset for a key made with `minisign -G -W`). The matching public key is
@@ -25,7 +27,12 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-latest }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
     container: debian:13
     steps:
       - name: System packages
@@ -52,7 +59,7 @@ jobs:
       - name: Package
         run: |
           version="${TAG#v}"
-          name="noobsbot-desktop-$version-x86_64"
+          name="noobsbot-desktop-$version-${{ matrix.arch }}"
           mkdir -p "dist/$name"
           cp target/release/noobsbot-desktop target/release/noobsbot-desktop-settings target/release/noobsbot-desktop-update \
             target/release/noobsbot-desktop-watchdog target/release/noobsbot-desktop-widget-system \
@@ -60,21 +67,23 @@ jobs:
           cp -r data "dist/$name/"
           cd dist
           tar --zstd -cf "$name.tar.zst" "$name"
-          sha256sum "$name.tar.zst" > SHA256SUMS
           rm -r "$name"
       - uses: actions/upload-artifact@v4
         with:
-          name: dist
+          name: dist-${{ matrix.arch }}
           path: dist/
 
   # The tarball must load on both systems: every library found, none too old (`--version` only runs once they load).
   smoke:
     needs: build
-    runs-on: ubuntu-latest
     strategy:
       fail-fast: true
       matrix:
-        system: ["archlinux:latest", "debian:13"]
+        include:
+          - { arch: x86_64, runner: ubuntu-latest, system: "archlinux:latest" }
+          - { arch: x86_64, runner: ubuntu-latest, system: "debian:13" }
+          - { arch: aarch64, runner: ubuntu-24.04-arm, system: "debian:13" }
+    runs-on: ${{ matrix.runner }}
     container: ${{ matrix.system }}
     steps:
       - name: Runtime libraries
@@ -88,7 +97,7 @@ jobs:
           fi
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          name: dist-${{ matrix.arch }}
           path: dist
       - name: Load test
         run: |
@@ -106,7 +115,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: dist
+          pattern: dist-*
+          merge-multiple: true
           path: dist
       - name: Sign
         env:
@@ -120,6 +130,9 @@ jobs:
           key="$RUNNER_TEMP/minisign.key"
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
           cd dist
+          # Every CPU's tarball, or none: a release without one would leave that CPU on the old version.
+          test "$(ls *.tar.zst | wc -l)" -eq 2 || { ls; echo "expected the x86_64 and aarch64 tarballs"; exit 1; }
+          sha256sum *.tar.zst > SHA256SUMS
           for file in *.tar.zst SHA256SUMS; do
             printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m "$file" -t "noobsbot-desktop $TAG"
           done
