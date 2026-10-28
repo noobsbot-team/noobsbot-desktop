@@ -19,27 +19,33 @@ concurrency:
 
 jobs:
   # Docs, trail notes and agent wiring only: nothing to build or test. The checks are then skipped, which counts as
-  # passed; a path filter on the trigger would leave the ruleset waiting for checks that never run.
+  # passed; a path filter on the trigger would leave the ruleset waiting for checks that never run. Only a clear
+  # "docs only" skips them: if this job fails, they run (`!cancelled()`, and an output that isn't "false").
   changes:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.diff.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - if: github.event_name == 'pull_request'
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
       - id: diff
         run: |
+          set -euo pipefail
           if [[ $GITHUB_EVENT_NAME != pull_request ]]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
-          git diff --name-only "$BASE...$HEAD" | grep -Ev '\.md$|^\.trail/|^\.claude/' >/dev/null &&
-            echo code=true >> "$GITHUB_OUTPUT" || echo code=false >> "$GITHUB_OUTPUT"
+          # A git error stops the job (and the checks then run). --no-renames: code moved to a .md still counts.
+          files=$(git diff --no-renames --name-only "$BASE...$HEAD")
+          # The same docs list as version.yml's, less .github/ and LICENSE (workflow changes are tested here).
+          if grep -Ev '\.md$|^\.trail/|^\.claude/' <<<"$files" >/dev/null; then code=true; else code=false; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
 
   check:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     # Arch, like the users' machines: same glibc, libxkbcommon and fonts.
     container: archlinux:latest
@@ -62,7 +68,7 @@ jobs:
   # The release is built on Debian 13 (release.yml), so the tests run there too.
   debian:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     runs-on: ubuntu-latest
     container: debian:13
     steps:
