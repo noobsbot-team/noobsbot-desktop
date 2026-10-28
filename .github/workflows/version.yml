@@ -3,12 +3,14 @@
 #   "type!:" or "BREAKING" → a release now: 2.0.0 after 1.4.2
 #   "feat:"                → a release now: 1.5.0
 #   anything else          → a beta now: 1.4.3-beta.N, released as 1.4.3 by the nightly run
-# docs:, ci: and test: commits, and commits that change only docs, GitHub and trail files, make nothing. Nor does a
-# run when the last CI run on main failed.
+# docs:, ci: and test: commits, and commits that change only docs, GitHub and trail files, make nothing. Every commit
+# on main passed CI first: the ruleset on main takes only pull requests that passed it and are up to date with main.
 # A release sets the version (set-version.sh), commits and tags it; a beta only tags (release.yml sets its version
-# from the tag). Each gets a draft GitHub release (a beta as a pre-release) and starts release.yml for its tag, which
-# builds, signs and publishes it. Betas stay listed as pre-releases; a release has all the changes of the betas before
-# it. Versions only go up: a version that isn't above every tag, betas included, is refused.
+# from the tag). They are pushed with the deploy key in the VERSION_DEPLOY_KEY secret, the one push the ruleset lets
+# straight onto main; unlike GITHUB_TOKEN's, its tag pushes start release.yml, which builds, signs and publishes. Each
+# gets a draft GitHub release (a beta as a pre-release). Betas stay listed as pre-releases; a release has all the
+# changes of the betas before it. Versions only go up: a version that isn't above every tag, betas included, is
+# refused.
 # Until the first release, the alphas and betas before 1.0.0 are all there is: an automatic run makes nothing, and
 # 1.0.0 is made by hand (Run workflow, bump major).
 name: Version
@@ -28,7 +30,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 # One at a time, so two runs can't cut the same version.
 concurrency:
@@ -43,6 +44,7 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+          ssh-key: ${{ secrets.VERSION_DEPLOY_KEY }}
       - run: |
           set -euo pipefail
           docs='\.md$|^\.github/|^\.trail/|^\.claude/|^LICENSE$'
@@ -71,10 +73,8 @@ jobs:
             newest=$(git describe --tags --abbrev=0)
             [[ -n $(counted "$newest..HEAD") ]] || { echo "nothing new since $newest"; exit 0; }
           fi
-          # A cancelled run (a newer push replaced it) says nothing about main.
-          ok=$(gh run list --workflow ci.yml --branch main --event push --status completed --limit 20 --json conclusion \
-            -q 'map(select(.conclusion != "cancelled"))[0].conclusion // "success"')
-          [[ $ok == success ]] || { echo "::error::the last ci.yml run on main ended with \"$ok\"; fix main first"; exit 1; }
+          # Without the key the push would be refused at the end, after the version was picked.
+          [[ $DEPLOY_KEY == true ]] || { echo "::error::the VERSION_DEPLOY_KEY secret is not set"; exit 1; }
           base=${last#v}
           IFS=. read -r major minor patch <<<"${base:-0.0.0}"
           if [[ $bump == auto ]]; then
@@ -112,7 +112,7 @@ jobs:
             git push --atomic origin HEAD:main "v$v" || { echo "::error::main moved during the release; the next run makes a version"; exit 1; }
             gh release create "v$v" --generate-notes ${last:+--notes-start-tag "$last"} --draft
           fi
-          gh workflow run release.yml --ref "v$v"
         env:
           GH_TOKEN: ${{ github.token }}
           BUMP: ${{ inputs.bump || 'auto' }}
+          DEPLOY_KEY: ${{ secrets.VERSION_DEPLOY_KEY != '' }}
