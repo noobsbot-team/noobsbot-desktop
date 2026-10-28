@@ -1,10 +1,10 @@
 # fmt, clippy, tests and the Debian release build on every pull request (E6.13). The ruleset on main takes only pull
 # requests that passed `check` and `debian` and are up to date with main, so what they tested is what lands: main
-# itself needs no second run. Main runs them only to save the build caches every pull request starts from (a pull request's own
-# cache is only its own, so pull requests only restore): when Cargo.lock or a Cargo.toml changes (each release's
-# commit does), and once a day, which also catches a new Rust and a cache GitHub dropped after a week unused. The
-# daily run also builds the Arch release, which pull requests skip. The caches hold the dependencies, not our own
-# crates (rust-cache), so they restore fast.
+# itself needs no second run. Main runs them only to save the build caches every pull request starts from (a pull
+# request's own cache is only its own, so pull requests only restore): when a dependency changes (Cargo.lock or a
+# Cargo.toml; a release commit's version bump doesn't count), and once a day, which also catches a new Rust and a
+# cache GitHub dropped after a week unused. The daily run also builds the Arch release, which pull requests skip. The
+# caches hold the dependencies, not our own crates (rust-cache), so they restore fast.
 name: CI
 
 on:
@@ -12,14 +12,14 @@ on:
     branches: [main]
     paths: ['Cargo.lock', '**/Cargo.toml']
   pull_request:
-  # After version.yml's nightly run (00:00), so its release commit is built too.
   schedule:
     - cron: "0 1 * * *"
 
 permissions:
   contents: read
 
-# A newer push replaces a pull request's run; a run on main always finishes, so its caches get saved.
+# A newer push replaces a pull request's run. A run on main that has started finishes, so its caches get saved (a
+# queued one can still be dropped for a newer one, which saves for the newer main).
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -40,6 +40,10 @@ jobs:
       - id: diff
         run: |
           set -euo pipefail
+          # A release commit only bumps our own version, which the caches' key leaves out: nothing new to save.
+          if [[ $GITHUB_EVENT_NAME == push && $MESSAGE == "chore: release v"* ]]; then
+            echo code=false >> "$GITHUB_OUTPUT"; exit 0
+          fi
           if [[ $GITHUB_EVENT_NAME != pull_request ]]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
           # A git error stops the job (and the checks then run). --no-renames: code moved to a .md still counts.
           files=$(git diff --no-renames --name-only "$BASE...$HEAD")
@@ -49,6 +53,7 @@ jobs:
         env:
           BASE: ${{ github.event.pull_request.base.sha }}
           HEAD: ${{ github.event.pull_request.head.sha }}
+          MESSAGE: ${{ github.event.head_commit.message }}
 
   check:
     needs: changes
@@ -60,15 +65,20 @@ jobs:
       - name: System packages
         run: pacman -Syu --noconfirm --needed rust gcc pkgconf libxkbcommon seatd libinput systemd-libs libdrm mesa libdisplay-info inter-font git
       - uses: actions/checkout@v4
+      # A failed run on main still saves: it is the only place that does.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+          cache-on-failure: true
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
-      # Pull requests skip it: the release is built on Debian (release.yml), and the debian job builds that.
+      # Pull requests skip it: the release is built on Debian (release.yml), and the debian job builds that. Outside
+      # target/, so the cache pull requests restore holds no release builds they never use.
       - if: github.event_name != 'pull_request'
         run: cargo build --workspace --release --locked
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/release
 
   # The release is built on Debian 13 (release.yml), so the tests run there too.
   debian:
@@ -90,6 +100,7 @@ jobs:
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.event_name != 'pull_request' }}
+          cache-on-failure: true
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --release --locked
       - run: sh scripts/test-install.sh
