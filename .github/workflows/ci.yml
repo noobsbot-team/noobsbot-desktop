@@ -1,13 +1,14 @@
-# fmt, clippy, tests and a release build on every push and pull request (E6.13); `main` requires it to pass.
+# fmt, clippy, tests and a release build on every pull request (E6.13). The ruleset on main takes only pull requests
+# that passed `check` and `debian` and are up to date with main, so what they tested is what lands: main itself needs
+# no second run. A push to main runs them only when Cargo.lock changes (each release's commit does), to save the build
+# caches every pull request starts from: a pull request's own cache is only its own.
 name: CI
 
-# Docs, trail notes and agent wiring only: nothing to build or test.
 on:
   push:
     branches: [main]
-    paths-ignore: ['**.md', '.trail/**', '.claude/**']
+    paths: ['Cargo.lock']
   pull_request:
-    paths-ignore: ['**.md', '.trail/**', '.claude/**']
 
 permissions:
   contents: read
@@ -17,7 +18,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Docs, trail notes and agent wiring only: nothing to build or test. The checks are then skipped, which counts as
+  # passed; a path filter on the trigger would leave the ruleset waiting for checks that never run.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        run: |
+          if [[ $GITHUB_EVENT_NAME != pull_request ]]; then echo code=true >> "$GITHUB_OUTPUT"; exit 0; fi
+          git diff --name-only "$BASE...$HEAD" | grep -Ev '\.md$|^\.trail/|^\.claude/' >/dev/null &&
+            echo code=true >> "$GITHUB_OUTPUT" || echo code=false >> "$GITHUB_OUTPUT"
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+
   check:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     # Arch, like the users' machines: same glibc, libxkbcommon and fonts.
     container: archlinux:latest
@@ -39,6 +61,8 @@ jobs:
 
   # The release is built on Debian 13 (release.yml), so the tests run there too.
   debian:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container: debian:13
     steps:

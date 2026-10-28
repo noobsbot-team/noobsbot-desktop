@@ -126,7 +126,9 @@ first and follow it. Also:
 2. Read the commit **subjects** since `last` (bodies can quote other commits). `docs:`, `ci:` and `test:` commits,
    and commits that change only docs, `.github/`, `.trail/`, `.claude/` or `LICENSE` files, count for nothing.
 3. On a push with nothing new that counts since the newest tag (betas included): stop.
-4. If the last CI run (`ci.yml`) on main failed: stop with an error.
+4. No CI check here: every commit on main passed CI (`ci.yml`) first, as the ruleset on main takes only pull
+   requests that passed `check` and `debian` and are up to date with main. If the `VERSION_DEPLOY_KEY` secret is
+   not set: stop with an error.
 5. Pick the version from the subjects since `last` (`bump` other than `auto` picks the number by hand):
    - any `type!:` or `BREAKING` → `MAJOR+1` → **release**
    - else any `feat:` → `MINOR+1` → **release**
@@ -139,8 +141,21 @@ first and follow it. Also:
    meanwhile, neither is pushed, and the next run makes the release). Create a draft GitHub release with notes since
    `last`.
 8. **Beta:** only tag the commit (no version commit). Create a draft **pre-release**.
-9. Start [`release.yml`](.github/workflows/release.yml) for the new tag (a tag pushed by a workflow starts no
-   workflow by itself).
+9. The commit and tag are pushed with the deploy key in `VERSION_DEPLOY_KEY`: the ruleset lets it, and only it,
+   push straight onto main. Unlike a `GITHUB_TOKEN` push, its tag push starts
+   [`release.yml`](.github/workflows/release.yml) for the new tag.
+
+Set up once (Settings, by an owner):
+
+- **Deploy key:** `ssh-keygen -t ed25519 -N '' -C version.yml -f version-key`. Add `version-key.pub` under
+  Settings ▸ Deploy keys with **Allow write access**, and `version-key` as the repository secret
+  `VERSION_DEPLOY_KEY`. Then delete both files.
+- **Ruleset on main** (Settings ▸ Rules ▸ Rulesets, target the default branch): require a pull request; require the
+  status checks `check` and `debian`, with "require branches to be up to date"; block force pushes and deletion.
+  Bypass list: **Deploy keys** only.
+
+`ci.yml` runs on pull requests only. On main it runs just when `Cargo.lock` changes (each release's commit does), to
+save the build caches pull requests start from.
 
 `release.yml` (also on a `v*` tag pushed by hand, or by hand from Actions):
 
