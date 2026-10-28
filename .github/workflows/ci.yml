@@ -1,7 +1,8 @@
-# fmt, clippy, tests and a release build on every pull request (E6.13). The ruleset on main takes only pull requests
+# fmt, clippy, tests and the Debian release build on every pull request (E6.13). The ruleset on main takes only pull requests
 # that passed `check` and `debian` and are up to date with main, so what they tested is what lands: main itself needs
 # no second run. A push to main runs them only when Cargo.lock changes (each release's commit does), to save the build
-# caches every pull request starts from: a pull request's own cache is only its own.
+# caches every pull request starts from: a pull request's own cache is only its own, so pull requests only restore.
+# The caches hold the dependencies, not our own crates (rust-cache), so they restore fast.
 name: CI
 
 on:
@@ -47,17 +48,13 @@ jobs:
       - name: System packages
         run: pacman -Syu --noconfirm --needed rust gcc pkgconf libxkbcommon seatd libinput systemd-libs libdrm mesa libdisplay-info inter-font git
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            target
-          key: cargo-arch-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-arch-
+          save-if: ${{ github.event_name == 'push' }}
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      # No release build here: the release is built on Debian (release.yml), and the debian job below builds it.
       - run: cargo test --workspace --locked
-      - run: cargo build --workspace --release --locked
 
   # The release is built on Debian 13 (release.yml), so the tests run there too.
   debian:
@@ -76,13 +73,9 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - uses: actions/checkout@v4
-      - uses: actions/cache@v4
+      - uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            target
-          key: cargo-debian-${{ hashFiles('Cargo.lock') }}
-          restore-keys: cargo-debian-
+          save-if: ${{ github.event_name == 'push' }}
       - run: cargo test --workspace --locked
       - run: cargo build --workspace --release --locked
       - run: sh scripts/test-install.sh
