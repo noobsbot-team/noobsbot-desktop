@@ -17,9 +17,16 @@ use smithay::{
             generic::Generic,
             timer::{TimeoutAction, Timer},
         },
-        wayland_protocols::xdg::shell::server::xdg_toplevel,
+        wayland_protocols::{
+            ext::data_control::v1::server::{
+                ext_data_control_device_v1::{self, ExtDataControlDeviceV1},
+                ext_data_control_manager_v1::ExtDataControlManagerV1,
+                ext_data_control_source_v1::ExtDataControlSourceV1,
+            },
+            xdg::shell::server::xdg_toplevel,
+        },
         wayland_server::{
-            Client, Display, DisplayHandle, Resource,
+            Client, DataInit, Dispatch, Display, DisplayHandle, Resource,
             backend::{ClientData, ClientId, DisconnectReason},
             protocol::{wl_buffer::WlBuffer, wl_seat::WlSeat, wl_surface::WlSurface},
         },
@@ -34,6 +41,10 @@ use smithay::{
         selection::{
             SelectionHandler, SelectionSource, SelectionTarget,
             data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler, set_data_device_focus},
+            ext_data_control::{
+                DataControlHandler, DataControlState, ExtDataControlDeviceUserData, ExtDataControlManagerGlobalData, ExtDataControlManagerUserData,
+                ExtDataControlSourceUserData,
+            },
             primary_selection::{PrimarySelectionHandler, PrimarySelectionState, set_primary_focus},
         },
         shell::xdg::{
@@ -169,6 +180,7 @@ pub struct State {
     pub seat_state: SeatState<Self>,
     pub data_device_state: DataDeviceState,
     pub primary_selection_state: PrimarySelectionState,
+    pub data_control_state: DataControlState,
     pub activation_state: XdgActivationState,
     pub foreign_state: XdgForeignState,
     pub _viewporter_state: ViewporterState,
@@ -533,6 +545,7 @@ impl State {
             state.schedule_redraw();
             TimeoutAction::ToDuration(tick(state))
         })?;
+        let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
 
         Ok(Self {
             start_time: Instant::now(),
@@ -582,7 +595,10 @@ impl State {
             _output_manager_state: OutputManagerState::new_with_xdg_output::<Self>(&dh),
             seat_state,
             data_device_state: DataDeviceState::new::<Self>(&dh),
-            primary_selection_state: PrimarySelectionState::new::<Self>(&dh),
+            // Clipboard managers and sync tools watch and set the clipboard (and the primary selection) from
+            // the background, without the keyboard focus: trusted clients only (E6.11, perms.rs).
+            data_control_state: DataControlState::new::<Self, _>(&dh, Some(&primary_selection_state), crate::perms::trusted),
+            primary_selection_state,
             activation_state: XdgActivationState::new::<Self>(&dh),
             foreign_state: XdgForeignState::new::<Self>(&dh),
             _viewporter_state: ViewporterState::new::<Self>(&dh),
@@ -1555,6 +1571,37 @@ impl ServerDndGrabHandler for State {
 impl PrimarySelectionHandler for State {
     fn primary_selection_state(&self) -> &PrimarySelectionState {
         &self.primary_selection_state
+    }
+}
+
+impl DataControlHandler for State {
+    fn data_control_state(&self) -> &DataControlState {
+        &self.data_control_state
+    }
+}
+
+// smithay's `delegate_ext_data_control!`, but a clipboard set through data-control belongs to its client, which has
+// no keyboard focus: `new_selection` takes the focused app for the owner, and the copy would never be served once the
+// client quits (E1.1).
+smithay::reexports::wayland_server::delegate_global_dispatch!(State: [ExtDataControlManagerV1: ExtDataControlManagerGlobalData] => DataControlState);
+smithay::reexports::wayland_server::delegate_dispatch!(State: [ExtDataControlManagerV1: ExtDataControlManagerUserData] => DataControlState);
+smithay::reexports::wayland_server::delegate_dispatch!(State: [ExtDataControlSourceV1: ExtDataControlSourceUserData] => DataControlState);
+
+impl Dispatch<ExtDataControlDeviceV1, ExtDataControlDeviceUserData> for State {
+    fn request(
+        state: &mut Self,
+        client: &Client,
+        resource: &ExtDataControlDeviceV1,
+        request: ext_data_control_device_v1::Request,
+        data: &ExtDataControlDeviceUserData,
+        dh: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        let set = matches!(request, ext_data_control_device_v1::Request::SetSelection { source: Some(_) });
+        <DataControlState as Dispatch<ExtDataControlDeviceV1, ExtDataControlDeviceUserData, State>>::request(state, client, resource, request, data, dh, init);
+        if set {
+            state.clipboard.owner = Some(client.id());
+        }
     }
 }
 

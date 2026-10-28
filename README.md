@@ -427,8 +427,10 @@ CI makes them from the commit types, never by hand; the full rule is in [`VERSIO
 - **Lock screen:** if the desktop ever crashes, you return to the login screen; it is never left unlocked.
 - **Updates are signed:** releases are signed in CI with a key whose private half never leaves the release secret.
   The installer and the updater refuse anything that doesn't match, and refuse to downgrade.
-- Privileged Wayland interfaces (screen capture, input methods, window lists) are offered only to trusted clients;
-  start a tool with `noobsbot-desktop --trusted <command>` to trust it.
+- Privileged Wayland interfaces (screen capture, input methods, window lists, clipboard control) are offered only to
+  trusted clients; start a tool with `noobsbot-desktop --trusted <command>` to trust it. Clipboard control
+  (`ext-data-control`, used by clipboard managers and `wl-paste --watch`) is never offered to other apps, because
+  the clipboard often holds passwords.
 
 ## Apps that come with it
 | Role | App |
