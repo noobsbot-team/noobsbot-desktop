@@ -38,6 +38,8 @@ concurrency:
 
 jobs:
   bump:
+    # The deploy key's push of a release commit starts this workflow again; that run would only find nothing new.
+    if: "github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore: release v')"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,7 +104,8 @@ jobs:
           if [[ $bump == beta ]]; then
             git tag -a "v$v" -m "v$v"
             git push origin "v$v"
-            gh release create "v$v" --generate-notes --draft --prerelease
+            # release.yml makes the draft itself if it gets there first (a hand-pushed tag).
+            gh release view "v$v" > /dev/null 2>&1 || gh release create "v$v" --generate-notes --draft --prerelease
           else
             .github/set-version.sh "$v"
             git commit -am "chore: release v$v"
@@ -110,7 +113,8 @@ jobs:
             # Both or neither: if main moved meanwhile, nothing is pushed and the next run (the push that moved it)
             # makes a version.
             git push --atomic origin HEAD:main "v$v" || { echo "::error::main moved during the release; the next run makes a version"; exit 1; }
-            gh release create "v$v" --generate-notes ${last:+--notes-start-tag "$last"} --draft
+            gh release view "v$v" > /dev/null 2>&1 ||
+              gh release create "v$v" --generate-notes ${last:+--notes-start-tag "$last"} --draft
           fi
         env:
           GH_TOKEN: ${{ github.token }}

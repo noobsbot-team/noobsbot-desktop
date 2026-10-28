@@ -1,7 +1,7 @@
-# Builds, checks, signs and publishes the release tarball of a `v*` tag (E6.13). version.yml runs it on each version's
-# tag right after making it (tags pushed with the default GITHUB_TOKEN start no workflows, so that is how it runs); a
-# tag pushed with any other token starts it too. The version is set from the tag before building, since a beta is only
-# a tag. Publishing makes a release "latest"; a beta stays a pre-release, never "latest".
+# Builds, checks, signs and publishes the release tarball of a `v*` tag (E6.13). It starts on the tag push itself:
+# version.yml pushes each version's tag with its deploy key (a GITHUB_TOKEN push would start no workflow), and a tag
+# pushed by hand starts it too. The version is set from the tag before building, since a beta is only a tag.
+# Publishing makes a release "latest"; a beta stays a pre-release, never "latest".
 #
 # One tarball per CPU (x86_64, aarch64) for Arch and Debian: each is built on Debian 13, the oldest system supported
 # (glibc 2.41; Arch's is newer, and a program built against an older glibc runs on a newer one). Before it is signed,
@@ -143,7 +143,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           cd dist
-          # version.yml has already made the draft release; a hand-pushed tag has none yet.
+          # version.yml makes the draft release seconds after its tag push, long before this; a hand-pushed tag has none.
           case "$TAG" in *-*) pre=--prerelease latest=false ;; *) pre= latest=true ;; esac
           gh release view "$TAG" > /dev/null 2>&1 || gh release create "$TAG" --verify-tag --generate-notes --draft $pre
           gh release upload "$TAG" --clobber *.tar.zst SHA256SUMS *.minisig
