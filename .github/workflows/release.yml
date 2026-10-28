@@ -67,6 +67,8 @@ jobs:
           cp -r data "dist/$name/"
           cd dist
           tar --zstd -cf "$name.tar.zst" "$name"
+          # Hashed where it was built; publish checks the download against it before joining them into SHA256SUMS.
+          sha256sum "$name.tar.zst" > "SHA256SUMS-${{ matrix.arch }}"
           rm -r "$name"
       - uses: actions/upload-artifact@v4
         with:
@@ -130,9 +132,14 @@ jobs:
           key="$RUNNER_TEMP/minisign.key"
           printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key"
           cd dist
-          # Every CPU's tarball, or none: a release without one would leave that CPU on the old version.
-          test "$(ls *.tar.zst | wc -l)" -eq 2 || { ls; echo "expected the x86_64 and aarch64 tarballs"; exit 1; }
-          sha256sum *.tar.zst > SHA256SUMS
+          # Every CPU's tarball, or none: a release without one would leave that CPU on the old version. The CPUs are
+          # the build matrix's.
+          for arch in x86_64 aarch64; do
+            test -f "noobsbot-desktop-${TAG#v}-$arch.tar.zst" || { ls; echo "no $arch tarball for $TAG"; exit 1; }
+          done
+          cat SHA256SUMS-* | sha256sum -c --strict
+          cat SHA256SUMS-* > SHA256SUMS
+          rm SHA256SUMS-*
           for file in *.tar.zst SHA256SUMS; do
             printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m "$file" -t "noobsbot-desktop $TAG"
           done

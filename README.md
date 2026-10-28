@@ -114,8 +114,8 @@ The full design, with the reasoning behind every choice, is in [`plan.md`](plan.
 
 ## Requirements
 - **Arch Linux** or **Debian 13 (trixie)**, freshly installed or existing. Other distributions (and other Debian
-  versions) aren't supported by the installer. The prebuilt release is for x86_64; on other CPUs (arm64) the
-  installer builds it from source.
+  versions) aren't supported by the installer. The prebuilt release is for x86_64 and aarch64 (arm64); on other
+  CPUs the installer builds it from source.
 - A normal user account with `sudo` (in the `wheel` group on Arch, `sudo` on Debian). Don't run the installer as root.
 - An internet connection during install.
 - A GPU with OpenGL ES 3: Intel, AMD, or NVIDIA with `nvidia-open` (driver 555 or newer). Virtual machines with
